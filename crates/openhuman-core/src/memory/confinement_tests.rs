@@ -202,6 +202,7 @@ async fn rpc_items_get_and_forget_cannot_reach_another_root() {
     assert_eq!(forgotten.forgotten, 0);
 
     let engine: Arc<dyn MemoryEngine> = crate::memory::engine::resolve(&config)
+        .await
         .engine()
         .unwrap()
         .engine;

@@ -6,6 +6,12 @@ use crate::core::Outcome;
 
 use super::loader::snapshot_config_json;
 
+#[path = "model_byok_route.rs"]
+mod model_byok_route;
+#[cfg(test)]
+use model_byok_route::BYOK_INFERENCE_SLUG;
+use model_byok_route::{complete_byok_route, ExplicitRolePins};
+
 #[derive(Debug, Clone, Default)]
 pub struct ModelSettingsPatch {
     pub api_url: Option<String>,
@@ -23,7 +29,7 @@ pub struct ModelSettingsPatch {
     pub model_routes: Option<Vec<crate::config::ModelRouteConfig>>,
     /// When `Some`, REPLACES the entire `config.cloud_providers` array with
     /// the supplied entries (each lacking the API key — those live in
-    /// `auth-profiles.json` via [`crate::security::credentials::AuthService`]).
+    /// `auth-profiles.json` via [`crate::credentials::AuthService`]).
     /// Pass `Some(vec![])` to clear all third-party cloud providers.
     pub cloud_providers: Option<Vec<crate::config::schema::cloud_providers::CloudProviderCreds>>,
     /// PEM CA bundle changes keyed by provider slug; empty values remove one.
@@ -94,168 +100,6 @@ pub struct LocalAiSettingsPatch {
     pub chat_model_id: Option<String>,
     pub usage_embeddings: Option<bool>,
     pub api_key: Option<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ComposioTriggerSettingsPatch {
-    /// When `Some(true)`, disables triage for all toolkits.
-    pub triage_disabled: Option<bool>,
-    /// When `Some(v)`, replaces the per-toolkit opt-out list entirely.
-    pub triage_disabled_toolkits: Option<Vec<String>>,
-}
-
-/// Which agent-turn roles the incoming patch pinned explicitly.
-#[derive(Debug, Clone, Copy, Default)]
-struct ExplicitRolePins {
-    chat: bool,
-    reasoning: bool,
-    agentic: bool,
-    coding: bool,
-}
-
-/// The `cloud_providers` slug [`complete_byok_route`] registers under.
-///
-/// Distinct from `ephemeral_route::EPHEMERAL_ROUTE_SLUG`: that one is
-/// in-memory only and must never be persisted, while this entry exists
-/// precisely to be saved.
-const BYOK_INFERENCE_SLUG: &str = "byok-inference";
-
-/// Two endpoints are the same route if they differ only by trailing slashes.
-fn same_endpoint(a: &str, b: &str) -> bool {
-    a.trim().trim_end_matches('/') == b.trim().trim_end_matches('/')
-}
-
-/// Make an `inference_url` + `api_key` pair actually route.
-///
-/// Setting those two is the documented way to point inference at a custom
-/// OpenAI-compatible endpoint ("When set together with `api_key`, inference
-/// goes direct to this URL instead of the OpenHuman backend"). It did not work:
-/// `provider_for_role` resolves through `cloud_providers`, never through
-/// `inference_url`, so the save succeeded and the *next turn* died with
-///
-/// ```text
-/// [chat-factory] BYOK_INCOMPLETE: inference_url is set to a custom/direct
-/// endpoint (…) but no matching cloud_providers entry was found for role 'chat'
-/// ```
-///
-/// — a failure in a different subsystem, one call later, for a write the API
-/// accepted. The caller had to also hand-build the provider entry and pin four
-/// roles to `<slug>:<model>`, which is not what the field promises and is not
-/// discoverable from the error.
-///
-/// So complete the statement here, the same way
-/// [`ephemeral_route::apply`](crate::config::schema::ephemeral_route::apply)
-/// completes it for a single call: register the endpoint as a provider and pin
-/// the four roles an agent turn runs on.
-///
-/// Deliberately conservative:
-/// - does nothing unless BOTH `inference_url` and `api_key` are non-blank — an
-///   endpoint with no credential is a partial statement, and guessing the other
-///   half is how a turn ends up somewhere the caller did not ask for;
-/// - does nothing when an entry already matches the endpoint, so a
-///   hand-configured provider is never overwritten;
-/// - needs a resolved `default_model`, because the provider grammar is
-///   `<slug>:<model>` and pinning a role to `<slug>:` trades a working default
-///   for a resolution failure;
-/// - leaves any role the same patch pinned explicitly, and any role already
-///   pinned to something other than the managed default, alone.
-fn complete_byok_route(config: &mut Config, explicit: &ExplicitRolePins) {
-    use crate::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
-
-    let Some(endpoint) = config
-        .inference_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-    else {
-        return;
-    };
-    let has_key = config
-        .api_key
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty());
-    if !has_key {
-        return;
-    }
-
-    let existing = config
-        .cloud_providers
-        .iter()
-        .find(|entry| same_endpoint(&entry.endpoint, &endpoint))
-        .map(|entry| entry.slug.trim().to_string());
-
-    let Some(model) = config
-        .default_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-    else {
-        if existing.is_none() {
-            log::warn!(
-                "[config][byok] inference_url is set with a key but no default_model is \
-                 resolved — cannot complete the BYOK route; turns will report BYOK_INCOMPLETE"
-            );
-        }
-        return;
-    };
-
-    let slug = match existing {
-        Some(slug) => slug,
-        None => {
-            log::info!(
-                "[config][byok] registering cloud provider '{BYOK_INFERENCE_SLUG}' for the \
-                 configured inference_url so agent turns can resolve it"
-            );
-            config.cloud_providers.push(CloudProviderCreds {
-                id: BYOK_INFERENCE_SLUG.to_string(),
-                slug: BYOK_INFERENCE_SLUG.to_string(),
-                label: "Custom inference endpoint".to_string(),
-                endpoint: endpoint.clone(),
-                auth_style: AuthStyle::Bearer,
-                default_model: Some(model.clone()),
-            });
-            BYOK_INFERENCE_SLUG.to_string()
-        }
-    };
-
-    let provider_string = format!("{slug}:{model}");
-    // "Unspoken for" means empty or the managed `cloud` sentinel. Anything else
-    // is a deliberate choice — a local Ollama role, a second BYOK provider —
-    // and repointing it at this endpoint would be exactly the silent
-    // repointing this function exists to avoid.
-    let unspoken = |value: &Option<String>| {
-        value
-            .as_deref()
-            .map(str::trim)
-            .is_none_or(|v| v.is_empty() || v == "cloud")
-    };
-    let mut pinned: Vec<&str> = Vec::new();
-    for (role, pinned_explicitly, slot) in [
-        ("chat", explicit.chat, &mut config.chat_provider),
-        (
-            "reasoning",
-            explicit.reasoning,
-            &mut config.reasoning_provider,
-        ),
-        ("agentic", explicit.agentic, &mut config.agentic_provider),
-        ("coding", explicit.coding, &mut config.coding_provider),
-    ] {
-        if pinned_explicitly || !unspoken(slot) {
-            continue;
-        }
-        *slot = Some(provider_string.clone());
-        pinned.push(role);
-    }
-    if !pinned.is_empty() {
-        log::info!(
-            "[config][byok] pinned role(s) [{}] to '{}' from the configured inference_url",
-            pinned.join(", "),
-            provider_string
-        );
-    }
 }
 
 /// Updates the model-related settings in the configuration.
@@ -432,7 +276,7 @@ pub async fn apply_model_settings(
     complete_byok_route(config, &explicit_role_pins);
 
     config.save().await.map_err(super::config_save_error)?;
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(
@@ -478,7 +322,7 @@ pub async fn apply_memory_settings(
         config.memory.embedding_dimensions = dimensions;
     }
     config.save().await.map_err(super::config_save_error)?;
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(
@@ -537,7 +381,7 @@ pub async fn apply_runtime_settings(
         }
     }
     config.save().await.map_err(super::config_save_error)?;
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(
@@ -615,7 +459,7 @@ pub async fn apply_local_ai_settings(
         );
     }
     config.save().await.map_err(super::config_save_error)?;
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(
@@ -632,60 +476,6 @@ pub async fn load_and_apply_local_ai_settings(
 ) -> Result<Outcome<serde_json::Value>, String> {
     let mut config = ctx.load_config().await?;
     apply_local_ai_settings(&mut config, update).await
-}
-
-/// Updates the Composio trigger-triage settings in the configuration.
-pub async fn apply_composio_trigger_settings(
-    config: &mut Config,
-    update: ComposioTriggerSettingsPatch,
-) -> Result<Outcome<serde_json::Value>, String> {
-    if let Some(v) = update.triage_disabled {
-        config.composio.triage_disabled = v;
-        tracing::debug!(
-            triage_disabled = v,
-            "[config][composio] triage_disabled updated"
-        );
-    }
-    if let Some(toolkits) = update.triage_disabled_toolkits {
-        tracing::debug!(
-            count = toolkits.len(),
-            "[config][composio] triage_disabled_toolkits updated"
-        );
-        config.composio.triage_disabled_toolkits = toolkits;
-    }
-    config.save().await.map_err(super::config_save_error)?;
-    let snapshot = snapshot_config_json(config)?;
-    Ok(Outcome::new(
-        snapshot,
-        vec![format!(
-            "composio trigger settings saved to {}",
-            config.config_path.display()
-        )],
-    ))
-}
-
-/// Loads the configuration, applies composio trigger settings, and saves it.
-pub async fn load_and_apply_composio_trigger_settings(
-    ctx: &DispatchCtx,
-    update: ComposioTriggerSettingsPatch,
-) -> Result<Outcome<serde_json::Value>, String> {
-    let mut config = ctx.load_config().await?;
-    apply_composio_trigger_settings(&mut config, update).await
-}
-
-/// Reads the current composio trigger-triage settings.
-pub async fn get_composio_trigger_settings(
-    ctx: &DispatchCtx,
-) -> Result<Outcome<serde_json::Value>, String> {
-    let config = ctx.load_config().await?;
-    let result = serde_json::json!({
-        "triage_disabled": config.composio.triage_disabled,
-        "triage_disabled_toolkits": config.composio.triage_disabled_toolkits,
-    });
-    Ok(Outcome::new(
-        result,
-        vec!["composio trigger settings read".to_string()],
-    ))
 }
 
 /// The control-plane URL the host's config enricher resolved onto

@@ -15,20 +15,23 @@ impl ArtifactPublisher for FixedPublisher {
     }
 }
 
-#[test]
-fn nothing_registered_offers_no_publisher() {
-    assert!(artifact_publisher(&Config::default()).is_none());
+#[tokio::test]
+async fn nothing_registered_offers_no_publisher() {
+    assert!(artifact_publisher(&Config::default()).await.is_none());
 }
 
-#[test]
-fn the_first_factory_that_answers_serves_sharing() {
-    register_artifact_publisher("declines", |_| None);
-    assert!(artifact_publisher(&Config::default()).is_none());
+#[tokio::test]
+async fn the_first_factory_that_answers_serves_sharing() {
+    register_artifact_publisher("declines", |_| Box::pin(async { None }));
+    assert!(artifact_publisher(&Config::default()).await.is_none());
     let binder: ArtifactPublisherBinder = Arc::new(|_files| Arc::new(FixedPublisher));
-    register_artifact_publisher("answers", move |_| Some(binder.clone()));
-    assert!(artifact_publisher(&Config::default()).is_some());
+    register_artifact_publisher("answers", move |_| {
+        let binder = binder.clone();
+        Box::pin(async move { Some(binder) })
+    });
+    assert!(artifact_publisher(&Config::default()).await.is_some());
     assert!(unregister_artifact_publisher("answers"));
-    assert!(artifact_publisher(&Config::default()).is_none());
+    assert!(artifact_publisher(&Config::default()).await.is_none());
 }
 
 #[tokio::test]
@@ -52,21 +55,35 @@ async fn publisher_lookup_uses_the_carried_context_not_the_ambient_profile() {
     let selected_b = Arc::new(AtomicUsize::new(0));
     let factory_a = selected_a.clone();
     register_artifact_publisher_in(core_a.extensions(), "publisher-context-a", move |_| {
-        factory_a.fetch_add(1, Ordering::SeqCst);
-        Some(binder.clone())
+        let factory_a = factory_a.clone();
+        let binder = binder.clone();
+        Box::pin(async move {
+            factory_a.fetch_add(1, Ordering::SeqCst);
+            Some(binder)
+        })
     });
     let factory_b = selected_b.clone();
     register_artifact_publisher_in(core_b.extensions(), "publisher-context-b", move |_| {
-        factory_b.fetch_add(1, Ordering::SeqCst);
-        Some(Arc::new(|_files| Arc::new(FixedPublisher)))
+        let factory_b = factory_b.clone();
+        Box::pin(async move {
+            factory_b.fetch_add(1, Ordering::SeqCst);
+            Some(
+                Arc::new(|_files| Arc::new(FixedPublisher) as Arc<dyn ArtifactPublisher>)
+                    as ArtifactPublisherBinder,
+            )
+        })
     });
 
     CoreContext::scope(core_b, async {
-        assert!(artifact_publisher_in(&Config::default(), &ctx_a).is_some());
+        assert!(artifact_publisher_in(&Config::default(), &ctx_a)
+            .await
+            .is_some());
         assert_eq!(selected_a.load(Ordering::SeqCst), 1);
         assert_eq!(selected_b.load(Ordering::SeqCst), 0);
 
-        assert!(artifact_publisher_in(&Config::default(), &ctx_b).is_some());
+        assert!(artifact_publisher_in(&Config::default(), &ctx_b)
+            .await
+            .is_some());
         assert_eq!(selected_a.load(Ordering::SeqCst), 1);
         assert_eq!(selected_b.load(Ordering::SeqCst), 1);
     })

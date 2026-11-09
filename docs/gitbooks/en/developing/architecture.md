@@ -323,7 +323,7 @@ Core subsystems run on `tiny*` crates, vendored as git submodules under `vendor/
 | Database   | SQLite (rusqlite)                  | Embedded, zero-config, per-domain stores                  |
 | WebSocket  | tokio-tungstenite + rustls         | Persistent connections with native TLS                    |
 | HTTP       | reqwest                            | Async HTTP with rustls + native-TLS support          |
-| Encryption | chacha20poly1305 (secret store), aes-gcm + argon2 (`security/encryption/`) | Config-field secrets use ChaCha20-Poly1305 under a keychain-backed master key (`enc2:` prefix); the separate user-facing encryption facility uses AES-256-GCM with Argon2id |
+| Encryption | TinySecurity cipher bus | SecretStore and `encryption.*` RPC operations delegate cipher work to TinySecurity; OpenHuman supplies scoped key storage and consent callbacks |
 | Scheduling | cron crate + `cron` domain         | Standard cron expressions, `llm_gate`-gated         |
 | Telegram   | `tinychannels` Bot API driver      | Transport in vendored `tinychannels`; host keeps bus/approval glue |
 | Realtime   | Socket.io (client)                 | Bidirectional event-based communication                   |

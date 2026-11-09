@@ -14,6 +14,7 @@
 //! and return `Err(_)`, but Sentry never saw it. Funnel error sites through
 //! `report_error` so they show up tagged and grep-friendly in Sentry.
 pub(crate) mod progress_tracing;
+pub mod sentry_scope;
 pub(crate) mod telemetry;
 
 #[path = "observability_channel_message.rs"]
@@ -33,8 +34,9 @@ pub use release_tag::is_stale_release_event;
 mod availability;
 use availability::log_module_unavailable;
 pub use availability::{
-    is_api_key_rejected_message, is_backend_unavailable_message, is_module_unavailable_message,
-    API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX,
+    is_api_key_rejected_message, is_backend_unavailable_message, is_hosted_billing_refusal_message,
+    is_module_unavailable_message, API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX,
+    INSUFFICIENT_CREDITS_PREFIX, PAID_PLAN_REQUIRED_PREFIX,
 };
 
 /// A `(key, value)` pair attached as a Sentry tag. Tags are short, indexed,
@@ -264,7 +266,7 @@ pub enum ExpectedErrorKind {
     /// Drops Sentry TAURI-RUST-83A (~430 events / 40 users on
     /// `openhuman@0.57.13`). Anchored to the `codex cli auth` /
     /// `.codex/auth.json` envelope produced by
-    /// [`crate::security::credentials::openai_oauth::store::import_codex_cli_auth_from_path`]
+    /// Codex CLI import path in `openhuman_tinyhumans::provider_oauth`.
     /// — a genuine keyring/persist failure in `upsert_profile` carries neither
     /// anchor, so a real defect in the import code still reaches Sentry.
     CodexCliAuthUnavailable,
@@ -308,8 +310,8 @@ pub enum ExpectedErrorKind {
     UpstreamEdgeBlock,
     /// `approval_decide` (`crates/openhuman-core/src/security/approval/rpc.rs`) resolved a request_id
     /// whose pending row was **already decided, lazily expired, or superseded**
-    /// — `store::decide` updated 0 rows because `decided_at` was already set,
-    /// and `store::get_decision` confirms a persisted decision exists. The
+    /// — TinySecurity reports that the request is already terminal, and the
+    /// engine confirms the decision is present. The
     /// inline-approvals design spec
     /// classifies "no pending approval found" as a **benign** outcome: the
     /// frontend `ApprovalRequestCard.decide` and the Telegram callback both call
@@ -370,6 +372,7 @@ include!("observability_expected_error_classification.rs");
 include!("observability_plan_and_session_errors.rs");
 include!("observability_provider_local_errors.rs");
 include!("observability_network_provider_errors.rs");
+include!("observability_voice_provider_errors.rs");
 include!("observability_reporting.rs");
 include!("observability_event_classification.rs");
 include!("observability_backend_event_classification.rs");

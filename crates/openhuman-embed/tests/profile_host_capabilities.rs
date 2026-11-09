@@ -218,33 +218,36 @@ async fn scenario() {
         // synthetic expiry check cannot race a heartbeat.
         .configure(|config| config.lease_ttl_secs = 3600)
         .tools(move |turn| {
-            let profile = openhuman_embed::current_tenant().unwrap().profile.unwrap();
-            factory_sessions
-                .lock()
-                .unwrap()
-                .push((profile, turn.session_id().map(str::to_owned)));
-            HostTurnTools::advertised(
-                [
-                    "tenant_probe",
-                    "hidden",
-                    "shell",
-                    "spawn_subagent",
-                    "curl",
-                    "install_workflow_from_url",
-                    "http_request",
-                    "run_workflow",
-                    "delegate_to",
-                ]
-                .into_iter()
-                .map(|name| {
-                    Box::new(TenantTool {
-                        name,
-                        calls: factory_calls.clone(),
-                        relay_origins: factory_relay_origins.clone(),
-                    }) as Box<dyn Tool>
-                })
-                .collect(),
-            )
+            let session_id = turn.session_id().map(str::to_owned);
+            let factory_sessions = factory_sessions.clone();
+            let factory_calls = factory_calls.clone();
+            let factory_relay_origins = factory_relay_origins.clone();
+            Box::pin(async move {
+                let profile = openhuman_embed::current_tenant().unwrap().profile.unwrap();
+                factory_sessions.lock().unwrap().push((profile, session_id));
+                HostTurnTools::advertised(
+                    [
+                        "tenant_probe",
+                        "hidden",
+                        "shell",
+                        "spawn_subagent",
+                        "curl",
+                        "install_workflow_from_url",
+                        "http_request",
+                        "run_workflow",
+                        "delegate_to",
+                    ]
+                    .into_iter()
+                    .map(|name| {
+                        Box::new(TenantTool {
+                            name,
+                            calls: factory_calls.clone(),
+                            relay_origins: factory_relay_origins.clone(),
+                        }) as Box<dyn Tool>
+                    })
+                    .collect(),
+                )
+            })
         })
         .tool_scope(ToolScopeSpec::Named(vec![
             "tenant_probe".into(),
@@ -313,6 +316,7 @@ async fn scenario() {
                     openhuman_core::memory::engine::is_on(
                         handle.context().embedder_config().unwrap(),
                     )
+                    .await
                 })
                 .await,
             "expired profile memory must fail closed"
@@ -685,13 +689,13 @@ async fn scenario() {
     escaped_config.memory.root = Some("user:bob".into());
     assert!(
         !handles[0]
-            .scope(async { openhuman_core::memory::engine::is_on(&escaped_config) })
+            .scope(async { openhuman_core::memory::engine::is_on(&escaped_config).await })
             .await
     );
     alice_profile.lease_fence().renewed(0);
     assert!(
         !handles[0]
-            .scope(async { openhuman_core::memory::engine::is_on(&forced_config) })
+            .scope(async { openhuman_core::memory::engine::is_on(&forced_config).await })
             .await,
         "an expired profile must not resolve the shared engine"
     );
@@ -699,7 +703,7 @@ async fn scenario() {
     alice_profile.lease_fence().fence();
     assert!(
         !handles[0]
-            .scope(async { openhuman_core::memory::engine::is_on(&forced_config) })
+            .scope(async { openhuman_core::memory::engine::is_on(&forced_config).await })
             .await,
         "a latched profile must not resolve the shared engine"
     );

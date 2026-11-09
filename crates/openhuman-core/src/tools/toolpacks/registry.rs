@@ -315,7 +315,7 @@ pub const PACKS: &[ToolPack] = &[
     ToolPack {
         id: "scheduling",
         summary: "Reminders and scheduled jobs: create, list, update, remove, run, inspect.",
-        tools: &["cron"],
+        tools: crate::cron::tools::CRON_OPERATION_TOOLS,
         owners: &[],
         guide: include_str!("guides/scheduling.md"),
     },

@@ -19,6 +19,7 @@
 use std::sync::{Arc, OnceLock};
 
 use tinystoragedrivers::secrets::{DerivedKeys, DocumentSecrets, KeyProvider};
+pub use tinystoragedrivers::secrets::{MemorySecrets, SecretStore};
 use zeroize::Zeroizing;
 
 use super::{current_scope, current_scoped, Scope, Storage, StorageError};

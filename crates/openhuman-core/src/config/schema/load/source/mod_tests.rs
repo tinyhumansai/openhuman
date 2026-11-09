@@ -531,7 +531,7 @@ async fn a_file_fallback_keeps_the_file_backup_recovery() {
 }
 
 #[tokio::test]
-async fn a_document_save_never_nests_process_key_ciphertext() {
+async fn a_document_save_fails_closed_when_cipher_authority_is_unavailable() {
     let tmp = tempfile::tempdir().unwrap();
     let storage = memory_backend();
     let _forced = ForcedDocumentSource::new(
@@ -541,28 +541,19 @@ async fn a_document_save_never_nests_process_key_ciphertext() {
     );
     let mut config = config_at(tmp.path(), "m");
     assert!(config.secrets.encrypt);
-    // A field still sealed under this node's key, as a file-seeded config
-    // holds it before the load decrypts.
-    let sealed = crate::security::secret_storage::SecretStore::new(tmp.path(), true)
-        .encrypt("sk-node-local")
-        .unwrap();
-    assert!(sealed.starts_with("enc2:"));
-    config.api_key = Some(sealed);
-    config.save().await.unwrap();
-
-    let body = document_source_keyed(storage.as_ref(), "tenant-a", &config.config_path, keys(3))
-        .read()
-        .await
-        .unwrap()
-        .contents;
-    assert!(body.contains("sk-node-local"), "{body}");
-    assert!(!body.contains("enc2:"), "{body}");
+    // A file-seeded config can still hold ciphertext before the load path
+    // opens it. Without TinySecurity authority, saving must not publish it.
+    config.api_key = Some(format!("enc2:{}", "00".repeat(32)));
+    let error = config.save().await.unwrap_err();
+    assert!(
+        format!("{error:#}").contains("could not be opened"),
+        "{error:#}"
+    );
 }
 
 #[tokio::test]
 async fn a_document_save_refuses_process_key_secrets_it_cannot_open() {
     let tmp = tempfile::tempdir().unwrap();
-    let other_node = tempfile::tempdir().unwrap();
     let storage = memory_backend();
     let _forced = ForcedDocumentSource::new(
         scoped(storage.as_ref(), "tenant-a"),
@@ -571,11 +562,7 @@ async fn a_document_save_refuses_process_key_secrets_it_cannot_open() {
     );
     let mut config = config_at(tmp.path(), "m");
     // Sealed under another node's key: this node cannot open it.
-    config.api_key = Some(
-        crate::security::secret_storage::SecretStore::new(other_node.path(), true)
-            .encrypt("sk-elsewhere")
-            .unwrap(),
-    );
+    config.api_key = Some(format!("enc2:{}", "11".repeat(32)));
     let error = config.save().await.unwrap_err();
     assert!(
         format!("{error:#}").contains("could not be opened"),

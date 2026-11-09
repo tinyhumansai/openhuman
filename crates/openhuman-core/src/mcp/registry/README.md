@@ -39,11 +39,10 @@ serializes its open, call, and close transitions. It retains transition
 receipts across caller cancellation or lost replies so cleanup can be retried
 without exposing TinyMCP's internal service implementation to host code.
 
-`tools_safe_for_agent` is intentionally host-owned because it is the product's
-prompt-injection policy. Remote descriptions and schemas are scrubbed by the
-module before the host sees them; the host then applies this admission filter
-before advertising a tool. Execution rechecks that the configured tool is
-still present and safe.
+`tools_safe_for_agent` sends each complete remote tool definition to
+TinySecurity's `ScanToolDefinition` before advertising it. A finding or an
+unavailable scanner drops the tool; execution rechecks that the configured
+tool is still present and safe.
 
 `config_set` retains its replace semantics and existing credentials behavior:
 environment values and HTTP headers remain write-only, while reads expose

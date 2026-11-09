@@ -317,6 +317,7 @@ async fn launch(
         return Err(LaunchError::SlotBusy(reason));
     };
     let bound = engine::resolve(config)
+        .await
         .engine()
         .map_err(LaunchError::Other)?;
     let driver = importer(config, bound.engine, consent, paused);

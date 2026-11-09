@@ -61,16 +61,16 @@ impl flow_backend::FlowPolicyHooks for NativeFlowPolicyHooks<'_, '_> {
         args: &Value,
     ) -> std::result::Result<Option<String>, String> {
         let tier_decision = super::super::enforce_node_tier_gate(policy, class, "tool_call")
+            .await
             .map_err(|EngineError::Capability(body)| body)?;
         let summary = crate::security::approval::summarize_action(tool_name, args);
-        let redacted = crate::security::approval::redact_args(args);
         let (outcome, audit_id) = super::super::gate_call_for_tier(
             self.ctx.dispatch,
             self.ctx.approval,
             tier_decision,
             tool_name,
             &summary,
-            redacted,
+            args.clone(),
         )
         .await;
         match outcome {

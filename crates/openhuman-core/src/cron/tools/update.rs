@@ -3,7 +3,7 @@ use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
-use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolExposure, ToolResult};
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use {crate::cron, tinyflows_bus::schedule::types::CronJobPatch};
 
 pub struct CronUpdateTool {
@@ -19,20 +19,12 @@ impl CronUpdateTool {
 
 #[async_trait]
 impl Tool for CronUpdateTool {
-    /// Superseded by the `cron` tool, which dispatches every scheduler
-    /// operation on one `action` field. Kept registered and dispatchable so a
-    /// replayed transcript or a saved skill naming `cron_*` keeps working;
-    /// hidden from the wire so six schemas do not ship where one does.
-    fn exposure(&self) -> ToolExposure {
-        ToolExposure::Hidden
-    }
-
     fn name(&self) -> &str {
         "cron_update"
     }
 
     fn description(&self) -> &str {
-        "Patch an existing cron job (schedule, command, prompt, enabled, delivery, model, etc.)"
+        "Change a job by id; only the fields in `patch` change."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -40,7 +32,21 @@ impl Tool for CronUpdateTool {
             "type": "object",
             "properties": {
                 "job_id": { "type": "string" },
-                "patch": { "type": "object" }
+                "patch": {
+                    "type": "object",
+                    "properties": {
+                        "schedule": {
+                            "type": "object",
+                            "description": "As in cron_add."
+                        },
+                        "prompt": { "type": "string" },
+                        "command": { "type": "string" },
+                        "name": { "type": "string" },
+                        "enabled": { "type": "boolean" },
+                        "delivery": { "type": "object" },
+                        "delete_after_run": { "type": "boolean" }
+                    }
+                }
             },
             "required": ["job_id", "patch"]
         })

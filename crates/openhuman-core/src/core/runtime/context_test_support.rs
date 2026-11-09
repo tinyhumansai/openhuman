@@ -3,7 +3,60 @@
 
 use super::*;
 
+#[cfg(feature = "security-module")]
+static NATIVE_FIXTURE_RUNTIME: std::sync::LazyLock<tokio::runtime::Runtime> =
+    std::sync::LazyLock::new(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("native-fixture")
+            .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
+            .enable_all()
+            .build()
+            .expect("native fixture runtime")
+    });
+
 impl CoreContext {
+    /// Admit the real module on a retained runtime so synchronous host adapters
+    /// can finish while a current-thread test waits. Negative availability
+    /// fixtures use `scope_test_config` and perform their own admission attempt.
+    pub(crate) async fn scope_test_native_config<F: std::future::Future>(
+        config: &crate::config::Config,
+        operation: F,
+    ) -> F::Output {
+        let context =
+            Self::for_test_with_config(crate::core::runtime::DomainSet::full(), config.clone());
+        #[cfg(feature = "security-module")]
+        if config.modules.enabled {
+            let boot_context = Arc::clone(&context);
+            let boot_config = config.clone();
+            NATIVE_FIXTURE_RUNTIME
+                .spawn(async move {
+                    Self::scope(
+                        boot_context,
+                        crate::modules::security::ensure_loaded(&boot_config),
+                    )
+                    .await
+                })
+                .await
+                .expect("native fixture bootstrap task")
+                .expect("admit the real native security fixture");
+        }
+        Self::scope(context, operation).await
+    }
+
+    /// Run a fixture under its explicit host configuration, preserving the real
+    /// module loader and policy checks instead of borrowing process state.
+    pub(crate) async fn scope_test_config<F: std::future::Future>(
+        config: &crate::config::Config,
+        operation: F,
+    ) -> F::Output {
+        Self::scope(
+            Self::for_test_with_config(crate::core::runtime::DomainSet::full(), config.clone()),
+            operation,
+        )
+        .await
+    }
+
     /// Test-only constructor: build a context with an explicit
     /// [`DomainSet`](crate::core::runtime::DomainSet) and optional workspace, so
     /// cross-module tests (e.g. `core::all`'s registry filter) can exercise the
@@ -105,10 +158,19 @@ impl CoreContext {
         domains: crate::core::runtime::DomainSet,
         config: crate::config::Config,
     ) -> Arc<CoreContext> {
+        Self::for_test_with_host_kind_and_config(HostKind::Cli, domains, config)
+    }
+
+    /// Test-only constructor with both an explicit host identity and config.
+    pub(crate) fn for_test_with_host_kind_and_config(
+        host_kind: HostKind,
+        domains: crate::core::runtime::DomainSet,
+        config: crate::config::Config,
+    ) -> Arc<CoreContext> {
         let latest_embedder_config = Arc::new(std::sync::Mutex::new(config.clone()));
         crate::config::Config::bind_context_snapshot(&latest_embedder_config);
         Arc::new(CoreContext {
-            host_kind: HostKind::Cli,
+            host_kind,
             workspace_binding: RwLock::new(Arc::new(RwLock::new(WorkspaceBinding {
                 workspace_dir: Some(config.workspace_dir.clone()),
                 config_path: Some(config.config_path.clone()),

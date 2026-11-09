@@ -6,6 +6,10 @@ use tinytools::ToolResult;
 
 struct FakeTool(&'static str);
 
+fn fake_tool(name: &'static str) -> Box<dyn Tool> {
+    Box::new(FakeTool(name))
+}
+
 #[async_trait::async_trait]
 impl Tool for FakeTool {
     fn name(&self) -> &str {
@@ -25,7 +29,7 @@ impl Tool for FakeTool {
     }
 }
 
-fn assemble(tmp: &TempDir) -> Vec<String> {
+async fn assemble(tmp: &TempDir) -> Vec<String> {
     let cfg = Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
@@ -42,41 +46,39 @@ fn assemble(tmp: &TempDir) -> Vec<String> {
         Arc::new(cfg.clone()),
         &security,
         Arc::new(NativeRuntime::new()),
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
         &cfg,
         None,
     )
+    .await
     .iter()
     .map(|t| t.name().to_string())
     .collect()
 }
 
-#[test]
-fn nothing_registered_leaves_the_catalogue_without_source_tools() {
+#[tokio::test]
+async fn nothing_registered_leaves_the_catalogue_without_source_tools() {
     let tmp = TempDir::new().unwrap();
-    let names = assemble(&tmp);
+    let names = assemble(&tmp).await;
     assert!(!names.is_empty());
     assert!(!names.iter().any(|n| n.starts_with("source_fake_")));
 }
 
-#[test]
-fn registered_sources_append_in_registration_order_after_built_ins() {
+#[tokio::test]
+async fn registered_sources_append_in_registration_order_after_built_ins() {
     let tmp = TempDir::new().unwrap();
-    let baseline = assemble(&tmp);
+    let baseline = assemble(&tmp).await;
 
     register_tool_source("test::second", |_| {
-        vec![Box::new(FakeTool("source_fake_b"))]
+        Box::pin(async { vec![fake_tool("source_fake_b")] })
     });
     register_tool_source("test::first", |_| {
-        vec![
-            Box::new(FakeTool("source_fake_a1")),
-            Box::new(FakeTool("source_fake_a2")),
-        ]
+        Box::pin(async { vec![fake_tool("source_fake_a1"), fake_tool("source_fake_a2")] })
     });
-    let names = assemble(&tmp);
+    let names = assemble(&tmp).await;
     unregister_tool_source("test::second");
     unregister_tool_source("test::first");
 
@@ -88,34 +90,41 @@ fn registered_sources_append_in_registration_order_after_built_ins() {
     assert_eq!(names.len(), baseline.len() + 3);
 }
 
-#[test]
-fn a_source_receives_the_catalogue_action_directory() {
+#[tokio::test]
+async fn a_source_receives_the_catalogue_action_directory() {
     let tmp = TempDir::new().unwrap();
     let seen = Arc::new(std::sync::Mutex::new(None));
     let sink = Arc::clone(&seen);
     register_tool_source("test::ctx", move |ctx| {
-        *sink.lock().unwrap() = Some(ctx.action_dir.to_path_buf());
-        Vec::new()
+        let sink = Arc::clone(&sink);
+        Box::pin(async move {
+            *sink.lock().unwrap() = Some(ctx.action_dir.to_path_buf());
+            Vec::new()
+        })
     });
-    let _ = assemble(&tmp);
+    let _ = assemble(&tmp).await;
     unregister_tool_source("test::ctx");
     let action_dir = seen.lock().unwrap().clone().expect("source ran");
     assert_eq!(action_dir, tmp.path());
 }
 
-#[test]
-fn unregistering_a_source_removes_its_tools() {
+#[tokio::test]
+async fn unregistering_a_source_removes_its_tools() {
     let tmp = TempDir::new().unwrap();
     register_tool_source("test::gone", |_| {
-        vec![Box::new(FakeTool("source_fake_gone"))]
+        Box::pin(async { vec![fake_tool("source_fake_gone")] })
     });
-    assert!(assemble(&tmp).contains(&"source_fake_gone".to_string()));
+    assert!(assemble(&tmp)
+        .await
+        .contains(&"source_fake_gone".to_string()));
     assert!(unregister_tool_source("test::gone"));
-    assert!(!assemble(&tmp).contains(&"source_fake_gone".to_string()));
+    assert!(!assemble(&tmp)
+        .await
+        .contains(&"source_fake_gone".to_string()));
 }
 
-#[test]
-fn anchored_sources_sit_where_the_catalogue_always_listed_them() {
+#[tokio::test]
+async fn anchored_sources_sit_where_the_catalogue_always_listed_them() {
     // The pre-refactor catalogue built a host's media / file-storage tools
     // right after the search tools (before hosting, web3 and image_info) and
     // its place / market-data tools right after image_info, ahead of the
@@ -131,25 +140,27 @@ fn anchored_sources_sit_where_the_catalogue_always_listed_them() {
     register_tool_source_at(
         "test::after_search_a",
         ToolSourcePlacement::After(ANCHOR_AFTER_SEARCH),
-        move |_| anchor_tools(&["anchor_fake_search_a"]),
+        move |_| Box::pin(async move { anchor_tools(&["anchor_fake_search_a"]) }),
     );
     register_tool_source_at(
         "test::after_search_b",
         ToolSourcePlacement::After(ANCHOR_AFTER_SEARCH),
-        move |_| anchor_tools(&["anchor_fake_search_b"]),
+        move |_| Box::pin(async move { anchor_tools(&["anchor_fake_search_b"]) }),
     );
     register_tool_source_at(
         "test::after_delegate",
         ToolSourcePlacement::After(ANCHOR_AFTER_DELEGATE),
-        move |_| anchor_tools(&["anchor_fake_delegate"]),
+        move |_| Box::pin(async move { anchor_tools(&["anchor_fake_delegate"]) }),
     );
-    register_tool_source("test::end", |_| vec![Box::new(FakeTool("anchor_fake_end"))]);
+    register_tool_source("test::end", |_| {
+        Box::pin(async { vec![fake_tool("anchor_fake_end")] })
+    });
     register_tool_source_at(
         "test::unknown_anchor",
         ToolSourcePlacement::After("nowhere"),
-        |_| vec![Box::new(FakeTool("anchor_fake_unknown"))],
+        |_| Box::pin(async { vec![fake_tool("anchor_fake_unknown")] }),
     );
-    let names = assemble(&tmp);
+    let names = assemble(&tmp).await;
     for id in [
         "test::after_search_a",
         "test::after_search_b",
@@ -187,8 +198,8 @@ fn anchored_sources_sit_where_the_catalogue_always_listed_them() {
 /// A media source that reads the security policy's files roots while it builds
 /// must find them already recorded.
 #[cfg(feature = "media")]
-#[test]
-fn media_files_roots_are_recorded_before_any_source_builds() {
+#[tokio::test]
+async fn media_files_roots_are_recorded_before_any_source_builds() {
     let tmp = TempDir::new().unwrap();
     let seen = Arc::new(std::sync::Mutex::new(None));
     let sink = Arc::clone(&seen);
@@ -196,11 +207,15 @@ fn media_files_roots_are_recorded_before_any_source_builds() {
         "test::roots",
         ToolSourcePlacement::After(ANCHOR_AFTER_SEARCH),
         move |ctx| {
-            *sink.lock().unwrap() = Some(ctx.security.media_files_roots.lock().unwrap().is_some());
-            Vec::new()
+            let sink = Arc::clone(&sink);
+            Box::pin(async move {
+                *sink.lock().unwrap() =
+                    Some(ctx.security.media_files_roots.lock().unwrap().is_some());
+                Vec::new()
+            })
         },
     );
-    let _ = assemble(&tmp);
+    let _ = assemble(&tmp).await;
     unregister_tool_source("test::roots");
     assert_eq!(*seen.lock().unwrap(), Some(true));
 }

@@ -429,7 +429,9 @@ async fn export_skips_api_key_credentials() {
     config.secrets.encrypt = false;
     config.api_url = Some(format!("http://{address}"));
     config.observability.share_usage_data = true;
-    crate::security::credentials::api_key::store_api_key(&config, "th_live_test").unwrap();
+    crate::credentials::api_key::store_api_key(&config, "th_live_test")
+        .await
+        .unwrap();
 
     export_flow_run_trace(
         &config,

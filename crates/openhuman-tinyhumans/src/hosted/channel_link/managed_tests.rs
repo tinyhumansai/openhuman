@@ -51,7 +51,7 @@ async fn start_flows_mint_link_tokens() {
         .mount(&server)
         .await;
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
 
     let tg = telegram_login_start(&config).await.unwrap().value;
     assert_eq!(tg.link_token, "tg-1");
@@ -75,12 +75,12 @@ async fn check_flows_read_auth_me_and_store_the_marker_when_linked() {
         .mount(&server)
         .await;
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
 
     let tg = telegram_login_check(&config, "lt").await.unwrap().value;
     assert!(tg.linked);
     assert_eq!(tg.details.unwrap()["telegramId"], json!("tg-42"));
-    let stored = openhuman_embed::__host::security::credentials::ops::list_provider_credentials(
+    let stored = openhuman_embed::__host::credentials::ops::list_provider_credentials(
         &config,
         Some("channel:telegram:managed_dm".to_string()),
     )
@@ -101,7 +101,7 @@ async fn check_flows_read_auth_me_and_store_the_marker_when_linked() {
 #[tokio::test]
 async fn local_session_is_backend_unavailable_for_every_flow() {
     let tmp = TempDir::new().unwrap();
-    let config = test_support::local_session(&tmp);
+    let config = test_support::local_session(&tmp).await;
     for err in [
         telegram_login_start(&config).await.err().unwrap(),
         telegram_login_check(&config, "x").await.err().unwrap(),

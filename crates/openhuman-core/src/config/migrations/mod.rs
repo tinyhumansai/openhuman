@@ -37,11 +37,12 @@ mod retire_local_whisper_stt;
 mod unify_ai_provider_settings;
 
 /// Current target schema version. Bumped alongside every new migration.
-pub const CURRENT_SCHEMA_VERSION: u32 = 14;
+pub const CURRENT_SCHEMA_VERSION: u32 = 15;
 
 /// Run registered host initializers for a new configuration before its first
 /// save. Bare core has no initializer and remains host-neutral.
 pub(crate) fn seed_new_workspace(config: &mut Config) {
+    crate::config::schema::cloud_providers::seed_cloud_providers(config);
     crate::inference::registry::normalize_config(config);
 }
 
@@ -555,6 +556,17 @@ pub async fn run_pending(config: &mut Config) {
         if let Err(err) = config.save().await {
             config.schema_version = 13;
             log::warn!("[migrations] schema_version 14 save failed: {err:#}");
+            return;
+        }
+    }
+    // 14 -> 15: reserialize the config without the retired
+    // autonomy.max_cost_per_day_cents field. The value was never enforced;
+    // serialization drops the unknown field from existing config files.
+    if config.schema_version == 14 {
+        config.schema_version = 15;
+        if let Err(err) = config.save().await {
+            config.schema_version = 14;
+            log::warn!("[migrations] schema_version 15 save failed: {err:#}");
         }
     }
 }

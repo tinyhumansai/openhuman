@@ -9,7 +9,7 @@ use crate::core::all::{
 };
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
-use super::manager::global_socket_manager;
+use super::global_socket_manager;
 use crate::platform::socket::models::{ConnectionStatus, SocketState};
 
 // ---------------------------------------------------------------------------
@@ -170,12 +170,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
 // Handlers
 // ---------------------------------------------------------------------------
 
-fn require_manager() -> Result<&'static std::sync::Arc<super::SocketManager>, String> {
+fn require_manager() -> Result<std::sync::Arc<dyn super::SocketPort>, String> {
     global_socket_manager()
         .ok_or_else(|| "SocketManager not initialized — runtime not bootstrapped".to_string())
 }
 
-type SocketManagerRef = &'static std::sync::Arc<super::SocketManager>;
+type SocketPortRef = std::sync::Arc<dyn super::SocketPort>;
 
 struct ConnectParams {
     url: String,
@@ -187,7 +187,7 @@ struct EmitParams {
     data: Value,
 }
 
-fn gate_manager(_ctx: DispatchCtx) -> ControllerTask<SocketManagerRef> {
+fn gate_manager(_ctx: DispatchCtx) -> ControllerTask<SocketPortRef> {
     Box::pin(async { require_manager() })
 }
 
@@ -292,23 +292,24 @@ fn status_slug(status: ConnectionStatus) -> String {
 
 fn run_connect(
     _ctx: DispatchCtx,
-    manager: SocketManagerRef,
+    manager: SocketPortRef,
     params: ConnectParams,
 ) -> ControllerFuture {
     Box::pin(async move {
-        let state = super::ops::connect_static(manager, &params.url, &params.token).await?;
+        let state =
+            super::ops::connect_static(manager.as_ref(), &params.url, &params.token).await?;
         Ok(status_payload(&state))
     })
 }
 
-fn run_disconnect(_ctx: DispatchCtx, manager: SocketManagerRef, _params: ()) -> ControllerFuture {
+fn run_disconnect(_ctx: DispatchCtx, manager: SocketPortRef, _params: ()) -> ControllerFuture {
     Box::pin(async move {
-        let state = super::ops::disconnect(manager).await?;
+        let state = super::ops::disconnect(manager.as_ref()).await?;
         Ok(status_payload(&state))
     })
 }
 
-fn run_state(_ctx: DispatchCtx, manager: SocketManagerRef, _params: ()) -> ControllerFuture {
+fn run_state(_ctx: DispatchCtx, manager: SocketPortRef, _params: ()) -> ControllerFuture {
     Box::pin(async move {
         let state = manager.get_state();
         log::debug!("[socket:rpc] state → {:?}", state.status);
@@ -316,7 +317,7 @@ fn run_state(_ctx: DispatchCtx, manager: SocketManagerRef, _params: ()) -> Contr
     })
 }
 
-fn run_emit(_ctx: DispatchCtx, manager: SocketManagerRef, params: EmitParams) -> ControllerFuture {
+fn run_emit(_ctx: DispatchCtx, manager: SocketPortRef, params: EmitParams) -> ControllerFuture {
     Box::pin(async move {
         log::debug!("[socket:rpc] emit event={}", params.event);
         manager.emit(&params.event, params.data).await?;
@@ -326,11 +327,11 @@ fn run_emit(_ctx: DispatchCtx, manager: SocketManagerRef, params: EmitParams) ->
 
 fn run_connect_with_session(
     ctx: DispatchCtx,
-    manager: SocketManagerRef,
+    manager: SocketPortRef,
     _params: (),
 ) -> ControllerFuture {
     Box::pin(async move {
-        let state = super::ops::connect_with_session(&ctx, manager).await?;
+        let state = super::ops::connect_with_session(&ctx, manager.as_ref()).await?;
         Ok(status_payload(&state))
     })
 }

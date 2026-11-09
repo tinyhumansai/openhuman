@@ -168,7 +168,7 @@ async fn react_dispatch_keeps_routing_without_creating_child_lifecycle_records()
     runtime
         .run_in(
             Arc::clone(runtime.context()),
-            crate::security::turn_origin::with_origin(
+            crate::core::runtime::turn_origin::with_origin(
                 crate::triage::local_trigger_origin(),
                 apply_decision(
                     &ctx,
@@ -309,7 +309,7 @@ async fn direct_turn_model_source_metadata_probe_does_not_duplicate_egress_discl
     runtime
         .run_in(
             context,
-            crate::security::turn_origin::with_origin(
+            crate::core::runtime::turn_origin::with_origin(
                 crate::triage::local_trigger_origin(),
                 crate::agent_runs::agent_chat::agent_chat_for_with_turn_model_source(
                     &mut config,
@@ -430,7 +430,7 @@ async fn react_dispatch_falls_back_to_parent_model_when_hint_route_cannot_build(
     runtime
         .run_in(
             Arc::clone(runtime.context()),
-            crate::security::turn_origin::with_origin(
+            crate::core::runtime::turn_origin::with_origin(
                 crate::triage::local_trigger_origin(),
                 apply_decision(
                     &ctx,
@@ -507,7 +507,7 @@ async fn escalate_dispatch_preserves_orchestrator_tools_without_child_delegation
     runtime
         .run_in(
             Arc::clone(runtime.context()),
-            crate::security::turn_origin::with_origin(
+            crate::core::runtime::turn_origin::with_origin(
                 crate::triage::local_trigger_origin(),
                 apply_decision(
                     &ctx,
@@ -608,7 +608,7 @@ async fn react_dispatch_inherits_the_parent_workload_for_inherit_targets() {
     runtime
         .run_in(
             context,
-            crate::security::turn_origin::with_origin(
+            crate::core::runtime::turn_origin::with_origin(
                 crate::triage::local_trigger_origin(),
                 apply_decision(
                     &ctx,

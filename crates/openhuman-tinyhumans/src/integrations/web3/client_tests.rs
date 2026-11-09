@@ -14,8 +14,8 @@ async fn start_mock_backend(app: Router) -> String {
     format!("http://127.0.0.1:{}", addr.port())
 }
 
-#[test]
-fn from_config_errors_without_a_backend_credential() {
+#[tokio::test]
+async fn from_config_errors_without_a_backend_credential() {
     let tmp = tempfile::tempdir().unwrap();
     let config = Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -23,6 +23,7 @@ fn from_config_errors_without_a_backend_credential() {
         ..Config::default()
     };
     let error = CryptoClient::from_config(&config)
+        .await
         .err()
         .expect("no credential, no client");
     assert!(error.contains("signed-in session"), "{error}");

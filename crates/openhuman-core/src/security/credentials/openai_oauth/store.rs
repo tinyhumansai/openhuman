@@ -64,15 +64,15 @@ fn normalize_persisted_token_set(mut token_set: TokenSet) -> Result<TokenSet, St
     Ok(token_set)
 }
 
-pub fn persist_openai_oauth_token(
+pub async fn persist_openai_oauth_token(
     config: &Config,
     token: &OAuthTokenSet,
 ) -> Result<AuthProfile, String> {
     let account_id = openai_account_id_from_access_token(token.access_token.trim());
-    persist_openai_oauth_token_set(config, token_set_from_oauth(token), account_id)
+    persist_openai_oauth_token_set(config, token_set_from_oauth(token), account_id).await
 }
 
-pub(super) fn persist_openai_oauth_token_set(
+pub(super) async fn persist_openai_oauth_token_set(
     config: &Config,
     token_set: TokenSet,
     account_id: Option<String>,
@@ -92,6 +92,7 @@ pub(super) fn persist_openai_oauth_token_set(
     let store = auth_profiles_store(config);
     store
         .upsert_profile(profile.clone(), true)
+        .await
         .map_err(|e| e.to_string())?;
     Ok(profile)
 }
@@ -129,7 +130,7 @@ fn home_dir_from_env() -> Option<PathBuf> {
     }
 }
 
-pub(super) fn import_codex_cli_auth_from_path(
+pub(super) async fn import_codex_cli_auth_from_path(
     config: &Config,
     path: &Path,
 ) -> Result<AuthProfile, String> {
@@ -177,7 +178,8 @@ pub(super) fn import_codex_cli_auth_from_path(
             scope: None,
         },
         account_id,
-    )?;
+    )
+    .await?;
     log::info!(
         "{LOG_PREFIX} codex_cli_import:ok path={} profile_id={}",
         path.display(),
@@ -186,13 +188,13 @@ pub(super) fn import_codex_cli_auth_from_path(
     Ok(profile)
 }
 
-pub fn import_codex_cli_auth(config: &Config) -> Result<AuthProfile, String> {
+pub async fn import_codex_cli_auth(config: &Config) -> Result<AuthProfile, String> {
     let path = codex_cli_auth_path()?;
-    import_codex_cli_auth_from_path(config, &path)
+    import_codex_cli_auth_from_path(config, &path).await
 }
 
 fn auth_profiles_store(config: &Config) -> AuthProfilesStore {
-    AuthProfilesStore::new(&state_dir_from_config(config), config.secrets.encrypt)
+    AuthProfilesStore::new_with_config(&state_dir_from_config(config), config)
 }
 
 fn try_refresh_oauth_token(refresh: &str) -> Result<OAuthTokenSet, String> {
@@ -238,17 +240,20 @@ fn local_refresh_url_override() -> Option<String> {
 /// when the access token is empty. API-key fallback for the `openai` slug is
 /// handled by the standard `lookup_key_for_slug` path — this function is
 /// OAuth-only so the standard path's env/audit/metrics logic still runs.
-pub fn lookup_openai_bearer_token(config: &Config) -> Result<Option<String>, String> {
-    Ok(lookup_openai_oauth_credentials(config)?.map(|credentials| credentials.access_token))
+pub async fn lookup_openai_bearer_token(config: &Config) -> Result<Option<String>, String> {
+    Ok(lookup_openai_oauth_credentials(config)
+        .await?
+        .map(|credentials| credentials.access_token))
 }
 
-pub fn lookup_openai_oauth_credentials(
+pub async fn lookup_openai_oauth_credentials(
     config: &Config,
 ) -> Result<Option<OpenAiOAuthCredentials>, String> {
     let auth = AuthService::from_config(config);
 
     let profile = auth
         .get_profile(OPENAI_PROVIDER_KEY, Some(OPENAI_OAUTH_PROFILE_NAME))
+        .await
         .map_err(|e| e.to_string())?;
     let Some(mut profile) = profile else {
         return Ok(None);
@@ -266,8 +271,9 @@ pub fn lookup_openai_oauth_credentials(
                 Ok(fresh) => {
                     token_set = token_set_from_oauth(&fresh);
                     profile.token_set = Some(token_set.clone());
-                    if let Err(e) =
-                        auth_profiles_store(config).upsert_profile(profile.clone(), true)
+                    if let Err(e) = auth_profiles_store(config)
+                        .upsert_profile(profile.clone(), true)
+                        .await
                     {
                         log::warn!(
                             "{LOG_PREFIX} failed to persist refreshed token: {e}; \

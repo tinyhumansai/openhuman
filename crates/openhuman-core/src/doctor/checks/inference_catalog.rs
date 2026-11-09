@@ -73,7 +73,7 @@ fn configured_entries(config: &crate::config::Config) -> Vec<CloudProviderCreds>
     entries
 }
 
-fn readonly_credential(
+async fn readonly_credential(
     config: &crate::config::Config,
     entry: &CloudProviderCreds,
 ) -> Option<String> {
@@ -81,12 +81,12 @@ fn readonly_credential(
         return None;
     }
     let key = crate::inference::provider::factory::auth_key_for_slug(&entry.slug);
-    let profile =
-        crate::security::credentials::AuthService::get_profile_read_only(config, &key, None)
-            .ok()??;
+    let profile = crate::credentials::AuthService::get_profile_read_only(config, &key, None)
+        .await
+        .ok()??;
     let token = match profile.kind {
-        crate::security::credentials::AuthProfileKind::Token => profile.token,
-        crate::security::credentials::AuthProfileKind::OAuth => profile.token_set.and_then(|set| {
+        crate::credentials::AuthProfileKind::Token => profile.token,
+        crate::credentials::AuthProfileKind::OAuth => profile.token_set.and_then(|set| {
             (!set.is_expiring_within(Duration::from_secs(90))).then_some(set.access_token)
         }),
     };
@@ -122,7 +122,7 @@ async fn prepare(
     if !matches!(url.scheme(), "http" | "https") {
         return Err(InspectionCatalogError::NoCatalog);
     }
-    let token = readonly_credential(config, entry);
+    let token = readonly_credential(config, entry).await;
     let client = match config
         .cloud_provider_ca_certs
         .get(entry.slug.trim())

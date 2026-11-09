@@ -41,3 +41,10 @@ RUST_MIN_STACK = { value = "20971520", force = false }
 #
 # [target.x86_64-apple-darwin]
 # rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/opt/llvm/bin/ld64.lld"]
+
+# TinySecurity's password cipher requires POLYVAL's zeroizing software
+# dispatcher. Cargo ignores a path dependency's `.cargo/config.toml`, so the
+# host workspace must propagate its fail-closed native build requirement.
+[target.'cfg(all())']
+rustflags = ["--cfg", "polyval_force_soft"]
+

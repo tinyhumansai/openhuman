@@ -121,6 +121,10 @@ pub fn publish_backend_session_expired(
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::SessionExpired {
         source: "llm_provider.openhuman_backend".to_string(),
         reason: sanitize_api_error(message),
+        // Generic provider errors do not retain the request bearer. Without
+        // request-time provenance the credentials subscriber must not sign
+        // out whichever session happens to be current now.
+        credential_fingerprint: None,
     });
 }
 

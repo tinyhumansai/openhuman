@@ -93,7 +93,7 @@ fn a_library_agents_scheduled_reply_is_handed_to_the_host() {
                                 .system_prompt("TEENY")
                                 .tools(ToolScopeSpec::Named(vec!["cron".into(), "tool_search".into()])),
                         )
-                        .tools(|_| HostTurnTools::advertised(Vec::new())),
+                        .tools(|_| Box::pin(async { HostTurnTools::advertised(Vec::new()) })),
                 )
                 .expect("agent instantiates");
 

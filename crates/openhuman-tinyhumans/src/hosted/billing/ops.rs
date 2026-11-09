@@ -35,7 +35,7 @@ fn parse_enum<T: serde::de::DeserializeOwned>(field: &str, raw: &str) -> Result<
 }
 
 pub async fn get_current_plan(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /payments/stripe/currentPlan",
         client.sdk().payments().get_current_plan().await,
@@ -47,7 +47,7 @@ pub async fn get_current_plan(config: &Config) -> Result<Outcome<Value>, String>
 }
 
 pub async fn get_summary(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /payments/summary",
         client.sdk().payments().get_summary().await,
@@ -56,7 +56,7 @@ pub async fn get_summary(config: &Config) -> Result<Outcome<Value>, String> {
 }
 
 pub async fn get_balance(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /payments/credits/balance",
         client.sdk().payments().get_credit_balance().await,
@@ -71,7 +71,7 @@ pub async fn get_transactions(
 ) -> Result<Outcome<Value>, String> {
     let limit = limit.unwrap_or(20);
     let offset = offset.unwrap_or(0);
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let query = [
         ("limit", Some(limit.to_string())),
         ("offset", Some(offset.to_string())),
@@ -88,7 +88,7 @@ pub async fn get_transactions(
 }
 
 pub async fn get_auto_recharge(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /payments/credits/auto-recharge",
         client.sdk().payments().get_auto_recharge().await,
@@ -106,7 +106,7 @@ pub async fn update_auto_recharge(
     config: &Config,
     payload: Value,
 ) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish(
         "PATCH /payments/credits/auto-recharge",
         client
@@ -125,7 +125,7 @@ pub async fn update_auto_recharge(
 }
 
 pub async fn get_cards(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /payments/credits/auto-recharge/cards",
         client.sdk().payments().list_auto_recharge_cards().await,
@@ -134,7 +134,7 @@ pub async fn get_cards(config: &Config) -> Result<Outcome<Value>, String> {
 }
 
 pub async fn create_setup_intent(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "POST /payments/credits/auto-recharge/cards/setup-intent",
         client
@@ -160,7 +160,7 @@ pub async fn update_card(
         Value::Null => Map::new(),
         _ => return Err("card update payload must be an object".to_string()),
     };
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "PATCH /payments/credits/auto-recharge/cards/{paymentMethodId}",
         client
@@ -180,7 +180,7 @@ pub async fn delete_card(
     if payment_method_id.is_empty() {
         return Err("paymentMethodId is required".to_string());
     }
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "DELETE /payments/credits/auto-recharge/cards/{paymentMethodId}",
         client
@@ -204,7 +204,7 @@ pub async fn purchase_plan(config: &Config, plan: &str) -> Result<Outcome<Value>
         plan: parse_enum::<BillingPlan>("plan", plan)?,
         coupon_code: None,
     };
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "POST /payments/stripe/purchasePlan",
         client.sdk().payments().purchase_stripe_plan(&request).await,
@@ -213,7 +213,7 @@ pub async fn purchase_plan(config: &Config, plan: &str) -> Result<Outcome<Value>
 }
 
 pub async fn create_portal_session(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "POST /payments/stripe/portal",
         client.sdk().payments().create_stripe_portal_session().await,
@@ -254,7 +254,7 @@ pub async fn top_up_credits(
         amount_usd,
         gateway: Some(parse_enum::<PaymentGateway>("gateway", &gateway)?),
     };
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "POST /payments/credits/top-up",
         client.sdk().payments().create_credit_top_up(&request).await,
@@ -285,7 +285,7 @@ pub async fn create_coinbase_charge(
         interval: Some(parse_enum::<CoinbaseInterval>("interval", interval_str)?),
         metadata: Map::new(),
     };
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "POST /payments/coinbase/charge",
         client
@@ -309,7 +309,7 @@ pub async fn redeem_coupon(config: &Config, code: &str) -> Result<Outcome<Value>
     let request = CodeRequest {
         code: code.to_string(),
     };
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "POST /coupons/redeem",
         client.sdk().coupons().redeem_coupon(&request).await,
@@ -320,7 +320,7 @@ pub async fn redeem_coupon(config: &Config, code: &str) -> Result<Outcome<Value>
 /// List coupons redeemed by the current user.
 /// Maps to `GET /coupons/me`.
 pub async fn get_user_coupons(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /coupons/me",
         client.sdk().coupons().list_my_coupons().await,

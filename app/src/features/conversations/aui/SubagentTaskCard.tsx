@@ -19,12 +19,17 @@
  * (`elements/task-card.tsx`) + `utils/task.ts` pieces instead, with those
  * actions supplied explicitly.
  */
-import { type ToolCallMessagePartComponent, useAui } from '@assistant-ui/react';
+import {
+  TextMessagePartProvider,
+  type ToolCallMessagePartComponent,
+  useAui,
+} from '@assistant-ui/react';
 import { useCallback, useState } from 'react';
 
 import { TaskCard, type TaskCardState } from '../../../components/assistant-ui/elements/task-card';
 import { TaskTranscript } from '../../../components/assistant-ui/elements/task-card.aui';
 import { useDisclosure } from '../../../components/assistant-ui/lib/useDisclosure';
+import { MarkdownTextNoCitations } from '../../../components/assistant-ui/markdown-text';
 import { formatElapsed } from '../../../components/assistant-ui/utils/task';
 import { Button } from '../../../components/ui';
 import { useT } from '../../../lib/i18n/I18nContext';
@@ -245,10 +250,23 @@ export const SubagentTaskCard: ToolCallMessagePartComponent = ({
       </div>
     ) : undefined;
 
+  // A failure's output stays on the card. A finished report goes inside the
+  // disclosure instead, rendered as markdown with the chat's own renderer:
+  // the parent's reply presents the same result, so the card stays a header
+  // row until the user expands it. Its `[n]` markers are the child's, not
+  // the parent turn's sources, so citation linking is off.
   const resultNode =
-    resolved.output && (state === 'done' || state === 'failed') ? (
+    resolved.output && state === 'failed' ? (
       <p className="m-0 whitespace-pre-wrap">{resolved.output}</p>
     ) : undefined;
+  const report =
+    resolved.output && state === 'done' ? (
+      <div data-testid="subagent-report" className="text-sm">
+        <TextMessagePartProvider text={resolved.output} isRunning={false}>
+          <MarkdownTextNoCitations />
+        </TextMessagePartProvider>
+      </div>
+    ) : null;
 
   // `messages` (the part's own nested transcript, built by `subagentMessages`)
   // is preferred over recomputing it here — it is the SAME data, but reusing
@@ -280,6 +298,7 @@ export const SubagentTaskCard: ToolCallMessagePartComponent = ({
           />
         </div>
       ) : undefined}
+      {report}
     </TaskCard>
   );
 };

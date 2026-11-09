@@ -67,20 +67,19 @@ async fn start_mock_composio() -> (String, SeenKeys) {
 
 /// A runtime config whose disk file and credential store both point
 /// somewhere other than the pinned credential.
-fn shared_runtime_config(tmp: &tempfile::TempDir) -> Config {
+async fn shared_runtime_config(tmp: &tempfile::TempDir) -> Config {
     let config_path = tmp.path().join("config.toml");
     std::fs::write(&config_path, "[composio]\nmode = \"backend\"\n").unwrap();
-    let mut config = Config::default();
-    config.config_path = config_path;
-    config.workspace_dir = tmp.path().join("workspace");
-    crate::security::credentials::AuthService::from_config(&config)
+    let config = crate::integrations::composio::module_client::test_support::config_in(tmp.path());
+    crate::credentials::AuthService::from_config(&config)
         .store_provider_token(
-            crate::security::credentials::COMPOSIO_DIRECT_PROVIDER,
-            crate::security::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            crate::integrations::composio::COMPOSIO_DIRECT_PROVIDER,
+            crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
             SHARED_STORE_KEY,
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .unwrap();
     config
 }
@@ -95,17 +94,20 @@ fn pinned(base: &Config, key: &str, entity: &str, mock: Option<&str>) -> Config 
     config
 }
 
-fn direct_key_fingerprint(config: &Config) -> u64 {
-    match resolve_composio_route(config).expect("pinned credential resolves") {
+async fn direct_key_fingerprint(config: &Config) -> u64 {
+    match resolve_composio_route(config)
+        .await
+        .expect("pinned credential resolves")
+    {
         ComposioRoute::Direct(tool) => tool.auth_key_fingerprint(),
         ComposioRoute::Backend => panic!("a pinned credential must resolve direct"),
     }
 }
 
-#[test]
-fn pinned_credential_beats_the_shared_credential_store() {
+#[tokio::test]
+async fn pinned_credential_beats_the_shared_credential_store() {
     let tmp = tempfile::tempdir().unwrap();
-    let base = shared_runtime_config(&tmp);
+    let base = shared_runtime_config(&tmp).await;
     let agent = pinned(&base, KEY_A, "tenant-a", None);
 
     let mut unpinned_direct = base.clone();
@@ -113,9 +115,9 @@ fn pinned_credential_beats_the_shared_credential_store() {
     unpinned_direct.composio.api_key = Some(KEY_A.into());
 
     let fp = crate::integrations::composio::direct_auth::fingerprint_api_key;
-    assert_eq!(direct_key_fingerprint(&agent), fp(KEY_A));
+    assert_eq!(direct_key_fingerprint(&agent).await, fp(KEY_A));
     assert_eq!(
-        direct_key_fingerprint(&unpinned_direct),
+        direct_key_fingerprint(&unpinned_direct).await,
         fp(SHARED_STORE_KEY)
     );
 }
@@ -123,7 +125,7 @@ fn pinned_credential_beats_the_shared_credential_store() {
 #[tokio::test]
 async fn pinned_config_is_not_replaced_by_the_shared_config_file() {
     let tmp = tempfile::tempdir().unwrap();
-    let base = shared_runtime_config(&tmp);
+    let base = shared_runtime_config(&tmp).await;
     let agent = pinned(&base, KEY_A, "tenant-a", None);
 
     let live = live_composio_config(&agent).await.unwrap();
@@ -148,7 +150,7 @@ async fn pinned_config_is_not_replaced_by_the_shared_config_file() {
 #[tokio::test]
 async fn two_agents_on_one_runtime_each_call_composio_with_their_own_key() {
     let tmp = tempfile::tempdir().unwrap();
-    let base = shared_runtime_config(&tmp);
+    let base = shared_runtime_config(&tmp).await;
     let (mock, seen) = start_mock_composio().await;
     let agent_a = pinned(&base, KEY_A, "tenant-a", Some(&mock));
     let agent_b = pinned(&base, KEY_B, "tenant-b", Some(&mock));
@@ -174,26 +176,29 @@ async fn two_agents_on_one_runtime_each_call_composio_with_their_own_key() {
     );
 }
 
-#[test]
-fn connected_integrations_cache_is_keyed_per_credential() {
+#[tokio::test]
+async fn connected_integrations_cache_is_keyed_per_credential() {
     let tmp = tempfile::tempdir().unwrap();
-    let base = shared_runtime_config(&tmp);
+    let base = shared_runtime_config(&tmp).await;
     let agent_a = pinned(&base, KEY_A, "tenant-a", None);
     let agent_b = pinned(&base, KEY_B, "tenant-b", None);
     let same_key_other_entity = pinned(&base, KEY_A, "tenant-c", None);
 
-    assert_ne!(cache_key(&agent_a), cache_key(&agent_b));
-    assert_ne!(cache_key(&agent_a), cache_key(&base));
-    assert_ne!(cache_key(&agent_a), cache_key(&same_key_other_entity));
-    assert_eq!(cache_key(&agent_a), cache_key(&agent_a.clone()));
-    assert!(!cache_key(&agent_a).contains(KEY_A));
+    assert_ne!(cache_key(&agent_a).await, cache_key(&agent_b).await);
+    assert_ne!(cache_key(&agent_a).await, cache_key(&base).await);
+    assert_ne!(
+        cache_key(&agent_a).await,
+        cache_key(&same_key_other_entity).await
+    );
+    assert_eq!(cache_key(&agent_a).await, cache_key(&agent_a.clone()).await);
+    assert!(!cache_key(&agent_a).await.contains(KEY_A));
 
     // A private map, not the process-wide `INTEGRATIONS_CACHE`: any test that
     // stores a credential invalidates the global map without taking the cache
     // test lock, which would empty it between the insert and the reads below.
     let cache = RwLock::new(HashMap::new());
     cache.write().unwrap().insert(
-        cache_key(&agent_a),
+        cache_key(&agent_a).await,
         CachedIntegrations {
             entries: vec![crate::integrations::ConnectedIntegration {
                 toolkit: "gmail".into(),
@@ -208,8 +213,8 @@ fn connected_integrations_cache_is_keyed_per_credential() {
         },
     );
 
-    let seen_by_a = read_cached_integrations_from(&cache, &agent_a);
-    let seen_by_b = read_cached_integrations_from(&cache, &agent_b);
+    let seen_by_a = read_cached_integrations_from(&cache, &agent_a).await;
+    let seen_by_b = read_cached_integrations_from(&cache, &agent_b).await;
 
     assert_eq!(seen_by_a.map(|v| v.len()), Some(1));
     assert!(seen_by_b.is_none());
@@ -218,7 +223,7 @@ fn connected_integrations_cache_is_keyed_per_credential() {
 #[tokio::test]
 async fn composio_key_never_reaches_tool_output_or_errors() {
     let tmp = tempfile::tempdir().unwrap();
-    let base = shared_runtime_config(&tmp);
+    let base = shared_runtime_config(&tmp).await;
     let (mock, seen) = start_mock_composio().await;
     let agent = pinned(&base, LEAKY_KEY, "tenant-l", Some(&mock));
 
@@ -235,11 +240,11 @@ async fn composio_key_never_reaches_tool_output_or_errors() {
     assert!(rendered.contains("[REDACTED]"), "{rendered}");
 }
 
-#[test]
-fn redaction_covers_every_result_channel() {
+#[tokio::test]
+async fn redaction_covers_every_result_channel() {
     use crate::integrations::composio::tools::redact_composio_outcome;
     let tmp = tempfile::tempdir().unwrap();
-    let base = shared_runtime_config(&tmp);
+    let base = shared_runtime_config(&tmp).await;
     let agent = pinned(&base, KEY_A, "tenant-a", None);
 
     let mut result = tinytools::ToolResult::json(json!({"nested": [format!("key={KEY_A}")]}))
@@ -248,11 +253,13 @@ fn redaction_covers_every_result_channel() {
     result
         .content
         .push(tinytools::ToolContent::Text { text: KEY_A.into() });
-    let redacted = redact_composio_outcome(&agent, Ok(result)).unwrap();
+    let redacted = redact_composio_outcome(&agent, Ok(result)).await.unwrap();
     let serialized = serde_json::to_string(&redacted).unwrap();
     assert!(!serialized.contains(KEY_A), "{serialized}");
 
-    let err = redact_composio_outcome(&agent, Err(anyhow::anyhow!("bad key {KEY_A}"))).unwrap_err();
+    let err = redact_composio_outcome(&agent, Err(anyhow::anyhow!("bad key {KEY_A}")))
+        .await
+        .unwrap_err();
     assert!(!format!("{err:#}").contains(KEY_A));
 
     let debug = format!("{:?}", agent.composio);
@@ -269,25 +276,26 @@ fn redaction_covers_every_result_channel() {
 /// cache right after a rotation would transparently receive the previous
 /// credential's cached connection list. Two DIFFERENT credentials must
 /// never collide on one cache identity.
-#[test]
-fn cache_key_changes_when_the_shared_stored_key_rotates_in_unpinned_direct_mode() {
+#[tokio::test]
+async fn cache_key_changes_when_the_shared_stored_key_rotates_in_unpinned_direct_mode() {
     let tmp = tempfile::tempdir().unwrap();
-    let mut base = shared_runtime_config(&tmp);
+    let mut base = shared_runtime_config(&tmp).await;
     base.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.into();
 
-    let key_before = cache_key(&base);
+    let key_before = cache_key(&base).await;
 
-    crate::security::credentials::AuthService::from_config(&base)
+    crate::credentials::AuthService::from_config(&base)
         .store_provider_token(
-            crate::security::credentials::COMPOSIO_DIRECT_PROVIDER,
-            crate::security::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            crate::integrations::composio::COMPOSIO_DIRECT_PROVIDER,
+            crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
             "ck_tenant_rotated_0004",
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .unwrap();
 
-    let key_after = cache_key(&base);
+    let key_after = cache_key(&base).await;
     assert_ne!(
         key_before, key_after,
         "cache identity must change when the effective stored Composio credential rotates"
@@ -297,11 +305,40 @@ fn cache_key_changes_when_the_shared_stored_key_rotates_in_unpinned_direct_mode(
 
 /// Sanity counterpart: an unchanged stored key must keep producing the same
 /// cache identity (no key material, no unrelated flapping).
-#[test]
-fn cache_key_is_stable_for_unpinned_direct_mode_when_nothing_rotates() {
+#[tokio::test]
+async fn cache_key_is_stable_for_unpinned_direct_mode_when_nothing_rotates() {
     let tmp = tempfile::tempdir().unwrap();
-    let mut base = shared_runtime_config(&tmp);
+    let mut base = shared_runtime_config(&tmp).await;
     base.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.into();
 
-    assert_eq!(cache_key(&base), cache_key(&base));
+    assert_eq!(cache_key(&base).await, cache_key(&base).await);
+}
+
+/// A key rotated while an Execute runs never comes back in its result: the
+/// keys read before the call are redacted along with the current ones.
+#[tokio::test]
+async fn a_key_rotated_during_execute_is_still_redacted_from_its_result() {
+    use crate::integrations::composio::tools::{composio_call_keys, redact_composio_response};
+    use crate::integrations::composio::types::ComposioExecuteResponse;
+    let tmp = tempfile::tempdir().unwrap();
+    let base = shared_runtime_config(&tmp).await;
+    let before = composio_call_keys(&pinned(&base, KEY_A, "tenant-a", None))
+        .await
+        .expect("keys before the call");
+    let rotated = pinned(&base, KEY_B, "tenant-a", None);
+    let response = ComposioExecuteResponse {
+        data: json!({ "echo": KEY_A }),
+        successful: true,
+        error: None,
+        cost_usd: 0.0,
+        markdown_formatted: None,
+    };
+
+    // Redacted, or withheld when the module cannot answer (in a one-process
+    // run it may serve another test's workspace): either way, never key A.
+    let returned = match redact_composio_response(&rotated, before, response).await {
+        Ok(redacted) => serde_json::to_string(&redacted).unwrap(),
+        Err(withheld) => withheld,
+    };
+    assert!(!returned.contains(KEY_A), "{returned}");
 }

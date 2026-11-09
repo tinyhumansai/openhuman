@@ -333,7 +333,17 @@ fn every_pack_declares_the_tools_it_is_named_for() {
                 "storage_get_link",
             ],
         ),
-        ("scheduling", &["cron"]),
+        (
+            "scheduling",
+            &[
+                "cron_add",
+                "cron_list",
+                "cron_update",
+                "cron_remove",
+                "cron_run",
+                "cron_runs",
+            ],
+        ),
         (
             "media",
             &[

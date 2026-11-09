@@ -50,7 +50,7 @@ fn a_tenant_root_confines_every_call() {
 
             let acme = rt.memory("team:acme").expect("acme");
             let globex = rt.memory("team:globex").expect("globex");
-            assert!(acme.status().on, "the installed engine binds");
+            assert!(acme.status().await.on, "the installed engine binds");
             assert!(rt.memory("").is_err(), "the store root is no tenant");
 
             // Learnings land at the tenant root, whatever the caller's meta says.

@@ -237,7 +237,7 @@ async fn approval_get_gate_state_returns_a_consistent_boot_snapshot() {
 /// same binary, making the pair order-dependent — the identical reason
 /// `tool_registry_approval_e2e.rs` gives for skipping this path.
 /// Grant idempotency ("already-trusted tools are reported, not re-granted") is
-/// covered by the unit tests in `approval::rpc` / `approval::store`, which own
+/// covered by the unit tests in `approval::rpc` / `approval::gate`, which own
 /// the gate lifecycle.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn approval_preauthorize_flow_succeeds_without_a_gate_installed() {

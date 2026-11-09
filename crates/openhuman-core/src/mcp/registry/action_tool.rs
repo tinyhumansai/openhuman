@@ -125,7 +125,7 @@ impl InstalledServerTool {
             Ok(client) => client,
             Err(_) => return Ok(ToolResult::error("MCP module is unavailable")),
         };
-        let client_config = host::client_config(&self.config);
+        let client_config = host::client_config(&self.config).await;
         let arguments: serde_json::Map<String, Value> = match client
             .call(
                 &client_config,

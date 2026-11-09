@@ -142,7 +142,7 @@ async fn back_up_previous(config_path: &Path, backup_path: &Path) {
     previous.config_path = config_path.to_path_buf();
 
     let mut upgraded = previous.clone();
-    if let Err(e) = super::secrets::encrypt_config_secrets(&mut upgraded) {
+    if let Err(e) = super::secrets::encrypt_config_secrets(&mut upgraded).await {
         tracing::debug!(
             path = %config_path.display(),
             error = %e,

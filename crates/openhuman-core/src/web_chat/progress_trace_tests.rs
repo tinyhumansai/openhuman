@@ -1,7 +1,7 @@
 use super::*;
 
-#[test]
-fn disabled_export_does_not_create_a_trace_context() {
+#[tokio::test]
+async fn disabled_export_does_not_create_a_trace_context() {
     // Usage sharing is on by default, so "disabled" has to turn both exporters
     // off explicitly rather than lean on the default config.
     let mut config = crate::config::Config::default();
@@ -13,12 +13,13 @@ fn disabled_export_does_not_create_a_trace_context() {
         "socket-client",
         "thread-123",
         "request-456",
-    );
+    )
+    .await;
     assert!(context.is_none());
 }
 
-#[test]
-fn trace_context_keeps_request_session_group_and_transport_client_distinct() {
+#[tokio::test]
+async fn trace_context_keeps_request_session_group_and_transport_client_distinct() {
     let mut config = crate::config::Config::default();
     config.observability.share_usage_data = false;
     config.observability.agent_tracing.enabled = true;
@@ -37,6 +38,7 @@ fn trace_context_keeps_request_session_group_and_transport_client_distinct() {
         "conversation-4",
         "request-2",
     )
+    .await
     .expect("local tracing enabled");
 
     assert_eq!(context.session_id, "93:request-2");

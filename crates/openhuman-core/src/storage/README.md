@@ -313,15 +313,17 @@ without fencing).
   `anyhow::Error`.
 - Approvals (`security::approval`), through `store_documents.rs`.
 - Secrets (`storage::secrets`): the keyring's user secrets
-  (`security::secret_storage::get` / `set` / `delete`) and the credential stores'
-  files (`auth-profiles.json`, `http-credentials.json`) become encrypted
-  documents (`DocumentSecrets`, `enc2:`) in the acting agent's scope. Each
+  (`security::secret_storage::get` / `set` / `delete`) and the flow store's
+  `http-credentials.json` become encrypted documents (`DocumentSecrets`,
+  `enc2:`) in the acting agent's scope. Auth profiles use their own
+  profile-local `EncryptedFileSecrets` document at `auth-profiles/secrets.enc`.
+  Each
   scope's data key is derived with HKDF-SHA256 from the keyring master key
   (`OPENHUMAN_KEYRING_MASTER_KEY` / `_FILE`, else the OS keychain); with no
   master key they fail closed. The config encryption key stays on the
   process keyring, because `config.toml` is loaded before any agent acts.
   The layout migration (`storage/layout/credentials.rs`) imports the profile's
-  `auth-profiles.json` and `http-credentials.json` into the `local` scope's
+  `http-credentials.json` into the `local` scope's
   secrets, verifies the read-back, archives them (`profile/` in the archive,
   restored beside `config.toml`) and deletes them. It skips them (files stay,
   adopted lazily) when no master key is resolvable without minting one, or

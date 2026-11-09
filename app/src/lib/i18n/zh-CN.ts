@@ -3655,6 +3655,10 @@ const messages: TranslationMap = {
     '智能体在一轮中已执行最大数量的工具步骤，但仍未完成。这通常意味着某个工具一直失败（常见原因是网页抓取触发了速率限制）。限制解除后，你可以在此对话中重试同一个问题。',
   'chat_error.turn_timeout':
     '这一轮超出了时间预算仍未完成，已被停止以免卡住。这通常意味着某次工具调用或被委派的子智能体停滞了。你可以在此对话中重试你的问题。',
+  'chat_error.disk_full':
+    '你的磁盘已满，因此无法保存此对话。请释放一些磁盘空间，然后在此对话中重新发送你的消息。',
+  'chat_error.prompt_screened':
+    'OpenHuman 的安全筛查拦下了这条消息，因此它没有发送给模型。如果消息中引用了写给助手的指令（例如来自网页或邮件），请删除后重试。如果普通消息也被拦下，可能是安全模块不可用：请重启 OpenHuman 后重试。',
   'chat_error.empty_response':
     '模型返回了空响应。请重试。如果持续出现，请尝试其他模型，或在 连接 → API 密钥 → 语言模型 中检查其设置。',
   'chat_error.chat_template_rejected':
@@ -4106,6 +4110,8 @@ const messages: TranslationMap = {
   'voice.live.error.micDenied': '麦克风访问被拒绝。请在系统设置中允许后重试。',
   'voice.live.error.micUnavailable': '没有可用的麦克风。',
   'voice.live.error.connection': '无法连接到语音助手。',
+  'voice.live.error.insufficientCredits': '实时语音需要更多额度。请充值后继续。',
+  'voice.live.error.paidPlanRequired': '实时语音需要付费套餐。请升级后继续。',
   'voice.live.toolRunning': '正在运行 {name}',
   'voice.live.toolOk': '{name} 已完成',
   'voice.live.toolFailed': '{name} 失败',
@@ -4338,11 +4344,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': '命名空格进程监狱',
   'settings.sandbox.backendHint.bubblewrap': '轻量级用户命名空间',
   'settings.sandbox.backendHint.none': '直接运行工具, 不孤立',
-  'devOptions.toolPolicyDiagnostics.inventory.title': '工具清单',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': '工具总数',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': '已启用的工具',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP 标准输入输出工具',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC 工具',
   'devOptions.toolPolicyDiagnostics.posture.title': '策略状态',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': '自主级别',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': '仅限工作区',
@@ -4811,6 +4812,52 @@ const messages: TranslationMap = {
 
   'settings.layout.corners.round': '圆角',
   'settings.layout.contrast.subtle': '微妙',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': '此核心未构建策略诊断功能。',
+  'devOptions.toolPolicyDiagnostics.policy.title': '当前安全策略',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': '自主级别',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': '仅限工作区',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': '每小时最多操作数',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': '中风险操作需要审批',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': '阻止高风险命令',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': '允许的命令',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': '没有明确允许的命令。',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': '策略',
+  'settings.approvalHistory.judgeScores':
+    '意图 {intent} · 可逆性 {reversible} · 数据外泄 {exfiltrate}',
+  'settings.approvalHistory.judgeCached': '已缓存',
+  'settings.approvalHistory.judgeExpires': '到期时间：{time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': '始终允许的工具',
+  'keyring.settings.toolTrustDescription': '在此安全范围内，这些工具可以无需审批提示直接运行。',
+  'keyring.settings.toolTrustLoading': '正在加载允许的工具…',
+  'keyring.settings.toolTrustLoadFailed': '无法加载允许的工具。',
+  'keyring.settings.toolTrustRevokeFailed': '无法撤销此工具授权。',
+  'keyring.settings.toolTrustEmpty': '没有始终允许的工具。',
+  'keyring.settings.toolTrustRetry': '重试',
+  'keyring.settings.toolTrustRevoke': '撤销',
+  'keyring.settings.toolTrustRevoking': '正在撤销…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': '密钥环访问请求',
+  'keyring.operation.description':
+    'TinySecurity 请求访问一项密钥环内容。请先查看操作详情，再作出决定。',
+  'keyring.operation.access': '访问权限',
+  'keyring.operation.requester': '请求方',
+  'keyring.operation.origin': '来源',
+  'keyring.operation.purpose': '用途',
+  'keyring.operation.name': '密钥环项目',
+  'keyring.operation.access.read': '读取',
+  'keyring.operation.access.write': '写入',
+  'keyring.operation.access.delete': '删除',
+  'keyring.operation.allow': '仅允许这一次',
+  'keyring.operation.deny': '拒绝',
+  'keyring.operation.submitting': '正在发送…',
+  'keyring.operation.expires': '请求将在 {seconds} 秒后过期。',
+  'keyring.operation.error': '无法发送你的决定。请求可能已过期。',
 };
 
 export default messages;

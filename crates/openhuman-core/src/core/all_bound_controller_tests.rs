@@ -20,10 +20,14 @@ fn staged_bound_methods() -> Vec<&'static str> {
         "keyring_consent.status",
         "keyring_consent.decide",
         "keyring_consent.retry_probe",
+        "keyring_consent.respond_operation",
+        "keyring_consent.list_pending_operations",
     ]);
     methods.extend([
         "approval.list_pending",
         "approval.list_recent_decisions",
+        "approval.list_tool_trust",
+        "approval.revoke_tool_trust",
         "approval.decide",
         "approval.get_gate_state",
         "approval.preauthorize_flow",
@@ -59,7 +63,12 @@ fn staged_bound_methods() -> Vec<&'static str> {
         "voice.live_test_provider",
     ]);
     methods.push("threads.upsert");
-    methods.extend(["devices.create_pairing", "devices.list", "devices.revoke"]);
+    methods.extend([
+        "devices.create_pairing",
+        "devices.import_legacy",
+        "devices.list",
+        "devices.revoke",
+    ]);
     methods.extend([
         "profiles.provision",
         "profiles.deprovision",

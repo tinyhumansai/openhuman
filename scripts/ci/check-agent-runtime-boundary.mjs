@@ -166,7 +166,19 @@ const openhumanDomainTypes = new Set([
   "WorkspacePolicy",
 ]);
 
-function isNativeAgentProgressReference(path, text, source = text) {
+// A harness module that imports the harness's own `crate::progress::AgentProgress`
+// names the native type, not OpenHuman's. A `*_tests.rs` file wired with
+// `use super::*;` inherits its parent module's imports, so it is native when
+// that parent is.
+const ownsNativeAgentProgressImport = (source) =>
+  /^\s*use\s+crate::progress::AgentProgress\s*;\s*$/m.test(rustCode(source));
+
+function isNativeAgentProgressReference(
+  path,
+  text,
+  source = text,
+  parentSource = null,
+) {
   const harness = "vendor/tinyagents/crates/tinyagents-harness/src/";
   if (
     /\b(?:openhuman(?:_[A-Za-z0-9_]+)?|tinyagents(?:_[A-Za-z0-9_]+)?)\s*::\s*AgentProgress\b/.test(
@@ -184,19 +196,16 @@ function isNativeAgentProgressReference(path, text, source = text) {
     /^\s*pub\s+use\s+progress::AgentProgress\s*;\s*$/.test(text)
   )
     return true;
-  if (path === `${harness}turn_runner/types.rs`) {
-    const ownsImport = /^\s*use\s+crate::progress::AgentProgress\s*;\s*$/m.test(
-      rustCode(source),
-    );
-    return ownsImport;
-  }
+  if (!path.startsWith(harness)) return false;
   if (path === `${harness}turn_runner/mod_tests.rs`)
     return /\bcrate\s*::\s*progress\s*::\s*AgentProgress\b/.test(text);
-  if (path === `${harness}progress_tests.rs`)
-    return /^\s*use\s+crate::progress::AgentProgress\s*;\s*$/m.test(
-      rustCode(source),
-    );
-  return false;
+  if (ownsNativeAgentProgressImport(source)) return true;
+  return (
+    path.endsWith("_tests.rs") &&
+    parentSource !== null &&
+    /^\s*use\s+super::\*\s*;\s*$/m.test(rustCode(source)) &&
+    ownsNativeAgentProgressImport(parentSource)
+  );
 }
 
 // Names moved out of compatibility layers. Values identify their sole owner;
@@ -570,6 +579,10 @@ function assertSelfTests() {
   const nativeTypes =
     "use crate::progress::AgentProgress;\nProgress(Box<AgentProgress>)";
   const progressTests = "use crate::progress::AgentProgress;";
+  const workTrackerPath =
+    "vendor/tinyagents/crates/tinyagents-harness/src/turn_runner/work_tracker.rs";
+  const workTrackerTestsPath =
+    "vendor/tinyagents/crates/tinyagents-harness/src/turn_runner/work_tracker_tests.rs";
   if (
     !isNativeAgentProgressReference(progressPath, "pub enum AgentProgress {") ||
     !isNativeAgentProgressReference(
@@ -588,6 +601,33 @@ function assertSelfTests() {
     !isNativeAgentProgressReference(
       progressTestsPath,
       "let event = AgentProgress::ContextCompacting;",
+      progressTests,
+    ) ||
+    !isNativeAgentProgressReference(
+      workTrackerPath,
+      "AgentProgress::IterationStarted { .. } => {",
+      progressTests,
+    ) ||
+    !isNativeAgentProgressReference(
+      workTrackerTestsPath,
+      "fn iteration_started() -> AgentProgress {",
+      "use super::*;",
+      progressTests,
+    ) ||
+    isNativeAgentProgressReference(
+      workTrackerTestsPath,
+      "fn iteration_started() -> AgentProgress {",
+      "use super::*;",
+      "use openhuman_core::AgentProgress;",
+    ) ||
+    isNativeAgentProgressReference(
+      workTrackerTestsPath,
+      "fn iteration_started() -> AgentProgress {",
+      "use super::*;",
+    ) ||
+    isNativeAgentProgressReference(
+      "vendor/tinyagents/crates/tinyagents-session/src/lib.rs",
+      "AgentProgress::IterationStarted { .. } => {",
       progressTests,
     ) ||
     isNativeAgentProgressReference(
@@ -875,6 +915,11 @@ for (const path of await filesUnder(
   }
   const crateName = tinyagentsCrateName(path);
   const lines = codeLines(source);
+  const parentSource = path.endsWith("_tests.rs")
+    ? await readFile(path.replace(/_tests\.rs$/, ".rs"), "utf8").catch(
+        () => null,
+      )
+    : null;
   let firstForwardingLine;
   for (const { line, text, raw } of lines) {
     if (!text.trim()) continue;
@@ -926,7 +971,12 @@ for (const path of await filesUnder(
         continue;
       if (
         name === "AgentProgress" &&
-        isNativeAgentProgressReference(relative(repoRoot, path), text, source)
+        isNativeAgentProgressReference(
+          relative(repoRoot, path),
+          text,
+          source,
+          parentSource,
+        )
       )
         continue;
       if (new RegExp(`\\b${escapeRegex(name)}\\b`).test(text)) {

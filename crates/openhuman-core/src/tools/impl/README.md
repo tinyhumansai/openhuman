@@ -44,8 +44,8 @@ tested but no production assembly site constructs it today.
 - [`filesystem/gate.rs`](./filesystem/gate.rs) owns workspace descriptor
   scoping. The filesystem gate and system policy resolver use the same helper,
   which grants the descriptor root as `action_dir` plus a `ReadWrite` trusted
-  root on a per-call clone of `SecurityPolicy`; `is_always_forbidden` and
-  `is_workspace_internal_path` are evaluated before any trusted-root shortcut.
+  root on a per-call clone of `SecurityPolicy`; `TinySecurity protected-path policy` and
+  `TinySecurity internal-state reservations` are evaluated before any trusted-root shortcut.
 
 ## Further reading
 

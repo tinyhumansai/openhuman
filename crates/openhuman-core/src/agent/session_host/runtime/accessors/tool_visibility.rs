@@ -111,7 +111,7 @@ impl OpenHumanSessionHost {
         // at all.
         let all_tools = self.all_tool_refs();
         let reachable = self.reachable_tool_names();
-        let mut session = crate::tools::policy_session::build_policy_session(
+        let mut session = tinytools::ToolPolicyEngine::build_session_from_refs(
             &self.agent_definition_name,
             &self.event_channel,
             "session",

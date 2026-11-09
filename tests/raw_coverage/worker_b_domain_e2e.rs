@@ -23,14 +23,14 @@ use tempfile::{tempdir, TempDir};
 
 use openhuman_core::config::Config;
 use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
+use openhuman_core::core::runtime::turn_origin::{self, AgentTurnOrigin};
 use openhuman_core::security::approval::gate::{
     ApprovalChatContext, ApprovalGate, ApprovalTurnContext,
 };
 use openhuman_core::security::approval::types::{ExecutionOutcome, GateOutcome};
-use openhuman_core::security::credentials::{
+use openhuman_core::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
-use openhuman_core::security::turn_origin::{self, AgentTurnOrigin};
 use openhuman_rpc::server::build_core_http_router;
 
 const TEST_RPC_TOKEN: &str = "worker-b-raw-coverage-e2e-token";
@@ -358,6 +358,7 @@ async fn seed_session_token() {
             HashMap::from([("user_id".to_string(), "worker-b-user".to_string())]),
             true,
         )
+        .await
         .expect("seed session token");
 }
 

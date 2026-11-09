@@ -22,7 +22,7 @@
 //! desktop notification are not the same trust proposition, and one label for
 //! both would have to be the weaker of the two.
 
-use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 
 use super::envelope::TriggerEnvelope;
 

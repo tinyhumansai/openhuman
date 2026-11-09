@@ -92,7 +92,8 @@ pack summary and the tool schemas when the pack is loaded. Packs with a guide
 today: `coding` (search, edit, run scripts, test, lint, review a diff, git),
 `web3` (wallet, swaps, bridges, contract calls, x402), `system` (config,
 health, diagnostics, costs, service lifecycle, credentials, app updates),
-`scheduling` (`cron`), `docs` (`gitbooks_search` / `gitbooks_get_page`) and
+`scheduling` (`cron_add`, `cron_list`, `cron_update`, `cron_remove`,
+`cron_run`, `cron_runs`), `docs` (`gitbooks_search` / `gitbooks_get_page`) and
 `mcp` (MCP registry search, connect, status, tool calls). The other packs are
 plain schema bundles with an empty guide.
 
@@ -104,7 +105,9 @@ context, a model call and a hand-off envelope on every use. As a guide it is
 roughly 500 tokens, paid once when the skill is loaded, and the orchestrator
 calls the tools itself. Those tools are `ToolExposure::Deferred` rather than
 on any belt, so `tool_search` finds a single one of them without loading the
-whole skill.
+whole skill. The `scheduling` members are the exception: they stay `Direct`,
+so a host that advertises the pack puts each on the wire with its own small
+schema, and a withheld pack still strips them.
 
 What does not go in a guide: a rule that has to bind before the model thinks
 to load the skill. The two such rules (an explicit yes before moving funds or

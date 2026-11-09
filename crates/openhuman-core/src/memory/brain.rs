@@ -54,11 +54,11 @@ fn layout(
         .layout
 }
 
-fn brain(
+async fn brain(
     config: &Config,
     identity: &tinymemory_tools::layout::identity::Identity,
 ) -> Result<Brain> {
-    let bound = engine::resolve(config).engine()?;
+    let bound = engine::resolve(config).await.engine()?;
     Ok(Brain::new(bound.engine, layout(config, identity)))
 }
 
@@ -76,7 +76,7 @@ pub async fn sources(
     config: &Config,
     identity: &tinymemory_tools::layout::identity::Identity,
 ) -> Result<BrainSourcesView> {
-    brain(config, identity)?.sources().await
+    brain(config, identity).await?.sources().await
 }
 
 /// `memory_brain_search` params.
@@ -111,7 +111,8 @@ pub async fn search(
     }
     let source = params.source.as_deref().map(parse_source).transpose()?;
     let limit = super::types::clamp_limit(params.limit);
-    let hits = brain(config, identity)?
+    let hits = brain(config, identity)
+        .await?
         .search(query, source.as_ref(), limit)
         .await?;
     tracing::debug!(hits = hits.len(), "[memory:brain] search");
@@ -149,7 +150,7 @@ pub struct BrainIngestView {
 /// Resolves an ingest `path` through the security policy, the same check
 /// the file tools make ([`SecurityPolicy::validate_path`]): no null bytes or
 /// `..` traversal, the credential-store and system-root floor
-/// (`is_always_forbidden`: `~/.ssh`, `~/.aws`, `/etc`, ...) on the resolved
+/// (TinySecurity's protected-path floor: `~/.ssh`, `~/.aws`, `/etc`, ...) on the resolved
 /// path (so a symlink cannot reach one either), and, with `[autonomy]`
 /// enabled, workspace and trusted-root containment. A relative path lands in
 /// `action_dir`.
@@ -223,7 +224,8 @@ pub async fn ingest(
         document = document.titled(title);
     }
     let filed = document.source.to_string();
-    let ingested = brain(config, identity)?
+    let ingested = brain(config, identity)
+        .await?
         .ingest_with(document, WriteOptions::accepted())
         .await?;
     jobs::enqueue(
@@ -261,7 +263,7 @@ pub async fn forget(
     params: BrainForgetParams,
 ) -> Result<BrainForgetView> {
     let source = parse_source(&params.source)?;
-    let report = brain(config, identity)?.forget(&source).await?;
+    let report = brain(config, identity).await?.forget(&source).await?;
     tracing::info!(source = %source, forgotten = report.forgotten, "[memory:brain] source forgotten");
     Ok(BrainForgetView {
         forgotten: report.forgotten,

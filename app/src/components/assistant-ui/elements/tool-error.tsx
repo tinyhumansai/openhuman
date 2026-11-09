@@ -12,6 +12,7 @@
  *   `features/conversations/aui/ToolFailureCard.tsx`, the only caller.
  */
 import { cn } from '@/components/assistant-ui/lib/utils';
+import { Button } from '@/components/ui';
 import { AlertCircleIcon, Loader2Icon, RotateCwIcon } from 'lucide-react';
 import type { ComponentProps } from 'react';
 
@@ -46,8 +47,8 @@ export function ToolError({
   name: string;
   target: string;
   message: string;
-  attempt: number;
-  maxAttempts: number;
+  attempt?: number;
+  maxAttempts?: number;
   retrying: boolean;
   onRetry?: () => void;
   onSkip?: () => void;
@@ -64,40 +65,45 @@ export function ToolError({
         <AlertCircleIcon className="size-3.5 shrink-0 text-red-500" />
         <span className={cn(mono, 'text-muted-foreground shrink-0')}>{name}</span>
         <span className="text-foreground/80 min-w-0 flex-1 truncate text-[13px]">{target}</span>
-        <span className={cn(mono, 'text-muted-foreground shrink-0 tabular-nums')}>
-          {attempt}/{maxAttempts}
-        </span>
+        {attempt !== undefined && maxAttempts !== undefined ? (
+          <span className={cn(mono, 'text-muted-foreground shrink-0 tabular-nums')}>
+            {attempt}/{maxAttempts}
+          </span>
+        ) : null}
       </div>
 
       <div
         className={cn(
           field,
-          'rounded-xl px-3 py-2 font-mono text-[11px] leading-relaxed break-words text-red-700 dark:text-red-300'
+          'rounded-xl px-3 py-2 text-sm leading-relaxed break-words text-red-700 dark:text-red-300'
         )}>
         {message}
       </div>
 
-      <div className="flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={onSkip}
-          disabled={!onSkip}
-          className="text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground/90 h-7 rounded-full px-2.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-30">
-          {skipLabel}
-        </button>
-        <button
-          type="button"
-          onClick={onRetry}
-          disabled={retrying || !onRetry}
-          className="text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground/95 flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96] disabled:pointer-events-none">
-          {retrying ? (
-            <Loader2Icon className="size-3 animate-spin motion-reduce:animate-none" />
-          ) : (
-            <RotateCwIcon className="size-3" />
-          )}
-          {retrying ? retryingLabel : retryLabel}
-        </button>
-      </div>
+      {onRetry || onSkip ? (
+        <div className="flex items-center justify-end gap-2">
+          {onSkip ? (
+            <Button type="button" variant="tertiary" size="sm" onClick={onSkip}>
+              {skipLabel}
+            </Button>
+          ) : null}
+          {onRetry ? (
+            <Button
+              type="button"
+              variant="tertiary"
+              size="sm"
+              onClick={onRetry}
+              disabled={retrying}>
+              {retrying ? (
+                <Loader2Icon className="size-3 animate-spin motion-reduce:animate-none" />
+              ) : (
+                <RotateCwIcon className="size-3" />
+              )}
+              {retrying ? retryingLabel : retryLabel}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

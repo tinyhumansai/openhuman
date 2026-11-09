@@ -19,9 +19,7 @@ use super::types::{AppStateSnapshot, StoredAppState, StoredAppStatePatch};
 use super::LOG_PREFIX;
 use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
-use crate::security::credentials::session_support::{
-    load_app_session_profile, session_state_from_profile,
-};
+use crate::credentials::session_state::{load_app_session_profile, session_state_from_profile};
 use log::{debug, warn};
 use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -59,16 +57,9 @@ pub async fn snapshot(ctx: &DispatchCtx) -> Result<Outcome<AppStateSnapshot>, St
     // lock per snapshot (the "Timed out waiting for auth profile lock" Sentry
     // failure on Windows came from taking it twice).
     //
-    // `load_app_session_profile` busy-waits with `thread::sleep` for up to
-    // ~35s when the lock is contended, so it runs on the blocking pool rather
-    // than a tokio worker thread.
-    let config_for_profile = config.clone();
-    let session_profile =
-        tokio::task::spawn_blocking(move || load_app_session_profile(&config_for_profile))
-            .await
-            .unwrap_or_else(|e| Err(format!("[app_state] auth profile load task panicked: {e}")))?;
+    let session_profile = load_app_session_profile(&config).await?;
     let mut auth = session_state_from_profile(session_profile.as_ref());
-    let session_token = crate::security::credentials::session_support::session_token_for_config(
+    let session_token = crate::credentials::session_state::session_token_for_config(
         &config,
         session_profile.as_ref(),
     )

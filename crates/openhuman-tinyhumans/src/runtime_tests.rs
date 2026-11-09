@@ -17,7 +17,10 @@ fn connect_wires_transport_hosted_controllers_and_ranker() {
     let _registry = crate::registry_test_lock();
 
     let summary = connected(RuntimeBuilder::new());
-    assert_eq!(summary.controller_extensions, vec![DomainGroup::Hosted]);
+    assert_eq!(
+        summary.controller_extensions,
+        vec![DomainGroup::Inference, DomainGroup::Hosted]
+    );
     #[cfg(feature = "jev")]
     assert_eq!(
         summary.tool_ranker.as_deref(),
@@ -56,7 +59,7 @@ fn hosted_controllers_and_jev_can_be_turned_off() {
             .hosted_controllers(false)
             .jev_ranker(false),
     );
-    assert!(summary.controller_extensions.is_empty());
+    assert_eq!(summary.controller_extensions, vec![DomainGroup::Inference]);
     assert!(summary.tool_ranker.is_none());
 }
 
@@ -161,7 +164,10 @@ fn knobs_and_seams_forward_unchanged() {
     assert!(summary.has_session_store);
     // A host ranker replaces the Jev one rather than being overwritten by it.
     assert_eq!(summary.tool_ranker.as_deref(), Some("test-ranker"));
-    assert_eq!(summary.controller_extensions, vec![DomainGroup::Hosted]);
+    assert_eq!(
+        summary.controller_extensions,
+        vec![DomainGroup::Inference, DomainGroup::Hosted]
+    );
 }
 
 struct HostRanker;
@@ -232,5 +238,8 @@ fn connect_keeps_cli_knobs_for_the_host_boot() {
     assert!(summary.fixed_token);
     assert_eq!(summary.listen_host.as_deref(), Some("0.0.0.0"));
     assert_eq!(summary.listen_port, Some(7812));
-    assert_eq!(summary.controller_extensions, vec![DomainGroup::Hosted]);
+    assert_eq!(
+        summary.controller_extensions,
+        vec![DomainGroup::Inference, DomainGroup::Hosted]
+    );
 }

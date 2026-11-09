@@ -1,7 +1,7 @@
 use super::*;
 
-#[test]
-fn default_temperature_wrapper_preserves_physical_attempt_tracking() {
+#[tokio::test]
+async fn default_temperature_wrapper_preserves_physical_attempt_tracking() {
     use async_trait::async_trait;
     use std::sync::Arc;
     use tinyinference_llm::model::{ModelRequest, ModelResponse};
@@ -27,7 +27,7 @@ fn default_temperature_wrapper_preserves_physical_attempt_tracking() {
         }
     }
 
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let _override = test_provider_override::install_model(Arc::new(TrackedModel));
     let wrapped = create_chat_model_in(
         &crate::core::runtime::DispatchCtx::ambient(),
@@ -35,6 +35,7 @@ fn default_temperature_wrapper_preserves_physical_attempt_tracking() {
         &Config::default(),
         0.3,
     )
+    .await
     .expect("test override model");
 
     assert!(wrapped.tracks_physical_attempts());

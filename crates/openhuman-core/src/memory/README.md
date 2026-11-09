@@ -43,7 +43,7 @@ with its own store (or a test binary with an in-memory engine) runs the
 whole lifecycle without a TinyHumans session or a CortexDB key.
 
 Whatever engine is bound, TinyMemory's native `EngineBinder` wraps it in a
-scrubbing decorator using `security::scrub::host_policy` and a timing
+scrubbing decorator using `memory::host_policy::host_policy` and a timing
 decorator. Every text a `StoreItem` carries is scrubbed before the engine sees
 it. This also covers writes TinyMemory makes through its own types
 (`AgentMemory::pre_turn`, `Brain::ingest`, background ingests). The timing
@@ -178,6 +178,14 @@ without an answer) and the work still finishes into the cache.
 host already puts in the system prompt: a pack whose every cited hit it
 excludes is left out (TinyMemory renders the pack, so single lines cannot be
 dropped yet).
+
+The memory block a new transcript generation renders (see
+`agent/session_host/runtime_session/memory_block.rs`) can likewise be taken off
+the turn's path: `[memory] memory_block_deadline_ms` (embed:
+`MemoryBinding::memory_block_deadline`) bounds the wait, a render that lapses
+is kept for the next generation start (`[memory_block] deferred`), and
+`Agent::prewarm_memory_block(thread_id)` renders it ahead of a turn. Its
+beliefs and learnings are read concurrently.
 
 The live prelude and compaction summarizer call the underlying work directly
 from the scoped prefetch workers. Their background deadlines bound engine I/O
@@ -451,7 +459,7 @@ sits in the app directory shared by all accounts
   middleware and the compaction summarizer live under `agent/`.
 - Chat transcripts are owned by `threads`; this folder only reads them for
   backfill and forgets their memory on delete.
-- Credentials come from `security::credentials` and the host's session
+- Credentials come from `credentials` and the host's session
   owner. The core does not sign in or refresh anything here.
 - Cron scheduling is `cron`'s; this folder only handles the due events.
 

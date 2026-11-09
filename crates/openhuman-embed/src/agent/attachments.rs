@@ -35,7 +35,7 @@ impl Agent {
     /// with no session at registration to validate names, then rebuilt per turn.
     /// Keep tool names stable. Their callbacks should authorize their operations.
     /// Only these names use the attachment policy; other tools keep their gate.
-    pub fn attach_tools(
+    pub async fn attach_tools(
         &self,
         key: impl Into<String>,
         factory: HostTools,
@@ -44,27 +44,30 @@ impl Agent {
         if key.trim().is_empty() {
             return Err(ToolAttachmentError::EmptyKey);
         }
-        let mut sources = self
-            .inner
-            .attachments
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(existing) = sources.get(&key) {
-            return if Arc::ptr_eq(&existing.factory, &factory) {
-                Ok(())
-            } else {
-                Err(ToolAttachmentError::SourceConflict(key))
-            };
-        }
+        let mut occupied: HashSet<String> = {
+            let sources = self
+                .inner
+                .attachments
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(existing) = sources.get(&key) {
+                return if Arc::ptr_eq(&existing.factory, &factory) {
+                    Ok(())
+                } else {
+                    Err(ToolAttachmentError::SourceConflict(key))
+                };
+            }
+            sources
+                .values()
+                .flat_map(|source| source.names.iter().cloned())
+                .collect()
+        };
         let context = TurnContext::new(self.id(), None);
-        let mut occupied: HashSet<String> = sources
-            .values()
-            .flat_map(|source| source.names.iter().cloned())
-            .collect();
         if let Some(host) = &self.inner.host_tools {
             occupied.extend(
                 host(context)
+                    .await
                     .tools
                     .iter()
                     .map(|tool| tool.name().to_string()),
@@ -85,21 +88,40 @@ impl Agent {
             openhuman_core::tools::ops::all_tools(
                 Arc::new(config.clone()),
                 &security,
-                openhuman_core::security::AuditLogger::disabled(),
+                openhuman_core::security::AuditSink::disabled(),
                 &config.browser,
                 &config.http_request,
                 &config.action_dir,
                 config,
             )
+            .await
             .iter()
             .map(|tool| tool.name().to_string()),
         );
-        let tools = factory(context);
+        let tools = factory(context).await;
         let mut names = HashSet::new();
         for tool in tools.tools {
             let name = tool.name().to_string();
             if occupied.contains(&name) || !names.insert(name.clone()) {
                 return Err(ToolAttachmentError::NameCollision(name));
+            }
+        }
+        let mut sources = self
+            .inner
+            .attachments
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(existing) = sources.get(&key) {
+            return if Arc::ptr_eq(&existing.factory, &factory) {
+                Ok(())
+            } else {
+                Err(ToolAttachmentError::SourceConflict(key))
+            };
+        }
+        for source in sources.values() {
+            if let Some(name) = names.intersection(&source.names).next() {
+                return Err(ToolAttachmentError::NameCollision(name.clone()));
             }
         }
         sources.insert(key, Attachment { factory, names });
@@ -132,23 +154,30 @@ impl super::AgentInner {
         }
         let host = self.host_tools.clone();
         Some(Arc::new(move |context| {
-            let mut merged = host.as_ref().map(|host| host(context)).unwrap_or_default();
-            let original = merged.policy.take();
-            let mut policies = Vec::new();
-            for source in &sources {
-                let attached = source(context);
-                let names: HashSet<String> = attached
-                    .tools
-                    .iter()
-                    .map(|tool| tool.name().to_string())
-                    .collect();
-                merged.visible.extend(names.iter().cloned());
-                merged.permanent.extend(names.iter().cloned());
-                merged.tools.extend(attached.tools);
-                policies.push((names, attached.policy));
-            }
-            merged.policy = Some(Arc::new(AttachmentPolicy { original, policies }));
-            merged
+            let host = host.clone();
+            let sources = sources.clone();
+            Box::pin(async move {
+                let mut merged = match host.as_ref() {
+                    Some(host) => host(context).await,
+                    None => Default::default(),
+                };
+                let original = merged.policy.take();
+                let mut policies = Vec::new();
+                for source in &sources {
+                    let attached = source(context).await;
+                    let names: HashSet<String> = attached
+                        .tools
+                        .iter()
+                        .map(|tool| tool.name().to_string())
+                        .collect();
+                    merged.visible.extend(names.iter().cloned());
+                    merged.permanent.extend(names.iter().cloned());
+                    merged.tools.extend(attached.tools);
+                    policies.push((names, attached.policy));
+                }
+                merged.policy = Some(Arc::new(AttachmentPolicy { original, policies }));
+                merged
+            })
         }))
     }
 }

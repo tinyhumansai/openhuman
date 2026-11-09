@@ -3,8 +3,7 @@
 
 use super::*;
 use crate::inference::provider::factory::access_gates::{
-    enforce_local_only_endpoint, is_loopback_endpoint, is_ollama_cloud_model,
-    verify_provider_session, LocalOnlyRequestGuard,
+    enforce_local_only_endpoint, is_loopback_endpoint, is_ollama_cloud_model, LocalOnlyRequestGuard,
 };
 use tinyinference_llm::providers::openai::build_local_runtime_chat_model;
 use tinyinference_llm::providers::openai::AuthStyle as CompatAuthStyle;
@@ -78,7 +77,7 @@ fn try_create_local_runtime_chat_model_from_string_with_identity(
     provider: &str,
     config: &Config,
     egress: &EgressLedger,
-    inspection: bool,
+    _inspection: bool,
     inspection_identity: Option<&mut Option<(String, String, String)>>,
 ) -> OptionalChatModelResult {
     use tinyinference_local::local_runtime::{
@@ -100,11 +99,8 @@ fn try_create_local_runtime_chat_model_from_string_with_identity(
     if let Err(e) = enforce_local_only_inference(role, &p) {
         return Some(Err(e));
     }
-    if !inspection {
-        if let Err(e) = verify_provider_session(config, provider) {
-            return Some(Err(e));
-        }
-    }
+    // These routes own independent local-runtime authentication; they do not
+    // read or depend on the OpenHuman app-session profile.
 
     // Endpoint, auth, model and `@temp` resolution is the module's pure
     // `resolve_local_runtime`; the host only supplies config + env.

@@ -6,13 +6,13 @@ use super::*;
 // `401 "Invalid token"` and surface that as an expired session.
 #[test]
 fn the_offline_local_session_cannot_authenticate_managed_inference() {
-    use openhuman_embed::__host::security::credentials::session_support::{
-        SessionTokenCheck, LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE,
-    };
+    use openhuman_embed::__host::credentials::backend_credential::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE;
+    use openhuman_embed::__host::credentials::session_state::SessionTokenCheck;
 
     let error = managed_bearer(
         SessionTokenCheck::Live("header.payload.local".to_string()),
         "openhuman_backend_model.resolve_bearer",
+        None,
     )
     .expect_err("a local session has no managed bearer");
 
@@ -24,11 +24,12 @@ fn the_offline_local_session_cannot_authenticate_managed_inference() {
 
 #[test]
 fn the_refusal_does_not_read_as_an_expired_session() {
-    use openhuman_embed::__host::security::credentials::session_support::SessionTokenCheck;
+    use openhuman_embed::__host::credentials::session_state::SessionTokenCheck;
 
     let error = managed_bearer(
         SessionTokenCheck::Live("header.payload.local".to_string()),
         "openhuman_backend_model.resolve_bearer",
+        None,
     )
     .expect_err("a local session has no managed bearer");
 
@@ -43,19 +44,20 @@ fn the_refusal_does_not_read_as_an_expired_session() {
 
 #[test]
 fn a_signed_in_session_still_authenticates_managed_inference() {
-    use openhuman_embed::__host::security::credentials::session_support::SessionTokenCheck;
+    use openhuman_embed::__host::credentials::session_state::SessionTokenCheck;
 
     let bearer = managed_bearer(
         SessionTokenCheck::Live("header.payload.signature".to_string()),
         "openhuman_backend_model.resolve_bearer",
+        None,
     )
     .expect("a hosted session is the bearer");
 
     assert_eq!(bearer, "header.payload.signature");
 }
 
-#[test]
-fn inspection_refuses_the_session_token_on_a_plaintext_remote_endpoint() {
+#[tokio::test]
+async fn inspection_refuses_the_session_token_on_a_plaintext_remote_endpoint() {
     use openhuman_embed::__host::config::Config;
 
     let temp = tempfile::tempdir().expect("temporary selected credential workspace");
@@ -78,12 +80,14 @@ fn inspection_refuses_the_session_token_on_a_plaintext_remote_endpoint() {
     };
 
     let error = managed_bearer_for_inspection(&config_for("http://10.0.0.1:1"))
+        .await
         .expect_err("plaintext remote endpoint must not receive the session token");
     assert!(error.to_string().contains("insecure endpoint"), "{error}");
     assert!(!error.to_string().contains("inspection-session-token"));
 
     assert_eq!(
         managed_bearer_for_inspection(&config_for("http://127.0.0.1:1"))
+            .await
             .expect("loopback HTTP stays allowed"),
         "inspection-session-token"
     );
@@ -160,29 +164,33 @@ async fn inspection_invoke_and_in_band_401_do_not_mutate_credentials_or_publish_
     drain_session_events(&mut events);
 
     let egress = EgressLedger::none();
-    let build_inspection_model = |api_url: &str| {
+    let build_inspection_model = |api_url: String| {
         let mut model_config = config.clone();
         model_config.api_url = Some(format!("http://{api_url}"));
-        let context = ProviderContext {
-            config: model_config.clone(),
-            egress: egress.clone(),
-            embedding: None,
-            catalog: None,
-        };
-        let request = ChatModelRequest {
-            role: "chat",
-            model_override: Some("reasoning-v1"),
-            default_model: None,
-            native_tool_calling: true,
-            thread_id: None,
-            context: &context,
-        };
-        let model = super::super::build_chat_model_for_inspection(&request)
-            .expect("real TinyHumans inspection adapter should read the selected profile");
-        (model_config, model.model)
+        let egress = egress.clone();
+        async move {
+            let context = ProviderContext {
+                config: model_config.clone(),
+                egress,
+                embedding: None,
+                catalog: None,
+            };
+            let request = ChatModelRequest {
+                role: "chat",
+                model_override: Some("reasoning-v1"),
+                default_model: None,
+                native_tool_calling: true,
+                thread_id: None,
+                context: &context,
+            };
+            let model = super::super::build_chat_model_for_inspection(&request)
+                .await
+                .expect("real TinyHumans inspection adapter should read the selected profile");
+            (model_config, model.model)
+        }
     };
 
-    let (_invoke_config, invoke_model) = build_inspection_model(&invoke_addr);
+    let (_invoke_config, invoke_model) = build_inspection_model(invoke_addr.clone()).await;
     let invoke_error = invoke_model
         .invoke(&(), ModelRequest::new(vec![Message::user("probe")]))
         .await
@@ -199,7 +207,7 @@ async fn inspection_invoke_and_in_band_401_do_not_mutate_credentials_or_publish_
     assert_eq!(credential_store_snapshot(temp.path()), store_before);
     assert_no_session_expired(&mut events);
 
-    let (_stream_config, stream_model) = build_inspection_model(&stream_addr);
+    let (_stream_config, stream_model) = build_inspection_model(stream_addr.clone()).await;
     let stream = stream_model
         .stream(&(), ModelRequest::new(vec![Message::user("probe")]))
         .await
@@ -271,7 +279,7 @@ async fn inspection_invoke_and_in_band_401_do_not_mutate_credentials_or_publish_
     fn assert_no_session_expired(receiver: &mut tinybus::events::EventReceiver<DomainEvent>) {
         loop {
             match receiver.try_recv() {
-                Ok(DomainEvent::SessionExpired { source, reason }) => {
+                Ok(DomainEvent::SessionExpired { source, reason, .. }) => {
                     panic!("inspection call published SessionExpired ({source}): {reason}")
                 }
                 Ok(_) | Err(tinybus::TryRecvError::Lagged(_)) => continue,

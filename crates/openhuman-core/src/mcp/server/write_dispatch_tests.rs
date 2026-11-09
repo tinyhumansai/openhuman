@@ -39,8 +39,14 @@ fn summarize_rejected_write_args_includes_param_keys_only() {
     assert!(summary.get("text").is_none());
 }
 
-#[test]
-fn write_policy_logs_and_returns_denial() {
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn write_policy_logs_and_returns_denial() {
+    let _budget = crate::modules::security::gap::install_budget_port(
+        crate::modules::security::gap::ScriptedBudgetPort::replying(
+            tinysecurity_bus::BudgetDecision2::ReadOnlyMode,
+        ),
+    );
     let tmp = tempfile::TempDir::new().unwrap();
     let mut config = Config::default();
     config.workspace_dir = tmp.path().join("workspace");
@@ -49,6 +55,7 @@ fn write_policy_logs_and_returns_denial() {
     config.autonomy.level = crate::security::AutonomyLevel::ReadOnly;
 
     let err = enforce_write_policy_for_config("memory.forget", &config)
+        .await
         .expect_err("read-only mode should deny writes");
     assert!(err.message().contains("read-only mode"));
 }

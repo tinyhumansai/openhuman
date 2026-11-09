@@ -112,12 +112,23 @@ pub const HARD_DENIED: &[&str] = &[
 
 /// Tools outside a profile's (or an embedded agent's) domain families that an
 /// operator may still admit by naming them in
-/// `tool_scope(ToolScopeSpec::Named(..))`: the scheduler (`cron`, bounded by
-/// `[cron] agent_jobs_only`) and the two clock tools (`current_time`,
-/// `resolve_time`, Platform tools with no reach beyond the wall clock).
-/// Nothing else in those families qualifies, and a name not in the scope is
-/// never registered. An embedded agent names them in its definition's scope.
-pub const OPERATOR_ADMITTABLE: &[&str] = &["cron", "current_time", "resolve_time"];
+/// `tool_scope(ToolScopeSpec::Named(..))`: the scheduler (its per-operation
+/// tools and the collapsed `cron`, all bounded by `[cron] agent_jobs_only`)
+/// and the two clock tools (`current_time`, `resolve_time`, Platform tools
+/// with no reach beyond the wall clock). Nothing else in those families
+/// qualifies, and a name not in the scope is never registered. An embedded
+/// agent names them in its definition's scope.
+pub const OPERATOR_ADMITTABLE: &[&str] = &[
+    "cron",
+    "cron_add",
+    "cron_list",
+    "cron_update",
+    "cron_remove",
+    "cron_run",
+    "cron_runs",
+    "current_time",
+    "resolve_time",
+];
 
 /// Whether `tool` is hard-denied to users.
 pub fn is_hard_denied(tool: &str) -> bool {
@@ -293,6 +304,7 @@ pub fn sandbox_policy_with(
         read_only_mounts: Vec::new(),
         read_write_mounts: Vec::new(),
         allow_network: config.network.trim() != "none",
+        mount_workspace: true,
         // Nothing from the host's environment: no PATH, HOME or USER.
         env_passthrough: Vec::new(),
         docker_overrides: Some(DockerOverrides {

@@ -9,22 +9,22 @@ use tinyagents_harness_tools::goals::ThreadGoalStatus;
 const THREAD: &str = "goal-thread";
 
 /// A session for `agent_id` bound to [`THREAD`], with its runtime session up.
-fn host_for(agent_id: &str) -> (crate::agent::OpenHumanSessionHost, tempfile::TempDir) {
+async fn host_for(agent_id: &str) -> (crate::agent::OpenHumanSessionHost, tempfile::TempDir) {
     let _ = crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins();
     crate::agent::session_host::test_support::install_model_fixture();
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = crate::config::Config {
-        workspace_dir: tmp.path().join("workspace"),
-        action_dir: tmp.path().join("workspace"),
-        config_path: tmp.path().join("config.toml"),
-        default_model: Some("test/session-fixture".to_string()),
-        ..crate::config::Config::default()
-    };
+    let mut config = crate::config::Config::default();
+    config.workspace_dir = tmp.path().join("workspace");
+    config.action_dir = tmp.path().join("workspace");
+    config.config_path = tmp.path().join("config.toml");
+    config.default_model = Some("test/session-fixture".to_string());
+    config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
     // Building the orchestrator's model passes the backend-session gate; a
     // standing API key in this session's own state dir satisfies it, and the
     // model fixture above answers instead of a real provider.
-    crate::security::credentials::api_key::store_api_key(&config, "test-goal-key")
+    crate::credentials::api_key::store_api_key(&config, "test-goal-key")
+        .await
         .expect("test api key");
     let definition = crate::agent_registry::agents::load_builtins()
         .unwrap()
@@ -36,6 +36,7 @@ fn host_for(agent_id: &str) -> (crate::agent::OpenHumanSessionHost, tempfile::Te
         &config,
         &definition,
     )
+    .await
     .expect("session builds");
     host.set_thread_id(Some(THREAD));
     host.ensure_runtime_session().expect("runtime session");
@@ -67,7 +68,7 @@ async fn enriched(host: &crate::agent::OpenHumanSessionHost) -> String {
 
 #[tokio::test]
 async fn a_paused_goal_is_not_resumed_by_a_new_message() {
-    let (host, tmp) = host_for("orchestrator");
+    let (host, tmp) = host_for("orchestrator").await;
     let store = store(&tmp);
     goal_store::set(&store, THREAD, "Migrate the auth schema", None)
         .await
@@ -83,7 +84,7 @@ async fn a_paused_goal_is_not_resumed_by_a_new_message() {
 
 #[tokio::test]
 async fn an_orchestrator_turn_leaves_the_goal_to_the_state_block() {
-    let (host, tmp) = host_for("orchestrator");
+    let (host, tmp) = host_for("orchestrator").await;
     goal_store::set(&store(&tmp), THREAD, "Migrate the auth schema", None)
         .await
         .unwrap();
@@ -96,7 +97,7 @@ async fn an_orchestrator_turn_leaves_the_goal_to_the_state_block() {
 
 #[tokio::test]
 async fn a_turn_without_the_state_block_still_carries_the_active_goal() {
-    let (host, tmp) = host_for("summarizer");
+    let (host, tmp) = host_for("summarizer").await;
     goal_store::set(&store(&tmp), THREAD, "Migrate the auth schema", None)
         .await
         .unwrap();
@@ -111,7 +112,7 @@ async fn a_turn_without_the_state_block_still_carries_the_active_goal() {
 /// run-state block (which reads the goal from the store) leaves the goal out.
 #[tokio::test]
 async fn a_suppressed_goal_reaches_the_run_context() {
-    let (host, tmp) = host_for("orchestrator");
+    let (host, tmp) = host_for("orchestrator").await;
     goal_store::set(&store(&tmp), THREAD, "Migrate the auth schema", None)
         .await
         .unwrap();

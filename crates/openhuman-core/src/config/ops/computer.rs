@@ -83,7 +83,7 @@ pub async fn apply_computer_settings(
         "[config] computer settings updated"
     );
     config.save().await.map_err(super::config_save_error)?;
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(

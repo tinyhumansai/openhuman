@@ -37,10 +37,13 @@ is mounted as a submodule of [`load/dirs.rs`](./load/dirs.rs) via `#[path]`.
 | `[modules]` | [`modules.rs`](./modules.rs) | `ModulesConfig`, `ModuleOverride`: controls only whether compiled-in modules load. The loadable *set* is fixed by `crate::modules::registry` |
 | `[observability]` | [`observability.rs`](./observability.rs) | `ObservabilityConfig`, `AgentTracingConfig` |
 | `[privacy]` | [`privacy.rs`](./privacy.rs) | `PrivacyConfig`, `PrivacyMode` |
+| `[prompt_screen]` | [`prompt_screen.rs`](./prompt_screen.rs) | `PromptScreenConfig`, `PromptScreenMode` (TinySecurity prompt screen; `off` is an explicit opt-out, default enforces and fails closed; `[security] mode = "off"` also turns it off) |
+| `[security]` | [`security_mode.rs`](./security_mode.rs) | `SecurityModeConfig`, `SecurityMode` (whether TinySecurity-delegated checks run; `off` allows them and passes redaction through, default enforces and fails closed). Not the daemon's `SecurityConfig` in `security.rs` |
 | `[proxy]` | [`proxy.rs`](./proxy.rs) | `ProxyConfig`, `ProxyScope`, plus `runtime_proxy_config()` / `set_runtime_proxy_config()` process-wide accessors |
 | `[[model_routes]]`, `[[embedding_routes]]` | [`routes.rs`](./routes.rs) | `ModelRouteConfig`, `EmbeddingRouteConfig` |
 | `[runtime]` (+ `[runtime.docker]`), `[shell]`, `[reliability]`, `[scheduler]` | [`runtime.rs`](./runtime.rs) | `RuntimeConfig`, `DockerRuntimeConfig`, `ShellConfig`, `ReliabilityConfig`, `SchedulerConfig` |
 | `[runtime.local_jail]` | [`runtime_local_jail.rs`](./runtime_local_jail.rs) | `LocalJailConfig`: filesystem grants for the local OS jail |
+| `[runtime.openshell]` | [`runtime_openshell.rs`](./runtime_openshell.rs) | `OpenShellRuntimeConfig`: image, CPU, memory (whole MiB), idle TTL and `max_live` for the OpenShell sandbox backend |
 | `[scheduler_gate]` | [`scheduler_gate.rs`](./scheduler_gate.rs) | `SchedulerGateConfig`, `SchedulerGateMode` |
 | `[memory]` (engine, `engines.<id>`, `conversations`, `context`, `sources`, embedding settings) | [`memory.rs`](./memory.rs) | `MemoryConfig`, `MemoryEngineSettings`, `MemoryConversationsConfig`, `MemoryContextConfig`, `MemorySourceConfig` (see [`docs/specs/memory-v2.md`](../../../../../docs/specs/memory-v2.md)) |
 | `[task_sources]` | [`task_sources.rs`](./task_sources.rs) | `TaskSourcesConfig` |

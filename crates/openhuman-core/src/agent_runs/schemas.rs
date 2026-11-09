@@ -397,7 +397,7 @@ fn handle_triage_evaluate(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
                     // had. The envelope it builds may name a remote *source*,
                     // but the request itself is local (#5634).
                     let origin = crate::triage::local_trigger_origin();
-                    crate::security::turn_origin::with_origin(
+                    crate::core::runtime::turn_origin::with_origin(
                         origin,
                         crate::triage::apply_decision(&ctx, run.clone(), &envelope),
                     )

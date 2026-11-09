@@ -25,6 +25,7 @@ documents = ["openhuman-core/documents"]
 hosting = ["openhuman-core/hosting"]
 inbound-queues = ["openhuman-core/inbound-queues"]
 modules = ["openhuman-core/modules", "tinybus/modules"]
+security-module = ["openhuman-core/security-module"]
 voice = ["openhuman-core/voice"]
 web3 = ["openhuman-core/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).
@@ -200,3 +201,10 @@ required-features = ["profiles"]
 [[test]]
 name = "mcp_module"
 required-features = ["mcp", "modules", "skills", "storage-sqlite"]
+
+# While the runtime that admitted TinySecurity is live, another secret scope is
+# refused the module. Calls the core's security module directly, so it needs
+# the feature by name. Ignored by default: it needs the module's release.
+[[test]]
+name = "security_live_scope"
+required-features = ["security-module"]

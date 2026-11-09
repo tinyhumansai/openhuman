@@ -34,6 +34,11 @@ impl OpenHumanSessionHost {
             microcompact_keep_recent,
             autocompact_enabled,
             compaction,
+            keep_recent_tokens: self
+                .runtime_config
+                .as_deref()
+                .and_then(|config| config.context.keep_recent_tokens)
+                .map(u64::from),
             transcript_snapshot: None,
         };
         let driver = Arc::new(OpenHumanSessionDriver::new(
@@ -150,6 +155,56 @@ impl OpenHumanSessionHost {
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .context_window = context_window;
+                        // The thread's discovery options: chosen from the config
+                        // by the turn that creates the thread and recorded with
+                        // it, read back from the transcript on every other. A
+                        // thread that has history but no frozen prefix (imported
+                        // rows) is not new: it predates the pin and keeps
+                        // today's behaviour, however its prefix gets prepared.
+                        let generation_start =
+                            super::turn::starts_thread(new_session, view.raw_history);
+                        let discovery = crate::agent::tinyagents::discovery::resolve(
+                            &prelude.config.tool_search,
+                            view.raw_history,
+                            generation_start,
+                        );
+                        tracing::debug!(
+                            thread_id = ?prelude.thread_id,
+                            options = ?discovery.effective,
+                            recorded_now = discovery.record.is_some(),
+                            "[tool-search] discovery options for this turn"
+                        );
+                        options.run_context.config.discovery = discovery.effective.overrides();
+                        // Result expiry and reasoning replay are pinned the same
+                        // way, from `[context]`.
+                        let replay = crate::agent::tinyagents::replay_pin::resolve(
+                            &prelude
+                                .runtime_config
+                                .as_deref()
+                                .map_or_else(Default::default, |config| config.context.clone()),
+                            view.raw_history,
+                            generation_start,
+                        );
+                        tracing::debug!(
+                            thread_id = ?prelude.thread_id,
+                            options = ?replay.effective,
+                            recorded_now = replay.record.is_some(),
+                            "[context] history replay options for this turn"
+                        );
+                        options.run_context.config.result_expiry =
+                            replay.effective.expiry_overrides();
+                        options.run_context.config.replay_reasoning =
+                            Some(replay.effective.replay_reasoning);
+                        {
+                            let mut sidecar = options
+                                .run_context
+                                .data
+                                .session_sidecar
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            sidecar.discovery_record = discovery.record;
+                            sidecar.replay_record = replay.record;
+                        }
                         let original_input = request.input.clone();
                         let original_user_message = user_text_with_markers(&original_input);
                         prelude.begin_user_effects(request, &options.run_context.data);
@@ -219,6 +274,10 @@ impl OpenHumanSessionHost {
                                 )
                             })?;
                         middleware.transcript_snapshot = Some(transcript_snapshot);
+                        // A tail the thread pinned wins over the configured one.
+                        middleware.keep_recent_tokens = replay
+                            .effective
+                            .keep_recent_tokens_or(middleware.keep_recent_tokens);
                         options.run_context.data.context_middleware = Some(middleware);
                         options.run_context.data.current_tools = Some(current_tools);
                         if !turn.overrides.suppress_tools {
@@ -288,7 +347,14 @@ impl OpenHumanSessionHost {
                     channel: self.event_channel.clone(),
                 },
             }))
-            .retain_recorded_tools(!self.host_only && !self.host_env.fresh_tool_snapshot);
+            .retain_recorded_tools(!self.host_only && !self.host_env.fresh_tool_snapshot)
+            // `[context] prune_retired_tools`: a recorded declaration the host
+            // no longer offers (live or deferred) is dropped, not carried on.
+            .prune_retired_tools(
+                self.runtime_config
+                    .as_deref()
+                    .is_some_and(|config| config.context.prune_retired_tools),
+            );
         let meta = self.runtime_transcript_meta();
         builder = if let Some(locator) = injected_locator {
             match self.session.clone() {

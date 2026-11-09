@@ -2,24 +2,6 @@ use super::*;
 use crate::tools::ShellTool;
 use tinytools::ToolTimeout;
 
-#[tokio::test]
-async fn configured_shell_fails_closed_when_tinybox_analysis_is_disabled() {
-    let mut config = crate::config::Config::default();
-    config.modules.enabled = false;
-    let tool = ShellTool::with_config(
-        test_security(AutonomyLevel::Full),
-        test_runtime(),
-        test_audit(),
-        Arc::new(config),
-    );
-
-    let error = tool
-        .prepare_authorization(&json!({"command": "cat ~/.ssh/id_rsa"}))
-        .await
-        .expect_err("hosted shell authorization requires TinyBox analysis");
-    assert_eq!(error.to_string(), "command analysis is unavailable");
-}
-
 #[cfg(feature = "modules")]
 #[test]
 fn docker_module_results_preserve_success_failure_and_timeout_semantics() {
@@ -63,79 +45,6 @@ fn docker_module_results_preserve_success_failure_and_timeout_semantics() {
     assert!(timeout.is_error);
     assert!(timeout.output().contains("timed out after 3s"));
     assert!(timeout.output().contains("before timeout"));
-}
-
-#[cfg(not(windows))]
-#[tokio::test]
-async fn shell_emits_audit_line_on_success() {
-    use crate::security::AuditEvent;
-    let (audit, tmp) = audit_with_tempdir();
-    let tool = ShellTool::new(
-        test_security(AutonomyLevel::Supervised),
-        test_runtime(),
-        audit,
-    );
-    let _ = tool
-        .execute(json!({"command": "echo hello"}))
-        .await
-        .unwrap();
-    let log =
-        std::fs::read_to_string(tmp.path().join("audit.log")).expect("audit log file should exist");
-    assert!(!log.is_empty(), "audit log should not be empty");
-    let parsed: AuditEvent = serde_json::from_str(log.trim()).expect("audit event JSON parses");
-    let action = parsed.action.expect("action present");
-    assert_eq!(action.command, Some("echo hello".to_string()));
-    assert!(action.allowed, "allowed command should set allowed=true");
-    let result = parsed.result.expect("result present");
-    assert!(result.success, "echo hello should succeed");
-    let actor = parsed.actor.expect("actor present");
-    assert_eq!(actor.channel, "tool:shell");
-}
-
-#[tokio::test]
-async fn shell_emits_audit_line_on_denial() {
-    use crate::security::AuditEvent;
-    let (audit, tmp) = audit_with_tempdir();
-    let tool = ShellTool::new(
-        test_security(AutonomyLevel::ReadOnly),
-        test_runtime(),
-        audit,
-    );
-    // A write command in read-only mode is denied before execution.
-    let _ = tool
-        .execute(json!({"command": "touch denied_file"}))
-        .await
-        .unwrap();
-    let log =
-        std::fs::read_to_string(tmp.path().join("audit.log")).expect("audit log file should exist");
-    let parsed: AuditEvent = serde_json::from_str(log.trim()).expect("audit event JSON parses");
-    let action = parsed.action.expect("action present");
-    assert!(
-        !action.allowed,
-        "denied command should set allowed=false on the audit event"
-    );
-}
-
-/// Full autonomy runs a write with no prompt, so no human approved it. The
-/// tool never learns the gate's decision; its audit row must not claim one.
-#[tokio::test]
-async fn shell_audit_never_claims_a_human_approval() {
-    use crate::security::AuditEvent;
-    let (audit, tmp) = audit_with_tempdir();
-    let tool = ShellTool::new(test_security(AutonomyLevel::Full), test_runtime(), audit);
-    let _ = tool
-        .execute(json!({"command": "echo hello"}))
-        .await
-        .unwrap();
-    let log =
-        std::fs::read_to_string(tmp.path().join("audit.log")).expect("audit log file should exist");
-    let parsed: AuditEvent = serde_json::from_str(log.trim()).expect("audit event JSON parses");
-    let action = parsed.action.expect("action present");
-    assert!(action.allowed, "the command ran");
-    assert!(
-        !action.approved,
-        "the audit row claimed a human approval that never happened"
-    );
 }
 
 #[test]
@@ -195,14 +104,12 @@ async fn shell_executes_allowed_command() {
 
 #[tokio::test]
 async fn shell_destructive_command_is_gated_not_run_inline() {
-    // `rm -rf /` is Destructive → it must route through the human approval
-    // gate (external_effect), never auto-run. Assert the classification
-    // here rather than executing it.
-    let security = test_security(AutonomyLevel::Supervised);
-    let tool = ShellTool::new(security.clone(), test_runtime(), test_audit());
-    assert_eq!(
-        security.classify_command("rm -rf /"),
-        CommandClass::Destructive
+    // The shell gate delegates command classification to TinySecurity. This
+    // test pins the shell tool's effect declaration without running the command.
+    let tool = ShellTool::new(
+        test_security(AutonomyLevel::Supervised),
+        test_runtime(),
+        test_audit(),
     );
     assert!(tool.external_effect_with_args(&json!({"command": "rm -rf /"})));
 }

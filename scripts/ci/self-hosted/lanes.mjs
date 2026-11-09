@@ -193,7 +193,7 @@ function du(path) {
 /**
  * Where the scratch disk's space goes, for the ex63 profile only: `df -h` of
  * the scratch mount, then `du -sh` of every top-level entry under `target/` and
- * of the scratch dir's own top level (the Tinymold store, the checkout). A lane
+ * of the scratch dir's own top level (the checkout). A lane
  * that fills the disk (EX63 run 39292268284 ran it to 16 MB free) then shows
  * which directory grew, lane by lane. Returns null off ex63 or without a
  * scratch dir. `run` is injectable for tests.

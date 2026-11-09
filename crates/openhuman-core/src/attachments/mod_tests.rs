@@ -190,6 +190,9 @@ fn config(root: &Path) -> Config {
     }
 }
 
+// Refusing the unrelated file is enforced security: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn ready_media_artifact_in_files_folder_can_be_attached() {
     let temp = tempfile::tempdir().unwrap();

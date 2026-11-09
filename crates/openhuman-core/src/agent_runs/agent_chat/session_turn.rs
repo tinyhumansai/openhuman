@@ -1,9 +1,11 @@
 //! Agent chat turns with the full tool-using harness.
 
 use super::envelope::AgentChatReply;
+use crate::agent::session_host::setup_report::{reported, result_outcome};
 use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 use crate::core::Outcome;
+use tinyagents_harness::observability::turn_observer::SetupPhase;
 
 use super::guards::{
     effective_agent_chat_origin, enforce_user_prompt_or_reject, grant_turn_cwd,
@@ -222,7 +224,7 @@ fn definition_for_turn(
     }
 }
 
-pub(super) fn build_turn_agent(
+pub(super) async fn build_turn_agent(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     target: &AgentChatTarget<'_>,
@@ -231,10 +233,10 @@ pub(super) fn build_turn_agent(
     turn_model_source: Option<(crate::agent::tinyagents::TurnModelSource, String)>,
 ) -> Result<OpenHumanSessionHost, String> {
     match target {
-        AgentChatTarget::Orchestrator => OpenHumanSessionHost::from_config(ctx, config),
+        AgentChatTarget::Orchestrator => OpenHumanSessionHost::from_config(ctx, config).await,
         AgentChatTarget::AgentId(id) => {
             log::debug!("[inference] agent_chat building agent_id={id}");
-            OpenHumanSessionHost::from_config_for_agent(ctx, config, id)
+            OpenHumanSessionHost::from_config_for_agent(ctx, config, id).await
         }
         AgentChatTarget::Definition {
             definition,
@@ -244,6 +246,7 @@ pub(super) fn build_turn_agent(
         } => {
             let definition = definition_for_turn(definition, temperature);
             OpenHumanSessionHost::from_config_host_only(ctx, config, &definition, *host, session_id)
+                .await
         }
         AgentChatTarget::Definition {
             definition, host, ..
@@ -258,17 +261,22 @@ pub(super) fn build_turn_agent(
                         source,
                         model,
                     )
+                    .await
                 }
                 (host, None) => match host {
-                    Some(host) => OpenHumanSessionHost::from_config_with_host_tools(
-                        ctx,
-                        config,
-                        &definition,
-                        host,
-                        session_id,
-                    ),
+                    Some(host) => {
+                        OpenHumanSessionHost::from_config_with_host_tools(
+                            ctx,
+                            config,
+                            &definition,
+                            host,
+                            session_id,
+                        )
+                        .await
+                    }
                     None => {
                         OpenHumanSessionHost::from_config_with_definition(ctx, config, &definition)
+                            .await
                     }
                 },
                 (Some(_), Some(_)) => Err(anyhow::anyhow!(
@@ -504,7 +512,8 @@ pub(super) async fn agent_chat_reply_for_inner(
                 "[inference] agent_chat untrusted input on a host-only agent; guard skipped"
             );
         }
-        _ => enforce_user_prompt_or_reject(message, "local_ai.ops.agent_chat")
+        _ => enforce_user_prompt_or_reject(config, message, "local_ai.ops.agent_chat")
+            .await
             .map_err(anyhow::Error::msg)?,
     }
 
@@ -537,14 +546,19 @@ pub(super) async fn agent_chat_reply_for_inner(
                 "[inference] agent_chat rooting turn tools at cwd={}",
                 root.display()
             );
-            let mut agent = build_turn_agent(
-                &turn_ctx,
-                &scoped,
-                &target,
-                turn_session_id,
-                temperature,
-                turn_model_source.clone(),
+            let mut agent = reported(
+                SetupPhase::AgentOpen,
+                build_turn_agent(
+                    &turn_ctx,
+                    &scoped,
+                    &target,
+                    turn_session_id,
+                    temperature,
+                    turn_model_source.clone(),
+                ),
+                result_outcome,
             )
+            .await
             .map_err(anyhow::Error::msg)?;
             // Also thread it as the turn's workspace descriptor so acting tools
             // that read `ToolExecutionContext::workspace` (shell) resolve their
@@ -552,14 +566,19 @@ pub(super) async fn agent_chat_reply_for_inner(
             agent.set_workspace_descriptor(Some(tinytools::WorkspaceDescriptor::new(root.clone())));
             agent
         }
-        None => build_turn_agent(
-            &turn_ctx,
-            config,
-            &target,
-            turn_session_id,
-            temperature,
-            turn_model_source,
+        None => reported(
+            SetupPhase::AgentOpen,
+            build_turn_agent(
+                &turn_ctx,
+                config,
+                &target,
+                turn_session_id,
+                temperature,
+                turn_model_source,
+            ),
+            result_outcome,
         )
+        .await
         .map_err(anyhow::Error::msg)?,
     };
     // Thread-correct resume. `OpenHumanSessionHost::turn` would otherwise auto-load the
@@ -683,7 +702,7 @@ pub(super) async fn agent_chat_reply_for_inner(
     // Overwriting that with `Cli` would silently discard the caller's own
     // trust statement and hand every such turn the blanket CLI allowance
     // instead of the narrower one it asked for.
-    let run = crate::security::turn_origin::with_origin(
+    let run = crate::core::runtime::turn_origin::with_origin(
         effective_agent_chat_origin(&turn_ctx),
         agent.run_single_with_approval(message, None, approval),
     );

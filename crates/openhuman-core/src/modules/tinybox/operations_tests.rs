@@ -149,26 +149,6 @@ fn host_and_module_contract_versions_must_cover_the_full_host_surface() {
 }
 
 #[tokio::test]
-async fn command_facts_use_shell_contract_and_host_policy_facts() {
-    let (_service, client, calls) = mock_client().await;
-    let command = "printf 'hello'".to_owned();
-    let raw: contract::ShellAnalysis =
-        call_with_client(&client, ANALYZE_SHELL, (command.clone(),), false)
-            .await
-            .expect("typed shell facts");
-    let facts = crate::security::policy::CommandAnalysis::from_shell_analysis(raw);
-
-    assert_eq!(facts.literal_words, ["printf", "hello"]);
-    assert_eq!(
-        calls.lock().expect("call log lock").as_slice(),
-        [
-            (CAPABILITIES.to_owned(), json!([])),
-            (ANALYZE_SHELL.to_owned(), json!([command]))
-        ]
-    );
-}
-
-#[tokio::test]
 async fn provider_failure_does_not_echo_paths_or_request_values() {
     let (_service, client, calls) = mock_client().await;
     let secret_path = "/home/user/token";
@@ -351,8 +331,8 @@ async fn pinned_loader_serves_resolve_local_grants_from_pinned_tinybox_release()
     );
 
     let record = crate::modules::registry::find(MODULE_ID).expect("TinyBox registry record");
-    assert_eq!(record.version, "0.2.3");
-    assert_eq!(contract::CONTRACT_VERSION, (2, 1));
+    assert_eq!(record.version, "0.2.4");
+    assert_eq!(contract::CONTRACT_VERSION, (2, 3));
     let asset = tinybus::module::platform::host_candidates()
         .iter()
         .find_map(|host_key| record.asset_for(host_key))

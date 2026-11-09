@@ -29,12 +29,12 @@ The snapshot never talks to the backend. The user it reports is the payload the 
 - `latch_from_config(&Config)` / `config_recovered_this_session()`: recovery latch.
 - RPC `app_state.{snapshot, update_local_state}` via `all_app_state_controller_schemas` / `all_app_state_registered_controllers`.
 
-The signed-in identity for prompts and Sentry is `security::credentials::identity::peek_credential_user_identity()`, seeded from the same stored payload.
+The signed-in identity for prompts and Sentry is `credentials::identity::peek_credential_user_identity()`, seeded from the same stored payload.
 
 ## Calls into
 
 - `crate::config`: `config::rpc::load_config_with_timeout`.
-- `crate::security::credentials`: `session_support::{load_app_session_profile, session_state_from_profile, session_token_from_profile}`; `crate::security::keyring_consent` for `KeyringStatus` / `ConsentPreference`.
+- `crate::credentials`: `session_state::{load_app_session_profile, session_state_from_profile, session_token_from_profile}`; `crate::security::keyring_consent` for `KeyringStatus` / `ConsentPreference`.
 - `crate::inference`: `LocalAiStatus` via `inference::ops::inference_status`.
 - `crate::platform::service`: `ServiceState` / `ServiceStatus`; `crate::platform::health::snapshot`.
 

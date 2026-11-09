@@ -483,7 +483,7 @@ impl ProfileHost {
         let id = meta.profile_id;
         let config = self.forced_config(&self.layout_of(&id), &id);
         let has_credential = CoreContext::scope(self.records_context(&id), async {
-            super::credentials::has(&config)
+            super::credentials::has(&config).await
         })
         .await;
         ProfileSummary {

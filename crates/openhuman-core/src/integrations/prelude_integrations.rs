@@ -214,22 +214,24 @@ impl OpenHumanTurnPrelude {
             }
         };
         let servers = crate::mcp::registry::connections::cached_overview_for_config(config).await;
-        let sources = servers
-            .into_iter()
-            .map(|server| tinymcp_bus::McpToolSourceSpec {
+        let mut sources = Vec::with_capacity(servers.len());
+        for server in servers {
+            let tools =
+                crate::mcp::registry::tools_safe_for_agent(&server.server_id, server.tools).await;
+            sources.push(tinymcp_bus::McpToolSourceSpec {
                 server_id: server.server_id.clone(),
                 label: server.qualified_name.clone(),
                 family: server.qualified_name,
                 display_name: server.display_name,
-                tools: crate::mcp::registry::tools_safe_for_agent(&server.server_id, server.tools),
+                tools,
                 default_exposure: tinymcp_bus::McpToolExposure::Deferred,
                 direct_tools: Vec::new(),
-            })
-            .collect::<Vec<_>>();
+            });
+        }
         let prepared = match crate::mcp::module_client::McpConfiguredClient::for_config(config) {
             Ok(client) => client
                 .call(
-                    &crate::mcp::host::client_config(config),
+                    &crate::mcp::host::client_config(config).await,
                     tinymcp_bus::names::methods::PREPARE_AGENT_TOOLS,
                     (tinymcp_bus::PrepareAgentToolsRequest { sources },),
                 )
@@ -407,10 +409,11 @@ impl OpenHumanTurnPrelude {
         if let Some(config) = config.as_deref() {
             // The connection list and change events invalidate the process
             // snapshot, so the turn reads it without an idle-time refresh.
-            let current = match crate::integrations::composio::cached_active_integrations(config) {
-                Some(current) => Some((current, true)),
-                None => load_connected_integrations(config).await,
-            };
+            let current =
+                match crate::integrations::composio::cached_active_integrations(config).await {
+                    Some(current) => Some((current, true)),
+                    None => load_connected_integrations(config).await,
+                };
             if let Some((current, authoritative)) = current {
                 let mut mutable = self
                     .mutable
@@ -498,7 +501,7 @@ async fn load_connected_integrations(
     match crate::integrations::composio::fetch_connected_integrations_status(config).await {
         FetchConnectedIntegrationsStatus::Authoritative(connected) => Some((connected, true)),
         FetchConnectedIntegrationsStatus::Unavailable => {
-            let stale = crate::integrations::composio::cached_active_integrations(config);
+            let stale = crate::integrations::composio::cached_active_integrations(config).await;
             log::warn!(
                 "[session] integrations fetch unavailable; using stale snapshot={}",
                 stale.as_ref().map_or(0, Vec::len)

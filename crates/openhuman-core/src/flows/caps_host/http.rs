@@ -15,8 +15,8 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::config::{Config, HttpRequestConfig};
+use crate::flows::http_credentials::{HttpCredential, HttpCredentialsStore};
 use crate::modules::tinyflows as module;
-use crate::security::credentials::{HttpCredential, HttpCredentialsStore};
 use crate::security::policy::CommandClass;
 use crate::security::SecurityPolicy;
 use crate::tools::http_request_tool;
@@ -61,7 +61,7 @@ pub struct OpenHumanHttp {
 /// Resolve the exact name returned by the module's credential parser. Trim
 /// only at the host's encrypted-store lookup boundary to preserve the prior
 /// credential identifier policy.
-pub(crate) fn resolve_http_credential(
+pub(crate) async fn resolve_http_credential(
     store: &HttpCredentialsStore,
     credential_name: Option<&str>,
 ) -> Result<Option<HttpCredential>> {
@@ -74,7 +74,7 @@ pub(crate) fn resolve_http_credential(
             "http_request connection_ref has an empty http_cred name".to_owned(),
         ));
     }
-    match store.get(name) {
+    match store.get(name).await {
         Ok(Some(cred)) => {
             tracing::debug!(
                 target: "flows",
@@ -146,7 +146,7 @@ impl OpenHumanHttp {
         let security =
             Arc::new(current_tier_policy(&self.ctx, &self.config, &self.security).await?);
         let tier_decision =
-            enforce_node_tier_gate(&security, CommandClass::Network, "http_request")?;
+            enforce_node_tier_gate(&security, CommandClass::Network, "http_request").await?;
 
         let portability = module::portability_proxy(&self.config)
             .await
@@ -172,14 +172,13 @@ impl OpenHumanHttp {
         // is injected, so a stored secret never lands in the approval UI or
         // audit trail. Injection happens strictly after this point.
         let summary = inspected.redacted_summary;
-        let redacted = crate::security::approval::redact_args(&request);
         let (outcome, audit_id) = gate_call_for_tier(
             &self.ctx,
             &self.approval,
             tier_decision,
             TOOL_NAME,
             &summary,
-            redacted,
+            serde_json::to_value(&request).unwrap_or_default(),
         )
         .await;
         if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
@@ -190,7 +189,7 @@ impl OpenHumanHttp {
         // header server-side. An unknown name fails the request closed (see
         // `resolve_http_credential`) — we never send it unauthenticated.
         if let Some(cred) =
-            resolve_http_credential(&self.http_creds, inspected.credential_name.as_deref())?
+            resolve_http_credential(&self.http_creds, inspected.credential_name.as_deref()).await?
         {
             let (header, value) = cred
                 .to_header()

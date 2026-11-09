@@ -1,7 +1,7 @@
 use super::*;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::core::runtime::{ComponentSet, CoreContext, DomainSet};
-use crate::security::turn_origin::AgentTurnOrigin;
 use tinyagents_harness::{context::RunConfig, ids::CallId, tool::ToolExecutionContext};
 
 fn tool() -> CronTool {
@@ -86,15 +86,17 @@ async fn an_unknown_action_is_an_error_result_naming_the_valid_ones() {
 }
 
 #[test]
-fn every_member_is_hidden_so_the_collapse_actually_saves_something() {
-    // The load-bearing assertion. Adding an action to the table while
-    // leaving its member `Direct` would ship both surfaces and save
-    // nothing, and nothing else in the build would notice.
+fn the_collapsed_tool_is_deferred_and_its_members_are_advertised() {
+    // The load-bearing assertion. Shipping both the collapsed `cron` and its
+    // members up front would put every scheduler schema on the wire twice;
+    // the pack advertises the members, so `cron` itself waits for
+    // `tool_search`.
+    assert_eq!(tool().exposure(), ToolExposure::Deferred);
     for entry in tool().actions() {
         assert_eq!(
             entry.tool.exposure(),
-            ToolExposure::Hidden,
-            "`{}` is still advertised alongside the collapsed `cron` tool",
+            ToolExposure::Direct,
+            "`{}` is not advertised; the scheduling pack lists it",
             entry.tool.name()
         );
     }

@@ -21,6 +21,14 @@ fn raw_keyring_consent_registry_matches_its_independent_contract() {
                 "keyring_consent.retry_probe",
                 "openhuman.keyring_consent_retry_probe",
             ),
+            (
+                "keyring_consent.respond_operation",
+                "openhuman.keyring_consent_respond_operation",
+            ),
+            (
+                "keyring_consent.list_pending_operations",
+                "openhuman.keyring_consent_list_pending_operations",
+            ),
         ],
     };
     registry_test_support::verify_family_contract(
@@ -118,8 +126,8 @@ fn raw_keyring_consent_decide_rejects_before_persistence() {
 #[test]
 fn raw_keyring_consent_wire_fields_are_exact() {
     let entries = keyring_consent_entries();
-    assert_eq!(entries.len(), 3);
-    for entry in [&entries[0], &entries[2]] {
+    assert_eq!(entries.len(), 5);
+    for entry in [&entries[0], &entries[2], &entries[4]] {
         assert_eq!(
             crate::core::all::verify_wire_fields(&entry.schema.inputs, &[]),
             Ok(()),
@@ -149,5 +157,22 @@ fn raw_keyring_consent_wire_fields_are_exact() {
             &[("result", TypeSchema::Json, true)]
         ),
         Ok(())
+    );
+    assert_eq!(
+        crate::core::all::verify_wire_fields(
+            &entries[3].schema.inputs,
+            &[
+                ("request_id", TypeSchema::String, true),
+                ("approved", TypeSchema::Bool, true)
+            ],
+        ),
+        Ok(()),
+    );
+    assert_eq!(
+        crate::core::all::verify_wire_fields(
+            &entries[3].schema.outputs,
+            &[("result", TypeSchema::Bool, true)],
+        ),
+        Ok(()),
     );
 }

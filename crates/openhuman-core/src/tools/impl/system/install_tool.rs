@@ -5,24 +5,36 @@ use serde_json::Value;
 use tinyagents_harness_tools::exec::{ExecBackend, InstallTool};
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolRunContext, ToolTimeout};
 
-use crate::security::{AuditLogger, SecurityPolicy};
+use crate::config::Config;
+use crate::security::{AuditSink, SecurityPolicy};
 
 use super::exec_adapters::InstallGate;
 
 /// OpenHuman host adapter for TinyAgents' generic package installer.
 pub struct InstallToolTool {
     inner: InstallTool,
+    gate: Arc<InstallGate>,
+    backend: Arc<dyn ExecBackend>,
 }
 
 impl InstallToolTool {
     pub fn new(security: Arc<SecurityPolicy>) -> Self {
-        Self::with_audit(security, AuditLogger::disabled())
+        Self::with_audit(security, AuditSink::disabled())
     }
 
-    pub fn with_audit(security: Arc<SecurityPolicy>, audit: Arc<AuditLogger>) -> Self {
+    pub fn with_audit(security: Arc<SecurityPolicy>, audit: Arc<AuditSink>) -> Self {
+        Self::with_audit_and_config(security, audit, Arc::new(Config::default()))
+    }
+
+    pub fn with_audit_and_config(
+        security: Arc<SecurityPolicy>,
+        audit: Arc<AuditSink>,
+        config: Arc<Config>,
+    ) -> Self {
         Self::with_backend_and_environment(
             security,
             audit,
+            config,
             Arc::new(tinyagents_harness_tools::exec::NativeExecBackend::new(
                 tinyagents_harness_tools::exec::ShellFlavor::Posix,
             )),
@@ -32,18 +44,31 @@ impl InstallToolTool {
 
     fn with_backend_and_environment(
         security: Arc<SecurityPolicy>,
-        audit: Arc<AuditLogger>,
+        audit: Arc<AuditSink>,
+        config: Arc<Config>,
         backend: Arc<dyn ExecBackend>,
         environment: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString>,
     ) -> Self {
         let gate = Arc::new(InstallGate {
             security,
             audit,
+            config,
+            audit_context: crate::core::runtime::DispatchCtx::unbound(),
             environment,
         });
+        let inner = InstallTool::new(gate.clone(), Arc::clone(&backend));
         Self {
-            inner: InstallTool::new(gate, backend),
+            inner,
+            gate,
+            backend,
         }
+    }
+
+    fn invocation(&self, context: Option<&dyn ToolRunContext>) -> InstallTool {
+        InstallTool::new(
+            Arc::new(self.gate.for_tool_context(context)),
+            Arc::clone(&self.backend),
+        )
     }
 }
 
@@ -126,7 +151,7 @@ impl Tool for InstallToolTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        self.inner.execute(args).await
+        self.invocation(None).execute(args).await
     }
 
     async fn execute_with_context(
@@ -135,7 +160,7 @@ impl Tool for InstallToolTool {
         options: ToolCallOptions,
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
-        self.inner
+        self.invocation(context)
             .execute_with_context(args, options, context)
             .await
     }

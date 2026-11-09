@@ -39,5 +39,5 @@ async fn handle_runtime_command_telegram_new_reports_unavailable_storage() {
     );
     assert!(sent_text(&sent[0]).contains("failed to persist the chat binding"));
     assert!(sent_text(&sent[0]).contains("host storage is unavailable"));
-    assert_eq!(sent[0].thread_id.as_deref(), Some("42"));
+    assert_eq!(sent[0].thread_ts.as_deref(), Some("42"));
 }

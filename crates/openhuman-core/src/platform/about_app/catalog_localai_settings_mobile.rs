@@ -320,10 +320,12 @@ Capability {
         name: "Always Allow a Tool",
         domain: "security",
         category: CapabilityCategory::Settings,
-        description: "On an approval prompt, choose \"Always allow\" to stop being asked for that \
-                      tool. The choice is saved to your allow-list and persists across restarts; \
-                      remove it any time under Settings → Agent OS access to be prompted again. \
-                      Policy still blocks forbidden paths and high-risk commands regardless.",
+        description: "On an approval prompt, choose \"Always allow\" to save a human-approved \
+                      grant for that tool. Later calls can skip this prompt, but still pass the \
+                      active policy checks and hard blocks. Remove the tool under Settings → Agent \
+                      OS access to be prompted again. Optional Jev scoring is disabled in OpenHuman's \
+                      TinySecurity configuration; when enabled by a host, it can approve only the \
+                      exact pending request once and cannot create a lasting grant.",
         how_to: "Click \"Always allow\" on an approval prompt; manage the list in Settings → Agent OS access.",
         status: CapabilityStatus::Stable,
         privacy: None,

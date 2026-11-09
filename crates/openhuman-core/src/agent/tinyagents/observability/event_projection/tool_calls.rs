@@ -67,10 +67,13 @@ impl OpenhumanEventBridge {
             input,
             output,
             error,
-            // `started_at_ms`/`duration_ms`/`output_bytes` ride the crate
-            // event, but the bridge reads the outcome-capture side channel
-            // below: it also carries the classified failure and the tool's
-            // structured metadata, which the crate event does not.
+            input_bytes,
+            output_bytes,
+            // `started_at_ms`/`duration_ms` ride the crate event, but the
+            // bridge reads the outcome-capture side channel below: it also
+            // carries the classified failure and the tool's structured
+            // metadata, which the crate event does not. The two sizes are
+            // logged with the projection, whatever payload capture is on.
             ..
         } = event
         {
@@ -168,6 +171,8 @@ impl OpenhumanEventBridge {
                 success,
                 elapsed_ms,
                 has_structured = structured.is_some(),
+                input_bytes = ?input_bytes,
+                output_bytes = ?output_bytes,
                 "[tool-presentation] projecting ToolCallCompleted with resolved label/detail"
             );
             match &self.scope {

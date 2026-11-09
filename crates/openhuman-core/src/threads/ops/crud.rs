@@ -71,7 +71,16 @@ pub async fn thread_create_new(
     request: CreateConversationThreadRequest,
 ) -> Result<Outcome<ApiEnvelope<ConversationThreadSummary>>, String> {
     let dir = workspace_dir().await?;
-    let working_dir = super::working_dir::validate_working_dir(request.action_dir.as_deref())?;
+    let config = ctx
+        .load_config()
+        .await
+        .map_err(|e| format!("load config: {e}"))?;
+    let working_dir = super::working_dir::validate_working_dir_for_store(
+        request.action_dir.as_deref(),
+        &config,
+        &dir,
+    )
+    .await?;
     let id = format!("thread-{}", uuid::Uuid::new_v4());
     let now = chrono::Local::now();
     let title = format!("Chat {} {}", now.format("%b %-d"), now.format("%-I:%M %p"));
@@ -198,7 +207,7 @@ pub(super) async fn message_append_with_config(
     ctx: &DispatchCtx,
     mut request: AppendConversationMessageRequest,
     config: &crate::config::Config,
-    origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
     persistence_dir: &std::path::Path,
 ) -> Result<Outcome<ApiEnvelope<ConversationMessageRecord>>, ThreadsError> {
     // Reserve the private path map for values minted after core staging. A
@@ -301,7 +310,9 @@ pub(super) async fn message_append_with_config(
                 || (image_count > 0 && config.multimodal.max_images == 0)
                 || matches!(
                     origin,
-                    Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+                    Some(
+                        crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. }
+                    )
                 )
             {
                 return Err(ThreadsError::Message(
@@ -312,7 +323,9 @@ pub(super) async fn message_append_with_config(
                 let scope = crate::attachments::AttachmentAccessScope {
                     external_channel: matches!(
                         origin,
-                        Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+                        Some(
+                            crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. }
+                        )
                     ),
                     workspace: Some(workspace.clone()),
                     ..Default::default()

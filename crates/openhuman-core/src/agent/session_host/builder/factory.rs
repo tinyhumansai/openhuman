@@ -45,8 +45,8 @@ impl OpenHumanSessionHost {
     /// time (for example the Tauri web chat path, which routes to the
     /// welcome agent pre-onboarding) should call
     /// [`OpenHumanSessionHost::from_config_for_agent`] directly.
-    pub fn from_config(ctx: &DispatchCtx, config: &Config) -> Result<Self> {
-        Self::from_config_for_agent(ctx, config, "orchestrator")
+    pub async fn from_config(ctx: &DispatchCtx, config: &Config) -> Result<Self> {
+        Self::from_config_for_agent(ctx, config, "orchestrator").await
     }
 
     /// Constructs an `OpenHumanSessionHost` instance scoped to a specific agent
@@ -81,15 +81,11 @@ impl OpenHumanSessionHost {
     ///
     /// The welcome agent uses this entry point when routed from the
     /// Tauri web channel (see `channels::provider::web::build_session_agent`).
-    pub fn from_config_for_agent(
+    pub async fn from_config_for_agent(
         ctx: &DispatchCtx,
         config: &Config,
         agent_id: &str,
     ) -> Result<Self> {
-        // A hosted profile never receives the ordinary config-derived belt.
-        if crate::profiles::capabilities::ProfileCapabilities::in_ctx(ctx).is_some() {
-            return Self::from_config_for_agent_session(ctx, config, agent_id, None);
-        }
         let target_def = resolve_target_definition(config, agent_id)?;
 
         log::info!(
@@ -124,6 +120,7 @@ impl OpenHumanSessionHost {
             None,
             None,
         )
+        .await
     }
 
     /// Internal constructor that consumes the optionally-resolved agent
@@ -136,7 +133,7 @@ impl OpenHumanSessionHost {
     // `AgentDefinitionRegistry` singleton's init-once state. Still not part
     // of the crate's public API.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn build_session_agent_inner(
+    pub(crate) async fn build_session_agent_inner(
         ctx: &DispatchCtx,
         config: &Config,
         agent_id: &str,
@@ -148,6 +145,7 @@ impl OpenHumanSessionHost {
         Self::build_session_agent_inner_with_turn_model_source(
             ctx, config, agent_id, target_def, host_only, host, session_id, None,
         )
+        .await
     }
 }
 

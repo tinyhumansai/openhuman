@@ -135,8 +135,49 @@ pub fn body_flags_malformed(err: &str) -> bool {
     after_colon.starts_with("true")
 }
 
+/// User-facing message for a hosted voice request the backend's own upstream
+/// provider refused. Nothing the user can change, so no instruction. The
+/// failure behind it was already reported (or demoted as transient) by
+/// `authed_json`, so the backend-error classifier marks this message
+/// backend-owned and not reportable (no second event at the RPC boundary).
+pub const HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE: &str =
+    "The voice service is temporarily unavailable. Please try again later.";
+
+/// Whether `err` is exactly the neutral hosted-voice copy, bare or behind an
+/// RPC method name (`voice.reply_synthesize: <copy>`). Matching the sentence
+/// anywhere would also exempt another provider's error that happens to quote
+/// it, which `authed_json` never reported.
+fn is_hosted_voice_unavailable_copy(err: &str) -> bool {
+    let message = HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE;
+    let err = err.trim();
+    if err == message {
+        return true;
+    }
+    err.strip_suffix(message)
+        .and_then(|rest| rest.strip_suffix(": "))
+        .is_some_and(|method| {
+            !method.is_empty()
+                && method
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        })
+}
+
 /// Classify an error for the core's generic observability and chat surfaces.
 pub(crate) fn classify(provider: Option<&str>, err: &str) -> BackendErrorClassification {
+    // The neutral hosted-voice copy replaces a failure `authed_json` already
+    // reported or demoted: backend-owned, so the RPC boundary does not report
+    // it again. No token or kind, so chat display is unaffected.
+    if is_hosted_voice_unavailable_copy(err) {
+        return BackendErrorClassification {
+            provider_owned: false,
+            backend_owned: true,
+            reportable: false,
+            token: None,
+            kind: None,
+            malformed_bad_request: false,
+        };
+    }
     let provider_owned = provider.map_or_else(
         || is_managed_backend_envelope(err),
         |provider| matches!(provider, PROVIDER_LABEL | "OpenHuman"),

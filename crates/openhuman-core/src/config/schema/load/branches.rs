@@ -70,6 +70,7 @@ impl Config {
         config_path: std::path::PathBuf,
         resolution_source: ConfigResolutionSource,
         env: &(dyn EnvLookup + Send + Sync),
+        decrypt_secrets: bool,
     ) -> Result<Self> {
         #[cfg(unix)]
         {
@@ -244,7 +245,11 @@ impl Config {
             "Config loaded"
         );
         Box::pin(crate::config::migrations::run_pending(&mut config)).await;
-        let migrated_legacy_secrets = decrypt_config_secrets(&mut config, &openhuman_dir)?;
+        let migrated_legacy_secrets = if decrypt_secrets {
+            decrypt_config_secrets(&mut config, &openhuman_dir).await?
+        } else {
+            false
+        };
         if migrated_legacy_secrets {
             // One-time forced migration: a legacy `enc:` (XOR) secret was
             // upgraded to `enc2:` on read. Persist immediately so the

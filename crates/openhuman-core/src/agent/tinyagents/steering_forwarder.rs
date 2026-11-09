@@ -92,15 +92,15 @@ impl SteeringRegistrar for SharedSteeringRegistrar {
 /// interactive/channel parent turn reads the turn origin.
 pub(super) fn thread_label(
     subagent_scope: Option<&crate::agent::tinyagents::observability::SubagentScope>,
-    origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
 ) -> String {
     subagent_scope
         .map(|s| s.task_id.clone())
         .or_else(|| match origin {
-            Some(crate::security::turn_origin::AgentTurnOrigin::WebChat { thread_id, .. }) => {
-                Some(thread_id.clone())
-            }
-            Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+            Some(crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
+                thread_id, ..
+            }) => Some(thread_id.clone()),
+            Some(crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
                 reply_target,
                 ..
             }) => Some(reply_target.clone()),

@@ -145,7 +145,7 @@ async fn inference_gate_surfaces_construction_error() {
     let _inference = crate::inference::inference_test_guard_async().await;
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
-    seed_app_session_for_gate_test(&tmp);
+    seed_app_session_for_gate_test(&tmp).await;
     config.memory_provider = Some("no_such_slug:some-model".to_string());
 
     let g = graph(json!({
@@ -255,7 +255,7 @@ async fn inference_gate_probes_every_distinct_agent_node_role() {
     let _inference = crate::inference::inference_test_guard_async().await;
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
-    seed_app_session_for_gate_test(&tmp);
+    seed_app_session_for_gate_test(&tmp).await;
     config.chat_provider = Some("no_such_chat_slug:some-model".to_string());
     config.reasoning_provider = Some("no_such_reasoning_slug:some-model".to_string());
 

@@ -21,6 +21,7 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("create_pairing"),
+        schemas("import_legacy"),
         schemas("list"),
         schemas("revoke"),
     ]
@@ -31,6 +32,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("create_pairing"),
             handler: handle_create_pairing,
+        },
+        RegisteredController {
+            schema: schemas("import_legacy"),
+            handler: handle_import_legacy,
         },
         RegisteredController {
             schema: schemas("list"),
@@ -46,6 +51,7 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 pub(crate) fn all_controller_entries() -> Vec<ControllerEntry> {
     vec![
         ControllerEntry::bound(create_pairing_controller()),
+        ControllerEntry::bound(import_legacy_controller()),
         ControllerEntry::bound(list_controller()),
         ControllerEntry::bound(revoke_controller()),
     ]
@@ -122,6 +128,19 @@ pub fn schemas(function: &str) -> ControllerSchema {
             }],
         },
 
+        "import_legacy" => ControllerSchema {
+            namespace: "devices",
+            function: "import_legacy",
+            description: "Import available legacy device identities after direct user approval.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "imported",
+                ty: TypeSchema::U64,
+                comment: "Number of legacy devices recovered into TinySecurity.",
+                required: true,
+            }],
+        },
+
         "revoke" => ControllerSchema {
             namespace: "devices",
             function: "revoke",
@@ -174,6 +193,10 @@ fn handle_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture
     list_controller().invoke(ctx, params)
 }
 
+fn handle_import_legacy(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    import_legacy_controller().invoke(ctx, params)
+}
+
 fn handle_revoke(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     revoke_controller().invoke(ctx, params)
 }
@@ -191,6 +214,15 @@ fn list_controller() -> BoundRegisteredController {
     BoundRegisteredController::after_gate(schemas("list"), load_config, parse_list, run_list)
 }
 
+fn import_legacy_controller() -> BoundRegisteredController {
+    BoundRegisteredController::after_gate(
+        schemas("import_legacy"),
+        load_config,
+        parse_list,
+        run_import_legacy,
+    )
+}
+
 fn revoke_controller() -> BoundRegisteredController {
     BoundRegisteredController::after_gate(schemas("revoke"), load_config, parse_revoke, run_revoke)
 }
@@ -205,13 +237,30 @@ fn run_create_pairing(ctx: DispatchCtx, config: Config, label: Option<String>) -
     })
 }
 
-fn run_list(_ctx: DispatchCtx, config: Config, (): ()) -> ControllerFuture {
-    Box::pin(async move { to_json(crate::security::devices::rpc::devices_list(&config).await?) })
+fn run_list(ctx: DispatchCtx, config: Config, (): ()) -> ControllerFuture {
+    Box::pin(async move {
+        if ctx.invocation_source()
+            == crate::core::runtime::InvocationSource::AuthenticatedUserController
+        {
+            #[cfg(feature = "security-module")]
+            {
+                crate::modules::security::ensure_device_pairing_unlocked(&config).await?;
+                crate::security::devices::rpc::resume_device_tunnels(&config).await;
+            }
+        }
+        to_json(crate::security::devices::rpc::devices_list(&config).await?)
+    })
 }
 
-fn run_revoke(_ctx: DispatchCtx, config: Config, channel_id: String) -> ControllerFuture {
+fn run_import_legacy(ctx: DispatchCtx, config: Config, (): ()) -> ControllerFuture {
     Box::pin(async move {
-        to_json(crate::security::devices::rpc::devices_revoke(&config, channel_id).await?)
+        to_json(crate::security::devices::rpc::devices_import_legacy(&ctx, &config).await?)
+    })
+}
+
+fn run_revoke(ctx: DispatchCtx, config: Config, channel_id: String) -> ControllerFuture {
+    Box::pin(async move {
+        to_json(crate::security::devices::rpc::devices_revoke(&ctx, &config, channel_id).await?)
     })
 }
 

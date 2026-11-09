@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::memory::test_fixtures::{bind_reference, config_in, RefusingEngine};
+use crate::memory::test_fixtures::{bind_reference, config_in, RefusingEngine, SlowEngine};
 use tinymemory_api::{LearningKind, MemoryEngine, MemoryMeta, StoreItem};
 
 fn hit(text: &str, tags: &[&str]) -> Hit {
@@ -139,4 +139,23 @@ async fn an_engine_failure_is_an_error() {
     RefusingEngine::out_of_credits().bind(&config);
     let identity = identity(&config, "block-refused");
     assert!(read(&config, &identity, 500).await.is_err());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_beliefs_and_learnings_are_read_together() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let engine = SlowEngine::new(std::time::Duration::from_secs(3));
+    SlowEngine::bind(&engine, &config);
+    let identity = identity(&config, "block-parallel");
+
+    let started = tokio::time::Instant::now();
+    read(&config, &identity, 500).await.expect("a read");
+
+    assert_eq!(engine.reads(), 2);
+    assert_eq!(
+        started.elapsed(),
+        std::time::Duration::from_secs(3),
+        "two reads of 3 s overlap instead of adding up to 6 s"
+    );
 }

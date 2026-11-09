@@ -2,7 +2,7 @@
 # Changed-area filters shared by every PR CI workflow (dorny/paths-filter).
 #
 # Read by ci-lite.yml's `changes` job and by the lane runner behind
-# ci-fast.yml / ci-fast-hosted.yml (ci-lanes.yml). One copy, so the two flows
+# ci-fast-hosted.yml (ci-lanes.yml). One copy, so the two flows
 # cannot disagree about which areas a PR touches.
 #
 # An area switches a WHOLE suite on or off. Nothing downstream may narrow a
@@ -262,7 +262,7 @@ storage:
   - 'crates/openhuman-core/src/security/approval/**'
   - 'crates/openhuman-core/src/security/devices/**'
   - 'crates/openhuman-core/src/security/secret_storage/**'
-  - 'crates/openhuman-core/src/security/credentials/**'
+  - 'crates/openhuman-core/src/credentials/**'
   - 'crates/openhuman-core/src/desktop/notifications/**'
   - 'crates/openhuman-core/src/integrations/task_sources/**'
   - 'crates/openhuman-core/src/agent/orchestration/**'

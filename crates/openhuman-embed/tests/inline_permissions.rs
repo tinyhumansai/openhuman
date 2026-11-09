@@ -70,7 +70,10 @@ async fn scenario() {
                     .bare_prompt("Use probe then answer")
                     .tools(ToolScopeSpec::HostOnly),
             )
-            .tools(move |_| HostTurnTools::advertised(vec![Box::new(Probe(calls.clone()))]))
+            .tools(move |_| {
+                let calls = calls.clone();
+                Box::pin(async move { HostTurnTools::advertised(vec![Box::new(Probe(calls))]) })
+            })
     };
     let (requests, mut received) = tokio::sync::mpsc::unbounded_channel::<(
         ToolHookContext,
@@ -180,7 +183,10 @@ async fn repeated_permissions(runtime: &Runtime) {
                         .tools(ToolScopeSpec::HostOnly),
                 )
                 .tools(move |_| {
-                    HostTurnTools::advertised(vec![Box::new(Probe(tool_calls.clone()))])
+                    let tool_calls = tool_calls.clone();
+                    Box::pin(
+                        async move { HostTurnTools::advertised(vec![Box::new(Probe(tool_calls))]) },
+                    )
                 })
                 .can_use_tool(|_| {
                     Box::pin(async { ToolHookDecision::deny("first policy refused") })

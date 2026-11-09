@@ -327,7 +327,7 @@ impl Turn {
             .is_some_and(|k| !k.is_empty())
         {
             if let Some(endpoint) = self.request.inference_url.as_deref() {
-                if !is_safe_endpoint_for_bearer(endpoint) {
+                if !crate::security::is_safe_endpoint_for_bearer(endpoint) {
                     return Err(crate::error::CoreError::InsecureRoute {
                         method: AGENT_CHAT,
                         endpoint: sanitize_url_for_display(endpoint),
@@ -409,12 +409,15 @@ impl Turn {
             untrusted_input: self.untrusted_input,
             tools: self.tools.take(),
             attachments: std::mem::take(&mut self.attachments),
+            tool_discovery: self.tool_discovery.take(),
+            tool_discovery_force: std::mem::take(&mut self.tool_discovery_force),
+            context: std::mem::take(&mut self.context),
         };
         let dispatch = dispatch(self.target, self.request, self.seed.take(), usage, options);
 
         let reply = match self.origin {
             Some(origin) => {
-                openhuman_core::security::turn_origin::with_origin(origin, dispatch).await
+                openhuman_core::core::runtime::turn_origin::with_origin(origin, dispatch).await
             }
             None => dispatch.await,
         }

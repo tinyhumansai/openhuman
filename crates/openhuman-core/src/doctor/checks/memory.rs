@@ -215,21 +215,23 @@ async fn probe_selected_config(config: &crate::config::Config) -> EngineHealth {
 }
 
 async fn cortexdb_health(config: &crate::config::Config) -> EngineHealth {
-    use crate::security::credentials::AuthService;
+    use crate::credentials::AuthService;
     use tinymemory_integrations::{EngineCredential, EngineSettings};
 
     let profile = match AuthService::get_profile_read_only(
         config,
         crate::config::schema::MEMORY_CORTEXDB_KEY_NAME,
         None,
-    ) {
+    )
+    .await
+    {
         Ok(Some(profile)) => profile,
         Ok(None) => return EngineHealth::Down("CortexDB API key is not configured.".to_owned()),
         Err(_) => return EngineHealth::Down("CortexDB credentials could not be read.".to_owned()),
     };
     let key = match profile.kind {
-        crate::security::credentials::profiles::AuthProfileKind::Token => profile.token,
-        crate::security::credentials::profiles::AuthProfileKind::OAuth => {
+        crate::credentials::profiles::AuthProfileKind::Token => profile.token,
+        crate::credentials::profiles::AuthProfileKind::OAuth => {
             profile.token_set.map(|tokens| tokens.access_token)
         }
     };

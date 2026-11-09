@@ -4,7 +4,7 @@
 use super::*;
 
 /// The full registry for `cfg`, with a disabled browser.
-fn registry_for(tmp: &TempDir, cfg: &Config) -> Vec<Box<dyn Tool>> {
+async fn registry_for(tmp: &TempDir, cfg: &Config) -> Vec<Box<dyn Tool>> {
     let security = Arc::new(SecurityPolicy::default());
     let browser = BrowserConfig {
         enabled: false,
@@ -15,26 +15,27 @@ fn registry_for(tmp: &TempDir, cfg: &Config) -> Vec<Box<dyn Tool>> {
     all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &crate::config::HttpRequestConfig::default(),
         tmp.path(),
         cfg,
     )
+    .await
 }
 
-#[test]
-fn repl_tools_are_registered_by_default_with_the_recovery_tool() {
+#[tokio::test]
+async fn repl_tools_are_registered_by_default_with_the_recovery_tool() {
     let tmp = TempDir::new().unwrap();
     let cfg = test_config(&tmp);
     assert!(crate::inference::tokenjuice::repl_handle_active(&cfg));
-    let names = tool_names(&registry_for(&tmp, &cfg));
+    let names = tool_names(&registry_for(&tmp, &cfg).await);
     assert_contains_all(&names, tinyjuice_bus::tools::REPL_TOOLS);
     assert_contains_all(&names, &[tinyjuice_bus::tools::RETRIEVE]);
 }
 
-#[test]
-fn repl_tools_are_absent_whenever_a_handle_cannot_be_produced() {
+#[tokio::test]
+async fn repl_tools_are_absent_whenever_a_handle_cannot_be_produced() {
     let tmp = TempDir::new().unwrap();
     type Flip = fn(&mut Config);
     let off: [(&str, Flip); 4] = [
@@ -52,7 +53,7 @@ fn repl_tools_are_absent_whenever_a_handle_cannot_be_produced() {
             !crate::inference::tokenjuice::repl_handle_active(&cfg),
             "{label}"
         );
-        let names = tool_names(&registry_for(&tmp, &cfg));
+        let names = tool_names(&registry_for(&tmp, &cfg).await);
         for absent in tinyjuice_bus::tools::REPL_TOOLS {
             assert!(
                 !names.iter().any(|n| n == absent),
@@ -64,15 +65,15 @@ fn repl_tools_are_absent_whenever_a_handle_cannot_be_produced() {
     }
 }
 
-#[test]
-fn repl_tools_belong_to_the_inference_family_and_are_read_only() {
+#[tokio::test]
+async fn repl_tools_belong_to_the_inference_family_and_are_read_only() {
     use crate::core::all::DomainGroup;
     for name in tinyjuice_bus::tools::REPL_TOOLS {
         assert_eq!(tool_group(name), DomainGroup::Inference, "{name}");
     }
     let tmp = TempDir::new().unwrap();
     let cfg = test_config(&tmp);
-    let tools = registry_for(&tmp, &cfg);
+    let tools = registry_for(&tmp, &cfg).await;
     for name in tinyjuice_bus::tools::REPL_TOOLS {
         let tool = find_tool(&tools, name);
         assert_eq!(
@@ -83,12 +84,12 @@ fn repl_tools_belong_to_the_inference_family_and_are_read_only() {
     }
 }
 
-#[test]
-fn juice_off_registers_no_juice_or_recovery_tools() {
+#[tokio::test]
+async fn juice_off_registers_no_juice_or_recovery_tools() {
     let tmp = TempDir::new().unwrap();
     let mut cfg = test_config(&tmp);
     cfg.components.juice = false;
-    let names = tool_names(&registry_for(&tmp, &cfg));
+    let names = tool_names(&registry_for(&tmp, &cfg).await);
     for absent in tinyjuice_bus::tools::REPL_TOOLS.iter().chain([
         &tinyjuice_bus::tools::RETRIEVE,
         &tinyjuice_bus::tools::LEGACY_RETRIEVE,

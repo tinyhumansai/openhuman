@@ -14,14 +14,14 @@ use tempfile::TempDir;
 /// memory pipeline reverts to sending an empty bearer and Cohere 401s on
 /// every embed. Lock the round-trip: store under `embeddings:<slug>`, read
 /// it back; an unrelated provider must stay empty (no cross-bleed).
-#[test]
-fn resolve_api_key_returns_stored_embeddings_credential() {
+#[tokio::test]
+async fn resolve_api_key_returns_stored_embeddings_credential() {
     let tmp = TempDir::new().unwrap();
     let mut config = Config::default();
     config.config_path = tmp.path().join("config.toml");
 
     // Nothing stored yet → empty (the empty-key guard's "" input).
-    assert_eq!(resolve_api_key(&config, "cohere"), "");
+    assert_eq!(resolve_api_key(&config, "cohere").await, "");
 
     // Store a Cohere embeddings key exactly as `set_api_key` does.
     AuthService::from_config(&config)
@@ -32,11 +32,12 @@ fn resolve_api_key_returns_stored_embeddings_credential() {
             HashMap::new(),
             true,
         )
+        .await
         .unwrap();
 
     // Resolve returns it; a provider with no stored key stays empty.
-    assert_eq!(resolve_api_key(&config, "cohere"), "sk-cohere-test");
-    assert_eq!(resolve_api_key(&config, "voyage"), "");
+    assert_eq!(resolve_api_key(&config, "cohere").await, "sk-cohere-test");
+    assert_eq!(resolve_api_key(&config, "voyage").await, "");
 }
 
 #[tokio::test]
@@ -67,8 +68,8 @@ async fn custom_profile_is_retained_and_returned_while_embeddings_are_disabled()
 /// `custom:<url>` providers must look up under the `embeddings:custom`
 /// slug (the inline URL is not part of the credential key), mirroring the
 /// slug normalization in `embed`/`set_api_key`.
-#[test]
-fn resolve_api_key_normalizes_custom_prefix_to_custom_slug() {
+#[tokio::test]
+async fn resolve_api_key_normalizes_custom_prefix_to_custom_slug() {
     let tmp = TempDir::new().unwrap();
     let mut config = Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -81,10 +82,11 @@ fn resolve_api_key_normalizes_custom_prefix_to_custom_slug() {
             HashMap::new(),
             true,
         )
+        .await
         .unwrap();
 
     assert_eq!(
-        resolve_api_key(&config, "custom:http://localhost:1234"),
+        resolve_api_key(&config, "custom:http://localhost:1234").await,
         "sk-custom-test"
     );
 }
@@ -159,6 +161,7 @@ async fn conformant_custom_endpoint_verifies_and_sends_expected_request() {
         "sk-secret-key",
         Some(&base),
     )
+    .await
     .expect("provider builds");
 
     let vectors = embedder
@@ -288,14 +291,16 @@ async fn embed_managed_without_provider_errors_with_backend_unavailable() {
 /// `provider_from_config` (reused by other domains for direct embedding)
 /// routes managed construction through the config-aware factory too — pure
 /// construction, so it builds the cloud provider without a network call.
-#[test]
-fn provider_from_config_managed_builds_cloud() {
+#[tokio::test]
+async fn provider_from_config_managed_builds_cloud() {
     let tmp = TempDir::new().unwrap();
     let mut config = Config::default();
     config.config_path = tmp.path().join("config.toml");
     config.memory.embedding_provider = "managed".to_string();
     config.memory.embedding_model = "voyage-3-large".to_string();
     config.memory.embedding_dimensions = 1024;
-    let provider = provider_from_config(&config).expect("managed provider must build");
+    let provider = provider_from_config(&config)
+        .await
+        .expect("managed provider must build");
     assert_eq!(provider.name(), "cloud");
 }

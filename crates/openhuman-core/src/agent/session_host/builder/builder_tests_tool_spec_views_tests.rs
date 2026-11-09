@@ -10,18 +10,19 @@ use super::*;
 /// deep-cloning shape also satisfied).
 ///
 /// One spec is exempt by design — see the `use_skill` branch below.
-#[test]
-fn the_three_spec_views_share_their_leaf_schemas() {
+#[tokio::test]
+async fn the_three_spec_views_share_their_leaf_schemas() {
     crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
 
     let agent = crate::agent::OpenHumanSessionHost::from_config_for_agent(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         "orchestrator",
     )
+    .await
     .expect("orchestrator session build");
 
     let durable = agent.durable_tool_specs_arc();
@@ -128,8 +129,8 @@ fn the_three_spec_views_share_their_leaf_schemas() {
 /// the survivor must still be the exact entry that was handed in — a helper
 /// that rebuilt the kept spec would reintroduce the per-agent copy the sharing
 /// exists to remove, while every content-equality assertion still passed.
-#[test]
-fn dedup_keeps_the_original_allocation_of_the_winning_spec() {
+#[tokio::test]
+async fn dedup_keeps_the_original_allocation_of_the_winning_spec() {
     let first = std::sync::Arc::new(spec("research"));
     let mut shadow = spec("research");
     shadow.description = "the delegate that must lose".to_string();
@@ -156,8 +157,8 @@ fn dedup_keeps_the_original_allocation_of_the_winning_spec() {
 
 /// Failure path: an agent with no tools at all must still build, and its three
 /// spec views must be empty rather than desynchronised.
-#[test]
-fn spec_views_stay_consistent_for_a_tool_less_agent() {
+#[tokio::test]
+async fn spec_views_stay_consistent_for_a_tool_less_agent() {
     let model: std::sync::Arc<dyn tinyinference_llm::model::ChatModel<()>> =
         std::sync::Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
     let agent = crate::agent::session_host::test_support::with_fixture_model_name(

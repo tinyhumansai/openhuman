@@ -1,4 +1,24 @@
+use super::apply_module_scrubber;
 use super::scrub_secrets;
+
+fn module_redaction(_input: &str) -> Option<String> {
+    Some("module-redacted".to_owned())
+}
+
+#[test]
+fn module_scrubber_result_replaces_boot_floor_after_load() {
+    assert_eq!(
+        apply_module_scrubber("boot-floor", Some(module_redaction)),
+        "module-redacted"
+    );
+}
+
+#[test]
+fn unavailable_module_keeps_only_the_boot_floor_result() {
+    let floor = scrub_secrets("Bearer secret-value-that-must-not-leak");
+    let result = apply_module_scrubber(&floor, None);
+    assert!(!result.contains("secret-value-that-must-not-leak"));
+}
 
 #[test]
 fn scrubs_bearer_token() {

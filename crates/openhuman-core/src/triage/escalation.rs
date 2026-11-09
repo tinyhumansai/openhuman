@@ -263,7 +263,8 @@ async fn dispatch_target_agent(
         !definition.subagents.is_empty(),
         None,
         definition.temperature,
-    );
+    )
+    .await;
 
     // Synchronous child runs strip nested delegation tools regardless of the
     // target definition's allowlist. Keep that same authority boundary.

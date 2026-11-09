@@ -6,6 +6,10 @@ fn register_all_is_idempotent() {
 
     let options = InstallOptions::default();
     register_all(&options, DoctorRegistration::Process);
+    assert!(
+        openhuman_embed::__host::security::devices::global_tunnel_client_port().is_some(),
+        "TinyHumans installs the hosted device tunnel port"
+    );
     register_all(&options, DoctorRegistration::Process);
 }
 

@@ -102,6 +102,21 @@ describe('ModalShell', () => {
     expect(screen.queryByRole('button', { name: 'common.close' })).not.toBeInTheDocument();
   });
 
+  test('a modal without an onClose handler remains non-dismissible and has no inert close button', async () => {
+    render(
+      <ModalShell title="Core recovery" titleId="core-recovery-title">
+        <p>Recovery required</p>
+      </ModalShell>
+    );
+
+    await flushDeferredWork();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    dismissByOutsideClick();
+
+    expect(screen.getByRole('dialog', { name: 'Core recovery' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'common.close' })).not.toBeInTheDocument();
+  });
+
   test('does not dismiss from pointer input inside the dialog panel', () => {
     const { onClose } = renderModal();
 

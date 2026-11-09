@@ -1,7 +1,7 @@
 use super::{ops::doctor_report_with_options, DoctorOptions};
 use crate::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::config::Config;
-use crate::security::credentials::{AuthService, DEFAULT_AUTH_PROFILE_NAME};
+use crate::credentials::{AuthService, DEFAULT_AUTH_PROFILE_NAME};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -129,7 +129,7 @@ pub(super) fn catalog_body(ids: &[&str]) -> serde_json::Value {
     })
 }
 
-pub(super) fn store_provider_key(config: &Config, slug: &str, token: &str) {
+pub(super) async fn store_provider_key(config: &Config, slug: &str, token: &str) {
     AuthService::from_config(config)
         .store_provider_token(
             &crate::inference::provider::factory::auth_key_for_slug(slug),
@@ -138,6 +138,7 @@ pub(super) fn store_provider_key(config: &Config, slug: &str, token: &str) {
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .expect("seed scoped provider credential");
 }
 

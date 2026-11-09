@@ -4177,6 +4177,10 @@ const messages: TranslationMap = {
     'エージェントが1回のターンで実行可能なツールステップの最大数に達しましたが、処理を完了できませんでした。これは通常、ツールの実行が失敗し続けていることを意味します（多くの場合、Web取得のレート制限が原因です）。根本的な制限が解消されたら、このスレッドで同じ質問を再試行してください。',
   'chat_error.turn_timeout':
     'このターンは時間予算を超過して完了しなかったため、ハングアップを防ぐために停止されました。これは通常、ツール呼び出しまたは委任されたサブエージェントが停止したことを意味します。このスレッドで質問を再試行してください。',
+  'chat_error.disk_full':
+    'ディスクがいっぱいのため、この会話を保存できませんでした。ディスクの空き容量を確保してから、このスレッドでメッセージをもう一度送信してください。',
+  'chat_error.prompt_screened':
+    'OpenHumanのセキュリティチェックがこのメッセージを保留したため、モデルには送信されませんでした。アシスタント向けの指示（ウェブページやメールからの引用など）が含まれている場合は、それを削除して再試行してください。通常のメッセージも保留される場合は、セキュリティモジュールが利用できない可能性があります。OpenHumanを再起動して再試行してください。',
   'chat_error.empty_response':
     'モデルが空の応答を返しました。再試行してください。問題が解決しない場合は、別のモデルを試すか、[接続] → [APIキー] → [LLM]で設定を確認してください。',
   'chat_error.chat_template_rejected':
@@ -4638,6 +4642,10 @@ const messages: TranslationMap = {
     'マイクへのアクセスが拒否されました。システム設定で許可してから、もう一度お試しください。',
   'voice.live.error.micUnavailable': '利用可能なマイクがありません。',
   'voice.live.error.connection': '音声エージェントに接続できませんでした。',
+  'voice.live.error.insufficientCredits':
+    'ライブ音声にはクレジットが不足しています。続けるにはクレジットを追加してください。',
+  'voice.live.error.paidPlanRequired':
+    'ライブ音声には有料プランが必要です。続けるにはアップグレードしてください。',
   'voice.live.toolRunning': '{name}を実行中',
   'voice.live.toolOk': '{name}が完了しました',
   'voice.live.toolFailed': '{name}が失敗しました',
@@ -4994,11 +5002,6 @@ const messages: TranslationMap = {
   'userErrors.scope.cron': 'スケジュールジョブ',
   'userErrors.scope.workspace': 'ワークスペース',
   'userErrors.scope.memory': 'メモリー',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'ツール一覧',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'ツール合計数',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': '有効なツール',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP stdio ツール',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC ツール',
   'devOptions.toolPolicyDiagnostics.posture.title': 'ポリシー設定',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': '自律性レベル',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'ワークスペースのみ',
@@ -5446,6 +5449,55 @@ const messages: TranslationMap = {
   'settings.layout.corners.round': '丸み',
 
   'settings.layout.contrast.strong': '強',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'このコアにはポリシー診断が含まれていません。',
+  'devOptions.toolPolicyDiagnostics.policy.title': '有効なセキュリティポリシー',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': '自律性',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'ワークスペースのみ',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': '1 時間あたりの最大アクション数',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': '中リスクで承認を要求',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': '高リスクのコマンドをブロック',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': '許可されたコマンド',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    '明示的に許可されたコマンドはありません。',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'ポリシー',
+  'settings.approvalHistory.judgeScores':
+    '意図 {intent} · 可逆性 {reversible} · 情報流出 {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'キャッシュ済み',
+  'settings.approvalHistory.judgeExpires': '{time} に期限切れ',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': '常に許可するツール',
+  'keyring.settings.toolTrustDescription':
+    'このセキュリティ範囲では、これらのツールは承認を求めずに実行できます。',
+  'keyring.settings.toolTrustLoading': '許可されたツールを読み込み中…',
+  'keyring.settings.toolTrustLoadFailed': '許可されたツールを読み込めませんでした。',
+  'keyring.settings.toolTrustRevokeFailed': 'このツールの許可を取り消せませんでした。',
+  'keyring.settings.toolTrustEmpty': '常に許可されたツールはありません。',
+  'keyring.settings.toolTrustRetry': '再試行',
+  'keyring.settings.toolTrustRevoke': '取り消す',
+  'keyring.settings.toolTrustRevoking': '取り消し中…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'キーチェーンアクセスのリクエスト',
+  'keyring.operation.description':
+    'TinySecurity がキーチェーン項目へのアクセスを要求しています。判断する前に操作を確認してください。',
+  'keyring.operation.access': 'アクセス',
+  'keyring.operation.requester': '要求元',
+  'keyring.operation.origin': '発生元',
+  'keyring.operation.purpose': '目的',
+  'keyring.operation.name': 'キーチェーン項目',
+  'keyring.operation.access.read': '読み取り',
+  'keyring.operation.access.write': '書き込み',
+  'keyring.operation.access.delete': '削除',
+  'keyring.operation.allow': '今回のみ許可',
+  'keyring.operation.deny': '拒否',
+  'keyring.operation.submitting': '送信中…',
+  'keyring.operation.expires': 'リクエストは {seconds} 秒後に期限切れになります。',
+  'keyring.operation.error':
+    '判断を送信できませんでした。リクエストの期限が切れた可能性があります。',
 };
 
 export default messages;

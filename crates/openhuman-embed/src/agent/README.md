@@ -31,7 +31,7 @@ with the same id cannot both pass the duplicate check), then calls
  5. provider model         route stays per turn, never written to config
  6. MCP servers            appended to mcp_client.servers   (mcp feature)
  7. Composio credential    pinned for this agent only
- 8. memory binding         memory.agent_id, memory.root, memory.recall_each_turn_ms
+ 8. memory binding         memory.agent_id, memory.root, memory.recall_each_turn_ms, memory.memory_block_deadline_ms
  9. config escape hatch    then config_path is reset to the runtime's
 10. create dirs            action_dir, agents/<id>/, agents/<id>/skills/
 11. copy skills            (skills feature)

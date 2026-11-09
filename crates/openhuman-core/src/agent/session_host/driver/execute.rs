@@ -30,6 +30,7 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
             hosted_base.security_policy.clone(),
             Vec::new(),
         )
+        .with_config(hosted_base.config.clone())
         .with_input_screening(!request.run_context.data.untrusted_input_turn)
         .with_approval(request.run_context.data.approval.clone())
         .with_dispatch(request.run_context.data.dispatch_ctx());
@@ -79,6 +80,7 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
                 context_window,
                 request.run_context.data.thread_id.as_deref(),
             )
+            .await
             .map_err(driver_error)?;
 
         let mut messages: Vec<TranscriptMessage> = request
@@ -122,9 +124,19 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
             &request.run_context.data.recorded_tool_names,
         )?;
         // Text dialects need the positional registry to recover P-Format and code-style calls.
-        let run_context = request.run_context.data.clone().with_tool_dialect(
+        let mut run_context = request.run_context.data.clone().with_tool_dialect(
             tinyagents_harness::dialect::dispatcher_for_format(self.dispatcher.tool_call_format()),
         );
+        // The turn builds its own `RunConfig`, so the options the session set on
+        // this request's config (result expiry, reasoning replay, discovery)
+        // have to be handed over here.
+        run_context.session_run_options =
+            crate::agent::tinyagents::host::run_context::SessionRunOptions::of(
+                &request.run_context.config,
+            );
+        // The close and the required-output repair run after the loop, outside
+        // the harness's request builder, so they apply the same options.
+        let replay = run_context.session_run_options.clone();
         let cancellation = request.run_context.cancellation.clone();
         // Boxing avoids worker-stack overflow in debug builds.
         let turn = Box::pin(async move {
@@ -240,6 +252,7 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
                 &outcome,
                 close_by.map(|at| at.saturating_duration_since(Instant::now())),
                 supplemental_trace.as_ref(),
+                &replay,
             ) => close,
         };
         let mut output = close
@@ -310,6 +323,7 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
                         outcome.model_calls.saturating_add(1) as u32,
                         &mut repair_usage,
                         supplemental_trace.as_ref(),
+                        &replay,
                     );
                     tokio::pin!(repair);
                     tokio::select! {

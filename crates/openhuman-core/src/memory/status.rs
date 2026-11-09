@@ -8,7 +8,7 @@ use super::engine::{self, Binding};
 /// The memory slot's status for `config`: the bound engine and its health, or
 /// a `null` row with the reason memory is off.
 pub async fn subsystem_status(config: &Config) -> SubsystemStatus {
-    match engine::resolve(config) {
+    match engine::resolve(config).await {
         Binding::On(bound) => {
             let status = tinymemory_api::EngineStatus::from_engine(
                 bound.engine.descriptor(),

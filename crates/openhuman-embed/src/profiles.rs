@@ -192,7 +192,12 @@ impl ProfileRuntimeBuilder {
                 let backend = openhuman_core::storage::open(&url)
                     .await
                     .map_err(|e| ProfileError::Boot(format!("opening the storage backend: {e}")))?;
-                openhuman_core::storage::install(backend);
+                match openhuman_core::storage::StorageUrl::parse(&url) {
+                    Ok(parsed) => {
+                        openhuman_core::storage::install_with_driver(parsed.driver(), backend)
+                    }
+                    Err(_) => openhuman_core::storage::install(backend),
+                };
             }
         }
         // Install the session store only after other validations pass, but before

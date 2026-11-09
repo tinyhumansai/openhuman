@@ -1,19 +1,25 @@
-//! `cron` — the whole scheduler surface as one action-dispatched tool.
+//! `cron` — the whole scheduler surface as one action-dispatched tool, kept
+//! for callers that already name it.
 //!
-//! Replaces six advertised schemas (`cron_add`, `cron_list`, `cron_update`,
-//! `cron_remove`, `cron_run`, `cron_runs`) with one. Four of the six took a
-//! `job_id` and nothing else, so most of what they cost was their own name and
-//! description repeated six times.
+//! The model is shown the six per-operation tools instead (`cron_add`,
+//! `cron_list`, `cron_update`, `cron_remove`, `cron_run`, `cron_runs`), the
+//! members of the `scheduling` pack: each carries only its own fields, so a
+//! call to list or remove a job no longer ships the add schema with it, and
+//! the pack decides whether they are on the wire or behind `use_skill`. This
+//! tool is [`ToolExposure::Deferred`]: never listed up front, found by
+//! `tool_search`, and run when called by name, so a saved skill or an
+//! embedder's script that calls `cron` keeps working at no cost per call. An
+//! embedder's named scope that lists `cron` is widened to the six (see
+//! `widen_named_scope`), so it is shown them too.
 //!
 //! # It delegates; it does not reimplement
 //!
 //! Each action forwards to the tool that already served it. That is deliberate
 //! and not merely convenient: `cron_add` carries schedule parsing, timezone
 //! resolution and a `SecurityPolicy` check, and a second copy of any of that
-//! would be a place for the two to disagree about what is allowed. The old
-//! tools stay registered as [`ToolExposure::Hidden`] so a replayed transcript
-//! or a saved skill that names `cron_add` still works — they are simply off
-//! the wire.
+//! would be a place for the two to disagree about what is allowed. The
+//! per-operation tools are the advertised surface; this one only routes to
+//! them.
 //!
 //! # Permissions
 //!
@@ -39,10 +45,7 @@ use tinytools::collapse::{
     any_external_effect, args_without_action, merge_action_schemas, resolve, strictest_permission,
     unknown_action_message, CollapsedAction,
 };
-use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
-
-#[cfg(test)]
-use tinytools::ToolExposure;
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolExposure, ToolResult};
 
 /// The advertised name. A constant so the registration site, the legacy-alias
 /// carve-out and the tests cannot disagree.
@@ -106,8 +109,8 @@ impl CronTool {
 
 #[async_trait]
 impl Tool for CronTool {
-    fn exposure(&self) -> tinytools::ToolExposure {
-        tinytools::ToolExposure::Deferred
+    fn exposure(&self) -> ToolExposure {
+        ToolExposure::Deferred
     }
 
     fn name(&self) -> &str {

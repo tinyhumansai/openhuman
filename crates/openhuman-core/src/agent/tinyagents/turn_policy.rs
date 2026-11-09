@@ -58,7 +58,8 @@ pub(crate) fn provider_is_self_hosted(provider: &str, endpoint: Option<&str>) ->
     match kind {
         LocalProviderKind::LocalOpenai => endpoint
             .and_then(|url| url::Url::parse(url).ok())
-            .is_some_and(|parsed| crate::util::url::host_is_local(&parsed)),
+            .and_then(|parsed| parsed.host_str().map(str::to_owned))
+            .is_some_and(|host| crate::util::url::provider_host_is_local(&host)),
         _ => true,
     }
 }

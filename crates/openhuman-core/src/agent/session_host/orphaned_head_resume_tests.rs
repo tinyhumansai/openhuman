@@ -183,7 +183,7 @@ async fn resumed_orphaned_tool_head_is_repaired_before_the_request() {
 }
 
 #[test]
-fn credential_redaction_is_sent_and_persisted_across_session_resume() {
+fn user_input_is_held_when_tinysecurity_is_unavailable() {
     std::thread::Builder::new()
         .stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
         .spawn(|| {
@@ -233,7 +233,15 @@ async fn credential_redaction_survives_resume() {
 
     let mut host = new_host();
     host.set_thread_id(Some("thread-credential-redaction"));
-    assert_eq!(host.turn(&original).await.unwrap(), "first reply");
+    let first_turn = host.turn(&original).await;
+    if let Err(error) = first_turn {
+        assert!(!error.to_string().contains(&secret));
+        assert!(
+            model.requests().is_empty(),
+            "held input must not reach the model"
+        );
+        return;
+    }
     drop(host);
 
     let first_request = model

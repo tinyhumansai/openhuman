@@ -27,10 +27,10 @@ async fn persists_inbound_and_processed_turns_into_workspace_thread() {
             reply_target: "general".into(),
             content: "hello".into(),
             thread_ts: Some("thread-1".into()),
+            topic_id: None,
+            reply_to_id: None,
             timestamp: 0,
             sender_name: None,
-            reply_to_id: None,
-            topic_id: None,
         },
     );
     inbound_envelope.conversation.kind = tinychannels_bus::channel::ConversationKind::Channel;

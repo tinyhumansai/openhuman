@@ -595,7 +595,7 @@ fn classify_inference_error_local_offline_profile_is_not_an_expired_session() {
     // arm matches the sentinel anywhere in the chain.
     let raw = format!(
         "run_chat_task failed client_id=abc thread_id=t-1 error={}",
-        crate::security::credentials::session_support::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
+        crate::credentials::backend_credential::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
     );
     let classified = classify_inference_error(&raw);
 
@@ -623,7 +623,7 @@ fn classify_inference_error_a_mixed_fallback_chain_reports_the_provider_that_fai
     // than at the head of the ladder.
     let raw = format!(
         "All providers/models failed. Attempts: {}; openai API error (401 Unauthorized): invalid api key",
-        crate::security::credentials::session_support::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
+        crate::credentials::backend_credential::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
     );
     let classified = classify_inference_error(&raw);
 
@@ -641,7 +641,7 @@ fn classify_inference_error_the_refusal_alone_keeps_the_exhausted_chain_flag() {
     // aggregate metadata rides along instead of being dropped.
     let raw = format!(
         "All providers/models failed. Attempts: {}",
-        crate::security::credentials::session_support::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
+        crate::credentials::backend_credential::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
     );
     let classified = classify_inference_error(&raw);
 

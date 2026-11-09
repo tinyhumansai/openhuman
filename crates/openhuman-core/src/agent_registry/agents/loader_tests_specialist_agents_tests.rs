@@ -202,13 +202,13 @@ fn flow_discovery_is_registered_readonly_reasoning_scout() {
 
 #[test]
 fn specialist_agents_are_registered_with_narrow_tools() {
-    // Scheduling is the `scheduling` skill over the collapsed `cron` tool,
-    // with the time tools the orchestrator holds directly.
+    // Scheduling is the `scheduling` skill over the per-operation cron
+    // tools, with the time tools the orchestrator holds directly.
     let scheduling = crate::tools::toolpacks::pack("scheduling").expect("scheduling skill");
     assert_eq!(
         scheduling.tools,
-        &["cron"],
-        "the skill uses collapsed `cron`"
+        crate::cron::tools::CRON_OPERATION_TOOLS,
+        "the skill lists the per-operation cron tools"
     );
     match &find("orchestrator").tools {
         ToolScope::Named(names) => {

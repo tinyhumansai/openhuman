@@ -3778,6 +3778,10 @@ const messages: TranslationMap = {
     'Ajan, tek bir turda izin verilen en fazla araç adımını tamamlamadan çalıştırdı. Bu genellikle bir aracın sürekli başarısız olduğu anlamına gelir (çoğunlukla bir web isteğindeki hız sınırı). Alttaki sınır kalktığında aynı soruyu bu sohbet dizisinde yeniden deneyebilirsiniz.',
   'chat_error.turn_timeout':
     'Bu tur, tamamlanmadan süre bütçesini aştı ve takılı kalmaması için durduruldu. Bu genellikle bir araç çağrısının veya görev devredilen bir alt ajanın takıldığı anlamına gelir. Sorunuzu bu sohbet dizisinde yeniden deneyebilirsiniz.',
+  'chat_error.disk_full':
+    'Diskiniz dolu, bu yüzden bu sohbet kaydedilemedi. Diskte biraz yer açın, ardından mesajınızı bu sohbet dizisinde yeniden gönderin.',
+  'chat_error.prompt_screened':
+    "OpenHuman'ın güvenlik denetimi bu mesajı tuttuğu için mesaj modele gönderilmedi. Mesaj bir asistana yönelik talimatlardan alıntı içeriyorsa (örneğin bir web sayfasından veya e-postadan), yalnızca bu alıntıyı kaldırıp yeniden deneyin. Sıradan mesajlar da tutuluyorsa güvenlik modülü kullanılamıyor olabilir: OpenHuman'ı yeniden başlatıp tekrar deneyin.",
   'chat_error.empty_response':
     'Model boş bir yanıt döndürdü. Lütfen yeniden deneyin. Sorun devam ederse farklı bir model deneyin veya Bağlantılar → API anahtarları → LLM bölümünden kurulumunu kontrol edin.',
   'chat_error.chat_template_rejected':
@@ -4289,6 +4293,10 @@ const messages: TranslationMap = {
     'Mikrofon erişimi reddedildi. Sistem ayarlarınızdan izin verip yeniden deneyin.',
   'voice.live.error.micUnavailable': 'Kullanılabilir mikrofon yok.',
   'voice.live.error.connection': 'Ses ajanına bağlanılamadı.',
+  'voice.live.error.insufficientCredits':
+    'Canlı ses için daha fazla kredi gerekiyor. Devam etmek için kredi ekleyin.',
+  'voice.live.error.paidPlanRequired':
+    'Canlı ses ücretli bir plan gerektirir. Devam etmek için planınızı yükseltin.',
   'voice.live.toolRunning': '{name} çalışıyor',
   'voice.live.toolOk': '{name} tamamlandı',
   'voice.live.toolFailed': '{name} başarısız oldu',
@@ -4644,11 +4652,6 @@ const messages: TranslationMap = {
   'userErrors.scope.workspace': 'Çalışma alanı',
   'userErrors.scope.memory': 'Bellek',
 
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Araç envanteri',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Toplam araç',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Etkin araçlar',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP stdio araçları',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC araçları',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Politika durumu',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Özerklik düzeyi',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Yalnızca çalışma alanı',
@@ -5094,6 +5097,53 @@ const messages: TranslationMap = {
   'settings.appearance.showChatMascot': "Tiny'yi mesaj kutusunda göster",
   'onboarding.custom.localDefaultDisabledReason':
     'Yönetilen kurulum için bir OpenHuman hesabı gerekir. Yerel oturumda her hizmeti kendiniz yapılandırırsınız.',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'İlke tanılaması bu çekirdekte yer almıyor.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Etkin güvenlik ilkesi',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Özerklik',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Yalnızca çalışma alanında',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Saat başına en fazla eylem',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': 'Orta risk için onay iste',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Yüksek riskli komutları engelle',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'İzin verilen komutlar',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': 'Açıkça izin verilen komut yok.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'İlke',
+  'settings.approvalHistory.judgeScores':
+    'Amaç {intent} · Geri alınabilirlik {reversible} · Veri sızdırma {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'önbellekte',
+  'settings.approvalHistory.judgeExpires': 'Son kullanma {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Her zaman izin verilen araçlar',
+  'keyring.settings.toolTrustDescription':
+    'Bu araçlar, bu güvenlik kapsamında onay istemeden çalışabilir.',
+  'keyring.settings.toolTrustLoading': 'İzin verilen araçlar yükleniyor…',
+  'keyring.settings.toolTrustLoadFailed': 'İzin verilen araçlar yüklenemedi.',
+  'keyring.settings.toolTrustRevokeFailed': 'Bu araç izni geri alınamadı.',
+  'keyring.settings.toolTrustEmpty': 'Her zaman izin verilen araç yok.',
+  'keyring.settings.toolTrustRetry': 'Yeniden dene',
+  'keyring.settings.toolTrustRevoke': 'Geri al',
+  'keyring.settings.toolTrustRevoking': 'Geri alınıyor…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Anahtarlık erişim isteği',
+  'keyring.operation.description':
+    'TinySecurity bir anahtarlık öğesine erişim istiyor. Karar vermeden önce işlemi inceleyin.',
+  'keyring.operation.access': 'Erişim',
+  'keyring.operation.requester': 'İsteyen',
+  'keyring.operation.origin': 'Kaynak',
+  'keyring.operation.purpose': 'Amaç',
+  'keyring.operation.name': 'Anahtarlık öğesi',
+  'keyring.operation.access.read': 'Oku',
+  'keyring.operation.access.write': 'Yaz',
+  'keyring.operation.access.delete': 'Sil',
+  'keyring.operation.allow': 'Bir kez izin ver',
+  'keyring.operation.deny': 'Reddet',
+  'keyring.operation.submitting': 'Gönderiliyor…',
+  'keyring.operation.expires': 'İstek {seconds} sn içinde sona erecek.',
+  'keyring.operation.error': 'Kararınız gönderilemedi. İsteğin süresi dolmuş olabilir.',
 };
 
 export default messages;

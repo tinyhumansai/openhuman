@@ -1,10 +1,7 @@
 use super::*;
 use crate::config::Config;
 use crate::core::runtime::DispatchCtx;
-use crate::security::credentials::openai_oauth::{OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY};
-use crate::security::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
 use axum::{routing::post, Json, Router};
-use chrono::{Duration, Utc};
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -194,102 +191,6 @@ async fn inference_get_client_config_returns_safe_snapshot() {
         credits_bypass.get("reasoning"),
         Some(&serde_json::Value::Bool(false))
     );
-}
-
-#[tokio::test]
-async fn inference_openai_oauth_start_returns_authorize_payload() {
-    let (config, _tmp) = disabled_config();
-
-    let outcome = inference_openai_oauth_start(&config)
-        .await
-        .expect("oauth start");
-
-    assert!(outcome.value["authUrl"]
-        .as_str()
-        .unwrap()
-        .contains("auth.openai.com"));
-    assert_eq!(
-        outcome.value["redirectUri"].as_str(),
-        Some("http://127.0.0.1:1455/auth/callback")
-    );
-    assert_eq!(outcome.logs, vec!["openai oauth authorize url ready"]);
-}
-
-#[tokio::test]
-async fn inference_openai_oauth_complete_surfaces_state_errors() {
-    let (config, _tmp) = disabled_config();
-    let start = inference_openai_oauth_start(&config)
-        .await
-        .expect("oauth start");
-    let state = start.value["state"].as_str().unwrap();
-    let callback = format!("http://127.0.0.1:1455/auth/callback?code=fake&state=wrong-{state}");
-
-    let err = inference_openai_oauth_complete(&config, &callback)
-        .await
-        .expect_err("state mismatch should fail");
-
-    assert!(err.contains("state mismatch"));
-}
-
-#[tokio::test]
-async fn inference_openai_oauth_status_returns_connected_payload() {
-    let (config, tmp) = disabled_config();
-    let store = AuthProfilesStore::new(tmp.path(), false);
-    store
-        .upsert_profile(
-            AuthProfile::new_oauth(
-                OPENAI_PROVIDER_KEY,
-                OPENAI_OAUTH_PROFILE_NAME,
-                TokenSet {
-                    access_token: "oauth-access".into(),
-                    refresh_token: None,
-                    id_token: None,
-                    expires_at: Some(Utc::now() + Duration::hours(1)),
-                    token_type: Some("Bearer".into()),
-                    scope: None,
-                },
-            ),
-            true,
-        )
-        .unwrap();
-
-    let outcome = inference_openai_oauth_status(&config)
-        .await
-        .expect("oauth status");
-
-    assert_eq!(outcome.value["connected"], true);
-    assert_eq!(outcome.value["authMethod"], "oauth");
-    assert_eq!(outcome.logs, vec!["openai oauth status"]);
-}
-
-#[tokio::test]
-async fn inference_openai_oauth_disconnect_returns_removed_flag() {
-    let (config, tmp) = disabled_config();
-    let store = AuthProfilesStore::new(tmp.path(), false);
-    store
-        .upsert_profile(
-            AuthProfile::new_oauth(
-                OPENAI_PROVIDER_KEY,
-                OPENAI_OAUTH_PROFILE_NAME,
-                TokenSet {
-                    access_token: "oauth-access".into(),
-                    refresh_token: None,
-                    id_token: None,
-                    expires_at: None,
-                    token_type: Some("Bearer".into()),
-                    scope: None,
-                },
-            ),
-            true,
-        )
-        .unwrap();
-
-    let outcome = inference_openai_oauth_disconnect(&config)
-        .await
-        .expect("oauth disconnect");
-
-    assert_eq!(outcome.value["disconnected"], true);
-    assert_eq!(outcome.logs, vec!["openai oauth disconnected"]);
 }
 
 // ── is_unknown_provider_user_config (TAURI-RUST-X) ───────────────────────

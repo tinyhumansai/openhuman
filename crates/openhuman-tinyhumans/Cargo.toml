@@ -25,6 +25,7 @@ documents = ["openhuman-embed/documents"]
 hosting = ["openhuman-embed/hosting"]
 inbound-queues = ["openhuman-embed/inbound-queues"]
 modules = ["openhuman-embed/modules"]
+security-module = ["openhuman-embed/security-module"]
 voice = ["openhuman-embed/voice", "dep:tinyagents-live"]
 web3 = ["openhuman-embed/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).
@@ -53,9 +54,8 @@ e2e-test-support = ["openhuman-embed/e2e-test-support"]
 # `openhuman-core` edge (chain: core -> embed -> tinyhumans -> rpc -> hosts).
 openhuman-embed = { path = "../openhuman-embed", default-features = false }
 # The vendored TinyHumans SDK: the only crate in the tree that may depend on
-# it. `default-features = false` drops the Socket.IO client; realtime stays
-# on the core's own `platform::socket` transport.
-tinyhumans-sdk = { path = "../../vendor/tinyhumans-sdk", default-features = false }
+# it. The hosted socket port is implemented on the SDK supervisor.
+tinyhumans-sdk = { path = "../../vendor/tinyhumans-sdk", default-features = false, features = ["socket"] }
 # The `tool_search` ranker backed by TypeSafe's Jev, reached through the
 # backend's `/agent-integrations/openrouter/systemone` proxy with the same
 # credential every other backend call uses. Same vendored tree as the core's
@@ -79,6 +79,7 @@ async-trait = "0.1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 log = "0.4"
+parking_lot = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

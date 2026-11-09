@@ -141,12 +141,11 @@ impl ProfileCapabilities {
     }
 
     /// Build the exact selected belt for this profile and session.
-    pub fn turn_tools(&self, config: &Config, turn: TurnContext<'_>) -> HostTurnTools {
-        let mut supplied = self
-            .host
-            .as_ref()
-            .map(|host| host(turn))
-            .unwrap_or_default();
+    pub async fn turn_tools(&self, config: &Config, turn: TurnContext<'_>) -> HostTurnTools {
+        let mut supplied = match self.host.as_ref() {
+            Some(host) => host(turn).await,
+            None => HostTurnTools::default(),
+        };
         let dispatch = turn.dispatch_ctx();
         supplied
             .tools
@@ -174,17 +173,19 @@ impl ProfileCapabilities {
                     &config.workspace_dir,
                     &config.action_dir,
                 ));
-                let native = CoreContext::sync_scope(assembly, || {
+                let native = CoreContext::scope(assembly, async {
                     crate::tools::ops::all_tools(
                         Arc::new(config.clone()),
                         &security,
-                        crate::security::AuditLogger::disabled(),
+                        crate::security::AuditSink::disabled(),
                         &config.browser,
                         &config.http_request,
                         &config.action_dir,
                         config,
                     )
+                    .await
                 });
+                let native = native.await;
                 let supplied_names: HashSet<_> = supplied
                     .tools
                     .iter()
@@ -195,7 +196,7 @@ impl ProfileCapabilities {
                 // settings are the profile-owned source for them, so add the
                 // roles the binding advertises; `admits` still applies.
                 let search = if config.profile_providers.is_some() {
-                    crate::search::build_search_tools(config)
+                    crate::search::build_search_tools(config).await
                 } else {
                     Vec::new()
                 };
@@ -227,7 +228,11 @@ impl ProfileCapabilities {
     pub fn factory(self: &Arc<Self>, config: &Config) -> HostTools {
         let capabilities = Arc::clone(self);
         let config = config.clone();
-        Arc::new(move |turn| capabilities.turn_tools(&config, turn))
+        Arc::new(move |turn| {
+            let capabilities = Arc::clone(&capabilities);
+            let config = config.clone();
+            Box::pin(async move { capabilities.turn_tools(&config, turn).await })
+        })
     }
 
     /// Bind the permission callback to the owning profile's lease.

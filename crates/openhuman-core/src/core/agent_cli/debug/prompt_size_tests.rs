@@ -75,8 +75,8 @@ fn tools_are_ranked_by_cost_not_registration_order() {
 /// agent's visible set — not the whole registry. d149ab0f0 switched the
 /// session dump to `all_tool_refs()`, and every agent then reported the same
 /// ~200 tools, so every `tool_bytes` budget described a belt no agent carries.
-#[test]
-fn session_report_measures_the_visible_belt_not_the_registry() {
+#[tokio::test]
+async fn session_report_measures_the_visible_belt_not_the_registry() {
     crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
@@ -92,6 +92,7 @@ fn session_report_measures_the_visible_belt_not_the_registry() {
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
     crate::agent::session_host::test_support::install_model_fixture();
     crate::security::credentials::api_key::store_api_key(&config, "test-prompt-size-key")
+        .await
         .expect("test api key");
     let mut definition =
         crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only()
@@ -105,6 +106,7 @@ fn session_report_measures_the_visible_belt_not_the_registry() {
         &config,
         &definition,
     )
+    .await
     .expect("test-owned prompt-size session build");
 
     let dumped =

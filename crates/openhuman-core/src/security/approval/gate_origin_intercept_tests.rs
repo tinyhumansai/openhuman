@@ -290,10 +290,8 @@ async fn intercept_audited_id_is_none_for_denied_some_for_approved() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     };
     // `ApproveAlwaysForTool` resolves the parked prompt to Allow and, because
-    // the prompt persisted a row, returns its id. (Persisting the tool onto
-    // the `auto_approve` allowlist for *future* calls is the RPC handler's
-    // job — see `approval::rpc::approval_decide` — and the gate's allowlist
-    // short-circuit is covered by `auto_approve_tool_skips_prompt`.)
+    // the prompt persisted a row, returns its id. The RPC handler persists the
+    // future grant under this request's exact TinySecurity scope.
     gate.decide(&pending.request_id, ApprovalDecision::ApproveAlwaysForTool)
         .unwrap();
     let (first_outcome, first_id) = first.await.unwrap();
@@ -408,7 +406,7 @@ async fn flow_tool_trust_auto_allows_before_parking() {
     // short window even though it never inspects the "timed out" reason.
     let (gate, _dir, env) = expiry_gate().await;
     let gate = Arc::new(gate);
-    store::insert_flow_trust(&gate.config, "flow-trusted", "composio").unwrap();
+    gate.insert_flow_trust("flow-trusted", "composio").unwrap();
 
     let outcome = turn_origin::with_origin(
         flow_origin("flow-trusted", true),

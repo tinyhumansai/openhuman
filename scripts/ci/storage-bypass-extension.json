@@ -331,27 +331,7 @@
   },
   {
     "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/audit.rs",
-    "line": 330,
-    "text": "let _ = std::fs::rename(&old_name, &new_name);",
-    "occurrence": 1,
-    "classification": "unmigrated",
-    "reason": "Canonical security audit file rotation; native scoped stream migration must retain captured producer authority.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7431"
-  },
-  {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/audit.rs",
-    "line": 334,
-    "text": "std::fs::rename(&self.log_path, &rotated)?;",
-    "occurrence": 1,
-    "classification": "unmigrated",
-    "reason": "Canonical security audit file rotation; native scoped stream migration must retain captured producer authority.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7431"
-  },
-  {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/credentials/http_creds.rs",
+    "path": "crates/openhuman-core/src/flows/http_credentials.rs",
     "line": 426,
     "text": "if let Err(e) = fs::rename(&tmp_path, &self.path) {",
     "occurrence": 1,
@@ -361,29 +341,9 @@
   },
   {
     "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/credentials/profiles.rs",
-    "line": 577,
+    "path": "crates/openhuman-core/src/credentials/profiles.rs",
+    "line": 281,
     "text": "fs::rename(path, &candidate).with_context(|| {",
-    "occurrence": 1,
-    "classification": "classic",
-    "reason": "Historical encrypted credential persistence/quarantine publication; native secret port and trusted source/key ownership are separate.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
-  },
-  {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/credentials/profiles/persistence.rs",
-    "line": 277,
-    "text": "fs::rename(&tmp_path, &self.path).context(\"rename auth profile tmp -> store\")",
-    "occurrence": 1,
-    "classification": "classic",
-    "reason": "Classic encrypted credential profile fallback persists AuthProfilesData and token fields; native SecretStore routing requires trusted machine key and source admission, not directory rollback authority.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
-  },
-  {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/secret_storage/encrypted_file_backend.rs",
-    "line": 580,
-    "text": "std::fs::rename(legacy_path, &archive_path)",
     "occurrence": 1,
     "classification": "classic",
     "reason": "Historical encrypted credential persistence/quarantine publication; native secret port and trusted source/key ownership are separate.",

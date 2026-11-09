@@ -136,3 +136,17 @@ fn modules_list_output_keeps_its_wire_shape() {
     assert_eq!(wire["detail"], "modules are disabled in configuration");
     assert!(wire.get("source").is_none());
 }
+
+#[tokio::test]
+async fn tinymcp_storage_destination_is_bound_by_the_verified_loader() {
+    // A generic config cannot choose the callback destination. The verified
+    // loader injects the unique name bound to this exact module instance.
+    assert_eq!(
+        ops::module_config(&Config::default(), "tinymcp").await,
+        serde_json::json!({})
+    );
+    assert_eq!(
+        ops::module_config(&Config::default(), "tinybox").await,
+        serde_json::json!({})
+    );
+}

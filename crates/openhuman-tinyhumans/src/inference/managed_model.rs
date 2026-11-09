@@ -40,16 +40,20 @@ impl ManagedOptions {
     }
 
     #[cfg(test)]
-    fn resolve_bearer(&self, endpoint: &str) -> anyhow::Result<String> {
-        self.resolve_bearer_kind(endpoint).map(|(bearer, _)| bearer)
+    async fn resolve_bearer(&self, endpoint: &str) -> anyhow::Result<String> {
+        self.resolve_bearer_kind(endpoint)
+            .await
+            .map(|(bearer, _)| bearer)
     }
 
     /// The bearer, and whether it is the API key (`true`) or the session JWT.
-    fn resolve_bearer_kind(&self, endpoint: &str) -> anyhow::Result<(String, bool)> {
-        if let Some(key) = openhuman_embed::__host::security::credentials::api_key::get_api_key_in(
+    async fn resolve_bearer_kind(&self, endpoint: &str) -> anyhow::Result<(String, bool)> {
+        if let Some(key) = openhuman_embed::__host::credentials::api_key::get_api_key_in(
             &self.state_dir(),
             self.secrets_encrypt,
-        )? {
+        )
+        .await?
+        {
             if !is_managed_endpoint_for_api_key(endpoint) {
                 anyhow::bail!(
                     "refusing to send the TinyHumans API key to an unmanaged or insecure \
@@ -69,6 +73,7 @@ impl ManagedOptions {
             self.auth_profile_override.as_deref(),
             "openhuman_backend_model.resolve_bearer",
         )
+        .await
         .map(|token| (token, false))
     }
 }
@@ -104,15 +109,20 @@ pub(super) fn build_chat_model(
         model,
         super::tiers::MODEL_MANAGED_DEFAULT,
         move || {
-            let (bearer, api_key) = resolver_options
-                .resolve_bearer_kind(&resolver_endpoint)
-                .map_err(|error| tinyinference_llm::Error::Model(error.to_string()))?;
-            let kind = if api_key {
-                TinyHumansCredentialKind::ApiKey
-            } else {
-                TinyHumansCredentialKind::Session
-            };
-            Ok(TinyHumansCredential { bearer, kind })
+            let options = resolver_options.clone();
+            let endpoint = resolver_endpoint.clone();
+            Box::pin(async move {
+                let (bearer, api_key) = options
+                    .resolve_bearer_kind(&endpoint)
+                    .await
+                    .map_err(|error| tinyinference_llm::Error::Model(error.to_string()))?;
+                let kind = if api_key {
+                    TinyHumansCredentialKind::ApiKey
+                } else {
+                    TinyHumansCredentialKind::Session
+                };
+                Ok(TinyHumansCredential { bearer, kind })
+            })
         },
     )?
     .with_cache_namespace("openhuman")
@@ -141,7 +151,10 @@ pub(super) fn build_chat_model_for_inspection(
         endpoint,
         model,
         super::tiers::MODEL_MANAGED_DEFAULT,
-        move || Ok(bearer.clone()),
+        move || {
+            let bearer = bearer.clone();
+            Box::pin(async move { Ok(bearer) })
+        },
     )?
     .with_cache_namespace("openhuman")
     .with_native_tool_calling(native_tool_calling)

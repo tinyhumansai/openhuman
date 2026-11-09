@@ -1,5 +1,5 @@
 use super::*;
-use crate::security::turn_origin::{with_origin, TrustedAutomationSource};
+use crate::core::runtime::turn_origin::{with_origin, TrustedAutomationSource};
 use serde_json::json;
 use tinyflows_bus::schedule::types::Schedule;
 use tinyflows_bus::schedule::{ChannelConversationIdentity, ChannelSessionIdentity};
@@ -108,11 +108,11 @@ fn other_origins_have_no_job_origin() {
 #[tokio::test]
 async fn current_job_origin_reads_the_scoped_turn() {
     assert_eq!(
-        current_job_origin(crate::security::turn_origin::current().as_ref()),
+        current_job_origin(crate::core::runtime::turn_origin::current().as_ref()),
         None
     );
     let got = with_origin(web_turn("t-9"), async {
-        current_job_origin(crate::security::turn_origin::current().as_ref())
+        current_job_origin(crate::core::runtime::turn_origin::current().as_ref())
     })
     .await;
     assert!(matches!(got, Some(JobOrigin::Web { thread_id, .. }) if thread_id == "t-9"));

@@ -5,7 +5,7 @@
 use super::*;
 use crate::integrations::test_support::spawn_fake_integration_backend;
 use openhuman_embed::__host::config::Config;
-use openhuman_embed::__host::security::credentials::{
+use openhuman_embed::__host::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 use tempfile::TempDir;
@@ -26,7 +26,7 @@ fn integration_test_config(tmp: &TempDir, backend_url: &str) -> Config {
     cfg
 }
 
-fn store_test_session_token(config: &Config) {
+async fn store_test_session_token(config: &Config) {
     AuthService::from_config(config)
         .store_provider_token(
             APP_SESSION_PROVIDER,
@@ -35,6 +35,7 @@ fn store_test_session_token(config: &Config) {
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .expect("store test session token");
 }
 
@@ -46,18 +47,18 @@ fn find_tool<'a>(tools: &'a [Box<dyn Tool>], name: &str) -> &'a dyn Tool {
         .unwrap_or_else(|| panic!("tool `{name}` not registered"))
 }
 
-fn integration_tools_for_config(cfg: &Config) -> Vec<Box<dyn Tool>> {
-    build_integration_tools(cfg)
+async fn integration_tools_for_config(cfg: &Config) -> Vec<Box<dyn Tool>> {
+    build_integration_tools(cfg).await
 }
 
-#[test]
-fn integration_families_register_when_enabled_and_signed_in() {
+#[tokio::test]
+async fn integration_families_register_when_enabled_and_signed_in() {
     let tmp = TempDir::new().unwrap();
     let mut cfg = integration_test_config(&tmp, "https://backend.example.test");
-    store_test_session_token(&cfg);
+    store_test_session_token(&cfg).await;
     cfg.api_url = Some("https://backend.example.test".to_string());
 
-    let tools = integration_tools_for_config(&cfg);
+    let tools = integration_tools_for_config(&cfg).await;
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
     assert_eq!(
         names,
@@ -73,20 +74,21 @@ fn integration_families_register_when_enabled_and_signed_in() {
     );
 }
 
-#[test]
-fn integration_families_are_absent_when_signed_out() {
+#[tokio::test]
+async fn integration_families_are_absent_when_signed_out() {
     let tmp = TempDir::new().unwrap();
     let cfg = integration_test_config(&tmp, "https://backend.example.test");
-    assert!(integration_tools_for_config(&cfg).is_empty());
+    assert!(integration_tools_for_config(&cfg).await.is_empty());
 }
 
-#[test]
-fn disabled_families_are_skipped() {
+#[tokio::test]
+async fn disabled_families_are_skipped() {
     let tmp = TempDir::new().unwrap();
     let mut cfg = integration_test_config(&tmp, "https://backend.example.test");
     cfg.integrations.stock_prices.enabled = false;
-    store_test_session_token(&cfg);
+    store_test_session_token(&cfg).await;
     let names: Vec<String> = integration_tools_for_config(&cfg)
+        .await
         .iter()
         .map(|tool| tool.name().to_string())
         .collect();
@@ -98,8 +100,8 @@ async fn all_tools_executes_stock_family_against_fake_backend() {
     let backend = spawn_fake_integration_backend().await;
     let tmp = TempDir::new().unwrap();
     let cfg = integration_test_config(&tmp, &backend.base_url);
-    store_test_session_token(&cfg);
-    let tools = integration_tools_for_config(&cfg);
+    store_test_session_token(&cfg).await;
+    let tools = integration_tools_for_config(&cfg).await;
 
     let quote = find_tool(&tools, "stock_quote")
         .execute(serde_json::json!({ "symbol": "AAPL" }))
@@ -169,8 +171,8 @@ async fn all_tools_executes_google_places_family_against_fake_backend() {
     let backend = spawn_fake_integration_backend().await;
     let tmp = TempDir::new().unwrap();
     let cfg = integration_test_config(&tmp, &backend.base_url);
-    store_test_session_token(&cfg);
-    let tools = integration_tools_for_config(&cfg);
+    store_test_session_token(&cfg).await;
+    let tools = integration_tools_for_config(&cfg).await;
 
     let search = find_tool(&tools, "google_places_search")
         .execute(serde_json::json!({

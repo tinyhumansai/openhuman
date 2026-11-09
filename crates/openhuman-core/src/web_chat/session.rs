@@ -144,7 +144,7 @@ fn effective_session_config(
     effective
 }
 
-pub(super) fn build_session_agent(
+pub(super) async fn build_session_agent(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     client_id: &str,
@@ -169,7 +169,8 @@ pub(super) fn build_session_agent(
         &effective,
         target_agent_id,
         Some(thread_id),
-    );
+    )
+    .await;
 
     agent_result
         .map(|mut agent| {
@@ -467,7 +468,8 @@ pub(crate) async fn checkout_session_agent(
                     &target_agent_id,
                     model_override,
                     temperature,
-                )?,
+                )
+                .await?,
                 fingerprint,
             )
         }
@@ -480,7 +482,8 @@ pub(crate) async fn checkout_session_agent(
                 &target_agent_id,
                 model_override,
                 temperature,
-            )?,
+            )
+            .await?,
             fingerprint,
         ),
     };

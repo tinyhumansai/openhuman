@@ -37,8 +37,8 @@ use super::web_errors::{
 };
 use crate::agent::queued_turn::QueuedPayload;
 use crate::core::events::DomainEvent;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::core::runtime::DispatchCtx;
-use crate::security::turn_origin::AgentTurnOrigin;
 use tinyagents_harness::progress::AgentProgress;
 
 #[path = "turn_host_progress.rs"]
@@ -156,6 +156,7 @@ impl WebHost {
         // tools are all built on the thread's folder.
         let thread_dir = crate::threads::ops::thread_working_dir(
             &ctx,
+            &config,
             config.workspace_dir.clone(),
             &request.thread_id,
         )

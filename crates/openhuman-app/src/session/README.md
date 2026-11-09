@@ -80,7 +80,7 @@ stable `PREFIX:` so the frontend can classify it without parsing prose.
   login behavior belong there.
 - Credential storage and what the core does with a credential (user-dir
   activation, gated services) belong to the core
-  (`security::credentials`).
+  (`credentials`).
 - `get_active_user_id` is a separate command in `lib.rs`, not part of this
   module.
 

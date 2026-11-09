@@ -4,7 +4,7 @@ use axum::{
     routing::get,
     Router,
 };
-use openhuman_embed::__host::security::credentials::{AuthService, APP_SESSION_PROVIDER};
+use openhuman_embed::__host::credentials::{AuthService, APP_SESSION_PROVIDER};
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
@@ -39,10 +39,11 @@ fn catalog_config(tmp: &TempDir, base_url: &str) -> Config {
     crate::hosted::test_support::config(tmp, base_url)
 }
 
-fn without_session(config: &Config) {
-    crate::hosted::test_support::store_session(config, "fixture-session-to-remove");
+async fn without_session(config: &Config) {
+    crate::hosted::test_support::store_session(config, "fixture-session-to-remove").await;
     AuthService::from_config(config)
         .remove_profile(APP_SESSION_PROVIDER, "default")
+        .await
         .expect("remove fixture session");
 }
 
@@ -82,18 +83,20 @@ fn the_catalog_url_targets_the_openrouter_catalog_on_the_control_plane() {
     );
 }
 
-#[test]
-fn limits_request_is_none_for_a_blank_model() {
-    assert!(limits_request("  ", &Config::default()).is_none());
+#[tokio::test]
+async fn limits_request_is_none_for_a_blank_model() {
+    assert!(limits_request("  ", &Config::default()).await.is_none());
 }
 
-#[test]
-fn limits_request_lists_the_catalog_keyed_by_the_inference_base() {
+#[tokio::test]
+async fn limits_request_lists_the_catalog_keyed_by_the_inference_base() {
     let config = Config {
         api_url: Some("https://api.tinyhumans.ai".into()),
         ..Config::default()
     };
-    let request = limits_request("some/model", &config).expect("managed limits request");
+    let request = limits_request("some/model", &config)
+        .await
+        .expect("managed limits request");
     assert_eq!(request.endpoint, "https://api.tinyhumans.ai/openai/v1");
     assert!(request
         .listing_url
@@ -101,36 +104,41 @@ fn limits_request_lists_the_catalog_keyed_by_the_inference_base() {
         .is_some_and(|url| url.ends_with("/openai/v1/models?catalog=openrouter")));
 }
 
-#[test]
-fn a_live_session_wins_over_the_provider_key() {
+#[tokio::test]
+async fn a_live_session_wins_over_the_provider_key() {
     assert_eq!(
-        listing_auth(SessionTokenCheck::Live("jwt".into()), "provider-key"),
+        listing_auth(
+            SessionTokenCheck::Live("jwt".into()),
+            Some("jwt"),
+            "provider-key",
+        )
+        .await,
         ListingAuth::Session("jwt".into())
     );
 }
 
 /// A self-hosted entry that stores its own key still lists its catalog when the
 /// user is signed out; before the move this fell back to that key.
-#[test]
-fn without_a_live_session_the_entrys_provider_key_authenticates() {
+#[tokio::test]
+async fn without_a_live_session_the_entrys_provider_key_authenticates() {
     assert_eq!(
-        listing_auth(SessionTokenCheck::Absent, " provider-key "),
+        listing_auth(SessionTokenCheck::Absent, None, " provider-key ").await,
         ListingAuth::ProviderKey("provider-key".into())
     );
     assert_eq!(
-        listing_auth(SessionTokenCheck::Expired, "provider-key"),
+        listing_auth(SessionTokenCheck::Expired, Some("old-jwt"), "provider-key").await,
         ListingAuth::ProviderKey("provider-key".into())
     );
 }
 
-#[test]
-fn with_neither_credential_the_catalog_is_empty() {
+#[tokio::test]
+async fn with_neither_credential_the_catalog_is_empty() {
     assert_eq!(
-        listing_auth(SessionTokenCheck::Absent, ""),
+        listing_auth(SessionTokenCheck::Absent, None, "").await,
         ListingAuth::Empty("no session")
     );
     assert_eq!(
-        listing_auth(SessionTokenCheck::Expired, "  "),
+        listing_auth(SessionTokenCheck::Expired, Some("old-jwt"), "  ").await,
         ListingAuth::Empty("session expired")
     );
 }
@@ -141,7 +149,7 @@ async fn managed_catalog_treats_http_401_as_signed_out_only_for_an_attached_sess
         catalog_server(StatusCode::UNAUTHORIZED, "session token rejected").await;
     let tmp = TempDir::new().unwrap();
     let config = catalog_config(&tmp, &base_url);
-    crate::hosted::test_support::store_session(&config, "fixture-live-session");
+    crate::hosted::test_support::store_session(&config, "fixture-live-session").await;
 
     let result = list_models(
         &config,
@@ -166,7 +174,7 @@ async fn managed_catalog_keeps_provider_key_401_as_a_provider_error() {
         catalog_server(StatusCode::UNAUTHORIZED, "provider key rejected").await;
     let tmp = TempDir::new().unwrap();
     let config = catalog_config(&tmp, &base_url);
-    without_session(&config);
+    without_session(&config).await;
 
     let error = list_models(
         &config,
@@ -191,7 +199,7 @@ async fn managed_catalog_does_not_infer_http_status_from_error_payload_text() {
         catalog_server(StatusCode::OK, r#"{"error":"401 session expired"}"#).await;
     let tmp = TempDir::new().unwrap();
     let config = catalog_config(&tmp, &base_url);
-    crate::hosted::test_support::store_session(&config, "fixture-live-session");
+    crate::hosted::test_support::store_session(&config, "fixture-live-session").await;
 
     let error = list_models(
         &config,

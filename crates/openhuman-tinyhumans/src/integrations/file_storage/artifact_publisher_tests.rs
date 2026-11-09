@@ -158,6 +158,32 @@ async fn read_only_autonomy_blocks_sharing_before_any_network_call() {
 }
 
 #[tokio::test]
+async fn file_upload_fails_closed_when_tinysecurity_cannot_check_the_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("private.png");
+    std::fs::write(&file, b"private").unwrap();
+    let mut version = ArtifactVersion::new(
+        1,
+        file.display().to_string(),
+        tiny_artifacts::ArtifactAuthor::Agent,
+        "agent",
+        1,
+    );
+    version.file = Some(FileRef {
+        key: file.display().to_string(),
+        size_bytes: 7,
+        media_type: Some("image/png".into()),
+    });
+    let mut record = ArtifactRecord::pending("private-1", "Private", ArtifactKind::Image, 1);
+    record.versions.push(version.clone());
+
+    let error = upload_body(&record, &version, None, None)
+        .await
+        .expect_err("an unavailable TinySecurity path floor must block uploads");
+    assert!(error.to_string().contains("[policy-blocked]"), "{error}");
+}
+
+#[tokio::test]
 async fn sharing_through_the_service_records_and_reuses_the_link() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

@@ -3904,6 +3904,10 @@ const messages: TranslationMap = {
     'Agen sudah menjalankan jumlah langkah alat maksimum dalam satu giliran tanpa selesai. Biasanya ini berarti sebuah alat terus gagal (sering karena batas laju pada pengambilan web). Anda dapat mengulang pertanyaan yang sama di utas ini setelah batasnya pulih.',
   'chat_error.turn_timeout':
     'Giliran ini melewati batas waktunya tanpa selesai dan dihentikan agar tidak menggantung. Biasanya ini berarti panggilan alat atau sub-agen yang didelegasikan macet. Anda dapat mengulang pertanyaan Anda di utas ini.',
+  'chat_error.disk_full':
+    'Disk Anda penuh, sehingga percakapan ini tidak dapat disimpan. Kosongkan sebagian ruang disk, lalu kirim ulang pesan Anda di utas ini.',
+  'chat_error.prompt_screened':
+    'Pemeriksaan keamanan OpenHuman menahan pesan ini, jadi pesan tidak dikirim ke model. Jika pesan mengutip instruksi yang ditujukan untuk asisten (misalnya dari halaman web atau email), hapus instruksi itu lalu coba lagi. Jika pesan biasa juga ditahan, modul keamanan mungkin tidak tersedia: mulai ulang OpenHuman lalu coba lagi.',
   'chat_error.empty_response':
     'Model mengembalikan respons kosong. Silakan coba lagi. Jika terus terjadi, coba model lain atau periksa pengaturannya di Koneksi → Kunci API → LLM.',
   'chat_error.chat_template_rejected':
@@ -4395,6 +4399,10 @@ const messages: TranslationMap = {
     'Akses mikrofon ditolak. Izinkan di pengaturan sistem lalu coba lagi.',
   'voice.live.error.micUnavailable': 'Tidak ada mikrofon yang tersedia.',
   'voice.live.error.connection': 'Tidak dapat terhubung ke agen suara.',
+  'voice.live.error.insufficientCredits':
+    'Suara langsung memerlukan lebih banyak kredit. Tambahkan kredit untuk melanjutkan.',
+  'voice.live.error.paidPlanRequired':
+    'Suara langsung memerlukan paket berbayar. Tingkatkan paket untuk melanjutkan.',
   'voice.live.toolRunning': 'Menjalankan {name}',
   'voice.live.toolOk': '{name} selesai',
   'voice.live.toolFailed': '{name} gagal',
@@ -4648,11 +4656,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'Penjara proses penamaan',
   'settings.sandbox.backendHint.bubblewrap': 'Namespace pengguna ringan',
   'settings.sandbox.backendHint.none': 'Jalankan alat secara langsung, tidak terisolasi',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Inventaris alat',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Jumlah alat',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Alat aktif',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'Alat MCP stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'Alat JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Postur kebijakan',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Tingkat otonomi',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Hanya ruang kerja',
@@ -5136,6 +5139,56 @@ const messages: TranslationMap = {
   'flows.nodeKind.loop': 'Loop',
 
   'settings.layout.corners.round': 'Membulat',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt':
+    'Diagnostik kebijakan tidak disertakan dalam core ini.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Kebijakan keamanan aktif',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Otonomi',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Hanya ruang kerja',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Maksimum tindakan per jam',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Perlu persetujuan untuk risiko sedang',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Blokir perintah berisiko tinggi',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Perintah yang diizinkan',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Tidak ada perintah yang diizinkan secara eksplisit.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Kebijakan',
+  'settings.approvalHistory.judgeScores':
+    'Tujuan {intent} · Dapat dibatalkan {reversible} · Eksfiltrasi {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'tersimpan di cache',
+  'settings.approvalHistory.judgeExpires': 'Berakhir {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Alat yang selalu diizinkan',
+  'keyring.settings.toolTrustDescription':
+    'Alat ini dapat dijalankan tanpa meminta persetujuan dalam cakupan keamanan ini.',
+  'keyring.settings.toolTrustLoading': 'Memuat alat yang diizinkan…',
+  'keyring.settings.toolTrustLoadFailed': 'Alat yang diizinkan gagal dimuat.',
+  'keyring.settings.toolTrustRevokeFailed': 'Izin alat ini gagal dicabut.',
+  'keyring.settings.toolTrustEmpty': 'Tidak ada alat yang selalu diizinkan.',
+  'keyring.settings.toolTrustRetry': 'Coba lagi',
+  'keyring.settings.toolTrustRevoke': 'Cabut',
+  'keyring.settings.toolTrustRevoking': 'Mencabut…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Permintaan akses keyring',
+  'keyring.operation.description':
+    'TinySecurity meminta akses ke satu item keyring. Tinjau operasi sebelum memutuskan.',
+  'keyring.operation.access': 'Akses',
+  'keyring.operation.requester': 'Diminta oleh',
+  'keyring.operation.origin': 'Asal',
+  'keyring.operation.purpose': 'Tujuan',
+  'keyring.operation.name': 'Item keyring',
+  'keyring.operation.access.read': 'Baca',
+  'keyring.operation.access.write': 'Tulis',
+  'keyring.operation.access.delete': 'Hapus',
+  'keyring.operation.allow': 'Izinkan sekali',
+  'keyring.operation.deny': 'Tolak',
+  'keyring.operation.submitting': 'Mengirim…',
+  'keyring.operation.expires': 'Permintaan berakhir dalam {seconds} dtk.',
+  'keyring.operation.error': 'Keputusan tidak dapat dikirim. Permintaan mungkin sudah kedaluwarsa.',
 };
 
 export default messages;

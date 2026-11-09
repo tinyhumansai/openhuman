@@ -133,20 +133,13 @@ pub(super) async fn resolve_typed_message(
     let mut media_payloads = Vec::new();
     for (index, part) in parts.iter_mut().enumerate() {
         let (media, image, name) = match part {
-            ContentPart::Image { media, .. } => (
-                media.clone(),
-                true,
-                media.file_name.clone().unwrap_or_else(|| "image".into()),
-            ),
+            ContentPart::Image { media, .. } => (media.clone(), true, "image".to_owned()),
             ContentPart::File {
                 media, file_name, ..
             } => (
                 media.clone(),
                 false,
-                file_name
-                    .clone()
-                    .or_else(|| media.file_name.clone())
-                    .unwrap_or_else(|| "attachment".into()),
+                file_name.clone().unwrap_or_else(|| "attachment".into()),
             ),
             ContentPart::Audio { .. } | ContentPart::Video { .. } => {
                 return Err("native audio/video attachments are not supported".into());

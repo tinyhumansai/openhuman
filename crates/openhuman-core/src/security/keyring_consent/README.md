@@ -20,7 +20,7 @@ so the app never silently drops to local storage without the user agreeing.
 | File | Purpose |
 | --- | --- |
 | [`types.rs`](./types.rs) | `StorageMode`, `KeyringFailureReason`, `KeyringStatus`, `ConsentPreference`, `PolicyDecision` |
-| [`policy.rs`](./policy.rs) | `check_secret_access`, `current_status`, `active_mode_for`, `record_consent`/`build_consent_preference`/`apply_consent`, `retry_probe`, `notify_master_key_unavailable`, `notify_decrypt_failure` |
+| [`policy.rs`](./policy.rs) | `check_secret_access`, `current_status`, `active_mode_for`, `build_consent_preference`/`apply_consent`, `retry_probe`, `notify_master_key_unavailable`, `notify_decrypt_failure` |
 | [`ops.rs`](./ops.rs) | RPC handler bodies: `keyring_status`, `keyring_consent_decide`, `keyring_retry_probe` |
 | [`schemas.rs`](./schemas.rs) | Controller registration for the `keyring_consent` RPC namespace |
 | [`mod.rs`](./mod.rs) | Module doc + re-exports |
@@ -50,8 +50,7 @@ so the app never silently drops to local storage without the user agreeing.
   (`local_encrypted` → `Proceed`, `declined` → `Declined`, none → publishes
   `KeyringConsentRequired` once and returns `ConsentRequired`).
 - `policy::current_status() -> KeyringStatus`: snapshot for RPC/UI.
-- `policy::record_consent(mode)` / `build_consent_preference` +
-  `apply_consent`: record a decision; the RPC handler persists to disk
+- `policy::build_consent_preference` + `apply_consent`: record a decision; the RPC handler persists to disk
   *before* updating the in-memory cache so cache and disk never diverge on a
   failed persist.
 - `policy::retry_probe()`: resets the keyring availability cache and
