@@ -169,12 +169,7 @@ fn configured(config: &Config) -> bool {
 /// chose for this spawn (its workspace and the mounts it resolved). The module still
 /// refuses the protected floor and the core's internal state under every root.
 fn paths(config: &Config, policy: &SandboxPolicy) -> PathPolicy {
-    let mut paths = crate::security::SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    )
-    .native_path_policy();
+    let mut paths = crate::security::SecurityPolicy::for_config(config).native_path_policy();
     // Reserved names protect internal files from the path tools (`.env`, `SOUL.md`...)
     // wherever they sit under the action dir. A jail's workspace grant is the whole
     // action dir by design, so under that rule no workspace could ever be granted.

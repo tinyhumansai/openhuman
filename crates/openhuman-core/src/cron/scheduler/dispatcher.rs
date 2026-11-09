@@ -81,11 +81,7 @@ async fn own_manual_run(
     // Keep the invocation's CoreContext strongly pinned while Binding itself
     // retains only a Weak reference. The task is the acyclic lifetime owner.
     let _context_pin = ctx.core().cloned();
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(&config));
     let binding = Binding::new(&ctx, &config, security);
     let host = bus_host::register(binding.clone())
         .await

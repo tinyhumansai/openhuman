@@ -182,11 +182,7 @@ pub(crate) async fn serve(
         },
     };
     let ctx = ctx.with_turn_origin(origin);
-    let security = Arc::new(crate::security::SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(crate::security::SecurityPolicy::for_config(&config));
     let approval = crate::security::approval::ApprovalTurnContext {
         flow_run: Some(crate::security::approval::FlowRunContext {
             flow_id: flow_id.clone(),
