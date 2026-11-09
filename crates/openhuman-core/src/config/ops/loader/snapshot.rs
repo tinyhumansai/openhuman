@@ -3,18 +3,24 @@
 use crate::core::runtime::DispatchCtx;
 use serde_json::json;
 
+use crate::config::schema::load::{secret_slots, SecretSlot};
 use crate::config::Config;
 use crate::core::Outcome;
 
 /// Serializes the current configuration into a JSON snapshot for the UI.
 pub async fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String> {
-    let mut value = serde_json::to_value(config).map_err(|e| e.to_string())?;
-    // The full snapshot is sent over RPC. Keep search settings visible while
-    // removing credentials, including the legacy Seltz key.
-    for provider in ["brave", "querit", "exa", "tavily", "gemini", "parallel"] {
-        value["search"][provider]["api_key"] = serde_json::Value::Null;
+    // The full snapshot is sent over RPC and returned to the model by the
+    // `config_snapshot` tool, so no credential leaves in it.
+    let mut masked = config.clone();
+    for (_, slot) in secret_slots(&mut masked) {
+        match slot {
+            SecretSlot::Opt(value) => *value = None,
+            SecretSlot::Str(value) => value.clear(),
+        }
     }
-    value["seltz"]["api_key"] = serde_json::Value::Null;
+    let mut value = serde_json::to_value(&masked).map_err(|e| e.to_string())?;
+    // Channel secrets that are not sealed on disk are not in that list.
+    mask_secret_named_strings(&mut value);
     // A broker URL may carry credentials too; show it redacted.
     if let Some(url) = config.inbound.queue_url.as_deref() {
         value["inbound"]["queue_url"] =
@@ -35,6 +41,38 @@ pub async fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, 
         "workspace_dir": config.workspace_dir.display().to_string(),
         "config_path": config.config_path.display().to_string(),
     }))
+}
+
+/// Blanks every string value whose key names a credential (`password`,
+/// `*_secret`, `*_token`, `*_key` credentials), at any depth.
+fn mask_secret_named_strings(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                if child.is_string() && names_a_secret(key) {
+                    *child = serde_json::Value::String(String::new());
+                } else {
+                    mask_secret_named_strings(child);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(mask_secret_named_strings),
+        _ => {}
+    }
+}
+
+fn names_a_secret(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    [
+        "password",
+        "secret",
+        "token",
+        "api_key",
+        "app_key",
+        "encrypt_key",
+    ]
+    .iter()
+    .any(|suffix| key.ends_with(suffix))
 }
 
 /// Serializes the client-facing AI config slice consumed by the settings UI.
