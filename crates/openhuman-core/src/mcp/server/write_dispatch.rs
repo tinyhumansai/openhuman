@@ -35,7 +35,7 @@ pub(super) async fn enforce_write_policy_for_config(
     tool_name: &str,
     config: &Config,
 ) -> Result<(), ToolCallError> {
-    let policy = SecurityPolicy::for_config(&config);
+    let policy = SecurityPolicy::for_config(config);
     match policy
         .enforce_tool_operation(ToolOperation::Act, tool_name)
         .await
