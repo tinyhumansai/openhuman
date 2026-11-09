@@ -18,6 +18,7 @@ pub async fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, 
             SecretSlot::Str(value) => value.clear(),
         }
     }
+    mask_unsealed_credentials(&mut masked);
     let mut value = serde_json::to_value(&masked).map_err(|e| e.to_string())?;
     // Channel secrets that are not sealed on disk are not in that list.
     mask_secret_named_strings(&mut value);
@@ -43,20 +44,69 @@ pub async fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, 
     }))
 }
 
-/// Blanks every string value whose key names a credential (`password`,
-/// `*_secret`, `*_token`, `*_key` credentials), at any depth.
+/// Credentials the config holds outside the sealed list: MCP server auth,
+/// environment and endpoint, and proxy URLs, which may carry userinfo.
+fn mask_unsealed_credentials(config: &mut Config) {
+    use crate::config::schema::storage::redact_url;
+    use crate::config::McpAuthConfig;
+    for server in &mut config.mcp_client.servers {
+        let server = &mut server.server;
+        // Any variable can hold a key (`AWS_SECRET_ACCESS_KEY`), so every
+        // value goes; the names stay.
+        server.env.values_mut().for_each(String::clear);
+        server.endpoint = redact_url(&server.endpoint);
+        match server.auth {
+            McpAuthConfig::None => {}
+            McpAuthConfig::BearerToken { ref mut token } => token.clear(),
+            McpAuthConfig::Basic {
+                ref mut password, ..
+            } => password.clear(),
+            McpAuthConfig::Header { ref mut value, .. }
+            | McpAuthConfig::QueryParam { ref mut value, .. } => value.clear(),
+            McpAuthConfig::Headers { ref mut headers } => {
+                headers.iter_mut().for_each(|header| header.value.clear())
+            }
+            // A kind added upstream is dropped whole until it is listed here.
+            _ => server.auth = McpAuthConfig::None,
+        }
+    }
+    let proxy = &mut config.proxy;
+    for url in [
+        &mut proxy.http_proxy,
+        &mut proxy.https_proxy,
+        &mut proxy.all_proxy,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        *url = redact_url(url);
+    }
+}
+
+/// Blanks every string under a key that names a credential (`password`,
+/// `*_secret`, `*_token`, `*_key` credentials), at any depth, including
+/// strings inside a list or object held under such a key.
 fn mask_secret_named_strings(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             for (key, child) in map.iter_mut() {
-                if child.is_string() && names_a_secret(key) {
-                    *child = serde_json::Value::String(String::new());
+                if names_a_secret(key) {
+                    blank_strings(child);
                 } else {
                     mask_secret_named_strings(child);
                 }
             }
         }
         serde_json::Value::Array(items) => items.iter_mut().for_each(mask_secret_named_strings),
+        _ => {}
+    }
+}
+
+fn blank_strings(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(text) => text.clear(),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(blank_strings),
+        serde_json::Value::Object(map) => map.values_mut().for_each(blank_strings),
         _ => {}
     }
 }

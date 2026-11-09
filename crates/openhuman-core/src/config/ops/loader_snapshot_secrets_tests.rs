@@ -44,6 +44,31 @@ fn config_with_every_secret() -> Config {
         password: SENTINEL.into(),
         ..Default::default()
     });
+    config.mcp_client.servers = [
+        json!({ "kind": "bearer_token", "token": SENTINEL }),
+        json!({ "kind": "basic", "username": "mcp-user", "password": SENTINEL }),
+        json!({ "kind": "header", "name": "X-Key", "value": SENTINEL }),
+        json!({ "kind": "query_param", "name": "key", "value": SENTINEL }),
+        json!({ "kind": "headers", "headers": [{ "name": "Authorization", "value": SENTINEL }] }),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(at, auth)| {
+        channel(json!({
+            "name": format!("mcp-{at}"),
+            "endpoint": format!("https://u:{SENTINEL}@mcp.example/rpc?key={SENTINEL}"),
+            "env": { "AWS_SECRET_ACCESS_KEY": SENTINEL },
+            "auth": auth,
+        }))
+    })
+    .collect();
+    config.mcp_client.registry_auth.smithery_api_key = Some(SENTINEL.into());
+    config.mcp_client.registry_auth.mcp_official_token = Some(SENTINEL.into());
+    config.mcp_client.client_identity.capabilities = json!({ "x": { "token": [SENTINEL] } });
+    let proxy_url = format!("http://proxy-user:{SENTINEL}@proxy.example:8080");
+    config.proxy.http_proxy = Some(proxy_url.clone());
+    config.proxy.https_proxy = Some(proxy_url.clone());
+    config.proxy.all_proxy = Some(proxy_url);
 
     let mut filled = 0;
     for (_, slot) in secret_slots(&mut config) {
@@ -64,13 +89,43 @@ async fn snapshot_carries_no_credential() {
 
     let snapshot = snapshot_config_json(&config).await.unwrap();
 
-    let text = snapshot.to_string();
-    assert!(!text.contains(SENTINEL), "credential in snapshot: {text}");
+    let mut leaks = Vec::new();
+    find_sentinel(&snapshot, String::new(), &mut leaks);
+    assert!(leaks.is_empty(), "credentials in snapshot at {leaks:?}");
     // The UI still sees which channels are configured.
     let telegram = &snapshot["config"]["channels_config"]["telegram"];
     assert_eq!(telegram["allowed_users"], json!([]));
     let lark = &snapshot["config"]["channels_config"]["lark"];
     assert_eq!(lark["app_id"], "lark-app");
+    // MCP servers keep their names, auth kinds and variable names.
+    let server = &snapshot["config"]["mcp_client"]["servers"][1];
+    assert_eq!(server["name"], "mcp-1");
+    assert_eq!(server["auth"]["kind"], "basic");
+    assert_eq!(server["auth"]["username"], "mcp-user");
+    assert_eq!(server["env"]["AWS_SECRET_ACCESS_KEY"], "");
+    assert_eq!(server["endpoint"], "https://***@mcp.example/rpc?***");
+    assert_eq!(
+        snapshot["config"]["proxy"]["http_proxy"],
+        "http://***@proxy.example:8080"
+    );
+}
+
+/// JSON pointers of every string that holds [`SENTINEL`].
+fn find_sentinel(value: &serde_json::Value, at: String, leaks: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(text) if text.contains(SENTINEL) => leaks.push(at),
+        serde_json::Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                find_sentinel(item, format!("{at}/{index}"), leaks);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                find_sentinel(child, format!("{at}/{key}"), leaks);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[tokio::test]
