@@ -3,6 +3,7 @@
  * when it was cut. The ellipsis itself counts against `max` UTF-16 code units,
  * so the result is never longer than `max` units and never cuts a surrogate
  * pair in half. Combining sequences may still be split at the boundary.
+ * Returns `''` when `max < 1`.
  *
  * Pass `trim: true` to trim whitespace before measuring/truncating (useful
  * for freeform text pulled from tool output or user input).
