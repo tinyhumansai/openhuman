@@ -117,6 +117,9 @@ fn loopback_urls_are_recognized() {
     // The whole 127.0.0.0/8 range is loopback, not only 127.0.0.1.
     assert!(is_loopback_url("http://127.0.0.2:7788/rpc"));
     assert!(is_loopback_url("http://127.1.2.3:7788/rpc"));
+    // An IPv4-mapped IPv6 address reaches the same loopback interface.
+    assert!(is_loopback_url("http://[::ffff:127.0.0.1]:7788/rpc"));
+    assert!(is_loopback_url("http://[::ffff:7f00:1]:7788/rpc"));
 }
 
 #[test]
@@ -125,13 +128,14 @@ fn remote_and_unparseable_urls_are_not_loopback() {
     assert!(!is_loopback_url("http://192.168.1.74:7788/rpc"));
     assert!(!is_loopback_url("http://127.0.0.1.example.com:7788/rpc"));
     assert!(!is_loopback_url("http://0.0.0.0:7788/rpc"));
+    // A mapped address for a routable IPv4 address is not loopback.
+    assert!(!is_loopback_url("http://[::ffff:192.168.1.74]:7788/rpc"));
     assert!(!is_loopback_url("not a url"));
     assert!(!is_loopback_url(""));
 }
 
-/// The local core is reachable on loopback even when the environment names
-/// a proxy: a proxy forwards the request to a hop that cannot reach the
-/// caller's own `127.0.0.1`.
+/// Check loopback connectivity. Proxy bypass is covered by
+/// `tests/client_loopback_proxy.rs`.
 #[tokio::test]
 async fn post_json_rpc_reaches_a_loopback_endpoint() {
     let (url, _request) = serve_one_rpc_response().await;

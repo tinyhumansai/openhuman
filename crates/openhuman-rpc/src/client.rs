@@ -53,7 +53,14 @@ fn is_loopback_url(url: &str) -> bool {
         .to_ascii_lowercase();
     if let Ok(address) = host.parse::<std::net::IpAddr>() {
         // The loopback ranges: `127.0.0.0/8` and `::1`.
-        return address.is_loopback();
+        return match address {
+            std::net::IpAddr::V4(v4) => v4.is_loopback(),
+            // An IPv4-mapped IPv6 address (`::ffff:127.0.0.1`) reaches the same
+            // interface, so the embedded IPv4 address decides.
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+            }
+        };
     }
     host == "localhost" || host.ends_with(".localhost")
 }
