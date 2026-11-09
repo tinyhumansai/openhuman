@@ -10,12 +10,25 @@ mod storage_case;
 
 use storage_case::UrlCase;
 
+#[cfg(unix)]
+fn make_workspace_private(workspace: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(workspace, std::fs::Permissions::from_mode(0o700))
+        .expect("make the test workspace private");
+}
+
+#[cfg(not(unix))]
+fn make_workspace_private(_workspace: &std::path::Path) {}
+
 fn core(workspace: &std::path::Path, url: Option<&str>, args: &[&str]) -> std::process::Output {
+    make_workspace_private(workspace);
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_openhuman-core"));
     cmd.args(args)
         .env("HOME", workspace)
         .env("USERPROFILE", workspace)
         .env("OPENHUMAN_WORKSPACE", workspace)
+        .env("OPENHUMAN_MODULE_SOURCE", "linked")
         // A shared backend keeps the config document encrypted under the
         // keyring master key and fails closed without one. CI has no OS
         // keychain, so every process gets the same fixed key, the way a

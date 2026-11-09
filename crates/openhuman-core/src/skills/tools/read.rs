@@ -317,7 +317,7 @@ impl Tool for WorkflowReadRunLogTool {
             .find(|run| run.run_id == run_id)
             .ok_or_else(|| anyhow::anyhow!("read_workflow_run_log: run `{run_id}` not found"))?;
         let path = PathBuf::from(run.log_path);
-        let slice = read_run_log_slice(&path, offset, max_bytes)
+        let slice = read_run_log_slice(&self.workspace_dir, &path, offset, max_bytes)
             .map_err(|e| anyhow::anyhow!("read_workflow_run_log: {e}"))?;
         Ok(ToolResult::success(serde_json::to_string(&slice)?))
     }

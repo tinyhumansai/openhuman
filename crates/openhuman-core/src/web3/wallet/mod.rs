@@ -62,14 +62,14 @@ pub use execution::{
     ProviderStatus, SupportedAsset, TxLookupInfo, TxReceiptInfo, TxState, TxStatusInfo,
 };
 #[cfg(feature = "web3")]
-pub(crate) use ops::secret_material;
-#[cfg(feature = "web3")]
 pub use ops::{
     derive_recovery_material, generate_recovery_phrase, reveal_recovery_phrase, setup, status,
     validate_recovery_phrase, GeneratedRecoveryPhrase, RecoveryPhraseValidation,
     RevealRecoveryPhraseResult, WalletAccount, WalletChain, WalletRecoveryMaterial,
     WalletSetupParams, WalletSetupSource, WalletStatus, WALLET_NOT_CONFIGURED_MESSAGE,
 };
+#[cfg(feature = "web3")]
+pub(crate) use ops::{inspect_stored_wallet_state, secret_material};
 #[cfg(feature = "web3")]
 pub use schemas::{
     all_controller_schemas, all_registered_controllers, all_wallet_controller_schemas,

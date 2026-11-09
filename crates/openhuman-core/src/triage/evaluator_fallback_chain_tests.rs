@@ -69,6 +69,30 @@ fn classify_string_recognises_429_with_retry_after() {
 }
 
 #[test]
+fn classify_string_preserves_long_fractional_and_inline_retry_hints() {
+    for (message, expected) in [
+        ("HTTP 429 Too Many Requests\nRetry-After: 60", 60_000),
+        (
+            "HTTP 429 Too Many Requests; Retry-After: 2.5 seconds",
+            2_500,
+        ),
+        ("HTTP 429 Too Many Requests; retry_after 1.5", 1_500),
+        (
+            "HTTP 429 Too Many Requests\nRetry-After: Sat, 01 Jan 2000 00:00:00 GMT",
+            0,
+        ),
+    ] {
+        match classify_error(message.to_string()) {
+            ArmError::Retryable {
+                retry_after_ms: Some(actual),
+                ..
+            } => assert_eq!(actual, expected, "Retry-After in {message:?}"),
+            _ => panic!("expected retry hint {expected}ms from {message:?}"),
+        }
+    }
+}
+
+#[test]
 fn classify_string_recognises_5xx_as_transient() {
     let err = classify_error("upstream returned 503 Service Unavailable".to_string());
     assert!(
@@ -83,6 +107,29 @@ fn classify_string_recognises_timeout_as_transient() {
     assert!(
         matches!(err, ArmError::Retryable { .. }),
         "timeout should be Retryable"
+    );
+}
+
+#[test]
+fn classify_string_keeps_context_and_quota_failures_terminal_even_with_500_status() {
+    for message in [
+        "provider returned 500: maximum context length exceeded",
+        "provider returned 500: MONTHLY_REQUEST_COUNT quota exhausted",
+    ] {
+        let err = classify_error(message.to_string());
+        assert!(
+            matches!(err, ArmError::Fatal(_)),
+            "terminal provider state must not retry: {message}"
+        );
+    }
+}
+
+#[test]
+fn classify_string_keeps_non_retryable_rate_limit_distinct() {
+    let err = classify_error("HTTP 429: monthly quota exhausted; Retry-After: 2".to_string());
+    assert!(
+        matches!(err, ArmError::Fatal(_)),
+        "billing rate limit remains terminal despite Retry-After"
     );
 }
 

@@ -26,6 +26,11 @@ impl Config {
                 "[components] OPENHUMAN_DISABLE_CHANNEL_LISTENERS folds to channels=false"
             );
             self.components.set("channels", false);
+            self.record_env_override(
+                env,
+                "components.channels",
+                &["OPENHUMAN_DISABLE_CHANNEL_LISTENERS"],
+            );
         }
         for name in COMPONENT_NAMES {
             let key = format!("OPENHUMAN_COMPONENT_{}", name.to_ascii_uppercase());
@@ -34,6 +39,7 @@ impl Config {
                 Some(value) => {
                     tracing::debug!("[components] env override {key}={value}");
                     self.components.set(name, value);
+                    self.record_env_override_var(env, &format!("components.{name}"), &key);
                 }
                 None => tracing::warn!("[components] ignoring invalid {key} (use 0 or 1)"),
             }

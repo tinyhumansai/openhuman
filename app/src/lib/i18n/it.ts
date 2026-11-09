@@ -596,6 +596,8 @@ const messages: TranslationMap = {
   'desktop.pendingUnavailable':
     'Impossibile caricare le approvazioni desktop in attesa. Aggiorna per riprovare.',
   'desktop.unsupported': 'Il controllo desktop non è disponibile in questo ambiente.',
+  'desktop.unsupportedWindows':
+    'Il controllo desktop non è ancora disponibile su Windows. Il controllo del browser funziona già su Windows.',
   'desktop.localOnly': 'Questa impostazione vale solo per questo computer.',
   'desktop.permissions': 'Autorizzazioni di sistema',
   'desktop.openSettings': 'Apri impostazioni',
@@ -616,6 +618,10 @@ const messages: TranslationMap = {
     'Al momento la memoria non è raggiungibile. Nulla di quanto salvato è andato perso; riprova tra poco.',
   'memory.outOfCredits.title': 'Crediti esauriti',
   'memory.outOfCredits.action': 'Ricarica',
+  'memory.error.planRequired':
+    "Il tuo piano attuale non include la memoria, quindi OpenHuman non può salvare né consultare ciò che impara. Passa a un piano superiore per attivare la memoria, oppure scegli un'altra opzione di memoria nelle Impostazioni.",
+  'memory.planRequired.title': 'La memoria non fa parte del tuo piano',
+  'memory.planRequired.action': 'Vedi i piani',
   'alerts.title': 'Avvisi',
   'alerts.empty': 'Nessun avviso',
   'alerts.markAllRead': 'Segna tutti come letti',
@@ -679,6 +685,15 @@ const messages: TranslationMap = {
   'invites.title': 'Inviti',
   'invites.noInvites': 'Nessun invito in sospeso',
   'devOptions.titleDiagnostics': 'Sviluppatore e Diagnostica',
+  'devOptions.doctor.run': 'Esegui diagnostica',
+  'devOptions.doctor.runLive': 'Esegui controlli dal vivo',
+  'devOptions.doctor.liveWarning':
+    'I controlli dal vivo possono consumare token per le chiamate a modelli o embedding. Continuare?',
+  'devOptions.doctor.severity.pass': 'Superato',
+  'devOptions.doctor.severity.info': 'Info',
+  'devOptions.doctor.severity.warn': 'Avviso',
+  'devOptions.doctor.severity.error': 'Errore',
+  'devOptions.doctor.severity.skipped': 'Saltato',
   'devOptions.diagnostics': 'Diagnostica',
   'devOptions.toolPolicyDiagnosticsDesc':
     'Inventario degli strumenti, posizione della politica, allowlist MCP e blocchi recenti',
@@ -1318,6 +1333,8 @@ const messages: TranslationMap = {
   'chat.failedToLoadMessages': 'Impossibile caricare i messaggi',
   'chat.thinkingDots': 'Sto pensando...',
   'chat.status.thinkingElapsed': 'Sto pensando · {elapsed}',
+  'chat.status.compacting': 'Riassumo la conversazione precedente…',
+  'chat.status.compactingElapsed': 'Riassumo la conversazione precedente · {elapsed}',
   'chat.status.waitingApproval': 'In attesa della tua approvazione',
   'chat.status.waitingReview': 'In attesa della tua revisione',
   'chat.status.waitingAnswer': 'In attesa della tua risposta',
@@ -1656,6 +1673,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Apri nel canvas',
   'chat.flowProposal.dismiss': 'Ignora',
   'chat.flowProposal.error': 'Impossibile salvare il workflow. Riprova.',
+  'chat.flowProposal.versionConflict':
+    'Questo workflow è cambiato dopo la proposta, quindi non è stato sovrascritto. Chiedi una nuova revisione.',
   'chat.flowProposal.enableError':
     'Workflow salvato, ma non è stato possibile attivarlo. Riprova, oppure attivalo dalla pagina Workflows.',
   'chat.flowProposal.savedConfirmation': 'Salvato',
@@ -1850,11 +1869,6 @@ const messages: TranslationMap = {
   'chat.todos.ofTotal': '{done} di {total}',
   'chat.todos.receipt': 'Avanzamento aggiornato · {done}/{total}',
   'chat.subagents.ranFor': 'Durata {duration}',
-  'chat.subagents.ofTotal': '{complete} di {total}',
-  'chat.subagents.runningCount': '{count} in corso',
-  'chat.subagents.failedCount': '{count} non riusciti',
-  'chat.subagents.incompleteCount': '{count} incompleti',
-  'chat.subagents.settled': 'Sottoattività concluse. Elaborazione dei risultati.',
   'conversations.planReview.title': 'Rivedi il piano',
   'conversations.planReview.subtitle':
     'Approva per eseguirlo, rifiuta per scartarlo o invia un feedback per rivederlo.',
@@ -1890,7 +1904,6 @@ const messages: TranslationMap = {
   'conversations.mcpUi.confirmAllow': 'Consenti',
   'conversations.mcpUi.confirmDeny': 'Rifiuta',
   'conversations.tools.delegatedTo': 'Delegato a {agent}',
-  'conversations.tools.parallelAgentsAggregating': 'Aggregazione dei risultati',
   'conversations.tools.openInBrowser': 'Apri nel browser',
   'conversations.tools.status.running': 'in corso',
   'conversations.tools.status.done': 'completato',
@@ -1959,22 +1972,6 @@ const messages: TranslationMap = {
     "Tentativo fallito. Scarica l'ultima build dell'app e riprova.",
   'daemon.serviceBlockingGate.retrying': 'Nuovo tentativo...',
   'daemon.serviceBlockingGate.title': 'Il core di OpenHuman non è disponibile',
-  'worktree.label': 'Albero di lavoro',
-  'worktree.dirty': 'Modifiche non sottoposte a commit',
-  'worktree.clean': 'Pulito',
-  'worktree.removing': 'Rimozione…',
-  'worktree.removeFailed': 'Impossibile rimuovere il worktree',
-  'worktree.diffFailed': 'Impossibile caricare il diff',
-  'worktree.diffLoading': 'Caricamento del diff…',
-  'worktree.diffEmpty': 'Nessuna modifica rispetto a HEAD.',
-  'worktree.dirtyConfirm':
-    'Questo worktree ha modifiche non sottoposte a commit. Rimuoverlo scarta quel lavoro. Il branch del worker viene mantenuto.',
-  'worktree.action.open': 'Apri cartella',
-  'worktree.action.diff': 'Diff',
-  'worktree.action.hideDiff': 'Nascondi diff',
-  'worktree.action.remove': 'Rimuovi',
-  'worktree.action.removeAnyway': 'Scarta e rimuovi',
-  'worktree.action.preserve': 'Conserva',
   'notifications.card.dismiss': 'Ignora notifica',
   'notifications.card.importanceTitle': 'Importanza: {pct}%',
   'notifications.center.empty': 'Nessuna notifica',
@@ -3523,6 +3520,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'Caricamento modelli…',
   'composer.voiceMode': 'Modalità vocale',
   'composer.humanMode': 'Modalità umano',
+  'voiceNote.record': 'Registra un messaggio vocale',
+  'voiceNote.stop': 'Interrompi la registrazione',
+  'voiceNote.discard': 'Elimina messaggio vocale',
+  'voiceNote.send': 'Invia messaggio vocale',
+  'voiceNote.recording': 'Registrazione in corso…',
+  'voiceNote.play': 'Riproduci messaggio vocale',
+  'voiceNote.pause': 'Metti in pausa il messaggio vocale',
+  'voiceNote.seek': 'Scorri il messaggio vocale',
+  'voiceNote.transcript': 'Trascrizione',
+  'voiceNote.noTranscript': 'Nessuna trascrizione disponibile',
+  'voiceNote.label': 'Messaggio vocale {duration}',
+  'voiceNote.micDenied': 'L’accesso al microfono è stato negato o non è disponibile.',
+  'voiceNote.transcribeFailed': 'Impossibile trascrivere il messaggio vocale.',
+  'voiceNote.loadFailed': 'Impossibile caricare questo messaggio vocale.',
+  'voiceNote.sendFailed': 'Impossibile inviare il messaggio vocale.',
 
   // Sync budget dialog
 
@@ -3928,6 +3940,10 @@ const messages: TranslationMap = {
     "L'agente ha eseguito il numero massimo di passaggi con gli strumenti in un turno senza finire. Di solito significa che uno strumento continuava a fallire (spesso per un limite di richieste su un recupero web). Puoi riprovare la stessa domanda in questo thread quando il limite si sarà sbloccato.",
   'chat_error.turn_timeout':
     'Questo turno ha superato il suo limite di tempo senza finire ed è stato interrotto per non restare bloccato. Di solito significa che una chiamata a uno strumento o un sub-agente delegato si è bloccato. Puoi riprovare la tua domanda in questo thread.',
+  'chat_error.disk_full':
+    "Il disco è pieno, quindi non è stato possibile salvare questa conversazione. Libera un po' di spazio su disco, poi invia di nuovo il messaggio in questo thread.",
+  'chat_error.prompt_screened':
+    "Il controllo di sicurezza di OpenHuman ha trattenuto questo messaggio, quindi non è stato inviato al modello. Se cita istruzioni rivolte a un assistente (ad esempio da una pagina web o da un'email), rimuovile e riprova. Se vengono trattenuti anche i messaggi normali, il modulo di sicurezza potrebbe non essere disponibile: riavvia OpenHuman e riprova.",
   'chat_error.empty_response':
     'Il modello ha restituito una risposta vuota. Riprova. Se continua a succedere, prova un altro modello o controlla la sua configurazione in Connessioni → Chiavi API → LLM.',
   'chat_error.chat_template_rejected':
@@ -4418,6 +4434,10 @@ const messages: TranslationMap = {
     "L'accesso al microfono è stato negato. Consentilo nelle impostazioni di sistema e riprova.",
   'voice.live.error.micUnavailable': 'Nessun microfono disponibile.',
   'voice.live.error.connection': "Impossibile connettersi all'agente vocale.",
+  'voice.live.error.insufficientCredits':
+    'La voce dal vivo richiede più crediti. Aggiungi crediti per continuare.',
+  'voice.live.error.paidPlanRequired':
+    'La voce dal vivo richiede un piano a pagamento. Passa a un piano superiore per continuare.',
   'voice.live.toolRunning': '{name} in esecuzione',
   'voice.live.toolOk': '{name} completato',
   'voice.live.toolFailed': '{name} non riuscito',
@@ -4705,11 +4725,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'Nomespaziale processo carcere',
   'settings.sandbox.backendHint.bubblewrap': 'Nome utente leggerospazi',
   'settings.sandbox.backendHint.none': 'Eseguire strumenti direttamente, non isolati',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Inventario degli strumenti',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Strumenti totali',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Strumenti attivi',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'Strumenti MCP stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'Strumenti JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Stato dei criteri',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Livello di autonomia',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Solo nell’area di lavoro',
@@ -4926,8 +4941,6 @@ const messages: TranslationMap = {
   'conversations.tools.updateLearnings.done': 'Apprendimenti aggiornati',
   'conversations.tools.delegateTask.active': "Delega dell'attività",
   'conversations.tools.delegateTask.done': 'Attività delegata',
-  'conversations.tools.runAgentsInParallel.active': 'Esecuzione di agenti in parallelo',
-  'conversations.tools.runAgentsInParallel.done': 'Agenti eseguiti in parallelo',
   'conversations.tools.messageAgent.active': "Invio di un messaggio all'agente",
   'conversations.tools.messageAgent.done': "Messaggio inviato all'agente",
   'conversations.tools.waitForAgent.active': "Attesa dell'agente",
@@ -4964,6 +4977,8 @@ const messages: TranslationMap = {
   'conversations.tools.checkGoal.done': 'Obiettivo verificato',
   'conversations.tools.completeGoal.active': "Completamento dell'obiettivo",
   'conversations.tools.completeGoal.done': 'Obiettivo completato',
+  'conversations.tools.resumeGoal.active': "Ripresa dell'obiettivo",
+  'conversations.tools.resumeGoal.done': 'Obiettivo ripreso',
   'conversations.tools.scheduleTask.active': "Pianificazione dell'attività",
   'conversations.tools.scheduleTask.done': 'Attività pianificata',
   'conversations.tools.checkSchedules.active': 'Verifica delle pianificazioni',
@@ -5155,6 +5170,58 @@ const messages: TranslationMap = {
     'La configurazione gestita richiede il login a OpenHuman e non è disponibile in modalità locale.',
   'onboarding.custom.localDefaultDisabledReason':
     'La configurazione gestita richiede un account OpenHuman. In una sessione locale configuri ogni servizio da solo.',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt':
+    'La diagnostica dei criteri non è inclusa in questo core.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Criterio di sicurezza attivo',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomia',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Solo nell’area di lavoro',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Numero massimo di azioni all’ora',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Richiedi approvazione per rischio medio',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Blocca i comandi ad alto rischio',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Comandi consentiti',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Nessun comando è consentito esplicitamente.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Criterio',
+  'settings.approvalHistory.judgeScores':
+    'Intento {intent} · Reversibile {reversible} · Esfiltrazione {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'memorizzato',
+  'settings.approvalHistory.judgeExpires': 'Scade il {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Strumenti sempre consentiti',
+  'keyring.settings.toolTrustDescription':
+    'Questi strumenti possono essere eseguiti senza richiedere approvazione in questo ambito di sicurezza.',
+  'keyring.settings.toolTrustLoading': 'Caricamento degli strumenti consentiti…',
+  'keyring.settings.toolTrustLoadFailed': 'Impossibile caricare gli strumenti consentiti.',
+  'keyring.settings.toolTrustRevokeFailed':
+    'Impossibile revocare questa autorizzazione per lo strumento.',
+  'keyring.settings.toolTrustEmpty': 'Nessuno strumento è sempre consentito.',
+  'keyring.settings.toolTrustRetry': 'Riprova',
+  'keyring.settings.toolTrustRevoke': 'Revoca',
+  'keyring.settings.toolTrustRevoking': 'Revoca in corso…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Richiesta di accesso al portachiavi',
+  'keyring.operation.description':
+    'TinySecurity richiede l’accesso a un elemento del portachiavi. Controlla l’operazione prima di decidere.',
+  'keyring.operation.access': 'Accesso',
+  'keyring.operation.requester': 'Richiesto da',
+  'keyring.operation.origin': 'Origine',
+  'keyring.operation.purpose': 'Scopo',
+  'keyring.operation.name': 'Elemento del portachiavi',
+  'keyring.operation.access.read': 'Leggere',
+  'keyring.operation.access.write': 'Scrivere',
+  'keyring.operation.access.delete': 'Eliminare',
+  'keyring.operation.allow': 'Consenti una volta',
+  'keyring.operation.deny': 'Nega',
+  'keyring.operation.submitting': 'Invio…',
+  'keyring.operation.expires': 'La richiesta scade tra {seconds}s.',
+  'keyring.operation.error':
+    'Impossibile inviare la decisione. La richiesta potrebbe essere scaduta.',
 };
 
 export default messages;

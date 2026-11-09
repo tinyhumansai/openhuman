@@ -105,10 +105,11 @@ async fn init_workspace_creates_dirs_and_files_in_fresh_workspace() {
     assert!(created.iter().any(|s| s.ends_with("IDENTITY.md")));
 
     let logs = value["logs"].as_array().expect("logs array");
-    assert!(logs.iter().any(|l| l
-        .as_str()
-        .unwrap_or("")
-        .contains("workspace initialization completed")));
+    assert!(logs.iter().any(|l| {
+        l.as_str()
+            .unwrap_or("")
+            .contains("workspace initialization completed")
+    }));
 }
 
 #[tokio::test]

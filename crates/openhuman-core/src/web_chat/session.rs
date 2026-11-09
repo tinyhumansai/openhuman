@@ -61,8 +61,16 @@ pub(crate) fn provider_role_for_model_override(model_override: Option<&str>) -> 
     // A role alias (`hint:coding`) or a retired tier slug (`hint:coding`) picks
     // that workload's route; a concrete model id rides the chat route.
     match model_override.map(str::trim) {
-        Some(value) if value.starts_with("hint:") || crate::config::is_legacy_tier_model(value) => {
-            match crate::inference::provider::factory::role_for_model_tier(value) {
+        Some(value)
+            if crate::inference::provider_model::is_abstract_model(
+                crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+                value,
+            ) =>
+        {
+            match crate::inference::provider_model::role_for_provider_model(
+                crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+                value,
+            ) {
                 role @ ("agentic" | "coding" | "summarization" | "reasoning") => role,
                 _ => "chat",
             }
@@ -95,7 +103,12 @@ fn effective_session_config(
         .default_model
         .as_deref()
         .map(str::trim)
-        .filter(|model| crate::inference::provider::factory::is_raw_passthrough_model(model))
+        .filter(|model| {
+            crate::inference::provider_model::is_raw_model(
+                crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+                model,
+            )
+        })
     {
         if model.starts_with("openrouter/") {
             // The managed backend accepts catalog ids verbatim. This also
@@ -131,7 +144,7 @@ fn effective_session_config(
     effective
 }
 
-pub(super) fn build_session_agent(
+pub(super) async fn build_session_agent(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     client_id: &str,
@@ -156,7 +169,8 @@ pub(super) fn build_session_agent(
         &effective,
         target_agent_id,
         Some(thread_id),
-    );
+    )
+    .await;
 
     agent_result
         .map(|mut agent| {
@@ -164,11 +178,7 @@ pub(super) fn build_session_agent(
                 json!({"client_id": client_id, "thread_id": thread_id}).to_string(),
                 "web_channel",
             );
-            let short_thread = if thread_id.len() > 12 {
-                &thread_id[..12]
-            } else {
-                thread_id
-            };
+            let short_thread: String = thread_id.chars().take(12).collect();
             agent.set_agent_definition_name(format!("{target_agent_id}_{short_thread}"));
             // Bind the conversation's durable identity here, not after
             // checkout: everything downstream — resume, transcript binding,
@@ -329,7 +339,8 @@ pub(super) fn build_session_fingerprint(
     let effective = effective_session_config(config, model_override.as_deref(), temperature);
     SessionCacheFingerprint {
         model_override,
-        effective_model: crate::inference::provider::factory::resolve_model_for_hint(
+        effective_model: crate::inference::provider_model::resolve_provider_model_hint(
+            crate::inference::provider::factory::PROVIDER_OPENHUMAN,
             &format!("hint:{provider_role}"),
             &effective,
         ),
@@ -457,7 +468,8 @@ pub(crate) async fn checkout_session_agent(
                     &target_agent_id,
                     model_override,
                     temperature,
-                )?,
+                )
+                .await?,
                 fingerprint,
             )
         }
@@ -470,7 +482,8 @@ pub(crate) async fn checkout_session_agent(
                 &target_agent_id,
                 model_override,
                 temperature,
-            )?,
+            )
+            .await?,
             fingerprint,
         ),
     };

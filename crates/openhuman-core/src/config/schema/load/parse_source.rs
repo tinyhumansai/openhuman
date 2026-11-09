@@ -21,11 +21,12 @@ pub(super) async fn parse_source_contents(
     // fell back to the file (no document for the scope yet) returns file text,
     // which keeps the file's `.bak` recovery.
     if read.from_document {
-        let config = parse_toml_off_worker(contents.to_string())
+        let mut config = parse_toml_off_worker(contents.to_string())
             .await
             .map_err(|error| {
                 anyhow::anyhow!("the config document for this scope could not be parsed: {error}")
             })?;
+        config.load_diagnostics_mut().warn_unknown_keys_once();
         *config.runtime_state.document_snapshot.lock().unwrap() =
             super::super::ConfigDocumentSnapshot {
                 version: read.document_version,
@@ -34,7 +35,12 @@ pub(super) async fn parse_source_contents(
         return Ok((config, false));
     }
     if read_was_recovered && contents.is_empty() {
-        let config = super::branches::default_config_boxed();
+        let mut config = super::branches::default_config_boxed();
+        super::diagnostics::record_non_utf8_recovery(
+            &mut config,
+            config_path,
+            super::ConfigLoadFallback::Defaults,
+        );
         *config.runtime_state.document_snapshot.lock().unwrap() =
             super::super::ConfigDocumentSnapshot {
                 version: read.document_version,
@@ -42,7 +48,15 @@ pub(super) async fn parse_source_contents(
             };
         return Ok((config, true));
     }
-    let (config, recovered) = Box::pin(parse_config_boxed(config_path, contents)).await;
+    let (mut config, recovered) = Box::pin(parse_config_boxed(config_path, contents)).await;
+    if read_was_recovered {
+        let fallback = if contents.is_empty() {
+            super::ConfigLoadFallback::Defaults
+        } else {
+            super::ConfigLoadFallback::Backup
+        };
+        super::diagnostics::record_non_utf8_recovery(&mut config, config_path, fallback);
+    }
     *config.runtime_state.document_snapshot.lock().unwrap() =
         super::super::ConfigDocumentSnapshot {
             version: read.document_version,

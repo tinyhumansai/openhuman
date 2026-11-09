@@ -25,7 +25,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use openhuman_core::agent::queued_turn::QueuedTurn;
+use openhuman_core::agent::queued_turn::{steer_message, QueuedTurn};
 use tinyagents_harness::run_queue::{QueueLane, RunQueue};
 
 /// The run queue a turn is steered through.
@@ -98,16 +98,7 @@ impl TurnSteering {
         }
         self.0.queue.push_now(
             QueueLane::Steer,
-            QueuedTurn {
-                id: uuid::Uuid::new_v4().to_string(),
-                text,
-                client_id: String::new(),
-                thread_id: String::new(),
-                queued_at_ms: now_ms(),
-                model_override: None,
-                temperature: None,
-                locale: None,
-            },
+            steer_message(uuid::Uuid::new_v4().to_string(), text, "", ""),
         );
         drop(state);
         log::debug!("[embed][agent] steer queued for the running turn");
@@ -219,14 +210,6 @@ impl SteerRefused {
     pub fn into_text(self) -> String {
         self.text
     }
-}
-
-/// Milliseconds since the Unix epoch, for the queued item's metadata.
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

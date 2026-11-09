@@ -1,10 +1,421 @@
 //! One-shot `create_chat_model*` entry points, the readiness probe, the
 //! default-temperature wrapper, and the unresolved-route error builder.
 
-use super::*;
+#[cfg(any(test, feature = "e2e-test-support", feature = "rss-bench"))]
+use super::test_provider_override;
+use super::{
+    access_gates::{emit_inference_egress, enforce_local_only_inference},
+    cloud_slug::resolve_cloud_slug_with_access,
+    credentials::CredentialAccess,
+    local_runtime::try_create_local_runtime_chat_model_from_string,
+    provider_for_role,
+    routing::route_with_model,
+    subprocess_providers::OpenHumanMcpEndpoint,
+    BYOK_INCOMPLETE_SENTINEL, CLAUDE_AGENT_SDK_PREFIX, CLAUDE_AGENT_SDK_PROVIDER,
+    PROVIDER_OPENHUMAN,
+};
+use crate::config::ops::resolve_primary_cloud_provider_string;
+use crate::config::Config;
 use crate::core::runtime::DispatchCtx;
-#[cfg(not(test))]
-use crate::inference::provider::factory::access_gates::verify_session_active;
+use crate::security::egress::EgressLedger;
+use std::sync::Arc;
+use tinyagents_harness::host::{
+    BuildOpts, ModelBuildGate, ModelBuildRequest, ModelFactory, ModelPurpose,
+};
+use tinyinference_llm::model::{
+    ChatModel, ModelRequestDefaults, ProfileOverrideModel, ResolvedModelRoute,
+};
+use tinyinference_providers::route::split_model_and_temperature;
+use tinyinference_providers::route::{ProviderRoute, RouteKind};
+
+/// OpenHuman's host policy and construction adapter for a harness turn.
+///
+/// The harness owns turn assembly; this adapter resolves OpenHuman provider
+/// configuration and enforces product access policy for each requested model.
+pub(crate) struct OpenHumanModelFactory<'a> {
+    pub(crate) ctx: &'a DispatchCtx,
+    pub(crate) config: &'a Config,
+    pub(crate) primary_provider: Option<&'a str>,
+    pub(crate) egress: &'a EgressLedger,
+    pub(crate) thread_id: Option<&'a str>,
+    /// Attach OpenHuman's per-turn multimodal providers using the route this
+    /// factory actually selected. One-shot probes do not need host attachments.
+    pub(crate) attach_host_attachments: bool,
+    pub(crate) credentials: super::credentials::RuntimeCredentialSnapshot,
+    /// Spend controls placed beneath attachment rendering on every model this
+    /// factory builds, filled once the turn is admitted.
+    pub(crate) host_controls: Option<&'a crate::inference::host_controls::HostControlSlot>,
+    /// `[context] summarizer_model`: the model a summarization request calls
+    /// on its own provider route instead of the route's model.
+    pub(crate) summarizer_model: Option<&'a str>,
+}
+
+impl OpenHumanModelFactory<'_> {
+    fn route_name<'a>(request: &'a ModelBuildRequest, role: &'a str) -> &'a str {
+        request
+            .route
+            .as_deref()
+            .or_else(|| request.model_pin.as_deref().filter(|pin| !pin.is_empty()))
+            .unwrap_or(role)
+    }
+
+    pub(super) fn provider_for(&self, request: &ModelBuildRequest) -> String {
+        match &request.purpose {
+            ModelPurpose::Primary | ModelPurpose::Summarization => {
+                let provider = self
+                    .primary_provider
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| provider_for_role(&request.role, self.config));
+                let summarizes = matches!(request.purpose, ModelPurpose::Summarization);
+                route_with_model(provider, self.summarizer_model.filter(|_| summarizes))
+            }
+            ModelPurpose::WorkloadTier(_) => provider_for_role(&request.role, self.config),
+        }
+    }
+
+    pub(super) fn injected(&self, request: &ModelBuildRequest) -> Option<Arc<dyn ChatModel<()>>> {
+        let route = request.route.as_deref();
+        let host_model = self
+            .ctx
+            .host_overrides()
+            .and_then(|local| match &request.purpose {
+                ModelPurpose::Primary => local.model_for(&request.role),
+                ModelPurpose::Summarization => local
+                    .role_models
+                    .get("summarization")
+                    .cloned()
+                    .or_else(|| local.model_for(&request.role)),
+                ModelPurpose::WorkloadTier(_) => route
+                    .and_then(|route| local.role_models.get(route))
+                    .or_else(|| local.role_models.get(&request.role))
+                    .cloned(),
+            });
+        if host_model.is_some() {
+            return host_model;
+        }
+        #[cfg(any(test, feature = "e2e-test-support", feature = "rss-bench"))]
+        if let Some(model) = test_provider_override::current() {
+            return Some(model);
+        }
+        None
+    }
+
+    async fn build_request(
+        &self,
+        request: &ModelBuildRequest,
+    ) -> anyhow::Result<(Arc<dyn ChatModel<()>>, ResolvedModelRoute)> {
+        let role = request.role.as_str();
+        let pin = request.model_pin.as_deref().unwrap_or("");
+        let provider = self.provider_for(request);
+        if let Some(model) = self.injected(request) {
+            let profile = model.profile().cloned().unwrap_or_default();
+            let route = ResolvedModelRoute::new(
+                profile.provider.as_deref().unwrap_or("injected"),
+                profile.model.as_deref().unwrap_or(pin),
+                Self::route_name(request, role),
+            );
+            return Ok((model, route));
+        }
+
+        let provider_route = ProviderRoute::parse(&provider);
+        let managed = match (&request.purpose, self.primary_provider) {
+            (ModelPurpose::Primary | ModelPurpose::Summarization, Some(provider)) => {
+                let provider = provider.trim();
+                provider.is_empty()
+                    || provider == "cloud"
+                    || provider == PROVIDER_OPENHUMAN
+                    || provider_route
+                        .as_ref()
+                        .is_some_and(|route| matches!(route.kind(), RouteKind::Managed))
+            }
+            _ => resolves_to_managed_backend(role, self.config),
+        };
+        if managed {
+            let resolved = self.ctx.resolved();
+            let extensions = resolved
+                .as_deref()
+                .map(crate::core::runtime::CoreContext::extensions);
+            let (model, concrete) =
+                super::managed_backend::make_openhuman_backend_model_for_thread_in(
+                    extensions,
+                    role,
+                    self.config,
+                    (!pin.is_empty()).then_some(pin),
+                    request.opts.native_tools,
+                    self.thread_id,
+                    self.egress,
+                )?;
+            let concrete = if concrete.trim().is_empty() {
+                pin
+            } else {
+                &concrete
+            };
+            return Ok((
+                model,
+                ResolvedModelRoute::new(
+                    PROVIDER_OPENHUMAN,
+                    concrete,
+                    Self::route_name(request, role),
+                ),
+            ));
+        }
+
+        let resolved = self.ctx.resolved();
+        let context_extensions = resolved
+            .as_deref()
+            .map(crate::core::runtime::CoreContext::extensions);
+        let mut parsed_route = ProviderRoute::parse(&provider);
+        if parsed_route.is_none()
+            && provider
+                .trim()
+                .eq_ignore_ascii_case(CLAUDE_AGENT_SDK_PROVIDER)
+        {
+            parsed_route = Some(ProviderRoute {
+                provider: CLAUDE_AGENT_SDK_PROVIDER.to_owned(),
+                model: self.config.claude_agent_sdk.default_model.clone(),
+                temperature: None,
+            });
+        }
+        if let Some(route) = parsed_route.as_mut() {
+            if !pin.is_empty()
+                && matches!(
+                    route.kind(),
+                    RouteKind::ClaudeCode | RouteKind::ClaudeAgentSdk
+                )
+            {
+                route.model = pin.to_owned();
+            }
+        }
+        if let Some(route) = parsed_route.as_ref().filter(|route| {
+            matches!(
+                route.kind(),
+                RouteKind::ClaudeCode | RouteKind::ClaudeAgentSdk
+            )
+        }) {
+            if route.temperature.is_some() && matches!(route.kind(), RouteKind::ClaudeCode) {
+                log::warn!(
+                    "[providers][chat-factory] claude-code provider: per-model temperature override \
+                     is accepted but not wired through to the CLI — the @<temp> suffix is ignored"
+                );
+            }
+            let effective_model = route.model.trim();
+            anyhow::ensure!(
+                !effective_model.is_empty(),
+                "subprocess model route for role '{role}' has an empty model"
+            );
+            let route_kind = route.kind();
+            let egress_name = match route_kind {
+                RouteKind::ClaudeCode => format!(
+                    "{}{}",
+                    tinyagents_harness::providers::claude_code::PROVIDER_PREFIX,
+                    effective_model
+                ),
+                RouteKind::ClaudeAgentSdk => format!("{CLAUDE_AGENT_SDK_PREFIX}{effective_model}"),
+                _ => unreachable!("subprocess route was filtered"),
+            };
+            emit_inference_egress(role, &egress_name, self.egress);
+            let workspace = self
+                .config
+                .config_path
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| self.config.workspace_dir.clone());
+            let documents = crate::storage::current_scoped()?
+                .ok_or_else(|| anyhow::anyhow!("storage is unavailable for Claude provider state"))?
+                .documents()
+                .clone();
+            let context = tinyagents_harness::host::model_factory::SubprocessProviderContext {
+                workspace_dir: workspace,
+                action_dir: self.config.action_dir.clone(),
+                documents,
+                claude_agent_sdk: (&self.config.claude_agent_sdk).into(),
+                mcp_provider: Some(Arc::new(OpenHumanMcpEndpoint)),
+            };
+            let model = tinyagents_harness::host::model_factory::build_claude_subprocess_model(
+                route, &context,
+            )?
+            .ok_or_else(|| anyhow::anyhow!("unsupported subprocess route"))?;
+            let route_provider = route.provider.clone();
+            let resolved_model = effective_model.to_owned();
+            let route = ResolvedModelRoute::new(
+                route_provider,
+                resolved_model,
+                Self::route_name(request, role),
+            );
+            return Ok((model, route));
+        }
+
+        let (model, route_provider, resolved_model) = match parsed_route
+            .as_ref()
+            .map(ProviderRoute::kind)
+        {
+            Some(RouteKind::Local(_)) | None
+                if tinyinference_local::profile::kind_from_provider_string(&provider).is_some() =>
+            {
+                let local = try_create_local_runtime_chat_model_from_string(
+                    role,
+                    &provider,
+                    self.config,
+                    self.egress,
+                );
+                let (model, resolved) = match local {
+                    Some(result) => result?,
+                    None => {
+                        return Err(unresolved_chat_model_error_for_access(
+                            role,
+                            &provider,
+                            self.config,
+                            self.egress,
+                            context_extensions,
+                            CredentialAccess::Runtime(&self.credentials),
+                        ));
+                    }
+                };
+                let provider = model
+                    .profile()
+                    .and_then(|p| p.provider.clone())
+                    .unwrap_or_else(|| "local".into());
+                (model, provider, resolved)
+            }
+            Some(RouteKind::Cloud { .. }) => {
+                let cloud = super::cloud_slug::try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
+                        role,
+                        &provider,
+                        self.config,
+                        request.opts.native_tools,
+                        self.egress,
+                        context_extensions,
+                        CredentialAccess::Runtime(&self.credentials),
+                        None,
+                        None,
+                )
+                .await;
+                let (model, resolved) = match cloud {
+                    Some(result) => result?,
+                    None => {
+                        return Err(unresolved_chat_model_error_for_access(
+                            role,
+                            &provider,
+                            self.config,
+                            self.egress,
+                            context_extensions,
+                            CredentialAccess::Runtime(&self.credentials),
+                        ));
+                    }
+                };
+                let route_provider = model
+                    .profile()
+                    .and_then(|p| p.provider.clone())
+                    .unwrap_or_else(|| {
+                        parsed_route
+                            .as_ref()
+                            .expect("parsed cloud route")
+                            .provider
+                            .clone()
+                    });
+                (model, route_provider, resolved)
+            }
+            _ => {
+                return Err(unresolved_chat_model_error_for_access(
+                    role,
+                    &provider,
+                    self.config,
+                    self.egress,
+                    context_extensions,
+                    CredentialAccess::Runtime(&self.credentials),
+                ));
+            }
+        };
+
+        let route = ResolvedModelRoute::new(
+            route_provider,
+            resolved_model,
+            Self::route_name(request, role),
+        );
+        Ok((model, route))
+    }
+}
+
+async fn build_one_shot(
+    ctx: &DispatchCtx,
+    role: &str,
+    provider: Option<&str>,
+    config: &Config,
+) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
+    let egress = EgressLedger::none();
+    let credentials = super::credentials::RuntimeCredentialSnapshot::resolve(config).await;
+    let factory = OpenHumanModelFactory {
+        ctx,
+        config,
+        primary_provider: provider,
+        egress: &egress,
+        thread_id: None,
+        attach_host_attachments: false,
+        credentials,
+        host_controls: None,
+        summarizer_model: None,
+    };
+    let request = ModelBuildRequest {
+        role: role.to_owned(),
+        route: None,
+        purpose: ModelPurpose::Primary,
+        model_pin: None,
+        opts: BuildOpts {
+            native_tools: true,
+            temperature: None,
+            egress_tag: None,
+        },
+    };
+    factory.check(&request)?;
+    let (model, route) = factory.build(&request).await?;
+    Ok((model, route.model))
+}
+
+#[async_trait::async_trait]
+impl ModelFactory<()> for OpenHumanModelFactory<'_> {
+    async fn build(
+        &self,
+        request: &ModelBuildRequest,
+    ) -> tinyagents_harness::Result<(Arc<dyn ChatModel<()>>, ResolvedModelRoute)> {
+        let (model, route) = self
+            .build_request(request)
+            .await
+            .map_err(|error| tinyagents_harness::TinyAgentsError::Model(error.to_string()))?;
+        let opts = ModelRequestDefaults {
+            model: (!route.model.is_empty()).then(|| route.model.clone()),
+            temperature: request.opts.temperature,
+        };
+        let mut model = with_request_defaults(model, opts);
+        if self.attach_host_attachments {
+            model = if self.injected(request).is_some() {
+                crate::attachments::provider::wrap_injected_controlled(
+                    self.ctx,
+                    model,
+                    Arc::new(self.config.clone()),
+                    self.host_controls,
+                )
+            } else {
+                crate::attachments::provider::wrap_controlled(
+                    self.ctx,
+                    model,
+                    Arc::new(self.config.clone()),
+                    &route.model,
+                    &route.provider,
+                    self.host_controls,
+                )
+                .await
+            };
+        }
+        Ok((model, route))
+    }
+}
+
+fn with_request_defaults(
+    model: Arc<dyn ChatModel<()>>,
+    defaults: ModelRequestDefaults,
+) -> Arc<dyn ChatModel<()>> {
+    Arc::new(ProfileOverrideModel::new_preserving_profile(model).with_defaults(defaults))
+}
 
 /// Build an `Arc<dyn ChatModel>` for the given workload role, under `ctx`.
 ///
@@ -12,13 +423,17 @@ use crate::inference::provider::factory::access_gates::verify_session_active;
 /// inference callers. Production and tests both inject this native interface;
 /// `temperature` is applied as the request default while an explicit per-call
 /// value still wins.
-pub fn create_chat_model_in(
+pub async fn create_chat_model_in(
     ctx: &DispatchCtx,
     role: &str,
     config: &Config,
     temperature: f64,
 ) -> anyhow::Result<Arc<dyn ChatModel<()>>> {
-    Ok(create_chat_model_with_model_id_in(ctx, role, config, temperature)?.0)
+    Ok(
+        create_chat_model_with_model_id_in(ctx, role, config, temperature)
+            .await?
+            .0,
+    )
 }
 
 /// Like [`create_chat_model_in`], but also returns the resolved model id.
@@ -27,88 +442,22 @@ pub fn create_chat_model_in(
 /// summarise audit) need the id the role resolved to; the plain
 /// [`create_chat_model_in`] drops it. The host model overrides of the agent
 /// `ctx` runs for win over the configured route.
-pub fn create_chat_model_with_model_id_in(
+pub async fn create_chat_model_with_model_id_in(
     ctx: &DispatchCtx,
     role: &str,
     config: &Config,
     temperature: f64,
 ) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
-    let (model, model_id) = create_chat_model_with_model_id_inner(ctx, role, config)?;
+    let (model, model_id) = create_chat_model_with_model_id_inner(ctx, role, config).await?;
     Ok((with_default_temperature(model, temperature), model_id))
 }
 
-pub(super) fn create_chat_model_with_model_id_inner(
+pub(super) async fn create_chat_model_with_model_id_inner(
     ctx: &DispatchCtx,
     role: &str,
     config: &Config,
 ) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
-    if let Some(model) = ctx.host_overrides().and_then(|local| local.model_for(role)) {
-        return Ok((
-            model,
-            config
-                .default_model
-                .clone()
-                .unwrap_or_else(|| "host-model".into()),
-        ));
-    }
-    #[cfg(any(test, feature = "e2e-test-support", feature = "rss-bench"))]
-    if let Some(model) = test_provider_override::current() {
-        return Ok((model, "mock-model".to_string()));
-    }
-    // Managed OpenHuman backend → crate-native host `ChatModel`
-    // (issue #4727 Motion B) instead of a
-    // adapted provider. A native test-model override must still win, so only
-    // take this path when no
-    // override is installed. The public wrapper supplies the construction-time
-    // default while preserving an explicit per-call `ModelRequest` temperature.
-    let test_override_active = {
-        #[cfg(any(test, feature = "e2e-test-support", feature = "rss-bench"))]
-        {
-            test_provider_override::current().is_some()
-        }
-        #[cfg(not(any(test, feature = "e2e-test-support", feature = "rss-bench")))]
-        {
-            false
-        }
-    };
-    if !test_override_active {
-        if resolves_to_managed_backend(role, config) {
-            return make_openhuman_backend_model(role, config);
-        }
-        if let Some(result) =
-            try_create_claude_agent_sdk_chat_model(role, config, &EgressLedger::none())
-        {
-            return result;
-        }
-        if let Some(result) =
-            try_create_claude_code_chat_model(role, config, None, &EgressLedger::none())
-        {
-            return result;
-        }
-        // Local OpenAI-compatible runtimes (Ollama / LM Studio / MLX / OMLX /
-        // local-openai) → crate-native `ChatModel` (issue #4727 Motion B) instead
-        // of a crate-adapted host provider. Cloud/BYOK/bespoke providers
-        // return `None` here and fall through to the `Provider` path below.
-        if let Some(result) =
-            try_create_local_runtime_chat_model(role, config, &EgressLedger::none())
-        {
-            return result;
-        }
-        // Wire-equivalent BYOK cloud slugs (Anthropic / None / plain-Bearer, no
-        // codex-oauth or `/v1/responses` fallback) → crate-native `ChatModel`
-        // (issue #4727 Phase 3, conservative subset). `openai`/codex, custom
-        // proxy slugs, and the managed entry return `None` and fall through.
-        if let Some(result) = try_create_cloud_slug_chat_model(role, config, &EgressLedger::none())
-        {
-            return result;
-        }
-    }
-    Err(unresolved_chat_model_error(
-        role,
-        &provider_for_role(role, config),
-        config,
-        &EgressLedger::none(),
-    ))
+    build_one_shot(ctx, role, None, config).await
 }
 
 /// Whether `role` resolves to the managed OpenHuman backend (vs BYOK / local /
@@ -160,7 +509,7 @@ pub async fn probe_inference_readiness(
     }
 
     log::debug!("[flows][inference-probe] role={role} verifying model construction");
-    if let Err(e) = create_chat_model_with_model_id_inner(ctx, role, config) {
+    if let Err(e) = create_chat_model_with_model_id_inner(ctx, role, config).await {
         log::debug!("[flows][inference-probe] role={role} construction failed: {e}");
         return Err(e.to_string());
     }
@@ -177,16 +526,44 @@ pub async fn probe_inference_readiness(
         "[flows][inference-probe] role={role} resolves to the managed OpenHuman backend — \
          probing readiness"
     );
-    let Some(probe) =
-        crate::inference::registry::chat_model(PROVIDER_OPENHUMAN).and_then(|entry| entry.probe)
+    let resolved_context = ctx.resolved();
+    let extensions = resolved_context
+        .as_deref()
+        .map(crate::core::runtime::CoreContext::extensions);
+    let Some(entry) = crate::inference::registry::chat_model_for(extensions, PROVIDER_OPENHUMAN)
     else {
+        log::debug!("[flows][inference-probe] role={role} managed provider was unregistered");
+        return Ok(());
+    };
+    let Some(probe) = entry.probe else {
         // The registered provider has no readiness probe: construction above
         // succeeded, and there is nothing further to ask it.
         log::debug!("[flows][inference-probe] role={role} managed provider registered no probe");
         return Ok(());
     };
-    let model_id = resolve_managed_model(role, config, None);
-    let result = probe(role.to_string(), model_id.clone(), config.clone()).await;
+    let provider_context = crate::inference::registry::ProviderContext::new(
+        config,
+        &crate::security::egress::EgressLedger::none(),
+    );
+    let model_id = entry
+        .models
+        .as_ref()
+        .and_then(|models| (models.resolve_model)(role, &provider_context, None))
+        .or_else(|| {
+            config
+                .default_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+                .map(str::to_string)
+        })
+        .ok_or_else(|| format!("provider {PROVIDER_OPENHUMAN} has no model for role {role}"))?;
+    let result = probe(tinyinference_llm::providers::overrides::ReadinessRequest {
+        role: role.to_string(),
+        model: model_id.clone(),
+        context: provider_context,
+    })
+    .await;
     log::debug!(
         "[flows][inference-probe] role={role} model={model_id} probe result: {}",
         if result.is_ok() { "ready" } else { "not ready" }
@@ -197,13 +574,14 @@ pub async fn probe_inference_readiness(
 /// Build an `Arc<dyn ChatModel>` from an explicit provider string and config.
 ///
 /// The explicit-string counterpart of [`create_chat_model`].
-pub fn create_chat_model_from_string(
+pub async fn create_chat_model_from_string(
     role: &str,
     provider: &str,
     config: &Config,
     temperature: f64,
 ) -> anyhow::Result<Arc<dyn ChatModel<()>>> {
     create_chat_model_from_string_with_model_id(role, provider, config, temperature)
+        .await
         .map(|(model, _)| model)
 }
 
@@ -212,141 +590,43 @@ pub fn create_chat_model_from_string(
 ///
 /// Managed, local-runtime, configured cloud-slug, Claude SDK/Code, and Codex
 /// strings all construct native `ChatModel` implementations directly.
-pub fn create_chat_model_from_string_with_model_id(
+pub async fn create_chat_model_from_string_with_model_id(
     role: &str,
     provider: &str,
     config: &Config,
     temperature: f64,
 ) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
     let (model, model_id) =
-        create_chat_model_from_string_with_model_id_inner(role, provider, config)?;
+        create_chat_model_from_string_with_model_id_inner(role, provider, config).await?;
     Ok((with_default_temperature(model, temperature), model_id))
 }
 
-pub(super) fn create_chat_model_from_string_with_model_id_inner(
+pub(super) async fn create_chat_model_from_string_with_model_id_inner(
     role: &str,
     provider: &str,
     config: &Config,
 ) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
-    #[cfg(any(test, feature = "e2e-test-support", feature = "rss-bench"))]
-    if let Some(model) = test_provider_override::current() {
-        return Ok((model, "mock-model".to_string()));
-    }
-    let test_override_active = {
-        #[cfg(any(test, feature = "e2e-test-support", feature = "rss-bench"))]
-        {
-            test_provider_override::current().is_some()
-        }
-        #[cfg(not(any(test, feature = "e2e-test-support", feature = "rss-bench")))]
-        {
-            false
-        }
+    let resolved_provider;
+    let provider = if provider.trim().is_empty() || provider.trim() == "cloud" {
+        resolved_provider = resolve_primary_cloud_provider_string(config);
+        resolved_provider.as_str()
+    } else {
+        provider
     };
-    if !test_override_active {
-        let mut resolved = provider.trim().to_string();
-        if resolved.is_empty() || resolved == "cloud" {
-            resolved = resolve_primary_cloud_provider_string(config);
-        }
-        if resolved == PROVIDER_OPENHUMAN {
-            return make_openhuman_backend_model(role, config);
-        }
-        if let Some(result) = try_create_claude_agent_sdk_chat_model_from_string(
-            role,
-            &resolved,
-            config,
-            &EgressLedger::none(),
-        ) {
-            return result;
-        }
-        if let Some(result) = try_create_claude_code_chat_model_from_string(
-            role,
-            &resolved,
-            config,
-            None,
-            &EgressLedger::none(),
-        ) {
-            return result;
-        }
-        if let Some(result) = try_create_local_runtime_chat_model_from_string(
-            role,
-            &resolved,
-            config,
-            &EgressLedger::none(),
-        ) {
-            return result;
-        }
-        if let Some(result) = try_create_cloud_slug_chat_model_from_string(
-            role,
-            &resolved,
-            config,
-            &EgressLedger::none(),
-        ) {
-            return result;
-        }
-    }
-    Err(unresolved_chat_model_error(
-        role,
-        provider,
-        config,
-        &EgressLedger::none(),
-    ))
-}
-
-pub(super) struct DefaultTemperatureChatModel {
-    inner: Arc<dyn ChatModel<()>>,
-    temperature: f64,
-}
-
-#[async_trait::async_trait]
-impl ChatModel<()> for DefaultTemperatureChatModel {
-    fn profile(&self) -> Option<&tinyinference_llm::model::ModelProfile> {
-        self.inner.profile()
-    }
-
-    fn supports_input(
-        &self,
-        modality: tinyinference_llm::model::InputModality,
-        mime: &str,
-        source: tinyinference_llm::model::InputSource,
-    ) -> bool {
-        self.inner.supports_input(modality, mime, source)
-    }
-
-    fn cache_identity(&self) -> Option<String> {
-        self.inner.cache_identity()
-    }
-
-    async fn invoke(
-        &self,
-        state: &(),
-        mut request: ModelRequest,
-    ) -> tinyinference_llm::Result<ModelResponse> {
-        if request.temperature.is_none() {
-            request.temperature = Some(self.temperature);
-        }
-        self.inner.invoke(state, request).await
-    }
-
-    async fn stream(
-        &self,
-        state: &(),
-        mut request: ModelRequest,
-    ) -> tinyinference_llm::Result<ModelStream> {
-        if request.temperature.is_none() {
-            request.temperature = Some(self.temperature);
-        }
-        self.inner.stream(state, request).await
-    }
+    build_one_shot(&DispatchCtx::ambient(), role, Some(provider), config).await
 }
 
 pub(super) fn with_default_temperature(
     model: Arc<dyn ChatModel<()>>,
     temperature: f64,
 ) -> Arc<dyn ChatModel<()>> {
-    Arc::new(DefaultTemperatureChatModel {
-        inner: model,
-        temperature,
-    })
+    with_request_defaults(
+        model,
+        ModelRequestDefaults {
+            model: None,
+            temperature: Some(temperature),
+        },
+    )
 }
 
 /// Reproduce the legacy provider factory's access gates and diagnostics for a
@@ -355,11 +635,13 @@ pub(super) fn with_default_temperature(
 /// Successful production routes never reach this function. Keeping error
 /// resolution separate means `create_chat_model*` no longer constructs a
 /// legacy `Provider` merely to discover that a route is invalid.
-pub(super) fn unresolved_chat_model_error(
+pub(super) fn unresolved_chat_model_error_for_access(
     role: &str,
     provider: &str,
     config: &Config,
     egress: &EgressLedger,
+    extensions: Option<&crate::core::slots::Extensions>,
+    credential_access: CredentialAccess<'_>,
 ) -> anyhow::Error {
     let p = provider.trim();
 
@@ -383,22 +665,25 @@ pub(super) fn unresolved_chat_model_error(
     }
 
     if p.is_empty() || p == "cloud" {
-        return unresolved_chat_model_error(
+        return unresolved_chat_model_error_for_access(
             role,
             &resolve_primary_cloud_provider_string(config),
             config,
             egress,
+            extensions,
+            credential_access,
         );
     }
 
     #[cfg(not(test))]
-    if let Err(error) = verify_session_active(config) {
-        return error;
+    if let CredentialAccess::Runtime(snapshot) = credential_access {
+        if let Err(error) =
+            super::access_gates::verify_session_active_with_snapshot(config, snapshot)
+        {
+            return error;
+        }
     }
 
-    // Preserve the legacy chokepoint's disclosure ordering for invalid custom
-    // routes: after both gates pass, the attempted external destination is
-    // visible even when configuration validation then fails.
     emit_inference_egress(role, p, egress);
 
     if let Some((slug, model_with_temperature)) = p.split_once(':') {
@@ -410,7 +695,27 @@ pub(super) fn unresolved_chat_model_error(
             );
         }
         let (model, _) = split_model_and_temperature(model_with_temperature);
-        return match resolve_cloud_slug(role, slug.trim(), &model, config) {
+        let result = match credential_access {
+            CredentialAccess::Runtime(snapshot) => resolve_cloud_slug_with_access(
+                role,
+                slug.trim(),
+                &model,
+                config,
+                extensions,
+                CredentialAccess::Runtime(snapshot),
+                None,
+            ),
+            CredentialAccess::Inspection => resolve_cloud_slug_with_access(
+                role,
+                slug.trim(),
+                &model,
+                config,
+                extensions,
+                CredentialAccess::Inspection,
+                None,
+            ),
+        };
+        return match result {
             Err(error) => error,
             Ok(_) => anyhow::anyhow!(
                 "[chat-factory] configured provider '{}' for role '{}' did not produce a crate-native chat model",

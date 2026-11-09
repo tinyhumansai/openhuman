@@ -1,5 +1,31 @@
 use super::*;
 
+fn round_trip_through_storage_bridge() -> serde_json::Value {
+    let backend: Arc<dyn StorageBackend> =
+        Arc::new(tinystoragedrivers_testkit::MemoryBackend::new());
+    let storage = backend
+        .for_scope(&Scope::new("bridge-test").unwrap())
+        .unwrap();
+    let docs = Arc::clone(storage.documents());
+    block_on(async move {
+        docs.ensure_collection(&CollectionSpec::new("bridge.records"))
+            .await?;
+        docs.put(
+            "bridge.records",
+            "record-1",
+            serde_json::json!({"value": 42}),
+            Precondition::Absent,
+        )
+        .await?;
+        Ok(docs
+            .get("bridge.records", "record-1")
+            .await?
+            .expect("record was written")
+            .doc)
+    })
+    .unwrap()
+}
+
 fn config_with(url: Option<&str>) -> Config {
     let mut config = Config::default();
     config.storage.url = url.map(str::to_string);
@@ -53,7 +79,22 @@ fn the_default_url_is_a_directory_under_the_workspace() {
 #[tokio::test]
 async fn opens_memory_and_refuses_garbage() {
     let backend = open("memory").await.unwrap();
-    assert_eq!(backend.driver(), "memory");
+    let scope = backend.for_scope(&Scope::local()).unwrap();
+    let docs = Arc::clone(scope.documents());
+    block_on(async move {
+        docs.ensure_collection(&CollectionSpec::new("probe"))
+            .await?;
+        docs.put(
+            "probe",
+            "opened",
+            serde_json::json!({"ok": true}),
+            Precondition::Absent,
+        )
+        .await?;
+        assert_eq!(docs.get("probe", "opened").await?.unwrap().doc["ok"], true);
+        Ok(())
+    })
+    .unwrap();
     assert!(open("ftp://nope").await.is_err());
 }
 
@@ -63,14 +104,12 @@ fn install_installed_and_clear() {
     // test's storage calls while this one runs.
     let slot = Slot::default();
     assert!(slot.installed().is_none());
-    let backend: Arc<dyn StorageBackend> = Arc::new(tinystoragedrivers::MemoryStorage::new());
+    let backend = test_support::memory_backend();
     assert!(slot.install(Arc::clone(&backend)).is_none());
     assert!(slot
         .installed()
         .is_some_and(|got| Arc::ptr_eq(&got, &backend)));
-    assert!(slot
-        .install(Arc::new(tinystoragedrivers::MemoryStorage::new()))
-        .is_some());
+    assert!(slot.install(test_support::memory_backend()).is_some());
     assert!(slot.clear());
     assert!(!slot.clear());
 }
@@ -131,13 +170,48 @@ fn block_on_runs_a_future_from_sync_code() {
     assert_eq!(error.message(), "raced");
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn block_on_works_inside_a_current_thread_runtime() {
+    assert_eq!(
+        round_trip_through_storage_bridge(),
+        serde_json::json!({"value": 42})
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
-async fn block_on_works_inside_a_runtime_too() {
-    let answer = tokio::task::spawn_blocking(|| block_on(async { Ok::<_, StorageError>(7) }))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(answer, 7);
+async fn block_on_works_inside_a_multi_thread_runtime() {
+    assert_eq!(
+        round_trip_through_storage_bridge(),
+        serde_json::json!({"value": 42})
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bridge_runtime_keeps_background_tasks_running_between_sync_calls() {
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let (progress_tx, progress_rx) = std::sync::mpsc::channel();
+    block_on(async move {
+        tokio::spawn(async move {
+            let _ = ready_tx.send(());
+            if release_rx.await.is_ok() {
+                let _ = progress_tx.send(());
+            }
+        });
+        ready_rx
+            .await
+            .map_err(|error| StorageError::backend(error.to_string()))?;
+        Ok(())
+    })
+    .unwrap();
+
+    // The task was spawned on the bridge runtime and the request has returned.
+    // It must still make progress while the bridge owner waits for its next
+    // synchronous request.
+    release_tx.send(()).unwrap();
+    progress_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("bridge runtime polled its background task while idle");
 }
 
 #[test]
@@ -146,6 +220,37 @@ fn only_mongodb_is_shared_between_processes() {
     for driver in ["sqlite", "memory", "file"] {
         assert!(!driver_is_shared(driver), "{driver}");
     }
+}
+
+/// The installed backend is shared when its driver is, however the host
+/// installed it: by URL, with a driver name, or (not shared) with neither.
+#[test]
+fn the_installed_backend_is_shared_by_its_driver_however_it_was_installed() {
+    let _guard = test_support::install_backend_for_test(test_support::memory_backend());
+    assert!(!installed_is_shared(), "no driver known");
+
+    install_with_driver("mongodb", test_support::memory_backend());
+    assert!(installed_is_shared());
+    assert_eq!(installed_driver().as_deref(), Some("mongodb"));
+    assert_eq!(
+        installed_url(),
+        None,
+        "a driver name never opts into rebind"
+    );
+
+    install_with_driver("sqlite", test_support::memory_backend());
+    assert!(!installed_is_shared());
+
+    install_for_url("mongodb://db.example/x", test_support::memory_backend());
+    assert!(installed_is_shared());
+
+    install(test_support::memory_backend());
+    assert!(!installed_is_shared(), "a plain install forgets the driver");
+    assert_eq!(installed_driver(), None);
+
+    install_with_driver("mongodb", test_support::memory_backend());
+    assert!(clear());
+    assert!(!installed_is_shared(), "clearing forgets the driver");
 }
 
 #[test]
@@ -159,19 +264,207 @@ fn only_mongodb_and_sqlite_have_cross_process_cas() {
 }
 
 #[tokio::test]
-async fn the_driver_name_check_agrees_with_what_each_backend_claims() {
+#[cfg(all(feature = "storage-sqlite", feature = "storage-file"))]
+async fn local_drivers_do_not_claim_cross_process_cas() {
     let dir = tempfile::tempdir().unwrap();
-    for url in [
-        "memory".to_string(),
-        format!("sqlite:{}", dir.path().join("cas.db").display()),
-        format!("file:{}", dir.path().join("files").display()),
+    for (url, expected) in [
+        ("memory".to_string(), false),
+        (
+            format!("sqlite:{}", dir.path().join("cas.db").display()),
+            true,
+        ),
+        (
+            format!("file:{}", dir.path().join("files").display()),
+            false,
+        ),
     ] {
         let backend = open(&url).await.unwrap();
-        assert_eq!(
-            backend_has_cross_process_cas(backend.as_ref()),
-            driver_has_cross_process_cas(backend.driver()),
-            "{}",
-            backend.driver()
+        assert!(
+            backend_has_cross_process_cas(backend.as_ref()) == expected,
+            "unexpected CAS capability for {url}"
         );
     }
+}
+
+mod storage_runtime {
+    use super::super::{block_on, connect_on_storage_runtime};
+    use super::StorageError;
+    use std::sync::mpsc as std_mpsc;
+    use std::time::Duration;
+    use tokio::sync::{mpsc, oneshot};
+
+    #[derive(Clone)]
+    struct FakePool {
+        requests: mpsc::UnboundedSender<oneshot::Sender<u32>>,
+    }
+
+    impl FakePool {
+        fn spawn() -> Self {
+            let (requests, mut receiver) = mpsc::unbounded_channel::<oneshot::Sender<u32>>();
+            tokio::spawn(async move {
+                while let Some(reply) = receiver.recv().await {
+                    let _ = reply.send(7);
+                }
+            });
+            Self { requests }
+        }
+
+        async fn ping(&self) -> Result<u32, StorageError> {
+            let (reply, answer) = oneshot::channel();
+            self.requests
+                .send(reply)
+                .map_err(|_| StorageError::backend("fake pool stopped"))?;
+            answer
+                .await
+                .map_err(|_| StorageError::backend("fake pool dropped the request"))
+        }
+    }
+
+    #[tokio::test]
+    async fn returns_what_connect_built() {
+        let value = connect_on_storage_runtime(|| async { 41 + 1 })
+            .await
+            .expect("connect runs");
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn runs_from_inside_the_blocking_bridge() {
+        let value = block_on(async {
+            let pool = connect_on_storage_runtime(|| async { FakePool::spawn() }).await?;
+            pool.ping().await
+        })
+        .expect("bridged connect completes");
+        assert_eq!(value, 7);
+    }
+
+    #[tokio::test]
+    async fn a_panicking_connect_is_a_storage_error() {
+        let result = connect_on_storage_runtime(|| async {
+            if true {
+                panic!("connect blew up");
+            }
+        })
+        .await;
+        assert!(result.is_err(), "a panic surfaces as a StorageError");
+    }
+
+    #[derive(Clone, Default)]
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Captured;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn open_connects_on_the_storage_runtime() {
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(captured.clone())
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        let backend = super::super::open("memory").await;
+        drop(guard);
+        assert!(backend.is_ok(), "memory backend opens");
+        let log = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            log.contains("connecting on the storage runtime"),
+            "open must connect through the storage runtime, got: {log}"
+        );
+    }
+
+    #[test]
+    fn bridged_calls_do_not_starve_a_capped_host_runtime() {
+        let (done, outcome) = std_mpsc::channel();
+        let host = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .max_blocking_threads(1)
+                .enable_all()
+                .build()
+                .expect("host runtime");
+            let result = runtime.block_on(async {
+                let pool = connect_on_storage_runtime(|| async { FakePool::spawn() })
+                    .await
+                    .expect("connect");
+                let calls: Vec<_> = (0..8)
+                    .map(|_| {
+                        let pool = pool.clone();
+                        tokio::spawn(async move { block_on(async move { pool.ping().await }) })
+                    })
+                    .collect();
+                let mut answers = Vec::new();
+                for call in calls {
+                    answers.push(call.await.expect("call task").expect("ping"));
+                }
+                answers
+            });
+            let _ = done.send(result);
+            runtime
+        });
+        match outcome.recv_timeout(Duration::from_secs(20)) {
+            Ok(answers) => {
+                assert_eq!(answers, vec![7; 8]);
+                drop(host.join().expect("host thread"));
+            }
+            Err(_) => {
+                std::mem::forget(host);
+                panic!("storage bridge deadlocked");
+            }
+        }
+    }
+}
+
+/// A backend one test installs is not another concurrent test's storage: the
+/// slot is visible to its installer's thread only (MAIN-57).
+#[test]
+fn a_test_installed_slot_is_hidden_from_other_test_threads() {
+    let ready = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let installer = {
+        let (ready, done) = (ready.clone(), done.clone());
+        std::thread::Builder::new()
+            .name("storage::slot_probe::installer".into())
+            .spawn(move || {
+                let _guard = crate::storage::test_support::install_backend_for_test(
+                    crate::storage::test_support::memory_backend(),
+                );
+                let mine = crate::storage::installed().is_some();
+                ready.wait();
+                done.wait();
+                assert!(mine, "the installer sees its own slot");
+            })
+            .unwrap()
+    };
+    let other = std::thread::Builder::new()
+        .name("storage::slot_probe::other".into())
+        .spawn(move || {
+            ready.wait();
+            let seen = installed_url().is_some() || crate::storage::installed().is_some();
+            done.wait();
+            seen
+        })
+        .unwrap();
+    installer.join().unwrap();
+    assert!(
+        !other.join().unwrap(),
+        "another test's thread must not see the installer's backend"
+    );
 }

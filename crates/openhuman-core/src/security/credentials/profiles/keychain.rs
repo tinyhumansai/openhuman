@@ -2,12 +2,12 @@
 
 use anyhow::Context;
 
-use super::{AuthProfile, AuthProfilesStore, KeychainSecrets, KEYCHAIN_AUTH_PREFIX};
+use super::{AuthProfile, AuthProfilesStore, KeychainSecrets};
 
 impl AuthProfilesStore {
     /// Build a keychain key for an auth profile's combined secret payload.
     pub(super) fn keychain_key_for_profile(&self, profile_id: &str) -> String {
-        format!("{KEYCHAIN_AUTH_PREFIX}{profile_id}")
+        super::auth_profile_secret_key(profile_id)
     }
 
     /// Store auth secrets for a profile in the OS keychain.
@@ -41,7 +41,8 @@ impl AuthProfilesStore {
 
     /// Load auth secrets for a profile from the OS keychain.
     ///
-    /// Returns `None` if no keychain entry exists for the profile.
+    /// Returns `None` if no keychain entry exists for the profile, and an error
+    /// when the keychain could not be read (locked, denied, unavailable).
     pub(super) fn keychain_load_secrets(
         &self,
         profile_id: &str,
@@ -62,7 +63,9 @@ impl AuthProfilesStore {
                     self.user_id,
                     e.diagnostic()
                 );
-                return Ok(None);
+                // A read error is not a missing entry: the caller must not
+                // treat the profile as having no secrets.
+                anyhow::bail!("keychain read failed: {}", e.diagnostic());
             }
         };
         let secrets: KeychainSecrets = serde_json::from_str(&payload).map_err(|e| {

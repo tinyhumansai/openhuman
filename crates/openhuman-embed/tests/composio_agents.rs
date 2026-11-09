@@ -84,20 +84,20 @@ fn agents_call_composio_with_their_own_credential() {
             let alpha = runtime
                 .agent(
                     AgentSpec::new("alpha")
-                        .provider(Provider::openai_compatible(
-                            format!("{}/v1", provider_a.uri()),
-                            "sk-a",
-                        ))
+                        .provider(
+                            Provider::openai_compatible(format!("{}/v1", provider_a.uri()), "sk-a")
+                                .model("fixture-alpha"),
+                        )
                         .composio(credential(KEY_A, "tenant-a", &composio)),
                 )
                 .expect("alpha instantiates");
             let beta = runtime
                 .agent(
                     AgentSpec::new("beta")
-                        .provider(Provider::openai_compatible(
-                            format!("{}/v1", provider_b.uri()),
-                            "sk-b",
-                        ))
+                        .provider(
+                            Provider::openai_compatible(format!("{}/v1", provider_b.uri()), "sk-b")
+                                .model("fixture-beta"),
+                        )
                         .composio(credential(KEY_B, "tenant-b", &composio)),
                 )
                 .expect("beta instantiates");

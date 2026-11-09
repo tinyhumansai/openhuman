@@ -1,5 +1,5 @@
 use super::*;
-use crate::util::classic_transcript_fixture::{read_classic_rows, write_classic};
+use crate::util::classic_transcript_fixture::write_classic;
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -62,6 +62,7 @@ fn meta() -> TranscriptMeta {
         updated: "2026-05-01T00:00:00Z".into(),
         turn_count: 1,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,
@@ -107,21 +108,24 @@ async fn run_pending_skips_when_version_current() {
     assert_eq!(before, after, "transcript must be untouched");
 }
 
+#[path = "remove_autonomy_cost_cap_tests.rs"]
+mod remove_autonomy_cost_cap_tests;
+
 #[tokio::test]
 async fn run_pending_runs_phase_out_when_version_zero() {
     let tmp = TempDir::new().unwrap();
     let path = seed_tainted_transcript(&tmp.path().join("workspace"));
+    let before = fs::read(&path).unwrap();
 
     let mut config = config_in(&tmp);
     assert_eq!(config.schema_version, 0);
     run_pending(&mut config).await;
 
     assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
-    let rows = read_classic_rows(&path);
-    let first = rows[0]["content"].as_str().unwrap();
-    assert!(
-        !first.contains("### PROFILE.md"),
-        "PROFILE.md block must be stripped, got:\n{first}"
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        before,
+        "migration must preserve source transcripts; import strips the retired section"
     );
 
     let on_disk = std::fs::read_to_string(&config.config_path).unwrap();
@@ -223,15 +227,14 @@ async fn run_pending_rolls_back_schema_version_when_save_fails() {
 }
 
 #[tokio::test]
-async fn run_pending_v7_to_v8_rolls_back_default_model_when_save_fails() {
+async fn run_pending_v7_to_v8_rolls_back_schema_version_when_save_fails() {
     let tmp = TempDir::new().unwrap();
     fs::create_dir_all(tmp.path().join("workspace")).unwrap();
 
     let mut config = config_in(&tmp);
     config.schema_version = 7;
     config.default_model = Some("reasoning-v1".to_string());
-    // Force save() to fail after normalize_default_model_tier mutates
-    // default_model, so the 7->8 rollback path runs.
+    // Force save() to fail so the generic 7->8 schema gate remains retryable.
     let blocker = tmp.path().join("blocker");
     fs::write(&blocker, "not a directory").unwrap();
     config.config_path = blocker.join("nested").join("config.toml");
@@ -250,7 +253,7 @@ async fn run_pending_v7_to_v8_rolls_back_default_model_when_save_fails() {
 }
 
 #[tokio::test]
-async fn run_pending_v12_to_v13_retires_persisted_tier_slugs() {
+async fn bare_core_v12_to_v13_preserves_provider_model_values() {
     let tmp = TempDir::new().unwrap();
     fs::create_dir_all(tmp.path().join("workspace")).unwrap();
 
@@ -262,20 +265,17 @@ async fn run_pending_v12_to_v13_retires_persisted_tier_slugs() {
     run_pending(&mut config).await;
 
     assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
-    assert_eq!(
-        config.default_model.as_deref(),
-        Some(crate::config::MODEL_MANAGED_DEFAULT)
-    );
-    assert_eq!(
-        config.orchestrator.model.as_deref(),
-        Some(crate::config::MODEL_MANAGED_DEFAULT)
-    );
+    assert_eq!(config.default_model.as_deref(), Some("chat-v1"));
+    assert_eq!(config.orchestrator.model.as_deref(), Some("reasoning-v1"));
     let on_disk = std::fs::read_to_string(&config.config_path).unwrap();
     assert!(
-        !on_disk.contains("chat-v1") && !on_disk.contains("reasoning-v1"),
-        "no retired tier slug may survive on disk, got:\n{on_disk}"
+        on_disk.contains("chat-v1") && on_disk.contains("reasoning-v1"),
+        "bare core must leave provider-owned values unchanged, got:\n{on_disk}"
     );
 }
+
+#[path = "config_normalizer_tests.rs"]
+mod config_normalizer;
 
 #[tokio::test]
 async fn run_pending_v12_to_v13_rolls_back_when_save_fails() {
@@ -692,7 +692,7 @@ async fn a_hand_written_empty_allowlist_is_also_widened() {
 /// fails its provider lookup before making any HTTP request, so the model
 /// picker's managed pane renders "Could not load models from this provider."
 #[tokio::test]
-async fn a_v10_workspace_with_no_cloud_providers_is_reseeded() {
+async fn bare_core_v10_workspace_advances_schema_without_hosted_policy() {
     let tmp = TempDir::new().unwrap();
     fs::create_dir_all(tmp.path().join("workspace")).unwrap();
 
@@ -702,24 +702,16 @@ async fn a_v10_workspace_with_no_cloud_providers_is_reseeded() {
 
     run_pending(&mut config).await;
 
-    assert!(
-        config.cloud_providers.iter().any(|e| e.slug == "openhuman"),
-        "a v10 workspace with an empty provider list must gain the managed entry, \
-         otherwise the model picker can never load the managed catalog"
-    );
+    assert!(config.cloud_providers.is_empty());
     assert_eq!(
         config.schema_version, CURRENT_SCHEMA_VERSION,
-        "the re-seed step must advance the schema version"
+        "generic schema steps must continue without hosted policy"
     );
 }
 
-/// The re-seed must not touch a workspace that already has providers.
-///
-/// `seed_cloud_providers` early-returns on a non-empty list, so this is the
-/// guard that keeps the new step a no-op for every healthy install — including
-/// one whose only entry is a BYO provider the user configured themselves.
+/// Generic schema progression preserves a user-owned provider entry.
 #[tokio::test]
-async fn a_v10_workspace_that_already_has_providers_is_left_alone() {
+async fn bare_core_v10_workspace_preserves_user_cloud_providers() {
     let tmp = TempDir::new().unwrap();
     fs::create_dir_all(tmp.path().join("workspace")).unwrap();
 

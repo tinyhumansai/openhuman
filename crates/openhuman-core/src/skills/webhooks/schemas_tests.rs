@@ -1,162 +1,75 @@
 use super::*;
-use serde_json::json;
-
-// ── Catalog integrity ─────────────────────────────────────────
-
-const EXPECTED_FUNCTIONS: &[&str] = &[
-    "list_registrations",
-    "list_logs",
-    "clear_logs",
-    "register_echo",
-    "unregister_echo",
-    "register_agent",
-    "trigger_agent",
-];
+use crate::core::all::{
+    assert_schema_controller_parity, expect_schema_fields, expect_schema_identity,
+    expect_schema_input_order, expect_schema_output_names, expect_schema_required_inputs,
+};
 
 #[test]
-fn all_controller_schemas_matches_expected_function_set() {
-    let schemas_list = all_controller_schemas();
-    assert_eq!(schemas_list.len(), EXPECTED_FUNCTIONS.len());
-    let names: Vec<&str> = schemas_list.iter().map(|s| s.function).collect();
-    for expected in EXPECTED_FUNCTIONS {
-        assert!(
-            names.contains(expected),
-            "catalog missing `{expected}`; got {names:?}"
-        );
-    }
-}
-
-#[test]
-fn all_controller_schemas_entries_are_all_under_webhooks_namespace() {
-    for s in all_controller_schemas() {
-        assert_eq!(
-            s.namespace, "webhooks",
-            "schema `{}` has wrong namespace",
-            s.function
-        );
-        assert!(
-            !s.description.trim().is_empty(),
-            "schema `{}` must have a description",
-            s.function
-        );
-    }
-}
-
-#[test]
-fn all_registered_controllers_parallels_the_schema_list() {
-    let schemas_list = all_controller_schemas();
-    let handlers = all_registered_controllers();
-    assert_eq!(schemas_list.len(), handlers.len());
-
-    // Every registered controller's schema must resolve back to the
-    // same ControllerSchema produced by `schemas()` — proves the two
-    // lists are kept in lock-step and no handler is mis-wired.
-    for rc in &handlers {
-        let resolved = schemas(rc.schema.function);
-        assert_eq!(resolved.function, rc.schema.function);
-        assert_eq!(resolved.namespace, rc.schema.namespace);
-    }
-}
-
-#[test]
-fn all_registered_controller_function_names_are_unique() {
-    let handlers = all_registered_controllers();
-    let mut names: Vec<&str> = handlers.iter().map(|rc| rc.schema.function).collect();
-    names.sort_unstable();
-    let unique_count = {
-        let mut clone = names.clone();
-        clone.dedup();
-        clone.len()
-    };
-    assert_eq!(
-        unique_count,
-        names.len(),
-        "duplicate function names: {names:?}"
+fn webhook_schema_contracts_are_preserved() {
+    crate::core::all::expect_schema_namespace(&all_controller_schemas(), "webhooks");
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "list_registrations",
     );
-}
-
-// ── schemas(function) per-arm coverage ───────────────────────
-
-fn required_input_names(s: &ControllerSchema) -> Vec<&'static str> {
-    s.inputs
-        .iter()
-        .filter(|f| f.required)
-        .map(|f| f.name)
-        .collect()
-}
-
-#[test]
-fn list_registrations_has_no_inputs_and_json_output() {
-    let s = schemas("list_registrations");
-    assert!(s.inputs.is_empty());
-    assert_eq!(s.outputs.len(), 1);
-    assert_eq!(s.outputs[0].name, "result");
-    assert!(matches!(s.outputs[0].ty, TypeSchema::Json));
-}
-
-#[test]
-fn list_logs_limit_is_optional_u64() {
-    let s = schemas("list_logs");
-    assert_eq!(s.inputs.len(), 1);
-    assert_eq!(s.inputs[0].name, "limit");
-    assert!(!s.inputs[0].required);
-    match &s.inputs[0].ty {
-        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::U64)),
-        other => panic!("limit must be Option<U64>, got {other:?}"),
-    }
-}
-
-#[test]
-fn clear_logs_has_no_inputs() {
-    assert!(schemas("clear_logs").inputs.is_empty());
-}
-
-#[test]
-fn register_echo_requires_tunnel_uuid_only() {
-    let s = schemas("register_echo");
-    assert_eq!(required_input_names(&s), vec!["tunnel_uuid"]);
-    // The two optional fields must exist and be Option<String>.
-    for optional in ["tunnel_name", "backend_tunnel_id"] {
-        let f = s
-            .inputs
-            .iter()
-            .find(|f| f.name == optional)
-            .unwrap_or_else(|| panic!("missing optional `{optional}`"));
-        assert!(!f.required);
-        assert!(
-            matches!(&f.ty, TypeSchema::Option(inner) if matches!(**inner, TypeSchema::String))
+    let contracts = [
+        ("list_registrations", &[][..], &[][..]),
+        ("list_logs", &[][..], &["limit"][..]),
+        ("clear_logs", &[][..], &[][..]),
+        (
+            "register_echo",
+            &["tunnel_uuid"][..],
+            &["tunnel_name", "backend_tunnel_id"][..],
+        ),
+        ("unregister_echo", &["tunnel_uuid"][..], &[][..]),
+        (
+            "register_agent",
+            &["tunnel_uuid"][..],
+            &["agent_id", "tunnel_name", "backend_tunnel_id"][..],
+        ),
+        (
+            "trigger_agent",
+            &["caller_id"][..],
+            &["source", "reason", "payload"][..],
+        ),
+    ];
+    for (function, required, optional) in contracts {
+        let schema = schemas(function);
+        expect_schema_identity(&schema, "webhooks", function);
+        expect_schema_required_inputs(&schema, required);
+        expect_schema_fields(
+            &schema,
+            &optional
+                .iter()
+                .map(|name| (*name, Some(false)))
+                .collect::<Vec<_>>(),
         );
     }
-}
-
-#[test]
-fn unregister_echo_requires_tunnel_uuid_only() {
-    let s = schemas("unregister_echo");
-    assert_eq!(required_input_names(&s), vec!["tunnel_uuid"]);
-}
-
-#[test]
-fn register_agent_requires_tunnel_uuid_and_has_optional_fields() {
-    let s = schemas("register_agent");
-    assert_eq!(required_input_names(&s), vec!["tunnel_uuid"]);
-    for optional in ["agent_id", "tunnel_name", "backend_tunnel_id"] {
-        assert!(
-            s.inputs.iter().any(|f| f.name == optional && !f.required),
-            "`register_agent` must accept optional `{optional}`"
-        );
+    expect_schema_input_order(&schemas("list_logs"), &["limit"]);
+    expect_schema_output_names(&schemas("list_registrations"), &["result"]);
+    assert!(matches!(
+        schemas("list_registrations").outputs[0].ty,
+        TypeSchema::Json
+    ));
+    for function in ["register_echo", "register_agent"] {
+        let schema = schemas(function);
+        for name in if function == "register_echo" {
+            &["tunnel_name", "backend_tunnel_id"][..]
+        } else {
+            &["agent_id", "tunnel_name", "backend_tunnel_id"][..]
+        } {
+            let field = schema
+                .inputs
+                .iter()
+                .find(|field| field.name == *name)
+                .unwrap();
+            assert!(
+                matches!(&field.ty, TypeSchema::Option(inner) if matches!(**inner, TypeSchema::String))
+            );
+        }
     }
-}
-
-#[test]
-fn trigger_agent_requires_caller_id_only() {
-    let s = schemas("trigger_agent");
-    assert_eq!(required_input_names(&s), vec!["caller_id"]);
-    for optional in ["source", "reason", "payload"] {
-        assert!(
-            s.inputs.iter().any(|f| f.name == optional && !f.required),
-            "`trigger_agent` must accept optional `{optional}`"
-        );
-    }
+    let limit = &schemas("list_logs").inputs[0].ty;
+    assert!(matches!(limit, TypeSchema::Option(inner) if matches!(**inner, TypeSchema::U64)));
 }
 
 // ── deserialize_params ────────────────────────────────────────
@@ -181,25 +94,4 @@ fn deserialize_params_reports_invalid_params_errors() {
         err.contains("invalid params"),
         "expected 'invalid params' prefix, got: {err}"
     );
-}
-
-// ── json_output / to_json ─────────────────────────────────────
-
-#[test]
-fn json_output_builds_required_json_field() {
-    let f = json_output("result", "stuff");
-    assert_eq!(f.name, "result");
-    assert_eq!(f.comment, "stuff");
-    assert!(f.required);
-    assert!(matches!(f.ty, TypeSchema::Json));
-}
-
-#[test]
-fn to_json_renders_rpc_outcome_in_cli_compatible_shape() {
-    // `to_json` is a thin wrapper over `Outcome::into_cli_compatible_json`.
-    // We exercise it here so coverage follows the real shape the
-    // adapters produce, rather than asserting on implementation details.
-    let outcome: Outcome<serde_json::Value> = Outcome::new(json!({"ok": true}), vec![]);
-    let value = to_json(outcome).unwrap();
-    assert!(value.is_object());
 }

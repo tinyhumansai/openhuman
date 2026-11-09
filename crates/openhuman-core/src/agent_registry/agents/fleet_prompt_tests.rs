@@ -123,8 +123,9 @@ async fn flow_prompt_texts(definitions: &[AgentDefinition]) -> HashMap<String, S
 /// A name outside this set is not checked. Tools a test config does not
 /// register (a disabled browser, say) therefore go unexamined — the invariant
 /// can miss, but it cannot misfire.
-fn tool_universe() -> BTreeSet<String> {
+async fn tool_universe() -> BTreeSet<String> {
     registered_tools()
+        .await
         .iter()
         .map(|t| t.name().to_string())
         .chain(
@@ -136,7 +137,7 @@ fn tool_universe() -> BTreeSet<String> {
 }
 
 /// Every tool this build registers, in a throwaway workspace.
-fn registered_tools() -> Vec<Box<dyn tinytools::Tool>> {
+async fn registered_tools() -> Vec<Box<dyn tinytools::Tool>> {
     let tmp = tempfile::TempDir::new().expect("temp dir");
     let config = crate::config::Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -147,13 +148,13 @@ fn registered_tools() -> Vec<Box<dyn tinytools::Tool>> {
     let tools = crate::tools::ops::all_tools(
         Arc::new(config.clone()),
         &Arc::new(crate::security::SecurityPolicy::default()),
-        crate::security::AuditLogger::disabled(),
+        crate::security::AuditSink::disabled(),
         &crate::config::BrowserConfig::default(),
         &crate::config::HttpRequestConfig::default(),
         tmp.path(),
-        &std::collections::HashMap::new(),
         &config,
-    );
+    )
+    .await;
     tools
 }
 
@@ -170,13 +171,10 @@ fn on_belt(def: &AgentDefinition, tool: &str) -> bool {
 /// whenever the pack table withheld something (`strip_packed_from_visible`).
 fn can_call(def: &AgentDefinition, tool: &str, universe: &BTreeSet<String>) -> bool {
     use crate::tools::toolpacks::ops::is_withheld_from;
-    if tool == tinyagents_harness::tool::packs::USE_SKILL {
+    if tool == tinyagents_harness_tools::skills::USE_SKILL {
         return universe
             .iter()
             .any(|n| on_belt(def, n) && is_withheld_from(&def.id, n));
-    }
-    if crate::agent::tinyagents::is_subagent_spawn_or_delegate_tool(tool) {
-        return false;
     }
     on_belt(def, tool)
         && !def.disallowed_tools.iter().any(|n| n == tool)
@@ -250,7 +248,7 @@ pub(super) fn names_presented_as_callable<'a>(
 /// leaving a stale excuse in [`KNOWN_UNCALLABLE`].
 #[tokio::test]
 async fn deferred_rows_name_deferred_tools_the_prompt_routes_through_tool_search() {
-    let tools = registered_tools();
+    let tools = registered_tools().await;
     let defs = load_builtins().expect("built-ins load");
     let flow_prompts = flow_prompt_texts(&defs).await;
     let deferred = KNOWN_UNCALLABLE
@@ -330,7 +328,7 @@ const KNOWN_UNCALLABLE: &[(&str, &str, &str)] = &[
 /// that rule over every built-in, against each one's own callable surface.
 #[tokio::test]
 async fn every_prompt_names_only_tools_its_agent_can_call() {
-    let universe = tool_universe();
+    let universe = tool_universe().await;
     let known = |agent: &str, tool: &str| {
         KNOWN_UNCALLABLE
             .iter()
@@ -457,7 +455,7 @@ fn profile_note(missing: &BTreeMap<String, Vec<String>>) -> String {
 
 #[tokio::test]
 async fn every_prompt_names_at_least_one_tool_it_can_call() {
-    let universe = tool_universe();
+    let universe = tool_universe().await;
     let defs = load_builtins().expect("built-ins load");
     let flow_prompts = flow_prompt_texts(&defs).await;
     let expected: Vec<&str> = NAMES_NO_TOOL
@@ -501,7 +499,13 @@ async fn every_prompt_names_at_least_one_tool_it_can_call() {
 /// are reworded, that judge silently grades against a different standard.
 #[test]
 fn close_verification_rubric_keeps_its_three_rules() {
-    let rubric = crate::agent::session_host::turn_checkpoint::close_verification_prompt("", "", "");
+    let rubric = tinyagents_harness::close::verification_prompt(
+        &crate::agent::session_host::product_copy::OPENHUMAN_CLOSE_COPY,
+        "",
+        "",
+        "",
+        4_000,
+    );
     for stem in [
         "1. The reply only says what the assistant will do",
         "2. The reply states something the tool records contradict",

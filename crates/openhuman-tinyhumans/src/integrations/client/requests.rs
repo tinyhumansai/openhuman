@@ -79,7 +79,7 @@ pub(super) fn emit_backend_egress(approval: &ApprovalTurnContext, path: &str) {
 /// [`is_control_plane_path`]. Call before
 /// [`emit_backend_egress`] so a blocked call is neither disclosed nor sent.
 pub(super) fn enforce_backend_egress(path: &str) -> anyhow::Result<()> {
-    openhuman_embed::__host::egress::enforce_egress(&backend_egress_descriptor(path))
+    openhuman_embed::__host::egress::enforce_egress_blocking(&backend_egress_descriptor(path))
 }
 
 impl IntegrationClient {

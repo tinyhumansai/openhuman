@@ -100,6 +100,33 @@ pub fn pending(workspace_dir: &Path) -> Vec<PendingDeletion> {
     queue(workspace_dir).pending()
 }
 
+/// Opens the workspace queue before entering a storage callback, where
+/// synchronous storage calls would re-enter the storage bridge.
+pub(crate) fn open_state(
+    workspace_dir: &Path,
+) -> anyhow::Result<crate::storage::state_kv::StateKv> {
+    super::state_store::open_workspace_quarantining::<Vec<PendingDeletion>>(workspace_dir, STATE)
+}
+
+/// Queues one deletion from an async storage callback without re-entering the
+/// synchronous storage bridge.
+pub(crate) async fn enqueue_with_state(
+    state: &crate::storage::state_kv::StateKv,
+    deletion: PendingDeletion,
+) -> anyhow::Result<()> {
+    state
+        .update_async(STATE, move |all: &mut Vec<PendingDeletion>| {
+            if all.contains(&deletion) {
+                ((), false)
+            } else {
+                all.push(deletion.clone());
+                ((), true)
+            }
+        })
+        .await?;
+    Ok(())
+}
+
 /// Runs queued deletions against the engine.
 struct Executor<'a> {
     config: &'a Config,
@@ -107,12 +134,13 @@ struct Executor<'a> {
 
 #[async_trait]
 impl DeletionExecutor for Executor<'_> {
-    fn is_reachable(&self) -> bool {
-        engine::resolve(self.config).is_on()
+    async fn is_reachable(&self) -> bool {
+        engine::resolve(self.config).await.is_on()
     }
 
     async fn run(&self, deletion: &PendingDeletion) -> std::result::Result<usize, String> {
         let bound = engine::resolve(self.config)
+            .await
             .engine()
             .map_err(|error| error.code().to_string())?;
         // Pending source/thread filters keep TinyMemory's ordinary root-tree
@@ -151,7 +179,7 @@ pub async fn forget_thread(config: &Config, thread_id: &str) -> usize {
     if thread_id.trim().is_empty() {
         return 0;
     }
-    let bound = match engine::resolve(config).engine() {
+    let bound = match engine::resolve(config).await.engine() {
         Ok(bound) => Some(bound),
         Err(Error::Off(_)) => None,
         Err(error) => {

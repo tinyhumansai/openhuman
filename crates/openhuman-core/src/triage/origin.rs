@@ -15,12 +15,14 @@
 //! - [`local_trigger_origin`] — the caller and the payload are both local.
 //! - [`remote_trigger_origin`] — the payload arrived from outside and is
 //!   attacker-influenceable.
+//! - [`external_inbound_origin`] — a pinned agent's turn over events pushed
+//!   into the inbound queues; remote content, the same posture.
 //!
 //! Deliberately *not* offered: a single blanket label. A webhook body and a
 //! desktop notification are not the same trust proposition, and one label for
 //! both would have to be the weaker of the two.
 
-use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 
 use super::envelope::TriggerEnvelope;
 
@@ -63,6 +65,24 @@ pub fn local_trigger_origin() -> AgentTurnOrigin {
 pub fn remote_trigger_origin(envelope: &TriggerEnvelope) -> AgentTurnOrigin {
     AgentTurnOrigin::TrustedAutomation {
         job_id: format!("{}:{}", envelope.source.slug(), envelope.external_id),
+        source: TrustedAutomationSource::Workflow {
+            require_approval: true,
+        },
+    }
+}
+
+/// The origin for a pinned agent's turn over a batch of external events
+/// pushed into the inbound queues (`inbound.offer`).
+///
+/// The same posture as [`remote_trigger_origin`]: the turn is legitimate
+/// automation, but the content steering it was pushed from outside, so every
+/// external-effect call parks for approval instead of running. `job_id` is
+/// `inbound:<source>:<turn_id>` — the configured source name and the queues'
+/// turn id, both system-generated, never event text.
+#[must_use]
+pub fn external_inbound_origin(source: &str, turn_id: &str) -> AgentTurnOrigin {
+    AgentTurnOrigin::TrustedAutomation {
+        job_id: format!("inbound:{source}:{turn_id}"),
         source: TrustedAutomationSource::Workflow {
             require_approval: true,
         },

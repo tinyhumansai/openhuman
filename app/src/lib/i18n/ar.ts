@@ -570,6 +570,8 @@ const messages: TranslationMap = {
   'desktop.pendingUnavailable':
     'تعذر تحميل موافقات سطح المكتب المعلقة. حدّث الصفحة للمحاولة مجددًا.',
   'desktop.unsupported': 'التحكم بسطح المكتب غير متاح في بيئة التشغيل هذه.',
+  'desktop.unsupportedWindows':
+    'التحكم بسطح المكتب غير متاح على Windows بعد. يعمل التحكم بالمتصفح على Windows حاليًا.',
   'desktop.localOnly': 'ينطبق هذا الإعداد على هذا الكمبيوتر فقط.',
   'desktop.permissions': 'أذونات النظام',
   'desktop.openSettings': 'فتح الإعدادات',
@@ -589,6 +591,10 @@ const messages: TranslationMap = {
     'تعذّر الوصول إلى الذاكرة حاليًا. لم يُفقد أي شيء مخزّن؛ حاول مرة أخرى بعد قليل.',
   'memory.outOfCredits.title': 'نفد الرصيد',
   'memory.outOfCredits.action': 'اشحن الرصيد',
+  'memory.error.planRequired':
+    'خطتك الحالية لا تتضمن الذاكرة، لذا لا يستطيع OpenHuman حفظ ما يتعلّمه أو البحث فيه. قم بالترقية لتفعيل الذاكرة، أو انتقل إلى خيار ذاكرة آخر من الإعدادات.',
+  'memory.planRequired.title': 'الذاكرة ليست جزءًا من خطتك',
+  'memory.planRequired.action': 'عرض الخطط',
   'alerts.title': 'التنبيهات',
   'alerts.empty': 'لا توجد تنبيهات بعد',
   'alerts.markAllRead': 'تحديد الكل كمقروء',
@@ -648,6 +654,15 @@ const messages: TranslationMap = {
   'invites.title': 'الدعوات',
   'invites.noInvites': 'لا توجد دعوات معلقة',
   'devOptions.titleDiagnostics': 'المطور والتشخيص',
+  'devOptions.doctor.run': 'تشغيل الفحص',
+  'devOptions.doctor.runLive': 'تشغيل الفحوصات المباشرة',
+  'devOptions.doctor.liveWarning':
+    'قد تستهلك الفحوصات المباشرة رموزًا عند اختبار استدعاءات النماذج أو التضمين. هل تريد المتابعة؟',
+  'devOptions.doctor.severity.pass': 'ناجح',
+  'devOptions.doctor.severity.info': 'معلومات',
+  'devOptions.doctor.severity.warn': 'تحذير',
+  'devOptions.doctor.severity.error': 'خطأ',
+  'devOptions.doctor.severity.skipped': 'تم التخطي',
   'devOptions.diagnostics': 'التشخيص',
   'devOptions.toolPolicyDiagnosticsDesc':
     'قوائم جرد المواد، ووضع السياسات، والقوائم المسموح بها بx0xx، والوحدات الأخيرة',
@@ -1271,6 +1286,8 @@ const messages: TranslationMap = {
   'chat.failedToLoadMessages': 'فشل تحميل الرسائل',
   'chat.thinkingDots': 'جارٍ التفكير...',
   'chat.status.thinkingElapsed': 'جارٍ التفكير · {elapsed}',
+  'chat.status.compacting': 'جارٍ تلخيص المحادثة السابقة…',
+  'chat.status.compactingElapsed': 'جارٍ تلخيص المحادثة السابقة · {elapsed}',
   'chat.status.waitingApproval': 'في انتظار موافقتك',
   'chat.status.waitingReview': 'في انتظار مراجعتك',
   'chat.status.waitingAnswer': 'في انتظار إجابتك',
@@ -1599,6 +1616,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'فتح في اللوحة',
   'chat.flowProposal.dismiss': 'إغلاق',
   'chat.flowProposal.error': 'تعذّر حفظ سير العمل. حاول مرة أخرى.',
+  'chat.flowProposal.versionConflict':
+    'تغيّر سير العمل هذا بعد إعداد الاقتراح، لذا لم تتم الكتابة فوقه. اطلب مراجعة جديدة.',
   'chat.flowProposal.enableError':
     'تم حفظ سير العمل، لكن تعذّر تفعيله. حاول مرة أخرى، أو فعّله من صفحة سير العمل.',
   'chat.flowProposal.savedConfirmation': 'تم الحفظ',
@@ -1785,11 +1804,6 @@ const messages: TranslationMap = {
   'chat.todos.ofTotal': '{done} من {total}',
   'chat.todos.receipt': 'تم تحديث التقدم · {done}/{total}',
   'chat.subagents.ranFor': 'استغرق {duration}',
-  'chat.subagents.ofTotal': '{complete} من {total}',
-  'chat.subagents.runningCount': '{count} قيد التشغيل',
-  'chat.subagents.failedCount': '{count} فشل',
-  'chat.subagents.incompleteCount': '{count} غير مكتمل',
-  'chat.subagents.settled': 'انتهت المهام الفرعية. تجري معالجة نتائجها.',
   'conversations.planReview.title': 'مراجعة الخطة',
   'conversations.planReview.subtitle':
     'وافق لتشغيلها، أو ارفضها لتجاهلها، أو أرسل ملاحظات لتعديلها.',
@@ -1825,7 +1839,6 @@ const messages: TranslationMap = {
   'conversations.mcpUi.confirmAllow': 'سماح',
   'conversations.mcpUi.confirmDeny': 'رفض',
   'conversations.tools.delegatedTo': 'تم التفويض إلى {agent}',
-  'conversations.tools.parallelAgentsAggregating': 'تجميع النتائج',
   'conversations.tools.openInBrowser': 'فتح في المتصفح',
   'conversations.tools.status.running': 'قيد التشغيل',
   'conversations.tools.status.done': 'مكتمل',
@@ -1893,22 +1906,6 @@ const messages: TranslationMap = {
     'فشلت إعادة المحاولة. نزّل أحدث إصدار للتطبيق وحاول مرة أخرى.',
   'daemon.serviceBlockingGate.retrying': 'جارٍ إعادة المحاولة...',
   'daemon.serviceBlockingGate.title': 'نواة OpenHuman غير متاحة',
-  'worktree.label': 'شجرة العمل',
-  'worktree.dirty': 'تغييرات غير مُلتزمة',
-  'worktree.clean': 'نظيفة',
-  'worktree.removing': 'جارٍ الإزالة…',
-  'worktree.removeFailed': 'فشل إزالة شجرة العمل',
-  'worktree.diffFailed': 'فشل تحميل الفرق',
-  'worktree.diffLoading': 'جارٍ تحميل الفرق…',
-  'worktree.diffEmpty': 'لا توجد تغييرات مقارنةً بـ HEAD.',
-  'worktree.dirtyConfirm':
-    'تحتوي شجرة العمل هذه على تغييرات غير مُلتزمة. إزالتها تتجاهل ذلك العمل. يتم الاحتفاظ بفرع العامل.',
-  'worktree.action.open': 'فتح المجلد',
-  'worktree.action.diff': 'الفرق',
-  'worktree.action.hideDiff': 'إخفاء الفرق',
-  'worktree.action.remove': 'إزالة',
-  'worktree.action.removeAnyway': 'تجاهل وإزالة',
-  'worktree.action.preserve': 'الإبقاء',
   'notifications.card.dismiss': 'إغلاق الإشعار',
   'notifications.card.importanceTitle': 'الأهمية: {pct}%',
   'notifications.center.empty': 'لا توجد إشعارات بعد',
@@ -3393,6 +3390,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'جارٍ تحميل النماذج…',
   'composer.voiceMode': 'وضع الصوت',
   'composer.humanMode': 'وضع الإنسان',
+  'voiceNote.record': 'تسجيل ملاحظة صوتية',
+  'voiceNote.stop': 'إيقاف التسجيل',
+  'voiceNote.discard': 'تجاهل الملاحظة الصوتية',
+  'voiceNote.send': 'إرسال الملاحظة الصوتية',
+  'voiceNote.recording': 'جارٍ التسجيل…',
+  'voiceNote.play': 'تشغيل الملاحظة الصوتية',
+  'voiceNote.pause': 'إيقاف الملاحظة الصوتية مؤقتًا',
+  'voiceNote.seek': 'التنقل داخل الملاحظة الصوتية',
+  'voiceNote.transcript': 'النص المكتوب',
+  'voiceNote.noTranscript': 'لا يتوفر نص مكتوب',
+  'voiceNote.label': 'ملاحظة صوتية {duration}',
+  'voiceNote.micDenied': 'تم رفض الوصول إلى الميكروفون أو أنه غير متاح.',
+  'voiceNote.transcribeFailed': 'تعذر تفريغ الملاحظة الصوتية إلى نص.',
+  'voiceNote.loadFailed': 'تعذر تحميل هذه الملاحظة الصوتية.',
+  'voiceNote.sendFailed': 'تعذر إرسال الملاحظة الصوتية.',
 
   // Sync budget dialog
 
@@ -3779,6 +3791,10 @@ const messages: TranslationMap = {
     'نفّذ الوكيل الحد الأقصى من خطوات الأدوات في دورة واحدة دون أن ينتهي. يعني هذا عادةً أن إحدى الأدوات استمرت في الفشل (غالبًا بسبب حد للمعدل عند جلب صفحة ويب). يمكنك إعادة المحاولة بالسؤال نفسه في هذا الموضوع بعد زوال الحد.',
   'chat_error.turn_timeout':
     'تجاوزت هذه الدورة ميزانيتها الزمنية دون أن تنتهي وتم إيقافها حتى لا تتعطل. يعني هذا عادةً أن استدعاء أداة أو وكيلًا فرعيًا مفوَّضًا توقف عن الاستجابة. يمكنك إعادة المحاولة بسؤالك في هذا الموضوع.',
+  'chat_error.disk_full':
+    'القرص لديك ممتلئ، لذا تعذّر حفظ هذه المحادثة. حرّر بعض المساحة على القرص، ثم أعد إرسال رسالتك في هذا الموضوع.',
+  'chat_error.prompt_screened':
+    'احتجز فحص الأمان في OpenHuman هذه الرسالة، لذلك لم تُرسل إلى النموذج. إذا كانت تقتبس تعليمات موجهة إلى مساعد (من صفحة ويب أو بريد إلكتروني مثلًا)، فاحذفها وحاول مرة أخرى. وإذا كانت الرسائل العادية تُحتجز أيضًا، فقد تكون وحدة الأمان غير متاحة: أعد تشغيل OpenHuman وحاول مرة أخرى.',
   'chat_error.empty_response':
     'أعاد النموذج ردًا فارغًا. يُرجى إعادة المحاولة. إذا استمر ذلك، فجرّب نموذجًا آخر أو راجع إعداده في الاتصالات ← مفاتيح API ← LLM.',
   'chat_error.chat_template_rejected':
@@ -4254,6 +4270,9 @@ const messages: TranslationMap = {
     'تم رفض الوصول إلى الميكروفون. اسمح به من إعدادات النظام ثم حاول مرة أخرى.',
   'voice.live.error.micUnavailable': 'لا يتوفر ميكروفون.',
   'voice.live.error.connection': 'تعذّر الاتصال بالوكيل الصوتي.',
+  'voice.live.error.insufficientCredits':
+    'يحتاج الصوت المباشر إلى رصيد إضافي. أضف رصيدًا للمتابعة.',
+  'voice.live.error.paidPlanRequired': 'يتطلب الصوت المباشر خطة مدفوعة. قم بالترقية للمتابعة.',
   'voice.live.toolRunning': 'جارٍ تشغيل {name}',
   'voice.live.toolOk': 'اكتمل {name}',
   'voice.live.toolFailed': 'فشل {name}',
@@ -4496,11 +4515,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'سجن العمليات المسروقة',
   'settings.sandbox.backendHint.bubblewrap': 'أماكن أسماء مستخدمي الوزن الخفيف',
   'settings.sandbox.backendHint.none': 'تشغيل الأدوات مباشرة، موحدة',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'جرد الأدوات',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'إجمالي الأدوات',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'الأدوات المفعّلة',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'أدوات MCP عبر stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'أدوات JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'حالة السياسة',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'مستوى الاستقلالية',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'مساحة العمل فقط',
@@ -4713,8 +4727,6 @@ const messages: TranslationMap = {
   'conversations.tools.updateLearnings.done': 'تم تحديث ما تعلمته',
   'conversations.tools.delegateTask.active': 'جارٍ تفويض المهمة',
   'conversations.tools.delegateTask.done': 'تم تفويض المهمة',
-  'conversations.tools.runAgentsInParallel.active': 'جارٍ تشغيل الوكلاء بالتوازي',
-  'conversations.tools.runAgentsInParallel.done': 'تم تشغيل الوكلاء بالتوازي',
   'conversations.tools.messageAgent.active': 'جارٍ مراسلة الوكيل',
   'conversations.tools.messageAgent.done': 'تمت مراسلة الوكيل',
   'conversations.tools.waitForAgent.active': 'جارٍ انتظار الوكيل',
@@ -4751,6 +4763,8 @@ const messages: TranslationMap = {
   'conversations.tools.checkGoal.done': 'تم فحص الهدف',
   'conversations.tools.completeGoal.active': 'جارٍ إكمال الهدف',
   'conversations.tools.completeGoal.done': 'تم إكمال الهدف',
+  'conversations.tools.resumeGoal.active': 'جارٍ استئناف الهدف',
+  'conversations.tools.resumeGoal.done': 'تم استئناف الهدف',
   'conversations.tools.scheduleTask.active': 'جارٍ جدولة المهمة',
   'conversations.tools.scheduleTask.done': 'تمت جدولة المهمة',
   'conversations.tools.checkSchedules.active': 'جارٍ فحص الجداول',
@@ -4983,6 +4997,53 @@ const messages: TranslationMap = {
   'settings.layout.corners.subtle': 'خفيف',
 
   'settings.layout.corners.round': 'مستدير',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'تشخيص السياسات غير مضمّن في هذا النظام الأساسي.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'سياسة الأمان النشطة',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'الاستقلالية',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'مساحة العمل فقط',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'الحد الأقصى للإجراءات في الساعة',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': 'طلب الموافقة للمخاطر المتوسطة',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'حظر الأوامر عالية المخاطر',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'الأوامر المسموح بها',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': 'لا توجد أوامر مسموح بها صراحةً.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'السياسة',
+  'settings.approvalHistory.judgeScores':
+    'النية {intent} · قابلية التراجع {reversible} · تسريب البيانات {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'من الذاكرة المؤقتة',
+  'settings.approvalHistory.judgeExpires': 'تنتهي الصلاحية {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'الأدوات المسموح بها دائمًا',
+  'keyring.settings.toolTrustDescription':
+    'يمكن تشغيل هذه الأدوات دون طلب موافقة ضمن نطاق الأمان هذا.',
+  'keyring.settings.toolTrustLoading': 'جارٍ تحميل الأدوات المسموح بها…',
+  'keyring.settings.toolTrustLoadFailed': 'تعذّر تحميل الأدوات المسموح بها.',
+  'keyring.settings.toolTrustRevokeFailed': 'تعذّر إلغاء الإذن لهذه الأداة.',
+  'keyring.settings.toolTrustEmpty': 'لا توجد أدوات مسموح بها دائمًا.',
+  'keyring.settings.toolTrustRetry': 'إعادة المحاولة',
+  'keyring.settings.toolTrustRevoke': 'إلغاء',
+  'keyring.settings.toolTrustRevoking': 'جارٍ الإلغاء…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'طلب الوصول إلى سلسلة المفاتيح',
+  'keyring.operation.description':
+    'يطلب TinySecurity الوصول إلى عنصر واحد في سلسلة المفاتيح. راجع العملية قبل اتخاذ القرار.',
+  'keyring.operation.access': 'الوصول',
+  'keyring.operation.requester': 'مقدم الطلب',
+  'keyring.operation.origin': 'المصدر',
+  'keyring.operation.purpose': 'الغرض',
+  'keyring.operation.name': 'عنصر سلسلة المفاتيح',
+  'keyring.operation.access.read': 'قراءة',
+  'keyring.operation.access.write': 'كتابة',
+  'keyring.operation.access.delete': 'حذف',
+  'keyring.operation.allow': 'السماح مرة واحدة',
+  'keyring.operation.deny': 'رفض',
+  'keyring.operation.submitting': 'جارٍ الإرسال…',
+  'keyring.operation.expires': 'ينتهي الطلب خلال {seconds} ثانية.',
+  'keyring.operation.error': 'تعذر إرسال قرارك. ربما انتهت صلاحية الطلب.',
 };
 
 export default messages;

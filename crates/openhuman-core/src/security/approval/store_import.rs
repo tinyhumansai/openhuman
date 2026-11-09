@@ -17,6 +17,64 @@ use super::storage_schema::{LEGACY_APPROVALS, LEGACY_FLOW_TRUST};
 use crate::config::Config;
 use crate::storage::import::{table_exists, ImportDoc};
 
+/// One approval row carried from OpenHuman's document store into TinySecurity.
+#[cfg(feature = "security-module")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LegacyApproval {
+    pub(crate) request_id: String,
+    pub(crate) tool_name: String,
+    pub(crate) agent_id: Option<String>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) expires_at: Option<DateTime<Utc>>,
+    pub(crate) decided_at: Option<DateTime<Utc>>,
+    pub(crate) decision: Option<String>,
+    pub(crate) executed: bool,
+}
+
+/// One persisted legacy flow-and-tool grant.
+#[cfg(feature = "security-module")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LegacyTrust {
+    pub(crate) flow_id: String,
+    pub(crate) tool_name: String,
+}
+
+/// Approval history and flow trust waiting for one-time import into TinySecurity.
+#[cfg(feature = "security-module")]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct LegacyHistory {
+    pub(crate) approvals: Vec<LegacyApproval>,
+    pub(crate) trust: Vec<LegacyTrust>,
+}
+
+/// Read the current host store once as the source for TinySecurity history import.
+/// The old store remains a migration source; new approval decisions use the module.
+#[cfg(feature = "security-module")]
+pub(crate) fn read_legacy(config: &Config) -> Result<Option<LegacyHistory>> {
+    let docs = super::store_documents::current(config)?;
+    let mut history = LegacyHistory::default();
+    history.approvals = docs
+        .list_recent_decisions(500)?
+        .into_iter()
+        .map(|row| LegacyApproval {
+            request_id: row.request_id,
+            tool_name: row.tool_name,
+            agent_id: None,
+            created_at: row.created_at,
+            expires_at: row.expires_at,
+            decided_at: Some(row.decided_at),
+            decision: Some(row.decision.as_str().to_owned()),
+            executed: false,
+        })
+        .collect();
+    history.trust = docs
+        .list_all_flow_trust()?
+        .into_iter()
+        .map(|(flow_id, tool_name)| LegacyTrust { flow_id, tool_name })
+        .collect();
+    Ok((!history.approvals.is_empty() || !history.trust.is_empty()).then_some(history))
+}
+
 /// SQL schema of the legacy database, applied on every `with_connection` call.
 ///
 /// `executed_at`, `execution_outcome`, and `execution_error` capture

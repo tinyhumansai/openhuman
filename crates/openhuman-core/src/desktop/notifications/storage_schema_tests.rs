@@ -87,5 +87,7 @@ fn dedup_and_settings_keep_their_bodies() {
 
 #[test]
 fn the_schema_composes_under_its_owner() {
-    tinystoragedrivers::schema::Registry::compose([storage_schema()]).unwrap();
+    for spec in collection_specs() {
+        spec.validate().unwrap();
+    }
 }

@@ -1,7 +1,7 @@
 //! Sub-agent execution entry points.
 //!
-//! The public runner lives in [`run_subagent`]. It dispatches to
-//! [`runner::run_typed_mode`] (narrow prompt + filtered tools) which builds a
+//! The registered dispatcher reaches this adapter, which dispatches to
+//! [`runner::run_typed_mode`] (narrow prompt + filtered tools) to build a
 //! brand-new system prompt and a filtered tool list for the requested
 //! archetype, then drives the turn through the tinyagents harness
 //! ([`graph::run_subagent_via_graph`]) until the model returns without
@@ -13,7 +13,7 @@
 //! | ------------------- | -------------------------------------------------------------- |
 //! | `provider.rs`       | `resolve_subagent_source`, `user_is_signed_in_to_composio`       |
 //! | `prompt.rs`         | Child role framing and artifact-offload contract |
-//! | `runner.rs`         | `run_subagent`, `run_typed_mode`                               |
+//! | `runner.rs`         | direct host execution and `run_typed_mode`                   |
 //! | `graph.rs`          | `run_subagent_via_graph` — the sub-agent turn graph + tools    |
 //! | `checkpoint.rs`     | `SubagentCheckpoint` — cap-hit summary                         |
 //! | `pause_checkpoint.rs` | `is_safe_task_id` — validates model-provided checkpoint names |
@@ -28,6 +28,15 @@ mod prompt;
 mod provider;
 mod runner;
 mod runner_artifacts;
+mod worker_mirror;
+mod worker_thread;
+
+pub(crate) use worker_mirror::{mirror_worker_thread, mirror_worker_thread_from_history};
+pub(crate) use worker_thread::{append_reuse_follow_up, create_worker_thread};
+
+#[cfg(test)]
+#[path = "worker_thread_tests.rs"]
+mod worker_thread_tests;
 
 // The lifecycle adapter owns the public entry point.  This is its host-only
 // execution leaf after a neutral driver has prepared and admitted a request.
@@ -44,7 +53,7 @@ pub(super) use super::tool_prep::filter_tool_indices;
 #[cfg(test)]
 pub(super) use super::types::{SubagentMode, SubagentRunError, SubagentRunOptions};
 #[cfg(test)]
-pub(super) use crate::agent::harness::fork_context::ParentExecutionContext;
+pub(super) use crate::agent::subagent_host::ParentExecutionContext;
 #[cfg(test)]
 pub(super) use crate::agent::tinyagents::budget::MAX_SPAWN_DEPTH;
 #[cfg(test)]

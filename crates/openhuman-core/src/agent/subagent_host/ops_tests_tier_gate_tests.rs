@@ -1,5 +1,4 @@
 use super::*;
-use crate::agent::subagent_host::run_subagent;
 
 #[test]
 fn tier_gate_skips_when_parent_unresolved() {
@@ -93,7 +92,7 @@ fn tier_gate_allows_upward_reasoning_to_chat() {
 //
 // These exercise the gate at its real call site rather than only the policy it
 // consults. The lever is that no `ParentExecutionContext` is installed here, so
-// an ungated `run_subagent` returns `NoParentContext`: each refusal below is
+// an ungated child execution returns `NoParentContext`: each refusal below is
 // therefore evidence the gate ran *and* that it ran before anything was spent,
 // and removing the gate turns every one of them into `NoParentContext`.
 // ---------------------------------------------------------------------------
@@ -107,7 +106,7 @@ async fn dispatch_is_refused_after_the_turn_requests_a_graceful_pause() {
     dispatch.record_pause_requested(15, 15);
     let mut options = SubagentRunOptions::default();
     options.run_context.dispatch = Some(dispatch);
-    let outcome = run_subagent(&definition, "task", options).await;
+    let outcome = run_host_from_test_options(&definition, "task", options).await;
 
     assert!(
         matches!(
@@ -130,7 +129,7 @@ async fn dispatch_is_refused_when_the_remaining_budget_cannot_fit_an_observed_su
     dispatch.record_subagent_elapsed(std::time::Duration::from_secs(60));
     let mut options = SubagentRunOptions::default();
     options.run_context.dispatch = Some(dispatch);
-    let outcome = run_subagent(&definition, "task", options).await;
+    let outcome = run_host_from_test_options(&definition, "task", options).await;
 
     assert!(
         matches!(
@@ -153,7 +152,7 @@ async fn dispatch_is_not_refused_while_the_guard_has_no_evidence() {
     options.run_context.dispatch = Some(std::sync::Arc::new(
         crate::agent::tinyagents::host::TurnDispatchState::new(Some(std::time::Duration::ZERO)),
     ));
-    let outcome = run_subagent(&definition, "task", options).await;
+    let outcome = run_host_from_test_options(&definition, "task", options).await;
 
     assert!(
         matches!(outcome, Err(SubagentRunError::NoParentContext)),

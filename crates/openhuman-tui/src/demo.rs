@@ -4,42 +4,91 @@ use super::cockpit::{Overlay, OverlayKind};
 use super::state::TranscriptState;
 use super::ui_state::{AppTab, UiState};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-use openhuman_rpc::embed::chat_surface::WebChannelEvent;
+use openhuman_rpc::embed::chat_surface::{WebChannelEvent, WebEventContext};
 
 pub fn sample() -> TranscriptState {
     let mut state = TranscriptState::new("preview");
     state.set_thread("preview");
     state.begin_user_turn("Make the terminal UI simpler, with mouse controls.");
-    let ev = |name: &str| WebChannelEvent {
-        event: name.into(),
+    let context = || WebEventContext {
         client_id: "preview".into(),
         thread_id: "preview".into(),
         request_id: "sample-turn".into(),
         ..Default::default()
     };
-    state.apply_event(&WebChannelEvent {
+    state.apply_event(&WebChannelEvent::TextDelta {
+        context: context(),
         delta: Some("I’ll keep the conversation central and make the work easy to inspect.".into()),
-        ..ev("text_delta")
+        delta_kind: None,
+        round: None,
     });
-    state.apply_event(&WebChannelEvent {
+    state.apply_event(&WebChannelEvent::ToolCall {
+        context: context(),
         tool_name: Some("Read source".into()),
-        tool_call_id: Some("read-1".into()),
+        skill_id: None,
         args: Some(serde_json::json!({"path":"src/render.rs"})),
-        ..ev("tool_call")
+        round: None,
+        tool_call_id: Some("read-1".into()),
+        tool_display_label: None,
+        tool_display_detail: None,
     });
-    state.apply_event(&WebChannelEvent {tool_name:Some("Read source".into()),tool_call_id:Some("read-1".into()),success:Some(true),elapsed_ms:Some(12),output:Some("Header → conversation → composer → status\nCached viewport rendering\nShared mouse and keyboard actions".into()),..ev("tool_result")});
-    state.apply_event(&WebChannelEvent {
+    state.apply_event(&WebChannelEvent::ToolResult {
+        context: context(),
+        tool_name: Some("Read source".into()),
+        skill_id: None,
+        output: Some("Header → conversation → composer → status\nCached viewport rendering\nShared mouse and keyboard actions".into()),
+        args: None,
+        success: Some(true),
+        round: None,
+        tool_call_id: Some("read-1".into()),
+        failure: None,
+        elapsed_ms: Some(12),
+        tool_display_label: None,
+        tool_display_detail: None,
+        structured: None,
+    });
+    state.apply_event(&WebChannelEvent::SubagentSpawned {
+        context: context(),
+        message: None,
         tool_name: Some("Explore".into()),
         skill_id: Some("child-1".into()),
-        ..ev("subagent_spawned")
+        round: None,
+        subagent: None,
     });
-    state.apply_event(&WebChannelEvent {skill_id:Some("child-1".into()),delta:Some("Checked the command, login, and tool-call surfaces.\nMouse targets use the displayed layout.".into()),..ev("subagent_text_delta")});
-    state.apply_event(&WebChannelEvent {
+    state.apply_event(&WebChannelEvent::SubagentTextDelta {
+        context: context(),
+        delta: Some("Checked the command, login, and tool-call surfaces.\nMouse targets use the displayed layout.".into()),
+        delta_kind: None,
         skill_id: Some("child-1".into()),
-        elapsed_ms: Some(840),
-        ..ev("subagent_completed")
+        round: None,
+        subagent: Some(openhuman_rpc::embed::chat_surface::SubagentProgressDetail {
+            task_id: Some("child-1".into()),
+            display_name: Some("Explore".into()),
+            ..Default::default()
+        }),
     });
-    state.apply_event(&WebChannelEvent {full_response:Some("Ready to inspect. Click a tool row to expand it, use Tools or /subagents for details, and choose a theme in Settings.\n\nThis is an offline preview; no model or account calls are made.".into()),..ev("chat_done")});
+    state.apply_event(&WebChannelEvent::SubagentCompleted {
+        context: context(),
+        message: None,
+        tool_name: None,
+        skill_id: Some("child-1".into()),
+        success: Some(true),
+        round: None,
+        subagent: Some(openhuman_rpc::embed::chat_surface::SubagentProgressDetail {
+            task_id: Some("child-1".into()),
+            display_name: Some("Explore".into()),
+            elapsed_ms: Some(840),
+            ..Default::default()
+        }),
+    });
+    state.apply_event(&WebChannelEvent::ChatDone {
+        context: context(),
+        full_response: Some("Ready to inspect. Click a tool row to expand it, use Tools or /subagents for details, and choose a theme in Settings.\n\nThis is an offline preview; no model or account calls are made.".into()),
+        citations: None,
+        usage: None,
+        timing: None,
+        parts: None,
+    });
     state
 }
 
@@ -278,3 +327,7 @@ fn activate_overlay(state: &mut TranscriptState, ui: &mut UiState) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+#[path = "demo_tests.rs"]
+mod tests;

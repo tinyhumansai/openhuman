@@ -2,6 +2,7 @@ import { createAsyncThunk, createSlice, type PayloadAction } from '@reduxjs/tool
 
 import { extractWorkflowProposalFromMessages } from '../lib/workflows/workflowProposal';
 import { threadApi } from '../services/api/threadApi';
+import type { ChatChannelEventEvent, ContentPart } from '../services/chatWire';
 import { isThreadNotFoundCoreRpcError } from '../services/coreRpcClient';
 import type { Thread, ThreadMessage } from '../types/thread';
 import { IS_DEV } from '../utils/config';
@@ -31,6 +32,8 @@ interface ThreadState {
    */
   welcomeThreadId: string | null;
   messagesByThreadId: Record<string, ThreadMessage[]>;
+  /** Live provider receipts/reactions keyed by exact persisted thread/message IDs. */
+  channelActivityByThreadId: Record<string, Record<string, ChannelActivity>>;
   messages: ThreadMessage[];
   isLoadingThreads: boolean;
   isLoadingMessages: boolean;
@@ -60,6 +63,11 @@ interface ThreadState {
   createThreadRequestId: string | null;
 }
 
+interface ChannelActivity {
+  reactions: Array<{ actorId: string; value: string; customEmojiId?: string }>;
+  readReceipts: Array<{ actorId: string; timestamp?: number }>;
+}
+
 const initialState: ThreadState = {
   threads: [],
   selectedThreadId: null,
@@ -67,6 +75,7 @@ const initialState: ThreadState = {
   activeThreadIds: {},
   welcomeThreadId: null,
   messagesByThreadId: {},
+  channelActivityByThreadId: {},
   messages: [],
   isLoadingThreads: false,
   isLoadingMessages: false,
@@ -252,9 +261,16 @@ async function evictStaleThread(threadId: string, dispatch: (action: any) => any
 
 export const addMessageLocal = createAsyncThunk(
   'thread/addMessageLocal',
-  async (payload: { threadId: string; message: ThreadMessage }, { dispatch, rejectWithValue }) => {
+  async (
+    payload: { threadId: string; message: ThreadMessage; attachments?: ContentPart[] },
+    { dispatch, rejectWithValue }
+  ) => {
     try {
-      const persisted = await threadApi.appendMessage(payload.threadId, payload.message);
+      const persisted = await threadApi.appendMessage(
+        payload.threadId,
+        payload.message,
+        payload.attachments
+      );
       if (payload.message.sender === 'user' && payload.message.content.trim()) {
         void dispatch(generateThreadTitleIfNeeded({ threadId: payload.threadId }))
           .unwrap()
@@ -416,10 +432,11 @@ export const persistMessageFeedback = createAsyncThunk(
     const message = stored.find(e => e.id === payload.messageId);
     if (!message) return rejectWithValue('Message not found');
 
-    const previous = message.extraMetadata[FEEDBACK_METADATA_KEY];
+    const currentMetadata = message.extraMetadata ?? {};
+    const previous = currentMetadata[FEEDBACK_METADATA_KEY];
     const next = previous === payload.feedback ? undefined : payload.feedback;
     const extraMetadata: Record<string, unknown> = {
-      ...message.extraMetadata,
+      ...currentMetadata,
       [FEEDBACK_METADATA_KEY]: next,
     };
     if (payload.rowIds && payload.rowIds.length > 1) {
@@ -471,6 +488,89 @@ const threadSlice = createSlice({
   name: 'thread',
   initialState,
   reducers: {
+    applyChannelEvent(state, action: PayloadAction<ChatChannelEventEvent>) {
+      const event = action.payload;
+      const rowId = event.openhuman_message_id;
+      if (!rowId || !event.thread_id) return;
+      state.channelActivityByThreadId ??= {};
+      const thread = (state.channelActivityByThreadId[event.thread_id] ??= {});
+      if (!thread[rowId]) {
+        const prior = state.messagesByThreadId[event.thread_id]?.find(
+          message => message.id === rowId
+        );
+        const persisted = prior?.extraMetadata?.channelActivity;
+        const saved = persisted && typeof persisted === 'object' ? persisted : undefined;
+        const storedItems = (items: unknown): Array<Record<string, unknown>> => {
+          if (Array.isArray(items)) {
+            return items.filter(item => item && typeof item === 'object');
+          }
+          if (items && typeof items === 'object') {
+            return Object.values(items).filter(item => item && typeof item === 'object');
+          }
+          return [];
+        };
+        thread[rowId] = {
+          reactions: storedItems((saved as ChannelActivity | undefined)?.reactions).map(item => ({
+            actorId: typeof item.actorId === 'string' ? item.actorId : '',
+            value: typeof item.value === 'string' ? item.value : '',
+            ...(typeof item.customEmojiId === 'string'
+              ? { customEmojiId: item.customEmojiId }
+              : {}),
+          })),
+          readReceipts: storedItems((saved as ChannelActivity | undefined)?.readReceipts).map(
+            item => ({
+              actorId: typeof item.actorId === 'string' ? item.actorId : '',
+              ...(typeof item.timestamp === 'number' ? { timestamp: item.timestamp } : {}),
+            })
+          ),
+        };
+      }
+      const activity = thread[rowId];
+      const providerEvent = event.channel_event;
+      if (providerEvent.type === 'reaction_added') {
+        const reaction = {
+          actorId: providerEvent.actor.id,
+          value: providerEvent.reaction.value,
+          ...(providerEvent.reaction.customEmojiId
+            ? { customEmojiId: providerEvent.reaction.customEmojiId }
+            : {}),
+        };
+        if (
+          !activity.reactions.some(
+            item =>
+              item.actorId === reaction.actorId &&
+              item.value === reaction.value &&
+              item.customEmojiId === reaction.customEmojiId
+          )
+        ) {
+          activity.reactions.push(reaction);
+        }
+      } else if (providerEvent.type === 'reaction_removed') {
+        activity.reactions = activity.reactions.filter(
+          item =>
+            item.actorId !== providerEvent.actor.id ||
+            item.value !== providerEvent.reaction.value ||
+            item.customEmojiId !== (providerEvent.reaction.customEmojiId ?? undefined)
+        );
+      } else if (providerEvent.type === 'read_receipt') {
+        const receipt = {
+          actorId: providerEvent.actor?.id ?? '',
+          ...(providerEvent.timestamp == null ? {} : { timestamp: providerEvent.timestamp }),
+        };
+        const prior = activity.readReceipts.findIndex(item => item.actorId === receipt.actorId);
+        if (prior >= 0) activity.readReceipts[prior] = receipt;
+        else activity.readReceipts.push(receipt);
+      }
+      const updateMessage = (message: ThreadMessage) => {
+        if (message.id !== rowId) return;
+        message.extraMetadata = {
+          ...(message.extraMetadata ?? {}),
+          channelActivity: { reactions: activity.reactions, readReceipts: activity.readReceipts },
+        };
+      };
+      state.messagesByThreadId[event.thread_id]?.forEach(updateMessage);
+      if (state.selectedThreadId === event.thread_id) state.messages.forEach(updateMessage);
+    },
     /**
      * Dismiss the "couldn't start a new chat" surface (#5156) — the user has
      * seen it and moved on (typed into the composer, navigated away).
@@ -519,6 +619,7 @@ const threadSlice = createSlice({
       const threadId = action.payload;
       state.threads = state.threads.filter(thread => thread.id !== threadId);
       delete state.messagesByThreadId[threadId];
+      if (state.channelActivityByThreadId) delete state.channelActivityByThreadId[threadId];
       if (state.selectedThreadId === threadId) {
         state.selectionIntentVersion = (state.selectionIntentVersion ?? 0) + 1;
         state.selectedThreadId = null;
@@ -534,6 +635,7 @@ const threadSlice = createSlice({
       state.selectionIntentVersion = (state.selectionIntentVersion ?? 0) + 1;
       state.threads = [];
       state.messagesByThreadId = {};
+      state.channelActivityByThreadId = {};
       state.selectedThreadId = null;
       state.messages = [];
       state.activeThreadIds = {};
@@ -548,6 +650,7 @@ const threadSlice = createSlice({
     resetThreadCachesPreservingSelection: state => {
       state.threads = [];
       state.messagesByThreadId = {};
+      state.channelActivityByThreadId = {};
       state.messages = [];
       state.activeThreadIds = {};
       state.welcomeThreadId = null;
@@ -740,6 +843,9 @@ const threadSlice = createSlice({
       })
       .addCase(deleteThread.fulfilled, (state, action) => {
         delete state.messagesByThreadId[action.payload.threadId];
+        if (state.channelActivityByThreadId) {
+          delete state.channelActivityByThreadId[action.payload.threadId];
+        }
       })
       .addCase(updateThreadTitle.fulfilled, (state, action) => {
         const idx = state.threads.findIndex(t => t.id === action.payload.id);
@@ -758,6 +864,7 @@ const threadSlice = createSlice({
 });
 
 export const {
+  applyChannelEvent,
   clearCreateThreadError,
   setSelectedThread,
   invalidateThreadSelection,

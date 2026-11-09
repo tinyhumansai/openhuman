@@ -288,7 +288,8 @@ fn handle_detect(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFutu
             extension: str_param(&params, "extension"),
             ..Default::default()
         };
-        let kind = super::detect(content, hint).await?;
+        let config = ctx.load_config().await?;
+        let kind = super::detect_with_config(&config, content, hint).await?;
         Ok(serde_json::json!({ "kind": kind }))
     })
 }
@@ -333,7 +334,8 @@ fn handle_compress(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFu
         gate(&ctx)?;
         let content = str_param(&params, "content").ok_or("missing 'content'")?;
         let hint = compress_hint_from_params(&params)?;
-        let res = super::compress(content, hint).await?;
+        let config = ctx.load_config().await?;
+        let res = super::compress_with_config(&config, content, hint).await?;
         Ok(serde_json::json!({
             "applied": res.applied,
             "kind": res.content_kind.as_str(),
@@ -350,7 +352,8 @@ fn handle_compress(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFu
 fn handle_cache_stats(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         gate(&ctx)?;
-        let stats = super::cache_stats().await?;
+        let config = ctx.load_config().await?;
+        let stats = super::cache_stats_with_config(&config).await?;
         Ok(serde_json::json!({ "entries": stats.entries, "bytes": stats.bytes }))
     })
 }
@@ -359,7 +362,8 @@ fn handle_retrieve(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFu
     Box::pin(async move {
         gate(&ctx)?;
         let token = str_param(&params, "token").ok_or("missing 'token'")?;
-        match super::retrieve(token, None).await? {
+        let config = ctx.load_config().await?;
+        match super::retrieve_with_config(&config, token, None).await? {
             Some(content) => Ok(serde_json::json!({ "found": true, "content": content })),
             None => Ok(serde_json::json!({ "found": false, "content": Value::Null })),
         }
@@ -411,8 +415,8 @@ fn handle_settings_update(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
 fn handle_savings_stats(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         gate(&ctx)?;
-        let cache = super::cache_stats().await?;
         let config = ctx.load_config().await.map_err(|e| e.to_string())?;
+        let cache = super::cache_stats_with_config(&config).await?;
         super::install_from_config(&config).await?;
         let agg = super::savings::stats(&super::client(&config)).await?;
         Ok(serde_json::json!({

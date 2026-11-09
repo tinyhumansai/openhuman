@@ -102,51 +102,57 @@ fn handle_session_import_run(_ctx: DispatchCtx, params: Map<String, Value>) -> C
             )
             .into_cli_compatible_json();
         }
-        let configured = crate::config::Config::load_or_init()
-            .await
-            .map_err(|e| format!("failed to load config: {e}"))?;
-        let configured_workspace = configured.workspace_dir.clone();
-        let config = crate::config::Config {
-            workspace_dir: workspace.clone(),
-            ..configured
-        };
-        // A workspace override that differs from the configured one must not
-        // write into the installed backend (bound to the configured workspace).
-        let backend = if !overridden || workspace == configured_workspace {
-            match crate::storage::installed() {
-                Some(backend) => backend,
-                None => crate::storage::local::backend_for(&workspace)
-                    .map_err(|e| format!("open the storage backend: {e:#}"))?,
-            }
-        } else {
-            crate::storage::open(&crate::storage::config::default_url(&workspace))
+        #[cfg(not(feature = "legacy-import"))]
+        return Err("legacy session import requires the `legacy-import` feature".to_owned());
+
+        #[cfg(feature = "legacy-import")]
+        {
+            let configured = crate::config::Config::load_or_init()
                 .await
-                .map_err(|e| format!("open the storage backend: {e:#}"))?
-        };
-        let reports = tokio::task::spawn_blocking(move || {
-            crate::storage::import::sessions::run_with(&backend, &config)
-        })
-        .await
-        .map_err(|e| format!("session import task failed: {e}"))?;
-        let imports: Vec<Value> = reports
-            .iter()
-            .map(|report| match &report.outcome {
-                Ok(outcome) => {
-                    json!({ "domain": report.domain, "outcome": format!("{outcome:?}") })
+                .map_err(|e| format!("failed to load config: {e}"))?;
+            let configured_workspace = configured.workspace_dir.clone();
+            let config = crate::config::Config {
+                workspace_dir: workspace.clone(),
+                ..configured
+            };
+            // A workspace override that differs from the configured one must not
+            // write into the installed backend (bound to the configured workspace).
+            let backend = if !overridden || workspace == configured_workspace {
+                match crate::storage::installed() {
+                    Some(backend) => backend,
+                    None => crate::storage::local::backend_for(&workspace)
+                        .map_err(|e| format!("open the storage backend: {e:#}"))?,
                 }
-                Err(error) => json!({ "domain": report.domain, "error": format!("{error:#}") }),
+            } else {
+                crate::storage::open(&crate::storage::config::default_url(&workspace))
+                    .await
+                    .map_err(|e| format!("open the storage backend: {e:#}"))?
+            };
+            let reports = tokio::task::spawn_blocking(move || {
+                crate::storage::import::sessions::run_with(&backend, &config)
             })
-            .collect();
-        let logs = reports
-            .iter()
-            .filter_map(|report| report.outcome.as_ref().err())
-            .map(|error| format!("{error:#}"))
-            .collect();
-        Outcome::new(
+            .await
+            .map_err(|e| format!("session import task failed: {e}"))?;
+            let imports: Vec<Value> = reports
+                .iter()
+                .map(|report| match &report.outcome {
+                    Ok(outcome) => {
+                        json!({ "domain": report.domain, "outcome": format!("{outcome:?}") })
+                    }
+                    Err(error) => json!({ "domain": report.domain, "error": format!("{error:#}") }),
+                })
+                .collect();
+            let logs = reports
+                .iter()
+                .filter_map(|report| report.outcome.as_ref().err())
+                .map(|error| format!("{error:#}"))
+                .collect();
+            Outcome::new(
             json!({ "dry_run": false, "workspace": workspace, "sources": sources, "imports": imports }),
             logs,
         )
         .into_cli_compatible_json()
+        }
     })
 }
 
@@ -168,6 +174,6 @@ fn optional_bool(name: &'static str, comment: &'static str) -> FieldSchema {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-import"))]
 #[path = "schemas_tests.rs"]
 mod tests;

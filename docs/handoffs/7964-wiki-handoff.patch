@@ -1,0 +1,647 @@
+diff --git a/Architecture.md b/Architecture.md
+index a8f4dcc..35ee41c 100644
+--- a/Architecture.md
++++ b/Architecture.md
+@@ -1,8 +1,10 @@
+ # Architecture
+ 
+-TinyChannels separates channel-specific I/O from OpenHuman-owned runtime
+-behavior. Providers can live in this crate because they depend on portable
+-contracts instead of application internals.
++TinyChannels owns provider I/O and normalization. OpenHuman composes its
++application policy with TinyAgents generic agent execution. Hosts exchange typed
++requests, events, and results with
++the loaded module through `tinychannels-bus`, rather than linking provider
++implementations.
+ 
+ ## Layered Model
+ 
+@@ -14,28 +15,28 @@ contracts instead of application internals.
+                                         |
+                                         v
+                          +----------------------------+
+-                         | ChannelBackend             |
+-                         | connect/status/test/send   |
++                         | OpenHuman host adapter     |
++                         | auth, policy, storage ports|
+                          +--------------+-------------+
+                                         |
+                                         v
+ +----------------+       +----------------------------+       +----------------+
+-| Controller UI  |------>| ChannelManager             |------>| Channel defs   |
+-| setup/status   |       | validation + delegation    |       | auth fields    |
+-+----------------+       +----------------------------+       +----------------+
++| Controller UI  |------>| tinychannels-bus           |------>| Channel defs   |
++| setup/status   |       | typed request/result DTOs   |       | auth fields    |
+++----------------+       +--------------+-------------+       +----------------+
+                                         |
+                                         v
+                          +----------------------------+
+-                         | ProviderContext            |
+-                         | config + HTTP + host       |
++                         | TinyChannels module        |
++                         | provider runtime + relay   |
+                          +--------------+-------------+
+                                         |
+                     +-------------------+-------------------+
+                     |                                       |
+                     v                                       v
+         +------------------------+              +------------------------+
+-        | Direct providers       |              | Relay connectors       |
+-        | Slack, Discord, etc.   |              | descriptor + frames    |
++        | Provider transports    |              | Relay transport        |
++        | normalize/send/listen  |              | frames + reconnect     |
+         +-----------+------------+              +-----------+------------+
+                     |                                       |
+                     v                                       v
+@@ -56,24 +57,26 @@ contracts instead of application internals.
+ 
+ ## Boundary Rules
+ 
+-TinyChannels owns portable contracts:
++TinyChannels owns provider behavior and portable contracts:
+ 
+ - what a channel message looks like before and after normalization
+ - what a provider can advertise as capabilities
+ - what a UI setup definition needs to render auth forms
+ - what a relay connector sends over the socket
+-- what durable delivery state means
++- provider normalization, capability declarations, and send behavior
+ 
+ OpenHuman owns host-specific behavior:
+ 
+ - user accounts and credential storage
+ - REST/JWT/session authorization
+ - model and harness execution
+-- conversation memory and run ledger storage
+-- event bus fanout and process lifecycle management
++- OpenHuman-specific turn policy, approvals, and persistence adapters
++- event-bus fanout and process lifecycle management; TinyAgents owns the
++  generic agent loop, session identity, transcript replay, and turn runner
+ 
+-The dependency direction is deliberate: providers call small host capability
+-traits, and OpenHuman implements those traits.
++The host depends on the bus contract and loaded module. Module operations call
++only the host capabilities exposed through that boundary; OpenHuman does not
++provide a substitute implementation when an operation is missing.
+ 
+ ## Main Data Flow
+ 
+@@ -81,43 +83,41 @@ Inbound:
+ 
+ ```text
+ platform event
+-  -> provider or relay connector
+-  -> ChannelInboundEnvelope
+-  -> ChannelInboundSink or ChannelHost TurnDispatcher
+-  -> OpenHuman harness turn
+-  -> ChannelOutputEvent stream
++  -> TinyChannels module normalizes ChannelInboundEnvelope
++  -> typed inbound preparation over TinyBus
++  -> OpenHuman applies identity, authorization, and session policy
++  -> TinyAgents generic agent loop and transcript replay
++  -> OpenHuman persistence and progress adapters
++  -> canonical output event stream
++  -> TinyChannels web-output projection when a web surface is configured
+ ```
+ 
+ Outbound:
+ 
+ ```text
+ agent output or controller send
+-  -> ChannelOutboundIntent
+-  -> durability negotiation
+-  -> provider send or relay send action
+-  -> MessageReceipt
+-  -> delivery ack or retry state
++  -> typed outbound request over TinyBus
++  -> module/provider send or relay action
++  -> typed receipt and delivery result
++  -> TinyChannels-owned durable queue, retry, and reconciliation through its
++     scoped storage grant; OpenHuman supplies the storage backend and imports
++     legacy workspace delivery records once during startup
+ ```
+ 
+ Setup and control:
+ 
+ ```text
+ UI action
+-  -> ChannelManager
+-  -> ChannelDefinition credential validation
+-  -> ChannelBackend implementation in OpenHuman
+-  -> ChannelConnectionResult / ChannelStatusEntry / ChannelTestResult
++  -> OpenHuman controller and policy validation
++  -> typed channel controller operation over TinyBus
++  -> configured provider/module operation
++  -> typed connection/status/test result
+ ```
+ 
+ ## Compatibility Strategy
+ 
+-The crate still supports legacy shapes (`ChannelMessage`, `SendMessage`, and raw
+-controller JSON payloads), but newer code should normalize as early as possible:
+-
+-- project inbound legacy messages into `ChannelInboundEnvelope`
+-- build outbound sends as `ChannelOutboundIntent`
+-- carry idempotency keys through `SendMessage` when using legacy providers
+-- return `MessageReceipt` from direct adapters where possible
+-
+-This lets OpenHuman migrate provider by provider without requiring a single
+-large runtime rewrite.
++Compatibility DTOs remain at selected migration boundaries. New host
++integration should use bus DTOs and operations, preserve typed content and
++address fields, and keep authenticated relay provenance outside serialized
++message data. Provider normalization prepares identity inputs; OpenHuman selects
++and persists the durable conversation session.
+diff --git a/Capabilities.md b/Capabilities.md
+index 28a85a8..4ad7061 100644
+--- a/Capabilities.md
++++ b/Capabilities.md
+@@ -2,37 +2,29 @@
+ 
+ This page is the master index of TinyChannels functionality.
+ 
+-## Channel Contracts
+-
+-- `ChannelMessage` - legacy received/sent message shape.
+-- `SendMessage` - legacy outbound message request with subject, thread, and
+-  idempotency support.
+-- `ChannelInboundEnvelope` - normalized inbound message event.
+-- `ChannelOutboundIntent` - normalized outbound send request.
+-- `OutboundPayload` - text, media, voice, files, poll, presentation blocks, or
+-  native channel data.
+-- `MessageReceipt` - normalized platform result for one logical send.
+-- `ChannelStaticCapabilities` - chat, poll, reaction, edit, reply, thread,
+-  media, command, and streaming support flags.
+-- `ChannelPresentationCapabilities` - text limits, length units, markdown
+-  dialect, action layout limits, and edit support.
++## Host and provider contracts
++
++- `ChannelInboundEnvelope` - normalized inbound event with ordered `ContentPart`
++  values and provider address facts.
++- `ChannelOutboundIntent` - normalized outbound request with typed parts,
++  address, durability, and idempotency key.
++- `MessageReceipt` - structured result for a provider operation.
++- `ChannelCapabilities` - declared support for content, voice, addressing,
++  reactions, edits, receipts, and streaming drafts.
++- `PrepareChannelInbound` and `PrepareChannelIdentity` - module operations that
++  normalize provider input and prepare provider-specific identity values.
++- `BeginWebTurn`, `ProjectWebOutput`, and `EndWebTurn` - scoped module
++  operations for projecting canonical agent output onto web events.
+ 
+ See [Channel Contracts](Channel-Contracts).
+ 
+-## Adapter Contracts
+-
+-- `ChannelAdapter` - base start/stop/send/status adapter surface.
+-- `ChannelInboundSink` - normalized inbound envelope sink.
+-- `ChannelReceiveAckPolicy` - when inbound receive should be acknowledged.
+-- Optional adapter traits:
+-  - `ChannelSetup`
+-  - `ChannelDirectory`
+-  - `ChannelResolver`
+-  - `ChannelTyping`
+-  - `ChannelReaction`
+-  - `ChannelEdit`
+-  - `ChannelDelete`
+-  - `ChannelStreamingDraft`
++## Provider conformance
++
++- `tinychannels-conformance` - a shared 24-case behavior matrix for typed
++  content, voice, addressing, typing, reactions, edits, deletes, read receipts,
++  and streaming drafts.
++- Provider suites compare declared capabilities with actual mock-wire
++  observations and require undeclared behavior to fail without platform I/O.
+ 
+ ## Host Capabilities
+ 
+@@ -47,7 +39,8 @@ See [Channel Contracts](Channel-Contracts).
+ - `LifecycleRegistry` - provider shutdown hooks.
+ - `RunLedger` - run and telemetry records.
+ 
+-See [Host Boundary](Host-Boundary).
++See [Host Boundary](Host-Boundary) for which capabilities run in the module and
++which policy remains with OpenHuman.
+ 
+ ## Relay Contracts
+ 
+@@ -81,13 +74,13 @@ See [Delivery](Delivery).
+ 
+ ## Controller And Backend Capabilities
+ 
+-- `ChannelDefinition` - UI setup metadata.
+-- `ChannelAuthMode` - API key, bot token, OAuth, managed DM.
+-- `ChannelCapability` - runtime UI capability list.
+-- `ChannelManager` - validation plus backend delegation.
+-- `ChannelBackend` - OpenHuman-owned implementation for connect, disconnect,
+-  status, test, send, reactions, threads, Telegram login, Discord link, and
+-  default-channel management.
++- `ChannelController` - typed TinyBus operations for setup, status, health,
++  and channel management.
++- `ChannelDefinition`, `ChannelAuthMode`, and `ChannelCapability` - setup and
++  connection metadata exchanged with the host.
++- `ChannelManager` and `ChannelBackend` remain compatibility APIs inside the
++  library; OpenHuman's host integration uses the module operations instead of
++  implementing this backend trait.
+ 
+ See [Controller API](Controller-API).
+ 
+diff --git a/Channel-Contracts.md b/Channel-Contracts.md
+index c1cbd2b..022c43a 100644
+--- a/Channel-Contracts.md
++++ b/Channel-Contracts.md
+@@ -1,47 +1,49 @@
+ # Channel Contracts
+ 
+-The channel contract layer is the core of TinyChannels. It keeps provider I/O
+-portable while preserving enough platform detail for OpenHuman to route,
+-thread, retry, and observe messages correctly.
+-
+-## Legacy Channel Trait
+-
+-`src/traits.rs` defines the legacy direct-provider surface:
+-
+-- `ChannelMessage` - received message with id, sender, reply target, content,
+-  channel id, timestamp, and optional thread id.
+-- `SendMessage` - outbound message with content, recipient, optional subject,
+-  optional thread id, and optional idempotency key.
+-- `Channel` - object-safe async provider trait with `send`, `listen`,
+-  `health_check`, typing indicators, reactions, draft updates, and proactive
+-  target support.
+-- `ChannelSendExt` - helper that builds a deterministic outbound intent
+-  idempotency key before delegating to legacy `send`.
+-
+-This surface is intentionally still available so existing OpenHuman providers
+-can migrate incrementally.
++TinyChannels separates portable channel data from provider implementation.
++Hosts exchange requests and results with the loaded module through
++`tinychannels-bus`; provider transports and normalization logic remain inside
++TinyChannels. The bus DTOs are the host boundary, not provider objects or an
++application-specific callback trait.
++
++## Compatibility DTOs and module boundary
++
++`ChannelMessage` and `SendMessage` remain compatibility shapes for paths that
++still require them. They do not define the normalized v2 content model. Hosts
++that construct or load providers use bus contracts and module operations;
++provider implementation details stay behind that boundary. The
++`tinychannels-runtime` crate contains shared provider algorithms, and
++`tinychannels-module` exposes configured behavior through TinyBus.
++
++Compatibility conversion is explicit. Legacy `thread_ts` maps to the
++appropriate thread or topic address without changing its serialized field.
++Text projections preserve text-part order, and non-text content must not be
++silently dropped by a compatibility path.
+ 
+ ## Normalized Inbound Envelope
+ 
+-`ChannelInboundEnvelope` is the newer inbound contract. It includes:
++`ChannelInboundEnvelope` is the inbound bus contract. It includes:
+ 
+ - `channel` - `ChannelRef` with channel id and optional account id.
+ - `message_id` - provider message id.
+ - `conversation` - `ConversationRef` with kind, id, scope, parent, thread, and
+   topic fields.
+ - `sender` - `SenderRef` with ids, name, bot flag, and roles.
+-- `text` - message text.
++- `parts` - ordered typed content; `text` and `media` remain compatibility
++  projections.
+ - `access` - DM/group/mention authorization facts.
+ - `media` - ordered media references.
+ - `raw` - optional provider payload for diagnostics or adapter-specific needs.
+ 
+-Legacy helpers project between `ChannelMessage` and `ChannelInboundEnvelope`.
+-Telegram topic ids are kept distinct from generic thread ids when projecting
+-legacy `thread_ts` values.
++`PrepareChannelInbound` asks the module to normalize a configured provider
++envelope and prepare provider-derived history, thread, client, and session
++identity inputs. The host passes authenticated provenance separately;
++serialized input cannot assert that it arrived through a trusted relay.
++Telegram topic ids remain distinct from generic thread ids.
+ 
+ ## Normalized Outbound Intent
+ 
+-`ChannelOutboundIntent` is the logical outbound send request:
++`ChannelOutboundIntent` is the provider-neutral logical outbound send request:
+ 
+ - `idempotency_key`
+ - `channel_id`
+@@ -51,9 +53,12 @@ legacy `thread_ts` values.
+ - `durability`
+ - `payload`
+ 
+-Payload variants cover text, media, voice, files, polls, presentation blocks,
+-and native channel data. Legacy JSON send payloads are preserved as
+-`NativeChannelData` while still gaining deterministic idempotency keys.
++The canonical `Parts` payload carries ordered typed content, including text,
++images, video, audio, files, voice notes, stickers, locations, contacts,
++buttons, polls, presentation blocks, and provider-native data. Simpler legacy
++payload variants remain available for compatibility. Unsupported content must
++produce an explicit result or use a caller-selected fallback; it is not
++silently discarded.
+ 
+ ## Receipts
+ 
+@@ -81,19 +86,12 @@ Provider capability data is split by concern:
+   durable final delivery for text, media, polls, payloads, replies, threads,
+   reconciliation, hooks, batch sends, and commit timing.
+ 
+-## Adapter Traits
+-
+-New provider work can implement `ChannelAdapter` and optional extension traits
+-instead of growing the legacy `Channel` trait:
+-
+-- base adapter: descriptor, ack policy, start, stop, send, status
+-- setup validation
+-- directory listing
+-- target resolution
+-- typing indicators
+-- reactions
+-- edit/delete
+-- streaming draft upsert
++## Provider conformance
+ 
+-Adapters send normalized inbound envelopes into a `ChannelInboundSink` and
+-return normalized receipts from outbound sends.
++Provider adapters declare capabilities and are checked against the shared
++`tinychannels-conformance` feature matrix. Tests observe actual mock-platform
++requests and returned identifiers; an undeclared feature must return an
++unsupported result without performing a platform operation. The matrix covers
++text and media kinds, voice, addressing, typing, reactions, edits, deletes,
++read receipts, and streaming drafts. Provider-specific suites define the
++tested subset for each adapter.
+diff --git a/Home.md b/Home.md
+index 2412b57..3dcd5a9 100644
+--- a/Home.md
++++ b/Home.md
+@@ -1,18 +1,16 @@
+ # TinyChannels Wiki
+ 
+-**TinyChannels is a Rust channel and messaging contract library for OpenHuman.**
+-It owns the portable channel types, provider adapters, relay contracts, delivery
+-queue policy, controller metadata, and host boundary that let OpenHuman connect
+-external messaging surfaces to its harness without pulling application internals
+-into each provider.
++**TinyChannels owns channel provider behavior and portable messaging contracts
++for OpenHuman.** The `tinychannels-bus` crate is the host/module contract;
++OpenHuman loads configured providers through the TinyChannels module. The host
++keeps product authorization, durable sessions, agent execution, and UI policy.
+ 
+ The repository `README.md` is the short product overview. This wiki is the
+ implementation-oriented companion: what each surface owns, how to set up the
+ crate, how providers fit together, and where OpenHuman plugs in.
+ 
+ - crate: `tinychannels` (Rust 2024 edition, GPL-3.0-only)
+-- crates.io: <https://crates.io/crates/tinychannels>
+-- docs.rs: <https://docs.rs/tinychannels>
++- publication: unpublished workspace crates (`publish = false`)
+ - source: <https://github.com/tinyhumansai/tinychannels>
+ 
+ ## Why TinyChannels Exists
+@@ -24,32 +22,34 @@ threading, formatting, delivery, and lifecycle rules.
+ 
+ TinyChannels keeps those differences behind typed contracts:
+ 
+-- inbound messages become `ChannelInboundEnvelope`
+-- outbound sends become `ChannelOutboundIntent`
+-- provider sends return normalized `MessageReceipt` values
++- inbound messages are normalized as `ChannelInboundEnvelope` with ordered
++  typed content
++- outbound sends use typed module requests and return structured receipts
+ - durable delivery is negotiated before retrying or downgrading
+ - rich providers call back into OpenHuman through `ChannelHost`
+ - external connectors speak the relay frame and descriptor contracts
+ 
+ ## The Main Surfaces
+ 
+-1. **[Channel Contracts](Channel-Contracts)** (`src/channel/`, `src/traits.rs`)
+-   - normalized inbound envelopes, outbound intents, receipts, provider
+-   capability flags, and the legacy `Channel` trait.
++1. **[Channel Contracts](Channel-Contracts)** (`crates/tinychannels-bus/`)
++   - typed inbound envelopes, ordered content, outbound intents, receipts, and
++   provider capability declarations.
+ 2. **[Providers](Providers)** (`src/providers/`)
+    - portable provider implementations for direct channel integrations.
+-3. **[Host Boundary](Host-Boundary)** (`src/host/`, `src/harness/`)
+-   - optional host capabilities for turn dispatch, speech, approvals,
+-   conversation history, events, lifecycle hooks, and telemetry.
++3. **[Host Boundary](Host-Boundary)** (`crates/tinychannels-bus/` and
++   `crates/tinychannels-module/`)
++   - typed operations and callbacks for dispatch, speech, approvals, scoped
++   media, events, lifecycle, and telemetry.
+ 4. **[Relay](Relay)** (`src/relay/`)
+    - connector descriptor, auth, frame, transport, and action contracts for
+    Hermes/OpenClaw-style platform relays.
+ 5. **[Delivery](Delivery)** (`src/delivery/`)
+    - durable outbound delivery queue policy, retry state, unknown-send
+    reconciliation, and capability negotiation.
+-6. **[Controller API](Controller-API)** (`src/controllers/`, `src/backend.rs`)
+-   - UI-facing channel definitions and the `ChannelBackend` delegation layer
+-   that OpenHuman implements.
++6. **[Controller API](Controller-API)** (`crates/tinychannels-bus/` and
++   `crates/tinychannels-module/`)
++   - Typed setup and management operations for the loaded provider module.
++     Older `ChannelManager` and `ChannelBackend` APIs remain for compatibility.
+ 
+ ## Page Index
+ 
+diff --git a/Providers.md b/Providers.md
+index 1a77b50..fc69748 100644
+--- a/Providers.md
++++ b/Providers.md
+@@ -21,19 +21,38 @@ centralized from `src/lib.rs` and `src/providers/mod.rs`.
+ | WhatsApp | `WhatsAppChannel` |
+ | Yuanbao | `YuanbaoChannel` |
+ 
+-## Provider Shapes
+-
+-TinyChannels supports several provider shapes:
+-
+-- lean direct providers that implement `Channel`
+-- richer providers that consume `ProviderContext` and host capabilities
+-- providers with optional adapter traits for setup, directory, typing, reaction,
+-  edit, delete, or draft streaming support
+-- relay-backed connectors that project normalized intents into relay actions
+-
+-Provider work should normalize platform-specific events into
+-`ChannelInboundEnvelope` as early as possible and convert outbound work into
+-`ChannelOutboundIntent` before delivery or relay projection.
++## Provider and host boundary
++
++Providers run inside the TinyChannels module. OpenHuman sends typed bus
++operations to the configured module instead of constructing provider objects.
++Provider-specific events are normalized into `ChannelInboundEnvelope` with
++ordered typed content; outbound sends preserve typed parts and return a
++structured receipt. The host supplies scoped capabilities such as media reads,
++speech, and event publication without taking ownership of provider transport.
++
++## Conformance matrix
++
++The shared `tinychannels-conformance` crate defines the 24 canonical cases.
++Provider test suites run the matrix against mock transports and check declared
++support against observed requests and receipts. This table identifies the
++current full-matrix suites; it is a test-coverage index, not a claim that all
++providers support every feature.
++
++| Provider | Conformance suite |
++| --- | --- |
++| Discord | `providers/discord/conformance_tests.rs` |
++| Email | `providers/email_channel/conformance_tests.rs` |
++| iMessage | `providers/imessage/conformance_tests.rs` |
++| Linq | `providers/linq/conformance_tests.rs` |
++| Mattermost, QQ, DingTalk | `providers/long_tail_conformance_tests.rs` |
++| Signal | `providers/signal/conformance_tests.rs` |
++| Slack | `providers/slack/adapter_tests.rs` |
++| Lark | `providers/lark_conformance_tests.rs` |
++| WhatsApp Cloud and Web | `providers/whatsapp*/conformance_tests.rs` |
++| Yuanbao | `providers/yuanbao/conformance_tests.rs` |
++
++The matrix names the operations being tested. The provider descriptor and
++mock-wire assertion in each suite are authoritative for its supported subset.
+ 
+ ## Controller Registry
+ 
+@@ -61,8 +80,7 @@ When adding or porting a provider:
+ 3. Export the provider from `src/providers/mod.rs` and `src/lib.rs` only if it
+    is part of the public API.
+ 4. Normalize inbound platform events into `ChannelInboundEnvelope`.
+-5. Build outbound sends as `ChannelOutboundIntent` or preserve legacy
+-   `SendMessage` idempotency through `ChannelSendExt`.
++5. Build outbound sends with typed bus operations and preserve idempotency keys.
+ 6. Return `MessageReceipt` where the provider can identify platform message ids.
+ 7. Advertise honest capabilities.
+ 8. Add setup metadata to `src/controllers/definitions.rs` only when the UI flow
+diff --git a/Quick-Start.md b/Quick-Start.md
+index a0da0e9..e0ae817 100644
+--- a/Quick-Start.md
++++ b/Quick-Start.md
+@@ -3,21 +3,11 @@
+ The shortest path from zero to a working TinyChannels checkout, plus the crate
+ layout you will navigate when adding or porting channel providers.
+ 
+-## Install From crates.io
+-
+-Add the crate to a Rust project:
+-
+-```sh
+-cargo add tinychannels
+-```
+-
+-The default feature set is intentionally small. The `relay-websocket` feature
+-keeps the WebSocket relay transport module behind an opt-in flag while the core
+-relay frame and descriptor contracts remain available.
+-
+-```sh
+-cargo add tinychannels --features relay-websocket
+-```
++TinyChannels is a vendored, unpublished workspace used by OpenHuman. For local
++development, clone the repository or work in the OpenHuman checkout. Hosts
++consume `tinychannels-bus` and load provider behavior through the compiled
++TinyChannels module. The relay WebSocket transport is part of the relay module
++and is not gated by a `relay-websocket` Cargo feature.
+ 
+ ## Clone, Test, And Build
+ 
+@@ -38,42 +28,13 @@ cargo build --all-targets
+ cargo test
+ ```
+ 
+-## Minimal Usage Shape
+-
+-Lean providers implement the legacy `Channel` trait when all they need is
+-receive, send, listen, and health:
+-
+-```rust
+-use async_trait::async_trait;
+-use tinychannels::{Channel, ChannelMessage, SendMessage};
+-
+-struct MyChannel;
+-
+-#[async_trait]
+-impl Channel for MyChannel {
+-    fn name(&self) -> &str {
+-        "my-channel"
+-    }
+-
+-    async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
+-        println!("send {} to {}", message.content, message.recipient);
+-        Ok(())
+-    }
+-
+-    async fn listen(
+-        &self,
+-        tx: tokio::sync::mpsc::Sender<ChannelMessage>,
+-    ) -> anyhow::Result<()> {
+-        let _ = tx;
+-        Ok(())
+-    }
+-}
+-```
++## Typed outbound shape
+ 
+-Newer provider and relay work should prefer the normalized channel contract:
++Host code uses typed bus DTOs rather than implementing provider objects. The
++smallest normalized outbound intent looks like this:
+ 
+ ```rust
+-use tinychannels::{
++use tinychannels_bus::channel::{
+     ChannelOutboundIntent, DeliveryDurability, OutboundPayload,
+ };
+ 
+@@ -81,8 +42,11 @@ let intent = ChannelOutboundIntent {
+     idempotency_key: "send:user-42:hello".to_string(),
+     channel_id: "discord".to_string(),
+     conversation_id: "channel-123".to_string(),
++    channel_ref: None,
++    conversation_ref: None,
+     reply_to_id: None,
+     thread_id: None,
++    turn_id: None,
+     durability: DeliveryDurability::BestEffort,
+     payload: OutboundPayload::Text {
+         text: "hello".to_string(),
+@@ -90,10 +54,18 @@ let intent = ChannelOutboundIntent {
+ };
+ ```
+ 
++For inbound messages, use `ChannelInboundEnvelope` with ordered `ContentPart`
++values. The module's `PrepareChannelInbound` operation normalizes provider
++addresses and prepares host identity inputs. See [Channel Contracts](Channel-Contracts)
++for the full address, media, voice, and receipt model.
++
+ ## Crate Layout
+ 
+ - `src/lib.rs` - public export surface.
+-- `src/traits.rs` - legacy `Channel`, `ChannelMessage`, and `SendMessage`.
++- `crates/tinychannels-bus/` - host/module DTOs and operation contracts.
++- `crates/tinychannels-runtime/` - shared provider and runtime algorithms.
++- `crates/tinychannels-module/` - loadable TinyBus implementation.
++- `src/traits.rs` - compatibility message and send DTOs retained during migration.
+ - `src/channel/` - normalized channel references, envelopes, intents, receipts,
+   adapter traits, capabilities, and session-key helpers.
+ - `src/providers/` - direct provider implementations.
+@@ -102,7 +74,7 @@ let intent = ChannelOutboundIntent {
+ - `src/relay/` - connector descriptors, auth, frames, actions, and transport.
+ - `src/delivery/` - durable outbound queue state machine and retry policy.
+ - `src/controllers/` - setup UI definitions and backend response DTOs.
+-- `src/backend.rs` - `ChannelBackend` and `ChannelManager`.
++- `src/backend.rs` - compatibility `ChannelBackend` and `ChannelManager` APIs.
+ - `docs/spec/` - system specs and porting plans.
+ - `wiki/` - this GitHub wiki source.
+ 
+diff --git a/Relay.md b/Relay.md
+index a663853..1f886fe 100644
+--- a/Relay.md
++++ b/Relay.md
+@@ -77,8 +77,8 @@ The transport module defines the reconnectable frame I/O boundary:
+ - `RelayReconnectPolicy`
+ - inbound, interrupt, and passthrough handlers
+ 
+-The `relay-websocket` feature enables the WebSocket transport module and exports
+-the WebSocket dialer/config helpers.
++The relay WebSocket transport is part of the relay module; it is not gated by a
++`relay-websocket` Cargo feature.
+ 
+ ## Relay Design Rule
+ 

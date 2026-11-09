@@ -69,7 +69,7 @@ pub(super) fn marked(
     backend: &Arc<dyn StorageBackend>,
     workspace: &Path,
     domain: &str,
-    body: impl FnOnce() -> Result<Option<(usize, usize, usize)>>,
+    body: impl FnOnce(&tinystoragedrivers::WriteCondition) -> Result<Option<(usize, usize, usize)>>,
 ) -> Result<Outcome> {
     let step = marker_step(domain, workspace);
     let markers = Repo::on(
@@ -81,11 +81,12 @@ pub(super) fn marked(
     if import_state::is_done(&markers, MARKER_OWNER, &step)? {
         return Ok(Outcome::AlreadyDone);
     }
-    let claimed = import_state::with_claim(&markers, MARKER_OWNER, &step, || {
-        if import_state::is_done(&markers, MARKER_OWNER, &step)? {
+    let claimed = import_state::with_claim(&markers, MARKER_OWNER, &step, |condition| {
+        let claimed_markers = markers.conditioned(condition)?;
+        if import_state::is_done(&claimed_markers, MARKER_OWNER, &step)? {
             return Ok(Outcome::AlreadyDone);
         }
-        let Some((found, written, skipped)) = body()? else {
+        let Some((found, written, skipped)) = body(condition)? else {
             return Ok(Outcome::NoSource);
         };
         if skipped > 0 {
@@ -101,14 +102,14 @@ pub(super) fn marked(
                 skipped,
             });
         }
-        import_state::set_done(&markers, MARKER_OWNER, &step)?;
+        import_state::set_done(&claimed_markers, MARKER_OWNER, &step)?;
         Ok(Outcome::Imported { found, written })
     })?;
     Ok(claimed.unwrap_or(Outcome::InProgress))
 }
 
 /// Counts the schedule reader's legacy records and logs safe problem details.
-fn counts(domain: &str, report: &tinyflows_import::ImportReport) -> (usize, usize, usize) {
+fn counts(domain: &str, report: &super::tinyflows_reader::ImportReport) -> (usize, usize, usize) {
     for problem in report.problems() {
         tracing::warn!(
             target: "openhuman::storage_import",
@@ -358,9 +359,18 @@ async fn migrate_owner_stores(
     backend: Arc<dyn StorageBackend>,
     config: Config,
 ) -> (Vec<Report>, bool) {
-    let scopes = crate::storage::boot::scopes_to_migrate(&backend).await;
-    #[cfg(feature = "flows")]
-    let local = Scope::local();
+    // v2 has no global scope registry. Prepare only the owner scopes whose
+    // legacy stores this importer can actually discover: the workspace and
+    // agent cron directories. The catalog remains workspace-local.
+    let local = crate::storage::tenant_scope(None);
+    let mut scopes = vec![local.clone()];
+    scopes.extend(
+        agent_cron_dirs(&config.workspace_dir)
+            .into_iter()
+            .map(|(agent, _)| crate::storage::scope_for_agent(&agent)),
+    );
+    scopes.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    scopes.dedup();
     #[cfg(feature = "flows")]
     let mut local_catalog_ready = false;
     #[cfg(not(feature = "flows"))]
@@ -374,7 +384,7 @@ async fn migrate_owner_stores(
         // second import change the database.
         if matches!(
             scope.parsed().map(|parsed| parsed.principal),
-            Ok(Some(tinystoragedrivers::Principal::Module(_)))
+            Ok(Some(crate::storage::Principal::Module(_)))
         ) {
             continue;
         }
@@ -419,13 +429,13 @@ fn import_flows_after_migration(
     };
 
     let dir = config.workspace_dir.join("flows");
-    marked(backend, &config.workspace_dir, FLOWS_DOMAIN, || {
+    marked(backend, &config.workspace_dir, FLOWS_DOMAIN, |condition| {
         if !flow_sources_present(&dir) {
             return Ok(None);
         }
         let dir = dir.clone();
-        let backend = Arc::clone(backend);
-        let scope = scope.clone();
+        let backend = import_state::backend_with_condition(Arc::clone(backend), condition.clone());
+        let scope = (*scope).clone();
         let config = config.clone();
         let totals = Arc::new(Mutex::new(ImportTotals::default()));
         crate::storage::block_on_anyhow(async move {
@@ -441,7 +451,7 @@ fn import_flows_after_migration(
             let flow_proxy = proxy.clone();
             let flow_storage = storage.clone();
             let flow_totals = Arc::clone(&totals);
-            tinyflows_import::read_legacy_flow_catalog(&dir, move |records| {
+            super::tinyflows_reader::read_legacy_flow_catalog(&dir, move |records| {
                 let proxy = flow_proxy.clone();
                 let storage = flow_storage.clone();
                 let totals = Arc::clone(&flow_totals);
@@ -464,7 +474,7 @@ fn import_flows_after_migration(
             let checkpoint_proxy = proxy.clone();
             let checkpoint_storage = storage.clone();
             let checkpoint_totals = Arc::clone(&totals);
-            tinyflows_import::read_legacy_checkpoint_batches(
+            super::tinyflows_reader::read_legacy_checkpoint_batches(
                 &dir.join("checkpoints.db"),
                 &dir.join("checkpoints"),
                 move |records: Vec<LegacyImportRecord>| {
@@ -521,7 +531,7 @@ pub fn import_cron(
         format!("{CRON_DOMAIN}/{label}")
     };
     let jobs_db = legacy_jobs_db(scope_dir);
-    marked(backend, &config.workspace_dir, &domain, || {
+    marked(backend, &config.workspace_dir, &domain, |condition| {
         if !jobs_db.is_file() {
             return Ok(None);
         }
@@ -529,12 +539,13 @@ pub fn import_cron(
         // records only) and replayed through the module's `import_job` /
         // `import_run` store operations, which write only what is absent and
         // file a flow-schedule job under the id its flow derives.
-        let doc_scope = DocScope::on_backend(config, Arc::clone(backend), scope.clone());
+        let backend = import_state::backend_with_condition(Arc::clone(backend), condition.clone());
+        let doc_scope = DocScope::on_backend(config, backend, scope.clone());
         let config = config.clone();
         let report = crate::storage::block_on_anyhow({
             let jobs_db = jobs_db.clone();
             async move {
-                let legacy = tinyflows_import::read_legacy_cron(&jobs_db)
+                let legacy = super::tinyflows_reader::read_legacy_cron(&jobs_db)
                     .await
                     .context("read the legacy cron database")?;
                 let mut report = legacy.report;
@@ -679,10 +690,10 @@ pub(super) fn finish(domain: &'static str, outcome: Result<Outcome>) -> Report {
     Report { domain, outcome }
 }
 
-#[cfg(all(test, feature = "flows"))]
+#[cfg(all(test, feature = "flows", feature = "storage-sqlite"))]
 #[path = "tinyflows_tests.rs"]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "storage-sqlite"))]
 #[path = "tinyflows_cron_tests.rs"]
 mod cron_tests;

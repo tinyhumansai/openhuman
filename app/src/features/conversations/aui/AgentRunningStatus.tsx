@@ -27,6 +27,9 @@
  * 3. **Thinking.** The vendored `GenerationLoader`, with "Thinking · {elapsed}"
  *    once a second has passed. The clock starts when this slot mounts, which is
  *    when the turn starts running: the runtime keeps no turn-start timestamp.
+ *    While the turn summarizes earlier conversation before its next model call
+ *    (`inferenceStatusByThread.phase === 'compacting'`), the same loader says
+ *    so instead: that can take minutes with nothing else to show.
  */
 import { useAuiState } from '@assistant-ui/react';
 import { useEffect, useState } from 'react';
@@ -85,6 +88,23 @@ export function hasPendingClarification(messages: ReadonlyArray<MessageLike>): b
   return false;
 }
 
+/**
+ * Whether the running turn has delegated work of its own.
+ *
+ * assistant-ui's `thread.tasks` collects delegations from every message in the
+ * thread, so a chat that ran a subagent once would hide "Thinking…" on every
+ * later turn. The running turn is the newest message when it is the
+ * assistant's; a turn whose reply has not appeared yet has no tasks.
+ */
+export function turnHasTasks(
+  tasks: ReadonlyArray<{ readonly messageId: string }>,
+  messages: ReadonlyArray<{ readonly id: string; readonly role: string }>
+): boolean {
+  const newest = messages.at(-1);
+  if (newest?.role !== 'assistant') return false;
+  return tasks.some(task => task.messageId === newest.id);
+}
+
 /** Approval outranks review outranks answer: the most blocking gate first. */
 export function waitingOnUser(args: {
   approval: boolean;
@@ -123,6 +143,14 @@ function useParentWaitsOnSubagents(): boolean {
   );
 }
 
+/** Whether the turn is summarizing earlier conversation before its next call. */
+function useCompacting(): boolean {
+  const threadId = useAuiThreadId();
+  return useAppSelector(state =>
+    threadId ? state.chatRuntime.inferenceStatusByThread?.[threadId]?.phase === 'compacting' : false
+  );
+}
+
 function WaitingLine({ kind }: { kind: WaitingOnUser }) {
   const { t } = useT();
   return (
@@ -146,9 +174,11 @@ export function AgentRunningStatus() {
   const strings = useAgentStatusStrings();
   const waiting = useWaitingOnUser();
   const parentWaits = useParentWaitsOnSubagents();
+  const compacting = useCompacting();
   const [tick, setTick] = useState(0);
   const [startedAt] = useState(() => Date.now());
-  const thinking = summary.total === 0 && waiting === null;
+  const turnTasks = useAuiState(s => turnHasTasks(s.thread.tasks, s.thread.messages));
+  const thinking = !turnTasks && waiting === null;
   const elapsedMs = useTaskElapsed({ startedAt }, thinking);
 
   useEffect(() => {
@@ -159,10 +189,15 @@ export function AgentRunningStatus() {
 
   if (waiting !== null) return <WaitingLine kind={waiting} />;
 
-  if (summary.total === 0) {
-    const label =
-      elapsedMs !== undefined && elapsedMs >= 1000
-        ? t('chat.status.thinkingElapsed').replace('{elapsed}', formatElapsed(elapsedMs))
+  if (!turnTasks) {
+    const elapsed =
+      elapsedMs !== undefined && elapsedMs >= 1000 ? formatElapsed(elapsedMs) : undefined;
+    const label = compacting
+      ? elapsed
+        ? t('chat.status.compactingElapsed').replace('{elapsed}', elapsed)
+        : t('chat.status.compacting')
+      : elapsed
+        ? t('chat.status.thinkingElapsed').replace('{elapsed}', elapsed)
         : t('chat.thinkingDots');
     return (
       <GenerationLoader

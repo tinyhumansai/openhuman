@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::config::TEST_ENV_LOCK;
-use tinyagents_graph::todos::{TodoItem, TodoStatus};
+use tinyagents_harness_tools::todos::{TodoItem, TodoStatus};
 
 #[test]
 fn thread_live_state_request_parses_thread_id() {
@@ -63,7 +63,7 @@ async fn goal_get_reads_back_a_stored_goal() {
         .await
         .unwrap()
         .workspace_dir;
-    tinyagents_graph::goals::store::set(
+    tinyagents_harness_tools::goals::store::set(
         &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
         "thread-goal-live",
         "ship it",
@@ -102,7 +102,7 @@ async fn todos_get_reads_back_what_the_todo_tool_wrote() {
     assert!(empty_json["data"]["todos"].as_array().unwrap().is_empty());
 
     let store = crate::storage::sessions::stores_or_ephemeral(&dir).kv;
-    tinyagents_graph::todos::store::replace(
+    tinyagents_harness_tools::todos::store::replace(
         &store,
         "thread-todos-live",
         vec![TodoItem::with_status("write tests", TodoStatus::InProgress)],
@@ -121,4 +121,68 @@ async fn todos_get_reads_back_what_the_todo_tool_wrote() {
         .unwrap_or_else(|| panic!("missing todos in {filled_json}"));
     assert_eq!(todos.len(), 1);
     assert_eq!(todos[0]["content"], "write tests");
+}
+
+/// `threads.state_get` reads goal, plan and the agent's notes in one call,
+/// with the run-state block they render to.
+#[tokio::test]
+async fn state_get_reads_goal_plan_and_notes_with_the_block() {
+    let _ws = WorkspaceGuard::new().await;
+    let dir = crate::config::Config::load_or_init()
+        .await
+        .unwrap()
+        .workspace_dir;
+
+    let empty = state_get(ThreadLiveStateRequest {
+        thread_id: "thread-state-live".to_string(),
+    })
+    .await
+    .unwrap();
+    let empty_json = empty.into_cli_compatible_json().unwrap();
+    assert!(empty_json["data"]["block"].is_null(), "{empty_json}");
+
+    let store = crate::storage::sessions::stores_or_ephemeral(&dir).kv;
+    tinyagents_harness_tools::goals::store::set(&store, "thread-state-live", "ship it", None)
+        .await
+        .unwrap();
+    tinyagents_harness_tools::todos::store::replace(
+        &store,
+        "thread-state-live",
+        vec![TodoItem::with_status("write tests", TodoStatus::InProgress)],
+    )
+    .await
+    .unwrap();
+    tinyagents_harness_tools::scratchpad::store::apply(
+        &store,
+        "thread-state-live",
+        &tinyagents_harness_tools::scratchpad::ScratchpadUpdate {
+            facts: vec!["the suite uses nextest".to_string()],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let filled = state_get(ThreadLiveStateRequest {
+        thread_id: "thread-state-live".to_string(),
+    })
+    .await
+    .unwrap();
+    let json = filled.into_cli_compatible_json().unwrap();
+    let state = &json["data"]["state"];
+    assert_eq!(state["goal"]["objective"], "ship it", "{json}");
+    assert_eq!(state["todos"][0]["content"], "write tests", "{json}");
+    assert_eq!(
+        state["notes"]["facts"][0], "the suite uses nextest",
+        "{json}"
+    );
+    let block = json["data"]["block"].as_str().unwrap_or_default();
+    assert!(block.contains("Goal (active): ship it"), "{block}");
+    assert!(block.contains("  - the suite uses nextest"), "{block}");
+
+    assert!(state_get(ThreadLiveStateRequest {
+        thread_id: "  ".to_string(),
+    })
+    .await
+    .is_err());
 }

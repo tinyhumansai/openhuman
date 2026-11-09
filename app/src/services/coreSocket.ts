@@ -29,6 +29,13 @@ interface CoreSocketOptions {
    */
   authExtras?: Record<string, unknown>;
   /**
+   * Re-reads the bearer for each handshake. Defaults to `getCoreRpcToken`.
+   * Return `null` to fall back to `coreToken` — e.g. when the active core has
+   * changed and the fresh bearer belongs to a different endpoint than the one
+   * this socket targets.
+   */
+  resolveToken?: () => Promise<string | null>;
+  /**
    * Override of the underlying Socket.IO connect options. The default
    * shape matches what the previous in-line callers used.
    */
@@ -44,9 +51,31 @@ const DEFAULT_OPTIONS: Partial<ManagerOptions & SocketOptions> = {
   forceNew: true,
 };
 
+const handshakeTokens = new WeakMap<Socket, string>();
+
+/** The bearer this socket presented on its most recent handshake. */
+export function lastHandshakeToken(socket: Socket): string | undefined {
+  return handshakeTokens.get(socket);
+}
+
 export function createCoreSocket(baseUrl: string, opts: CoreSocketOptions): Socket {
-  const auth = { token: opts.coreToken ?? '', ...(opts.authExtras ?? {}) };
-  return io(baseUrl, { ...DEFAULT_OPTIONS, ...(opts.overrides ?? {}), auth });
+  const extras = opts.authExtras ?? {};
+  const resolveToken = opts.resolveToken ?? getCoreRpcToken;
+  // socket.io-client resends an object `auth` unchanged on every reconnect, so
+  // after a core restart (new per-launch bearer) it would retry the dead one
+  // forever. A function `auth` runs on every handshake and re-reads the bearer.
+  const auth = (cb: (data: object) => void) => {
+    const send = (token: string) => {
+      handshakeTokens.set(socket, token);
+      cb({ token, ...extras });
+    };
+    void resolveToken().then(
+      token => send(token ?? opts.coreToken ?? ''),
+      () => send(opts.coreToken ?? '')
+    );
+  };
+  const socket = io(baseUrl, { ...DEFAULT_OPTIONS, ...(opts.overrides ?? {}), auth });
+  return socket;
 }
 
 interface ConnectCoreSocketOptions {

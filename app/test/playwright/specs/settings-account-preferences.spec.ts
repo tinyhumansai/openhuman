@@ -42,6 +42,7 @@ async function ensureRecoveryPhraseGenerateMode(page: Page): Promise<void> {
 
   if (await replaceButton.isVisible()) {
     await replaceButton.click();
+    await page.getByRole('menuitem', { name: 'Create a New Wallet' }).click();
     await page.getByRole('button', { name: 'I understand, replace my wallet' }).click();
   }
 
@@ -75,12 +76,14 @@ test.describe('Settings - Account Preferences', () => {
     await expect(page.getByTestId('wallet-panel')).toBeVisible();
   });
 
-  test.skip('saves a generated recovery phrase and exposes configured wallet state', async ({
+  test('saves a generated recovery phrase and exposes configured wallet state', async ({
     page,
   }) => {
     await gotoSettingsRoute(page, '/settings/recovery-phrase');
 
     await ensureRecoveryPhraseGenerateMode(page);
+    await page.getByRole('button', { name: 'Reveal recovery phrase' }).click();
+    await expect(page.getByRole('button', { name: 'Copy to Clipboard' })).toBeEnabled();
     await page.locator('#mnemonic-confirm-checkbox').check();
     await page.getByRole('button', { name: 'Save Recovery Phrase' }).click();
 
@@ -169,21 +172,12 @@ test.describe('Settings - Account Preferences', () => {
     }
   });
 
-  test('opens the billing route and settles the redirect status copy', async ({ page }) => {
-    test.skip(
-      true,
-      'billing is exposed as an account-settings button; the retired nested route is covered by card-payment-flow'
-    );
+  test('shows the billing dashboard handoff on the account panel', async ({ page }) => {
     await gotoSettingsRoute(page, '/settings/account');
 
-    await expect(page.getByRole('heading', { name: 'Billing', exact: true })).toBeVisible();
-    // Billing no longer auto-opens the browser; the panel explains billing
-    // moved to the web and offers an explicit open button.
-    await expect(
-      page.getByText(/Subscription changes, payment methods, credits, and invoices are now managed/)
-    ).toBeVisible();
-
-    await page.getByRole('button', { name: 'Back to settings' }).click();
-    await expect.poll(async () => page.evaluate(() => window.location.hash)).toContain('/settings');
+    await expect(page.getByTestId('account-panel')).toBeVisible();
+    await expect(page.getByTestId('account-open-billing')).toBeVisible();
+    await expect(page.getByText('Plan & billing')).toBeVisible();
+    await expect(page.getByText('Manage your subscription, credits, and invoices')).toBeVisible();
   });
 });

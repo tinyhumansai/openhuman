@@ -1,5 +1,17 @@
 //! Cross-platform process termination helpers shared by lifecycle recovery code.
 
+/// The raw pid to signal, refusing values `kill(2)` would not treat as one
+/// process: 0 (the caller's whole process group), 1 (init/launchd), and
+/// anything above `i32::MAX`, which `as i32` would turn negative — a process
+/// group again.
+#[cfg(unix)]
+fn signal_pid(pid: u32) -> Result<i32, String> {
+    match i32::try_from(pid) {
+        Ok(raw) if raw > 1 => Ok(raw),
+        _ => Err(format!("refusing to signal protected or invalid pid {pid}")),
+    }
+}
+
 /// Send the graceful-shutdown signal to `pid`. Returns `Ok` if the process
 /// exited cleanly, was already gone, or accepted the signal. Callers must
 /// re-check ownership of the resource (e.g. that the same pid is still bound
@@ -8,7 +20,7 @@
 pub(crate) fn kill_pid_term(pid: u32) -> Result<(), String> {
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
-    let target = Pid::from_raw(pid as i32);
+    let target = Pid::from_raw(signal_pid(pid)?);
     if let Err(e) = kill(target, Signal::SIGTERM) {
         // ESRCH means already gone — treat as success.
         if e != nix::errno::Errno::ESRCH {
@@ -25,15 +37,12 @@ pub(crate) fn kill_pid_term(pid: u32) -> Result<(), String> {
 pub(crate) fn kill_pid_force(pid: u32) -> Result<(), String> {
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
-    let target = Pid::from_raw(pid as i32);
-    match kill(Pid::from_raw(pid as i32), Signal::SIGKILL) {
+    let target = Pid::from_raw(signal_pid(pid)?);
+    match kill(target, Signal::SIGKILL) {
         Ok(()) => Ok(()),
         // ESRCH means the process exited between our re-validation and the
         // SIGKILL — the resource is freeing on its own, treat as success.
-        Err(nix::errno::Errno::ESRCH) => {
-            let _ = target;
-            Ok(())
-        }
+        Err(nix::errno::Errno::ESRCH) => Ok(()),
         Err(e) => Err(format!("SIGKILL pid {pid}: {e}")),
     }
 }
@@ -269,6 +278,10 @@ pub(crate) fn classify_taskkill_force_status(
 pub(crate) const fn is_protected_windows_pid(pid: u32) -> bool {
     pid == 0 || pid == 4
 }
+
+#[cfg(all(test, unix))]
+#[path = "process_kill_unix_tests.rs"]
+mod unix_tests;
 
 #[cfg(test)]
 #[path = "process_kill_tests.rs"]

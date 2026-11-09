@@ -157,6 +157,19 @@ impl ProfileHost {
         &self.node
     }
 
+    /// Profile identities known to the host, including profiles that are not
+    /// currently open. Background maintenance uses this inventory so dormant
+    /// profiles are not skipped between requests.
+    pub async fn known_profiles(&self) -> Result<Vec<String>, String> {
+        Ok(self
+            .registry
+            .list()
+            .await?
+            .into_iter()
+            .map(|profile| profile.profile_id.to_string())
+            .collect())
+    }
+
     pub(crate) fn leases(&self) -> &dyn LeaseStore {
         self.leases.as_ref()
     }
@@ -197,7 +210,11 @@ impl ProfileHost {
 
     /// [`Self::forced_config`] plus the operator's direct providers, for any
     /// config that serves chat, relay or cron turns.
-    fn serving_config(&self, layout: &ProfileLayout, id: &ProfileId) -> Result<Config, String> {
+    pub(super) fn serving_config(
+        &self,
+        layout: &ProfileLayout,
+        id: &ProfileId,
+    ) -> Result<Config, String> {
         let mut config = self.forced_config(layout, id);
         super::provider_settings::ProfileProviderSettings::from_saas(&self.saas)
             .map_err(|error| error.to_string())?
@@ -241,13 +258,31 @@ impl ProfileHost {
         {
             return Err(OpenError::NotProvisioned(id.clone()));
         }
-        let (closed, full) = {
+        let (closed, full, pinned) = {
             let mut open = self.lock();
             let closed = self.evict_locked(&mut open, Instant::now());
-            (closed, open.len() >= self.saas.max_profiles_open.max(1))
+            let pinned = open
+                .values()
+                .filter(|slot| in_use(slot))
+                .map(|slot| {
+                    (
+                        Arc::strong_count(&slot.state),
+                        Arc::strong_count(&slot.state.context),
+                        slot.state.context.tenant_in_use(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (
+                closed,
+                open.len() >= self.saas.max_profiles_open.max(1),
+                pinned,
+            )
         };
         profile_lease::release_all(self, closed).await;
         if full {
+            log::debug!(
+                "[profiles] no free profile slot; pinned counts (profile, context, tenant_in_use)={pinned:?}"
+            );
             return Err(OpenError::Full {
                 max: self.saas.max_profiles_open,
             });
@@ -395,6 +430,18 @@ impl ProfileHost {
         self.lock().get(id).map(|slot| Arc::clone(&slot.state))
     }
 
+    /// Snapshot profiles currently leased by this host.
+    ///
+    /// The returned handles keep each slot in use until the caller drops the
+    /// snapshot, so maintenance cannot outlive the lease that fences its
+    /// profile-scoped writes.
+    pub(crate) fn hosted_profiles(&self) -> Vec<Arc<Profile>> {
+        self.lock()
+            .values()
+            .map(|slot| Arc::clone(&slot.state))
+            .collect()
+    }
+
     pub fn is_open(&self, id: &ProfileId) -> bool {
         self.lock().contains_key(id)
     }
@@ -436,7 +483,7 @@ impl ProfileHost {
         let id = meta.profile_id;
         let config = self.forced_config(&self.layout_of(&id), &id);
         let has_credential = CoreContext::scope(self.records_context(&id), async {
-            super::credentials::has(&config)
+            super::credentials::has(&config).await
         })
         .await;
         ProfileSummary {
@@ -467,7 +514,9 @@ impl ProfileHost {
         };
         // Retire the fence before the lease goes back, as `release_all` does.
         self.fences.retire(id.as_str(), grant.epoch);
-        self.leases.release(grant).await.map_err(|error| {
+        let released = self.leases.release(grant).await;
+        profile_lease::release_profile_stores(self, id);
+        released.map_err(|error| {
             log::warn!("[profiles] releasing profile={id} failed: {error}");
             format!("releasing profile {id}: {error}")
         })?;
@@ -550,6 +599,7 @@ impl ProfileHost {
             ))),
         )
         .await;
+        profile_lease::release_profile_stores(self, id);
         log::info!("[profiles] fenced profile={id}: stopped {stopped} thread(s)");
     }
 
@@ -634,8 +684,11 @@ static HOST: OnceLock<Arc<ProfileHost>> = OnceLock::new();
 /// Install the process's profile host. A SaaS boot does this once; later calls
 /// are ignored.
 pub fn install(host: Arc<ProfileHost>) {
-    if HOST.set(host).is_err() {
-        log::warn!("[profiles] profile host already installed; keeping the first");
+    match HOST.set(Arc::clone(&host)) {
+        Ok(()) => super::doctor::register_check_source(host),
+        Err(_) => {
+            log::warn!("[profiles] profile host already installed; keeping the first");
+        }
     }
 }
 

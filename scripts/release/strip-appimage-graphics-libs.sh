@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # Strip host graphics libraries from AppImage bundles so they load the user's
-# system Mesa/libdrm/libva at launch instead of the older versions baked in by
-# lib4bin's ldd-walk on the ubuntu-22.04 build runner.
+# system Mesa/libdrm/libva at launch instead of the older versions the AppImage
+# bundler copies in from the build runner.
 #
-# Without this, AppImages built on Mesa 22.x fail to initialize on systems
-# with newer GPUs (RDNA3, Intel Arc, Lovelace) because the bundled drivers
-# can't talk to the host kernel/driver stack. AppImage convention is to never
-# ship graphics drivers — they must come from the host. See:
+# Without this, AppImages fail to initialize on systems with newer GPUs (RDNA3,
+# Intel Arc, Lovelace) because the bundled drivers can't talk to the host
+# kernel/driver stack. AppImage convention is to never ship graphics drivers —
+# they must come from the host. See:
 # https://github.com/AppImageCommunity/pkg2appimage/blob/master/excludelist
 #
-# Only top-level lib directories are swept. CEF's own subdirs (swiftshader/,
-# locales/, libcef.so neighbors) are left alone — CEF ships its own
-# GLES/EGL implementation that must stay bundled.
+# Only top-level lib directories are swept, so subdirectories such as the
+# bundled webkit2gtk-4.1/ helper directory are left alone. The bundled WebKitGTK
+# itself stays, but on a linuxdeploy AppDir an AppRun hook prefers the host's
+# webkit2gtk-4.1 when it is at least as new (install_system_webkit_hook, #7652).
 #
 # Usage: strip-appimage-graphics-libs.sh <bundle-root> [bundle-root...]
 #   where <bundle-root> contains an `appimage/` subdir with *.AppImage files.
@@ -773,6 +774,65 @@ patch_apprun_sharun_cwd() {
   fi
 }
 
+SYSTEM_WEBKIT_HOOK="openhuman-system-webkit.sh"
+
+# install_system_webkit_hook — make a linuxdeploy AppRun prefer the host's
+# webkit2gtk-4.1 (#7652; see appimage-system-webkit-hook.sh for why). The hook is
+# sourced before every other hook, so when it execs the app against the host
+# WebKit, the bundled GTK hook never runs.
+#
+# Returns 0 if the hook was installed, 1 if the layout is not linuxdeploy or the
+# hook is already there. Exits when the bundled WebKit cannot be identified.
+install_system_webkit_hook() {
+  local appdir="$1"
+  local apprun="$appdir/AppRun"
+  [ -f "$apprun" ] || return 1
+  [ "$(LC_ALL=C head -c 2 "$apprun" 2>/dev/null || true)" = '#!' ] || return 1
+  grep -q 'AppRun\.wrapped' "$apprun" || return 1
+  if grep -Fq "$SYSTEM_WEBKIT_HOOK" "$apprun"; then
+    return 1
+  fi
+
+  # The bundler copied the runner's WebKitGTK, so the runner's real library name
+  # is the bundled version.
+  local runner_lib bundled
+  runner_lib="$(system_module_runtime_library libwebkit2gtk-4.1.so.0)" || runner_lib=""
+  bundled="$(basename "$(readlink -f "$runner_lib" 2>/dev/null)" 2>/dev/null)" || bundled=""
+  case "$bundled" in
+    libwebkit2gtk-4.1.so.0.*) ;;
+    *)
+      echo "[strip-libs] ERROR: cannot read the build runner's libwebkit2gtk-4.1 version (got '$bundled'); refusing to install the system WebKit hook without it" >&2
+      exit 1
+      ;;
+  esac
+
+  mkdir -p "$appdir/apprun-hooks"
+  sed "s|@BUNDLED_WEBKIT@|$bundled|" "$SCRIPT_DIR/appimage-system-webkit-hook.sh" \
+    >"$appdir/apprun-hooks/$SYSTEM_WEBKIT_HOOK"
+
+  # Insert before the first hook (or, with none, before the hand-off), after
+  # linuxdeploy's `this_dir=` line that the hook relies on.
+  local tmp_apprun
+  tmp_apprun="$(mktemp)"
+  awk -v hook="$SYSTEM_WEBKIT_HOOK" '
+    !done && (/^source .*apprun-hooks\// || /^exec .*AppRun\.wrapped/) {
+      print "source \"$this_dir\"/apprun-hooks/\"" hook "\""
+      print ""
+      done = 1
+    }
+    { print }
+  ' "$apprun" >"$tmp_apprun"
+  if ! grep -Fq "apprun-hooks/\"$SYSTEM_WEBKIT_HOOK\"" "$tmp_apprun"; then
+    rm -f "$tmp_apprun"
+    echo "[strip-libs] ERROR: could not find where to source $SYSTEM_WEBKIT_HOOK in the linuxdeploy AppRun" >&2
+    exit 1
+  fi
+  chmod --reference="$apprun" "$tmp_apprun"
+  mv "$tmp_apprun" "$apprun"
+  echo "[strip-libs]   installed apprun-hooks/$SYSTEM_WEBKIT_HOOK (bundled WebKit: $bundled)"
+  return 0
+}
+
 validate_rebuilt_appimage() {
   local rebuilt_path="$1"
   "$APPIMAGE_RUNTIME_VALIDATOR" "$rebuilt_path" || return 1
@@ -803,6 +863,7 @@ strip_one_appimage() {
   local rewrote_libpath=0
   local patched_apprun=0
   local rewrote_rpaths=0
+  local installed_webkit_hook=0
   if ! stage_module_runtime_libraries "$appdir"; then
     rm -rf "$workdir"
     return 1
@@ -848,6 +909,9 @@ strip_one_appimage() {
   if sanitize_elf_rpaths "$appdir"; then
     rewrote_rpaths=1
   fi
+  if install_system_webkit_hook "$appdir"; then
+    installed_webkit_hook=1
+  fi
   if ! validate_sharun_lib_path "$appdir"; then
     rm -rf "$workdir"
     return 1
@@ -857,7 +921,7 @@ strip_one_appimage() {
     return 1
   fi
 
-  if [ "$removed" -eq 0 ] && [ "$added_loader" -eq 0 ] && [ "$rewrote_libpath" -eq 0 ] && [ "$patched_apprun" -eq 0 ] && [ "$rewrote_rpaths" -eq 0 ] && [ "$added_module_libraries" -eq 0 ]; then
+  if [ "$removed" -eq 0 ] && [ "$added_loader" -eq 0 ] && [ "$rewrote_libpath" -eq 0 ] && [ "$patched_apprun" -eq 0 ] && [ "$rewrote_rpaths" -eq 0 ] && [ "$added_module_libraries" -eq 0 ] && [ "$installed_webkit_hook" -eq 0 ]; then
     echo "[strip-libs] No graphics libs, missing sharun interpreter, or build-machine RPATHs found in $original; leaving unchanged."
     if ! validate_rebuilt_appimage "$original"; then
       rm -rf "$workdir"
@@ -866,7 +930,7 @@ strip_one_appimage() {
     rm -rf "$workdir"
     return
   fi
-  echo "[strip-libs] Removed $removed file(s), added $added_loader loader file(s), patched AppRun=$patched_apprun, rewrote RPATHs=$rewrote_rpaths, staged module libraries=$added_module_libraries; repacking AppImage."
+  echo "[strip-libs] Removed $removed file(s), added $added_loader loader file(s), patched AppRun=$patched_apprun, rewrote RPATHs=$rewrote_rpaths, staged module libraries=$added_module_libraries, system WebKit hook=$installed_webkit_hook; repacking AppImage."
 
   local rebuilt="$workdir/$name"
   local appimage_arch

@@ -65,6 +65,29 @@ fn document_records_cannot_address_other_shared_or_graph_keys() {
             "{collection}"
         );
     }
+    for collection in [
+        "graph_checkpoints",
+        "graph_threads",
+        "graph_writes",
+        "delegation_graph_checkpoints",
+        "delegation_graph_threads",
+        "delegation_graph_writes",
+        "flows_graph_checkpoints",
+        "flows_graph_threads",
+        "flows_graph_writes",
+    ] {
+        assert!(allowed_collection(collection).is_ok(), "{collection}");
+    }
+    for (collection, id) in [
+        (
+            "tsd.migrations",
+            "graph/graph.checkpoints/checkpoints_flows_v2",
+        ),
+        ("graph.checkpoints", "graph/thread/checkpoint"),
+        ("graph.checkpoints", "delegation/thread/checkpoint"),
+    ] {
+        assert!(allowed_record(collection, id).is_ok(), "{collection}: {id}");
+    }
     for (collection, id) in [
         ("tsd.migrations", "other/definitions_v2"),
         ("tsd.migrations", "flows/unknown/migration"),
@@ -278,11 +301,14 @@ async fn catalog_module_uses_captured_profile_and_storage_preserves_cas_metadata
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // Serializes access to the process-wide installed storage slot.
 async fn catalog_storage_resolves_the_current_backend_and_confines_graph_namespace_queries() {
     use tinyflows_bus::catalog::{
         CatalogCollectionSpec, CatalogDocumentPrecondition, CatalogFilter, CatalogQuery,
         CatalogStorageReply, DocDeleteWhereRequest,
     };
+
+    let _slot_lock = crate::storage::test_support::lock_storage_slot();
 
     let workspace = tempfile::tempdir().expect("isolated workspace");
     let config = Config {
@@ -293,7 +319,7 @@ async fn catalog_storage_resolves_the_current_backend_and_confines_graph_namespa
     let registration = register(&context, &config).await.unwrap();
     let proxy = callback_proxy(&registration).await;
 
-    let backend_a: Arc<dyn StorageBackend> = Arc::new(crate::storage::MemoryStorage::new());
+    let backend_a = crate::storage::test_support::memory_backend();
     let previous = crate::storage::install(Arc::clone(&backend_a));
     struct RestoreBackend(Option<Arc<dyn StorageBackend>>);
     impl Drop for RestoreBackend {
@@ -486,7 +512,7 @@ async fn catalog_storage_resolves_the_current_backend_and_confines_graph_namespa
         CatalogStorageReply::Value { ref value } if value == &Value::Bool(true)
     ));
 
-    let backend_b: Arc<dyn StorageBackend> = Arc::new(crate::storage::MemoryStorage::new());
+    let backend_b = crate::storage::test_support::memory_backend();
     crate::storage::install(Arc::clone(&backend_b));
     let ensured: CatalogStorageReply = proxy
         .call(

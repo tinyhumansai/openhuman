@@ -1,4 +1,5 @@
 use super::*;
+use tinytools::Tool;
 
 // Both flows agents are `#[cfg(feature = "flows")]` entries in `BUILTINS`
 // (#4797), so these tests only apply when the gate is on.
@@ -26,7 +27,7 @@ fn workflow_builder_is_registered_worker_with_bounded_authoring_scope() {
     // through the single `memory` tool.
     let def = find("workflow_builder");
     assert_eq!(def.agent_tier, AgentTier::Worker);
-    assert_eq!(def.delegate_name.as_deref(), Some("build_workflow"));
+    assert!(def.delegate_name.is_none());
     assert_eq!(def.sandbox_mode, SandboxMode::None);
     // Graph authoring is multi-step structured reasoning — reasoning tier.
     assert!(
@@ -124,7 +125,7 @@ fn workflow_builder_is_registered_worker_with_bounded_authoring_scope() {
             .subagents
             .iter()
             .any(|entry| matches!(entry, SubagentEntry::AgentId(id) if id == "workflow_builder")),
-        "orchestrator must allow `workflow_builder` so build_workflow can spawn it"
+        "orchestrator must allow `workflow_builder` for spawn_subagent"
     );
 }
 
@@ -139,7 +140,7 @@ fn flow_discovery_is_registered_readonly_reasoning_scout() {
     // foothold.
     let def = find("flow_discovery");
     assert_eq!(def.agent_tier, AgentTier::Reasoning);
-    assert_eq!(def.delegate_name.as_deref(), Some("discover_workflows"));
+    assert!(def.delegate_name.is_none());
     assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
     assert!(
         def.subagents.is_empty(),
@@ -188,27 +189,26 @@ fn flow_discovery_is_registered_readonly_reasoning_scout() {
         ToolScope::Wildcard => panic!("flow_discovery must have a Named tool scope"),
     }
 
-    // Reachable by delegation from the orchestrator so `discover_workflows`
-    // can spawn it.
+    // Reachable from the orchestrator through the shared spawn tool.
     let orchestrator = find("orchestrator");
     assert!(
         orchestrator
             .subagents
             .iter()
             .any(|entry| matches!(entry, SubagentEntry::AgentId(id) if id == "flow_discovery")),
-        "orchestrator must allow `flow_discovery` so discover_workflows can spawn it"
+        "orchestrator must allow `flow_discovery` for spawn_subagent"
     );
 }
 
 #[test]
 fn specialist_agents_are_registered_with_narrow_tools() {
-    // Scheduling is the `scheduling` skill over the collapsed `cron` tool,
-    // with the time tools the orchestrator holds directly.
+    // Scheduling is the `scheduling` skill over the per-operation cron
+    // tools, with the time tools the orchestrator holds directly.
     let scheduling = crate::tools::toolpacks::pack("scheduling").expect("scheduling skill");
     assert_eq!(
         scheduling.tools,
-        &["cron"],
-        "the skill uses collapsed `cron`"
+        crate::cron::tools::CRON_OPERATION_TOOLS,
+        "the skill lists the per-operation cron tools"
     );
     match &find("orchestrator").tools {
         ToolScope::Named(names) => {
@@ -243,6 +243,89 @@ fn specialist_agents_are_registered_with_narrow_tools() {
 }
 
 #[test]
+fn orchestrator_routes_every_registered_specialist_through_spawn_subagent() {
+    use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
+    use std::sync::Arc;
+
+    let registry =
+        Arc::new(crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only());
+    let orchestrator = registry.get("orchestrator").expect("orchestrator exists");
+    let config = crate::config::Config::default();
+    let core = CoreContext::for_test_with_config(DomainSet::full(), config.clone()).derive_with(
+        ContextOverlay::new(
+            config,
+            DomainSet::full(),
+            crate::tools::toolpacks::ToolGroups::none(),
+        )
+        .definitions(Arc::clone(&registry)),
+    );
+    CoreContext::sync_scope(core, || {
+        let spawn = crate::agent::orchestration::tools::SpawnSubagentTool::new();
+        let schema = spawn.parameters_schema();
+        let allowed = schema
+            .pointer("/properties/agent_id/enum")
+            .and_then(serde_json::Value::as_array)
+            .expect("spawn_subagent has a finite agent_id enum");
+        for entry in &orchestrator.subagents {
+            let SubagentEntry::AgentId(agent_id) = entry else {
+                continue;
+            };
+            if agent_id == "presentation_agent" && !cfg!(feature = "documents") {
+                assert!(
+                    registry.get(agent_id).is_none(),
+                    "presentation_agent is intentionally absent without documents"
+                );
+                assert!(
+                    !allowed
+                        .iter()
+                        .any(|candidate| candidate.as_str() == Some(agent_id)),
+                    "spawn_subagent must not advertise presentation_agent without documents"
+                );
+                continue;
+            }
+            if agent_id == "skill_setup" && !cfg!(feature = "skills") {
+                assert!(
+                    registry.get(agent_id).is_none(),
+                    "skill_setup is intentionally absent without skills"
+                );
+                assert!(
+                    !allowed
+                        .iter()
+                        .any(|candidate| candidate.as_str() == Some(agent_id)),
+                    "spawn_subagent must not advertise skill_setup without skills"
+                );
+                continue;
+            }
+            if matches!(agent_id.as_str(), "workflow_builder" | "flow_discovery")
+                && !cfg!(feature = "flows")
+            {
+                assert!(
+                    registry.get(agent_id).is_none(),
+                    "workflow specialists are intentionally absent without flows"
+                );
+                assert!(
+                    !allowed
+                        .iter()
+                        .any(|candidate| candidate.as_str() == Some(agent_id)),
+                    "spawn_subagent must not advertise workflow specialists without flows"
+                );
+                continue;
+            }
+            assert!(
+                registry.get(agent_id).is_some(),
+                "orchestrator specialist `{agent_id}` must be registered"
+            );
+            assert!(
+                allowed
+                    .iter()
+                    .any(|candidate| candidate.as_str() == Some(agent_id)),
+                "orchestrator allows `{agent_id}` but spawn_subagent does not"
+            );
+        }
+    });
+}
+
+#[test]
 fn morning_briefing_is_read_only() {
     let def = find("morning_briefing");
     assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
@@ -271,22 +354,6 @@ fn morning_briefing_is_read_only() {
 }
 
 #[test]
-fn chatty_sub_agents_have_bounded_output() {
-    // critic results flow up verbatim. Without a cap the output is
-    // unbounded and bloats the caller's context (#4099), so it must carry
-    // the normal sub-agent cap so a long diff review can't leak unbounded
-    // text.
-    assert_eq!(
-        find("critic").max_result_chars,
-        Some(8000),
-        "critic output must be bounded so reviews don't leak unbounded text up"
-    );
-}
-
-/// R4 regression: `hint:vision` is deprecated (`vision-v1` silently falls
-/// back to the chat default on managed routes, with no error), so no
-/// built-in agent may still declare `ModelSpec::Hint("vision")`.
-#[test]
 fn no_builtin_agent_declares_the_deprecated_vision_hint() {
     for def in load_builtins().expect("built-ins load") {
         assert!(
@@ -301,14 +368,10 @@ fn no_builtin_agent_declares_the_deprecated_vision_hint() {
 /// passthrough models (regression R4), not left on `Inherit` or a `Hint`.
 #[test]
 fn media_agents_are_pinned_to_their_exact_models() {
-    use crate::config::{
-        MODEL_IMAGE_GENERATION_AGENT, MODEL_MEDIA_UNDERSTANDING, MODEL_VIDEO_GENERATION_AGENT,
-    };
-
     for (agent_id, expected_model) in [
-        ("vision_agent", MODEL_MEDIA_UNDERSTANDING),
-        ("image_agent", MODEL_IMAGE_GENERATION_AGENT),
-        ("video_agent", MODEL_VIDEO_GENERATION_AGENT),
+        ("vision_agent", "openrouter/qwen/qwen3.5-flash-02-23"),
+        ("image_agent", "openrouter/qwen/qwen3.5-flash-02-23"),
+        ("video_agent", "openrouter/qwen/qwen3.5-flash-02-23"),
     ] {
         let def = find(agent_id);
         match &def.model {

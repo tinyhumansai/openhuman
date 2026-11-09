@@ -11,21 +11,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use tinyagents_orchestration::subagent::{
-    list_subagent_records, orphaned_subagent_reason, record_agent_id,
-    record_cancelled as ledger_cancelled, record_parent_session, record_spawned as ledger_spawned,
-    subagent_record_for_task, task_status_label, SpawnedSubagent, WaitError,
+    orphaned_subagent_reason, record_agent_id, record_parent_session, task_status_label, WaitError,
 };
 use tinyagents_tasks::{
-    reconcile_orphaned_tasks, DriverTaskStore, InMemoryTaskStore, OrchestrationTaskFilter,
-    OrchestrationTaskRecord, TaskStore, TaskStoreRegistry,
+    open_driver_task_store_or_memory, reconcile_orphaned_tasks, InMemoryTaskStore,
+    OrchestrationTaskFilter, TaskStore, TaskStoreRegistry,
 };
-
-#[cfg(test)]
-fn default_task_store_workspace() -> PathBuf {
-    crate::config::default_root_openhuman_dir()
-        .map(|root| root.join("workspace"))
-        .unwrap_or_else(|_| PathBuf::from(".openhuman").join("workspace"))
-}
 
 /// One cached ledger: a workspace and the storage scope it was opened for.
 type LedgerKey = (PathBuf, String);
@@ -58,9 +49,9 @@ fn task_stores() -> &'static TaskStoreRegistry<LedgerKey> {
 fn open_driver_store(workspace_dir: &Path) -> anyhow::Result<Arc<dyn TaskStore>> {
     let opened = crate::storage::local::open(DOMAIN, workspace_dir)?;
     let scoped = opened.scoped()?;
-    let store = DriverTaskStore::new(Arc::clone(scoped.documents()))
-        .map_err(|error| anyhow::anyhow!("start the task store bridge: {error}"))?;
-    Ok(Arc::new(store))
+    Ok(open_driver_task_store_or_memory(Arc::clone(
+        scoped.documents(),
+    )))
 }
 
 /// The cache key for this call: the storage scope joins the workspace, so two
@@ -98,79 +89,22 @@ pub(crate) fn task_store_for_workspace(workspace_dir: &Path) -> Arc<dyn TaskStor
     }
 }
 
-#[cfg(test)]
-fn task_store() -> Arc<dyn TaskStore> {
-    let workspace = default_task_store_workspace();
-    task_store_for_workspace(&workspace)
-}
-
-/// Record a freshly-spawned sub-agent in the workspace's store (`Pending` →
-/// `Running`). Insert errors (e.g. a re-used task id across tests) are ignored.
-#[cfg(test)]
-pub(crate) fn record_spawned(
-    task_id: &str,
-    agent_id: &str,
-    parent_session: &str,
-    session_parent_prefix: Option<&str>,
-    subagent_session_id: Option<&str>,
-    workspace_dir: &Path,
-    parent_thread_id: Option<&str>,
-) {
-    let workspace = workspace_dir.display().to_string();
-    let record = SpawnedSubagent {
-        task_id,
-        agent_id,
-        parent_session,
-        session_parent_prefix,
-        subagent_session_id,
-        workspace_dir: &workspace,
-        parent_thread_id,
-    };
-    record_spawned_in_store(task_store_for_workspace(workspace_dir).as_ref(), &record);
-}
-
-pub(crate) fn record_spawned_in_store(store: &dyn TaskStore, spawned: &SpawnedSubagent<'_>) {
-    if let Err(err) = ledger_spawned(store, spawned) {
-        log::debug!(
-            "[running_subagents] spawn ledger insert ignored task_id={} error={err}",
-            spawned.task_id
-        );
-    }
-}
-
-/// Record a cancellation (`CancelRequested` → `Cancelled`) for `task_id`.
-pub(crate) fn record_cancelled_in_store(
-    store: &dyn TaskStore,
-    workspace_dir: &Path,
-    task_id: &str,
-) {
-    log::debug!(
-        "[running_subagents] recording task cancellation task_id={} workspace_dir={}",
-        task_id,
-        workspace_dir.display()
-    );
-    if let Err(err) = ledger_cancelled(store, task_id) {
-        log::debug!(
-            "[running_subagents] cancel ledger update ignored task_id={task_id} error={err}"
-        );
-    }
-}
-
-pub(crate) fn record_cancelled(
+/// Open the caller's task store in its captured scope. SaaS calls without a
+/// resolved owner fail closed rather than falling back to ambient storage.
+pub(super) fn scoped_task_store(
     ctx: &crate::core::runtime::DispatchCtx,
     workspace_dir: &Path,
-    task_id: &str,
-) {
-    match super::resolve::scoped_task_store(ctx, workspace_dir) {
-        Ok(store) => record_cancelled_in_store(store.as_ref(), workspace_dir, task_id),
-        Err(error) => log::debug!(
-            "[running_subagents] cancel ledger store unavailable task_id={task_id} error={error:?}"
-        ),
+) -> Result<Arc<dyn TaskStore>, WaitError> {
+    if let Some(context) = ctx.resolved() {
+        return Ok(crate::core::runtime::CoreContext::sync_scope(
+            context,
+            || task_store_for_workspace(workspace_dir),
+        ));
     }
-}
-
-pub(crate) fn list_task_records(workspace_dir: &Path) -> Vec<OrchestrationTaskRecord> {
-    list_subagent_records(task_store_for_workspace(workspace_dir).as_ref())
+    if crate::core::runtime::is_saas() {
+        return Err(WaitError::NotOwned);
+    }
+    Ok(task_store_for_workspace(workspace_dir))
 }
 
 /// Restart/resume reconciliation for detached sub-agents (issue #4249 / 07.2
@@ -255,39 +189,4 @@ pub(crate) fn reconcile_orphaned_tasks_on_boot(workspace_dir: &Path) -> usize {
         report.error_count()
     );
     reconciled
-}
-
-pub(crate) fn task_record_for_task_in_workspace(
-    workspace_dir: &Path,
-    task_id: &str,
-    parent_session: &str,
-) -> Result<OrchestrationTaskRecord, WaitError> {
-    subagent_record_for_task(
-        task_store_for_workspace(workspace_dir).as_ref(),
-        task_id,
-        parent_session,
-    )
-}
-
-/// Snapshot the typed lifecycle records, optionally scoped to a `parent_session`.
-#[cfg(test)]
-pub(crate) fn task_records(parent_session: Option<&str>) -> Vec<OrchestrationTaskRecord> {
-    let _ = task_store();
-    let stores: Vec<Arc<dyn TaskStore>> = task_stores().values().unwrap_or_default();
-    let all: Vec<OrchestrationTaskRecord> = stores
-        .into_iter()
-        .flat_map(|store| store.list(OrchestrationTaskFilter::default()))
-        .collect();
-    log::trace!(
-        "[running_subagents] task_records loaded records={} parent_session_filter={:?}",
-        all.len(),
-        parent_session
-    );
-    match parent_session {
-        Some(ps) => all
-            .into_iter()
-            .filter(|r| r.spec.metadata.get("parentSession").map(String::as_str) == Some(ps))
-            .collect(),
-        None => all,
-    }
 }

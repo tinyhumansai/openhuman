@@ -66,10 +66,15 @@ function makeLinuxdeployAppDir() {
       "#! /usr/bin/env bash",
       "set -e",
       'this_dir="$(readlink -f "$(dirname "$0")")"',
+      'source "$this_dir"/apprun-hooks/"openhuman-system-webkit.sh"',
       'source "$this_dir"/apprun-hooks/linuxdeploy-plugin-gtk.sh',
       'exec "$this_dir"/AppRun.wrapped "$@"',
       "",
     ].join("\n"),
+  );
+  script(
+    join(app, "apprun-hooks/openhuman-system-webkit.sh"),
+    "#!/bin/sh\nOPENHUMAN_BUNDLED_WEBKIT='libwebkit2gtk-4.1.so.0.0'\n",
   );
   script(join(app, "apprun-hooks/linuxdeploy-plugin-gtk.sh"), "#!/bin/sh\n");
   elf(join(app, "AppRun.wrapped"));
@@ -213,6 +218,14 @@ const MUTATIONS = [
   [
     "an apprun hook is not sourced by AppRun",
     (a) => script(join(a, "apprun-hooks/orphan.sh"), "#!/bin/sh\n"),
+  ],
+  [
+    "the system WebKit hook has no versioned bundled library stamp",
+    (a) =>
+      script(
+        join(a, "apprun-hooks/openhuman-system-webkit.sh"),
+        "OPENHUMAN_BUNDLED_WEBKIT='libwebkit2gtk-4.1.so.0'\n",
+      ),
   ],
   [
     "the desktop entry has no Exec=",

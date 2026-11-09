@@ -55,5 +55,7 @@ fn a_never_seen_device_has_no_last_seen_field() {
 
 #[test]
 fn the_schema_composes_under_its_owner() {
-    tinystoragedrivers::schema::Registry::compose([storage_schema()]).unwrap();
+    for spec in collection_specs() {
+        spec.validate().unwrap();
+    }
 }

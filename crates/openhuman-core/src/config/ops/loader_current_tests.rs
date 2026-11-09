@@ -20,6 +20,7 @@ async fn a_context_route_follows_every_load_of_the_context_config() {
         endpoint: "http://127.0.0.1:9/v1".to_string(),
         api_key: "test-key".to_string(),
         headers: Vec::new(),
+        ..EphemeralRoute::default()
     });
 
     let loaded = load_current_or_init(&DispatchCtx::new(context_with(config)))

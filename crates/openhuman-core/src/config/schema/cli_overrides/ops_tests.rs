@@ -123,12 +123,30 @@ async fn reload_refreshes_the_snapshot_before_an_unrelated_save() {
     initial.config_path = config_path.clone();
     initial.workspace_dir = workspace_dir.clone();
     initial.chat_provider = Some("openai:old".into());
+    initial.default_model = Some("file-default-model".into());
     initial.save().await.expect("save initial config");
 
     set_cli_inference_overrides(Some("ollama"), Some("qwen3:8b"));
     let mut first = Config::load_from_config_path(&config_path, &workspace_dir)
         .await
         .expect("first load");
+    assert_eq!(first.default_model.as_deref(), Some("file-default-model"));
+    assert_eq!(
+        first.load_provenance().field("default_model").source,
+        crate::config::schema::load::ProvenanceSource::File
+    );
+    for field in [
+        "chat_provider",
+        "reasoning_provider",
+        "agentic_provider",
+        "coding_provider",
+    ] {
+        assert_eq!(
+            first.load_provenance().field(field).source,
+            crate::config::schema::load::ProvenanceSource::Cli,
+            "CLI override should be recorded for {field}"
+        );
+    }
     first.chat_provider = Some("anthropic:explicit".into());
     first.save().await.expect("save explicit route change");
 

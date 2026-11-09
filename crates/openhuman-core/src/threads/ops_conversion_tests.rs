@@ -225,6 +225,7 @@ fn record_to_message_preserves_null_extra_metadata() {
     let rec = ConversationMessageRecord {
         id: "m-2".into(),
         content: "x".into(),
+        attachments: vec![],
         message_type: "text".into(),
         extra_metadata: Value::Null,
         sender: "agent".into(),
@@ -270,11 +271,13 @@ async fn message_append_returns_typed_not_found_for_stale_thread() {
             message: ConversationMessageRecord {
                 id: "msg-1".to_string(),
                 content: "hello".to_string(),
+                attachments: vec![],
                 message_type: "text".to_string(),
                 extra_metadata: Value::Null,
                 sender: "user".to_string(),
                 created_at: "2026-01-01T00:00:00Z".to_string(),
             },
+            attachments: vec![],
         },
     )
     .await
@@ -429,6 +432,7 @@ async fn generate_title_falls_back_to_first_user_message_when_assistant_missing(
 async fn thread_delete_removes_persisted_turn_state_snapshot() {
     let _env_lock = crate::config::TEST_ENV_LOCK.lock().await;
     let workspace = tempfile::tempdir().expect("workspace");
+    crate::storage::local::use_persistent_default_for_test(&workspace.path().join("workspace"));
     let _workspace_guard = EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path());
     let thread_id = "thread-delete";
     create_thread_with_title(&workspace, thread_id, "Chat Jan 1 1:00 AM").await;
@@ -493,6 +497,7 @@ async fn thread_delete_queues_memory_before_snapshot_cleanup_error() {
 
     let workspace = tempfile::tempdir().expect("workspace");
     let dir = workspace.path().to_path_buf();
+    crate::storage::local::use_persistent_default_for_test(&dir);
     let thread_id = "channel:discord/sender/chat";
     let mut config = crate::config::Config {
         workspace_dir: dir.clone(),
@@ -588,6 +593,7 @@ async fn thread_delete_queues_memory_before_snapshot_cleanup_error() {
 async fn threads_purge_removes_every_turn_state_snapshot() {
     let _env_lock = crate::config::TEST_ENV_LOCK.lock().await;
     let workspace = tempfile::tempdir().expect("workspace");
+    crate::storage::local::use_persistent_default_for_test(&workspace.path().join("workspace"));
     let _workspace_guard = EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path());
     create_thread_with_title(&workspace, "thread-a", "Chat Jan 1 1:00 AM").await;
     create_thread_with_title(&workspace, "thread-b", "Chat Jan 1 1:01 AM").await;
@@ -693,6 +699,7 @@ async fn thread_update_title_rejects_empty_and_whitespace_only_titles() {
 async fn thread_delete_forgets_its_conversation_memory_or_queues_it() {
     let _env_lock = crate::config::TEST_ENV_LOCK.lock().await;
     let workspace = tempfile::tempdir().expect("workspace");
+    crate::storage::local::use_persistent_default_for_test(&workspace.path().join("workspace"));
     let _workspace_guard = EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path());
     let thread_id = "thread-delete-memory";
     create_thread_with_title(&workspace, thread_id, "Chat Jan 1 1:00 AM").await;
@@ -701,8 +708,23 @@ async fn thread_delete_forgets_its_conversation_memory_or_queues_it() {
         .expect("load config")
         .workspace_dir;
 
+    let mut config = crate::config::Config::load_or_init()
+        .await
+        .expect("load config");
+    config.memory.engine.clear();
+    let ctx = DispatchCtx::new(
+        crate::core::runtime::CoreContext::for_test(
+            crate::core::runtime::DomainSet::full(),
+            Some(dir.clone()),
+        )
+        .derive_with(crate::core::runtime::ContextOverlay::new(
+            config,
+            crate::core::runtime::DomainSet::full(),
+            crate::tools::toolpacks::ToolGroups::none(),
+        )),
+    );
     thread_delete(
-        &DispatchCtx::process_default(),
+        &ctx,
         DeleteConversationThreadRequest {
             thread_id: thread_id.to_string(),
             deleted_at: "2026-01-01T00:02:00Z".into(),

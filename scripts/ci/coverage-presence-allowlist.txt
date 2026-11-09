@@ -26,6 +26,23 @@
 # generic facade stub.
 crates/openhuman-core/src/runtime/client/disabled.rs
 
+# `modules/unloaded.rs` is the loader-off implementation of the module client.
+# The coverage lane enables `modules` in both its default and product feature
+# builds, so the loader-on implementation is covered there; this counterpart
+# is exercised by the feature-disabled Rust build instead.
+crates/openhuman-core/src/modules/unloaded.rs
+
+# `encrypted_file_backend_disabled.rs` is selected only when `secret-file` is
+# off. The coverage lane enables that feature for both default and product
+# builds; the disabled backend's fail-closed API is covered by its dedicated
+# no-secret-file nextest case.
+crates/openhuman-core/src/security/secret_storage/encrypted_file_backend_disabled.rs
+
+# This standalone generator is a developer fixture tool, not a core module or
+# Cargo target in the product coverage graph. The fixture is consumed by the
+# storage import tests; compiling the generator itself is outside that suite.
+crates/openhuman-core/src/storage/import/fixtures/legacy-v1-profile/generator/src/main.rs
+
 # `helper/swift_source.rs` assembles these fragments only to build the macOS
 # Swift accessibility helper. The production feature set is compiled for Linux
 # in this coverage lane, so each fragment's `#[cfg(target_os = "macos")]`
@@ -34,3 +51,11 @@ crates/openhuman-core/src/runtime/client/disabled.rs
 # `search/mod.rs` has module declarations and feature-gated re-exports only;
 # executable search behavior is in sibling modules.
 crates/openhuman-core/src/search/mod.rs
+
+# `host_internals.rs` is an explicit re-export facade. Its only executable
+# definitions are no-op WebSocket stubs behind `not(all(feature = "voice",
+# feature = "http-server"))`; both gates are enabled by the product coverage
+# build, so those stubs are compiled out. Re-export declarations have no
+# executable coverage mapping. Remove this entry if the facade gains runtime
+# behavior or the product feature set changes to compile the stubs.
+crates/openhuman-embed/src/host_internals.rs

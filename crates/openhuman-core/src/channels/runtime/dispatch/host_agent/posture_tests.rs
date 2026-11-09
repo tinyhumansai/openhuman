@@ -13,6 +13,7 @@ fn external() -> AgentTurnOrigin {
         reply_target: "42".into(),
         message_id: "m1".into(),
         history_key: Some("telegram_alice".into()),
+        channel_session: None,
     }
 }
 
@@ -129,22 +130,25 @@ async fn an_external_effect_is_refused_and_never_parks() {
     assert_eq!(runs.load(Ordering::SeqCst), 0);
 }
 
-#[test]
-fn guarded_host_tools_keep_the_rest_of_the_belt() {
+#[tokio::test]
+async fn guarded_host_tools_keep_the_rest_of_the_belt() {
     let runs = Arc::new(AtomicUsize::new(0));
     let probe_runs = Arc::clone(&runs);
     let host: HostTools = Arc::new(move |_turn| {
-        HostTurnTools::advertised(vec![Box::new(Probe {
-            level: PermissionLevel::Write,
-            effect: false,
-            runs: Arc::clone(&probe_runs),
-        })])
+        let probe_runs = Arc::clone(&probe_runs);
+        Box::pin(async move {
+            HostTurnTools::advertised(vec![Box::new(Probe {
+                level: PermissionLevel::Write,
+                effect: false,
+                runs: probe_runs,
+            })])
+        })
     });
     let guarded = guard_host_tools(host, PermissionLevel::ReadOnly);
-    let belt = guarded(crate::agent::TurnContext::new("teeny", Some("s1")));
+    let belt = guarded(crate::agent::TurnContext::new("teeny", Some("s1"))).await;
     assert_eq!(belt.tools.len(), 1);
     assert!(belt.visible.contains("probe"));
-    let result = futures::executor::block_on(belt.tools[0].execute(json!({}))).unwrap();
+    let result = belt.tools[0].execute(json!({})).await.unwrap();
     assert!(result.is_error, "the belt's tools are guarded");
     assert_eq!(runs.load(Ordering::SeqCst), 0);
 }

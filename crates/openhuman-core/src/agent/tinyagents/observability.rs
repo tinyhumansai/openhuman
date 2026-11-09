@@ -9,6 +9,7 @@
 //! tinyagents path — and feeds per-call usage into the global cost tracker.
 
 mod bridge_types;
+mod cache_layout;
 mod event_bridge;
 mod event_projection;
 mod tool_progress_projection;
@@ -23,8 +24,8 @@ use tinyinference_llm::usage::Usage;
 use crate::progress::AgentProgress;
 
 pub(crate) use bridge_types::{ProviderUsageCarry, SubagentScope, ToolFailureMap, ToolNameMap};
+pub(crate) use cache_layout::surface_cache_layout_events;
 pub(crate) use event_bridge::OpenhumanEventBridge;
-pub(crate) use event_projection::surface_cache_layout_events;
 
 #[cfg(test)]
 #[path = "observability_tests.rs"]

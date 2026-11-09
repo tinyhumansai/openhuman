@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use openhuman_core::config::Config;
-use openhuman_core::core::runtime::{DomainSet, ServiceSet, TokenSource};
+use openhuman_core::core::runtime::{CoreBootMode, DomainSet, ServiceSet, TokenSource};
 use openhuman_core::core::types::HostKind;
 use openhuman_core::tools::toolpacks::ToolGroups;
 use tinyagents_session::port::SessionStoreProvider;
@@ -81,6 +81,7 @@ pub struct RuntimeBuilder {
     pub(super) workspace_dir: Option<PathBuf>,
     pub(super) action_dir: Option<PathBuf>,
     pub(super) config_source: ConfigSource,
+    pub(super) boot_mode: CoreBootMode,
     pub(super) provider: Provider,
     pub(super) access: Access,
     pub(super) services: Option<ServiceSet>,
@@ -101,6 +102,7 @@ pub struct RuntimeBuilder {
     pub(super) cron_job_handlers: Vec<(crate::cron::JobKind, Arc<dyn crate::cron::JobKindHandler>)>,
     pub(super) seams: HostSeams,
     pub(super) max_agents: usize,
+    pub(super) agent_opener: Option<super::host_agents::AgentOpener>,
     pub(super) agent_defaults: super::AgentDefaults,
     pub(super) config_knobs: super::info::ConfigKnobs,
     pub(super) selection: Option<super::ModuleSelection>,
@@ -127,6 +129,7 @@ impl RuntimeBuilder {
             workspace_dir: None,
             action_dir: None,
             config_source: ConfigSource::Resolved,
+            boot_mode: CoreBootMode::Normal,
             provider: Provider::inherit(),
             access: Access::default(),
             services: None,
@@ -147,6 +150,7 @@ impl RuntimeBuilder {
             cron_job_handlers: Vec::new(),
             seams: HostSeams::default(),
             max_agents: DEFAULT_MAX_AGENTS,
+            agent_opener: None,
             agent_defaults: super::AgentDefaults::default(),
             config_knobs: super::info::ConfigKnobs::default(),
             selection: None,
@@ -203,6 +207,57 @@ impl RuntimeBuilder {
         self.config_knobs.privacy = Some(value);
         self
     }
+    /// Whether untrusted input is screened for prompt injection before a turn,
+    /// a tool result or an inbound message is processed (`[prompt_screen]`).
+    ///
+    /// The screen is TinySecurity's, and while security is enforced it fails
+    /// closed: input is held for review whenever no verdict can be had. A host
+    /// that runs the module but screens input itself passes
+    /// [`PromptScreenConfig::off`](crate::config::PromptScreenConfig::off); the
+    /// runtime then allows input unscreened and says so once at boot. With
+    /// security off ([`Self::security`]) or a build without the
+    /// `security-module` feature the screen is off whatever this says.
+    /// Leaving it unset keeps the configured (by default enforced) screen.
+    pub fn prompt_screen(
+        mut self,
+        value: openhuman_core::config::schema::PromptScreenConfig,
+    ) -> Self {
+        self.config_knobs.prompt_screen = Some(value);
+        self
+    }
+    /// Whether the checks OpenHuman delegates to TinySecurity run
+    /// (`[security]`).
+    ///
+    /// Enforced by default: the prompt screen, tool-call classification and
+    /// approvals, path checks, the action budget, egress privacy checks,
+    /// redaction and the audit trail ask the module and fail closed when it
+    /// cannot answer. A host with its own controls passes
+    /// [`SecurityModeConfig::off`](crate::config::SecurityModeConfig::off): those
+    /// checks then allow, tool output, diagnostics and log URLs are not
+    /// redacted, and the runtime says so once at boot. `[privacy] mode =
+    /// "local_only"` still refuses external transfers, approvals a channel or
+    /// flow demands still need a person, and the encrypted secret store and
+    /// device pairing still need the module. A build without the `security-module` feature behaves as off.
+    /// Leaving it unset keeps the configured (by default enforced) mode.
+    pub fn security(mut self, value: openhuman_core::config::schema::SecurityModeConfig) -> Self {
+        self.config_knobs.security = Some(value);
+        self
+    }
+    /// The route to TinySecurity's Jev judge, for a host that holds its own
+    /// Jev credential.
+    ///
+    /// The judge is on by default: it may settle a call that needs approval
+    /// when it is sure the call is intended, reversible and sends nothing out,
+    /// and anything else still goes to a person. Without a route the judge
+    /// stays off, whatever credentials are stored. Turn it off with `judge` on
+    /// [`Self::security`].
+    pub fn security_judge(
+        mut self,
+        value: openhuman_core::config::schema::SecurityJudgeRoute,
+    ) -> Self {
+        self.config_knobs.security_judge = Some(value);
+        self
+    }
     /// Credential encryption policy.
     pub fn secrets(mut self, value: openhuman_core::config::schema::SecretsConfig) -> Self {
         self.config_knobs.secrets = Some(value);
@@ -240,8 +295,8 @@ impl RuntimeBuilder {
     ///
     /// For a host serving many users from one process out of its own
     /// database; pair it with [`Workspace::Stateless`] so nothing durable is
-    /// left on disk. [`InMemorySessionStores`](crate::InMemorySessionStores)
-    /// keeps everything in memory. It is process-wide, as the runtime is, and
+    /// left on disk. A provider from the `testkit` feature can keep everything
+    /// in memory. It is process-wide, as the runtime is, and
     /// is removed with the runtime.
     pub fn session_store(mut self, provider: Arc<dyn SessionStoreProvider>) -> Self {
         self.session_store = Some(provider);
@@ -254,7 +309,8 @@ impl RuntimeBuilder {
     /// [`CronDelivery::deliver`](crate::CronDelivery::deliver) with the agent
     /// id, the thread the job was created in and its
     /// [`JobOrigin`](crate::JobOrigin), instead of writing into a local thread
-    /// or channel; a run that answers `NO_REPLY`, or fails, is never delivered.
+    /// or channel. A failed run is never delivered, nor is `NO_REPLY` from a
+    /// job whose prompt allows it; any other job always delivers a message.
     /// Jobs still run only while their agent is live (the scheduler service
     /// must be on). It is process-wide, as the runtime is, and the core has no
     /// uninstall for it: it stays installed for the life of the process.
@@ -280,6 +336,28 @@ impl RuntimeBuilder {
         self.cron_job_handlers
             .retain(|(existing, _)| *existing != kind);
         self.cron_job_handlers.push((kind, handler));
+        self
+    }
+
+    /// Open an agent on demand when a scheduled job targets one that is not
+    /// live. `opener` receives the job's agent id and returns the agent after
+    /// creating it (for example with [`Runtime::agent`](crate::Runtime::agent));
+    /// the job then runs as that agent, and the returned handle is held for
+    /// the run and released afterwards, so a host need not keep every agent
+    /// alive between runs. Returning `None`, or an agent under another id,
+    /// fails the job: a job whose agent cannot be found never runs as a
+    /// different one. Without an opener a job for a missing agent fails the
+    /// same way.
+    ///
+    /// The opener is stored in the runtime, so it must not hold a strong
+    /// `Arc<Runtime>` (that would keep the runtime alive forever); capture a
+    /// `Weak`. Concurrent opens are serialised.
+    pub fn on_missing_agent<F, Fut>(mut self, opener: F) -> Self
+    where
+        F: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Option<crate::Agent>> + Send + 'static,
+    {
+        self.agent_opener = Some(Arc::new(move |id| Box::pin(opener(id))));
         self
     }
 
@@ -334,6 +412,18 @@ impl RuntimeBuilder {
     /// [`ConfigSource::Discovered`].
     pub fn config_source(mut self, source: ConfigSource) -> Self {
         self.config_source = source;
+        self
+    }
+
+    /// Choose normal host startup or a side-effect-limited inspection build.
+    ///
+    /// Inspection requires an inherited workspace, a supplied resolved
+    /// config, and a fixed in-memory bearer. It does not discover ambient
+    /// config, open persistent storage, install session stores, bootstrap
+    /// workspace state, or start background services. The runtime still has
+    /// a real `CoreContext` and can dispatch in-process RPC.
+    pub fn boot_mode(mut self, mode: CoreBootMode) -> Self {
+        self.boot_mode = mode;
         self
     }
 

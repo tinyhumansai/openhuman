@@ -19,8 +19,15 @@ fn no_request_when_not_smaller() {
 
 #[test]
 fn request_carries_attribution_and_token_counts() {
-    let req = request(CompressorKind::SmartCrusher, 2000, 1000).unwrap();
-    assert_eq!(req.model, attribution_model());
+    assert!(request(CompressorKind::SmartCrusher, 2000, 1000).is_none());
+    let req = request_for(
+        "test-model".to_string(),
+        CompressorKind::SmartCrusher,
+        2000,
+        1000,
+    )
+    .unwrap();
+    assert_eq!(req.model, "test-model");
     assert_eq!(req.compressor, CompressorKind::SmartCrusher.as_str());
     assert_eq!((req.original_tokens, req.compacted_tokens), (2000, 1000));
 }

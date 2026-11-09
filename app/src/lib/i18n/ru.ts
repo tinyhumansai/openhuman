@@ -587,6 +587,8 @@ const messages: TranslationMap = {
   'desktop.pendingUnavailable':
     'Не удалось загрузить ожидающие подтверждения действий на рабочем столе. Обновите страницу и повторите попытку.',
   'desktop.unsupported': 'Управление рабочим столом недоступно в этой среде.',
+  'desktop.unsupportedWindows':
+    'Управление рабочим столом пока недоступно в Windows. Управление браузером в Windows уже работает.',
   'desktop.localOnly': 'Эта настройка действует только на этом компьютере.',
   'desktop.permissions': 'Системные разрешения',
   'desktop.openSettings': 'Открыть настройки',
@@ -606,6 +608,10 @@ const messages: TranslationMap = {
     'Сейчас не удаётся связаться с памятью. Ничего из сохранённого не потеряно; повторите попытку чуть позже.',
   'memory.outOfCredits.title': 'Кредиты закончились',
   'memory.outOfCredits.action': 'Пополнить',
+  'memory.error.planRequired':
+    'Ваш текущий тариф не включает память, поэтому OpenHuman не может сохранять то, что узнаёт, и обращаться к этому. Перейдите на более высокий тариф, чтобы включить память, или выберите другой вариант памяти в настройках.',
+  'memory.planRequired.title': 'Память не входит в ваш тариф',
+  'memory.planRequired.action': 'Посмотреть тарифы',
   'alerts.title': 'Оповещения',
   'alerts.empty': 'Оповещений пока нет',
   'alerts.markAllRead': 'Отметить всё прочитанным',
@@ -671,6 +677,15 @@ const messages: TranslationMap = {
   'invites.title': 'Приглашения',
   'invites.noInvites': 'Активных приглашений нет',
   'devOptions.titleDiagnostics': 'Разработчик и Диагностика',
+  'devOptions.doctor.run': 'Запустить диагностику',
+  'devOptions.doctor.runLive': 'Запустить проверки в реальном времени',
+  'devOptions.doctor.liveWarning':
+    'Проверки в реальном времени могут расходовать токены при вызовах модели или эмбеддингов. Продолжить?',
+  'devOptions.doctor.severity.pass': 'Пройдено',
+  'devOptions.doctor.severity.info': 'Информация',
+  'devOptions.doctor.severity.warn': 'Предупреждение',
+  'devOptions.doctor.severity.error': 'Ошибка',
+  'devOptions.doctor.severity.skipped': 'Пропущено',
   'devOptions.diagnostics': 'Диагностика',
   'devOptions.toolPolicyDiagnosticsDesc':
     'Инвентаризация инструментов, положение политики, белые списки MCP и недавние блокировки',
@@ -1305,6 +1320,8 @@ const messages: TranslationMap = {
   'chat.failedToLoadMessages': 'Не удалось загрузить сообщения',
   'chat.thinkingDots': 'Думаю...',
   'chat.status.thinkingElapsed': 'Думаю · {elapsed}',
+  'chat.status.compacting': 'Резюмирую предыдущий разговор…',
+  'chat.status.compactingElapsed': 'Резюмирую предыдущий разговор · {elapsed}',
   'chat.status.waitingApproval': 'Ожидает вашего одобрения',
   'chat.status.waitingReview': 'Ожидает вашей проверки',
   'chat.status.waitingAnswer': 'Ожидает вашего ответа',
@@ -1640,6 +1657,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Открыть на холсте',
   'chat.flowProposal.dismiss': 'Скрыть',
   'chat.flowProposal.error': 'Не удалось сохранить рабочий процесс. Попробуйте еще раз.',
+  'chat.flowProposal.versionConflict':
+    'Этот рабочий процесс изменился после создания предложения, поэтому он не был перезаписан. Запросите новую редакцию.',
   'chat.flowProposal.enableError':
     'Рабочий процесс сохранён, но не удалось его включить. Попробуйте ещё раз или включите его на странице Workflows.',
   'chat.flowProposal.savedConfirmation': 'Сохранено',
@@ -1832,11 +1851,6 @@ const messages: TranslationMap = {
   'chat.todos.ofTotal': '{done} из {total}',
   'chat.todos.receipt': 'Прогресс обновлён · {done}/{total}',
   'chat.subagents.ranFor': 'Длилось {duration}',
-  'chat.subagents.ofTotal': '{complete} из {total}',
-  'chat.subagents.runningCount': 'Выполняется: {count}',
-  'chat.subagents.failedCount': 'С ошибкой: {count}',
-  'chat.subagents.incompleteCount': 'Не завершено: {count}',
-  'chat.subagents.settled': 'Подзадачи завершены. Обрабатываем их результаты.',
   'conversations.planReview.title': 'Проверить план',
   'conversations.planReview.subtitle':
     'Одобрите для запуска, отклоните для отмены или отправьте отзыв для доработки.',
@@ -1872,7 +1886,6 @@ const messages: TranslationMap = {
   'conversations.mcpUi.confirmAllow': 'Разрешить',
   'conversations.mcpUi.confirmDeny': 'Запретить',
   'conversations.tools.delegatedTo': 'Передано агенту {agent}',
-  'conversations.tools.parallelAgentsAggregating': 'Объединение результатов',
   'conversations.tools.openInBrowser': 'Открыть в браузере',
   'conversations.tools.status.running': 'выполняется',
   'conversations.tools.status.done': 'готово',
@@ -1940,22 +1953,6 @@ const messages: TranslationMap = {
     'Повтор не удался. Скачай последнюю версию и попробуй снова.',
   'daemon.serviceBlockingGate.retrying': 'Повтор...',
   'daemon.serviceBlockingGate.title': 'Ядро OpenHuman недоступно',
-  'worktree.label': 'Рабочее дерево',
-  'worktree.dirty': 'Незакоммиченные изменения',
-  'worktree.clean': 'Чисто',
-  'worktree.removing': 'Удаление…',
-  'worktree.removeFailed': 'Не удалось удалить worktree',
-  'worktree.diffFailed': 'Не удалось загрузить diff',
-  'worktree.diffLoading': 'Загрузка diff…',
-  'worktree.diffEmpty': 'Нет изменений относительно HEAD.',
-  'worktree.dirtyConfirm':
-    'В этом worktree есть незакоммиченные изменения. При удалении эта работа будет потеряна. Ветка воркера сохраняется.',
-  'worktree.action.open': 'Открыть папку',
-  'worktree.action.diff': 'Разница',
-  'worktree.action.hideDiff': 'Скрыть diff',
-  'worktree.action.remove': 'Удалить',
-  'worktree.action.removeAnyway': 'Отклонить и удалить',
-  'worktree.action.preserve': 'Сохранить',
   'notifications.card.dismiss': 'Закрыть уведомление',
   'notifications.card.importanceTitle': 'Важность: {pct}%',
   'notifications.center.empty': 'Уведомлений пока нет',
@@ -3502,6 +3499,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'Загрузка моделей…',
   'composer.voiceMode': 'Голосовой режим',
   'composer.humanMode': 'Режим человека',
+  'voiceNote.record': 'Записать голосовое сообщение',
+  'voiceNote.stop': 'Остановить запись',
+  'voiceNote.discard': 'Удалить голосовое сообщение',
+  'voiceNote.send': 'Отправить голосовое сообщение',
+  'voiceNote.recording': 'Идёт запись…',
+  'voiceNote.play': 'Воспроизвести голосовое сообщение',
+  'voiceNote.pause': 'Приостановить голосовое сообщение',
+  'voiceNote.seek': 'Перемотать голосовое сообщение',
+  'voiceNote.transcript': 'Расшифровка',
+  'voiceNote.noTranscript': 'Расшифровка недоступна',
+  'voiceNote.label': 'Голосовое сообщение {duration}',
+  'voiceNote.micDenied': 'Доступ к микрофону отклонён или недоступен.',
+  'voiceNote.transcribeFailed': 'Не удалось расшифровать голосовое сообщение.',
+  'voiceNote.loadFailed': 'Не удалось загрузить это голосовое сообщение.',
+  'voiceNote.sendFailed': 'Не удалось отправить голосовое сообщение.',
 
   // Sync budget dialog
 
@@ -3903,6 +3915,10 @@ const messages: TranslationMap = {
     'Агент выполнил максимальное число шагов с инструментами за один ход и не завершил его. Обычно это значит, что инструмент постоянно завершался ошибкой (часто из-за лимита запросов при загрузке веб-страницы). Вы можете повторить тот же вопрос в этой теме, когда лимит снимется.',
   'chat_error.turn_timeout':
     'Этот ход превысил отведённое время и был остановлен, чтобы не зависнуть. Обычно это значит, что вызов инструмента или делегированный субагент завис. Вы можете повторить вопрос в этой теме.',
+  'chat_error.disk_full':
+    'Ваш диск заполнен, поэтому этот разговор не удалось сохранить. Освободите место на диске, а затем отправьте сообщение ещё раз в этой теме.',
+  'chat_error.prompt_screened':
+    'Проверка безопасности OpenHuman задержала это сообщение, поэтому оно не было отправлено модели. Если в нём цитируются инструкции для ассистента (например, с веб-страницы или из письма), удалите их и повторите попытку. Если задерживаются и обычные сообщения, модуль безопасности может быть недоступен: перезапустите OpenHuman и повторите попытку.',
   'chat_error.empty_response':
     'Модель вернула пустой ответ. Повторите попытку. Если это повторяется, попробуйте другую модель или проверьте её настройку в разделе Подключения → API-ключи → LLM.',
   'chat_error.chat_template_rejected':
@@ -4389,6 +4405,10 @@ const messages: TranslationMap = {
     'Доступ к микрофону запрещён. Разрешите его в настройках системы и попробуйте снова.',
   'voice.live.error.micUnavailable': 'Микрофон недоступен.',
   'voice.live.error.connection': 'Не удалось подключиться к голосовому агенту.',
+  'voice.live.error.insufficientCredits':
+    'Для голоса в реальном времени нужно больше кредитов. Пополните баланс, чтобы продолжить.',
+  'voice.live.error.paidPlanRequired':
+    'Для голоса в реальном времени нужен платный тариф. Перейдите на него, чтобы продолжить.',
   'voice.live.toolRunning': 'Выполняется {name}',
   'voice.live.toolOk': '{name} завершено',
   'voice.live.toolFailed': 'Ошибка: {name}',
@@ -4647,11 +4667,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'Обсуждение Namespaced Process Prison',
   'settings.sandbox.backendHint.bubblewrap': 'Легкие пространства имен пользователей',
   'settings.sandbox.backendHint.none': 'Запуск инструментов напрямую, без изоляции',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Список инструментов',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Всего инструментов',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Включённые инструменты',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'Инструменты MCP stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'Инструменты JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Состояние политики',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Уровень автономности',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Только рабочая область',
@@ -4866,8 +4881,6 @@ const messages: TranslationMap = {
   'conversations.tools.updateLearnings.done': 'Изученное обновлено',
   'conversations.tools.delegateTask.active': 'Передача задачи',
   'conversations.tools.delegateTask.done': 'Задача передана',
-  'conversations.tools.runAgentsInParallel.active': 'Параллельный запуск агентов',
-  'conversations.tools.runAgentsInParallel.done': 'Агенты запущены параллельно',
   'conversations.tools.messageAgent.active': 'Отправка сообщения агенту',
   'conversations.tools.messageAgent.done': 'Сообщение агенту отправлено',
   'conversations.tools.waitForAgent.active': 'Ожидание агента',
@@ -4904,6 +4917,8 @@ const messages: TranslationMap = {
   'conversations.tools.checkGoal.done': 'Цель проверена',
   'conversations.tools.completeGoal.active': 'Выполнение цели',
   'conversations.tools.completeGoal.done': 'Цель выполнена',
+  'conversations.tools.resumeGoal.active': 'Возобновление цели',
+  'conversations.tools.resumeGoal.done': 'Цель возобновлена',
   'conversations.tools.scheduleTask.active': 'Планирование задачи',
   'conversations.tools.scheduleTask.done': 'Задача запланирована',
   'conversations.tools.checkSchedules.active': 'Проверка расписаний',
@@ -5136,6 +5151,54 @@ const messages: TranslationMap = {
   'settings.layout.contrast.subtle': 'Незаметный',
 
   'settings.layout.contrast.strong': 'Высокий',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'Диагностика политик не включена в эту сборку ядра.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Активная политика безопасности',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Автономность',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Только в рабочей области',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Максимум действий в час',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Требовать подтверждение для среднего риска',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Блокировать команды высокого риска',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Разрешённые команды',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': 'Нет явно разрешённых команд.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Политика',
+  'settings.approvalHistory.judgeScores':
+    'Намерение {intent} · Обратимость {reversible} · Утечка данных {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'из кэша',
+  'settings.approvalHistory.judgeExpires': 'Истекает {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Всегда разрешённые инструменты',
+  'keyring.settings.toolTrustDescription':
+    'Эти инструменты могут запускаться без запроса подтверждения в этой области безопасности.',
+  'keyring.settings.toolTrustLoading': 'Загрузка разрешённых инструментов…',
+  'keyring.settings.toolTrustLoadFailed': 'Не удалось загрузить разрешённые инструменты.',
+  'keyring.settings.toolTrustRevokeFailed': 'Не удалось отозвать разрешение для этого инструмента.',
+  'keyring.settings.toolTrustEmpty': 'Нет инструментов с постоянным разрешением.',
+  'keyring.settings.toolTrustRetry': 'Повторить',
+  'keyring.settings.toolTrustRevoke': 'Отозвать',
+  'keyring.settings.toolTrustRevoking': 'Отзыв…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Запрос доступа к связке ключей',
+  'keyring.operation.description':
+    'TinySecurity запрашивает доступ к одному элементу связки ключей. Проверьте операцию перед решением.',
+  'keyring.operation.access': 'Доступ',
+  'keyring.operation.requester': 'Запросил',
+  'keyring.operation.origin': 'Источник',
+  'keyring.operation.purpose': 'Назначение',
+  'keyring.operation.name': 'Элемент связки ключей',
+  'keyring.operation.access.read': 'Чтение',
+  'keyring.operation.access.write': 'Запись',
+  'keyring.operation.access.delete': 'Удаление',
+  'keyring.operation.allow': 'Разрешить один раз',
+  'keyring.operation.deny': 'Отклонить',
+  'keyring.operation.submitting': 'Отправка…',
+  'keyring.operation.expires': 'Срок действия запроса истечёт через {seconds} с.',
+  'keyring.operation.error': 'Не удалось отправить решение. Возможно, срок запроса истёк.',
 };
 
 export default messages;

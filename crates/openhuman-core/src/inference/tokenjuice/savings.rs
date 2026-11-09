@@ -17,9 +17,9 @@ use tinyjuice_bus::types::CompressorKind;
 const MODULE: &str = "tinyjuice";
 
 /// Model used to price the saved input tokens (the configured default).
-fn model_slot() -> &'static Mutex<String> {
-    static SLOT: OnceLock<Mutex<String>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(crate::config::DEFAULT_MODEL.to_string()))
+fn model_slot() -> &'static Mutex<Option<String>> {
+    static SLOT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
 }
 
 /// Install the attribution model (host policy). The module keeps the totals in
@@ -27,12 +27,12 @@ fn model_slot() -> &'static Mutex<String> {
 /// [`crate::modules::import_legacy_tinyjuice_savings`].
 pub fn configure(attribution_model: String) {
     if !attribution_model.trim().is_empty() {
-        *model_slot().lock().unwrap_or_else(|p| p.into_inner()) = attribution_model;
+        *model_slot().lock().unwrap_or_else(|p| p.into_inner()) = Some(attribution_model);
     }
 }
 
 /// The model savings are currently attributed to.
-pub fn attribution_model() -> String {
+pub fn attribution_model() -> Option<String> {
     model_slot()
         .lock()
         .unwrap_or_else(|p| p.into_inner())
@@ -54,7 +54,7 @@ fn request(
     compacted_tokens: u64,
 ) -> Option<RecordSavingsRequest> {
     request_for(
-        attribution_model(),
+        attribution_model()?,
         compressor,
         original_tokens,
         compacted_tokens,

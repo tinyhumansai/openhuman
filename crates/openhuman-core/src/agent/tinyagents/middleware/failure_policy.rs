@@ -119,6 +119,15 @@ pub(super) fn missing_program_nudge(tool: &str, detail: &str) -> String {
     )
 }
 
+/// A timed-out local command may have completed some of its work before it
+/// was stopped. Tell the model to reconcile that state before trying a
+/// smaller bounded command.
+pub(super) fn uncertain_timeout_nudge(tool: &str) -> String {
+    format!(
+        "The `{tool}` command timed out and may have partially completed. Reconcile its effects before retrying, then use a smaller, bounded step."
+    )
+}
+
 pub(super) fn classified_recovery_policy(
     tool: &str,
     error: &str,
@@ -235,7 +244,9 @@ pub(super) fn classified_recovery_policy(
         // attempt, steered by a reconcile-first nudge, and halts on a second.
         // Remote actions (`gmail_send`, payments, …) stay at zero: a retry
         // there can repeat an effect the agent cannot observe.
-        Class::Timeout if tool == "shell" => ("uncertain_side_effect", 1),
+        Class::Timeout if tool == "shell" || tool == "shell_process" => {
+            ("uncertain_side_effect", 1)
+        }
         Class::Timeout => ("uncertain_side_effect", 0),
         // The harness's own schema-validation answer, classified from its
         // prefix before any keyword in the echoed schema could read as a

@@ -1,11 +1,10 @@
 use super::*;
+use crate::storage::{Scope, Storage};
 use sha2::Digest;
-use tinystoragedrivers::{MemoryStorage, Scope, StorageBackend};
+use tinystoragedrivers_testkit::memory_storage;
 
-fn scoped() -> ScopedStorage {
-    MemoryStorage::new()
-        .for_scope(&Scope::new("module:tinywallet@local").unwrap())
-        .unwrap()
+fn scoped() -> Storage {
+    memory_storage(&Scope::new("module:tinywallet@local").unwrap())
 }
 
 fn record(id: &str, status: &str) -> String {
@@ -167,5 +166,57 @@ async fn an_unreadable_ledger_is_retried_instead_of_marked_done() {
             payments: 1,
             skipped: 0
         }
+    );
+}
+
+/// Another process holding the import claim is not "no backend": the import
+/// stays unsettled and the ledger gate refuses, instead of x402 opening an
+/// empty ledger with a fresh allowance.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_live_foreign_claim_keeps_the_ledger_closed() {
+    use crate::storage::import_state;
+    use std::sync::{mpsc, Arc};
+
+    let backend = crate::storage::test_support::memory_backend();
+    let _installed =
+        crate::storage::test_support::install_for_test("memory:x402-claim", Arc::clone(&backend));
+    let ctx = DispatchCtx::host_default();
+    let legacy = legacy_workspace();
+    let scope = super::super::storage_host::current_module_scope(&ctx, MODULE_ID).unwrap();
+    let repo = crate::storage::documents::Repo::on(
+        &backend,
+        &scope,
+        "storage_import",
+        import_state::collection_specs,
+    )
+    .unwrap();
+    let step = import_state::step_id(
+        MARKER_COLLECTION,
+        &support::marker_id("x402", legacy.path()),
+    );
+    let (held_tx, held_rx) = mpsc::channel::<()>();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        import_state::with_claim(&repo, import_state::HOST_OWNER, &step, |_| {
+            held_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        })
+        .unwrap()
+    });
+    held_rx.recv().unwrap();
+
+    let outcome = import_legacy(&ctx, legacy.path()).await;
+    let ledger_may_open = crate::modules::import_legacy_x402(&ctx, legacy.path()).await;
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+
+    assert!(
+        outcome.is_err(),
+        "a contended import must not settle as {outcome:?}"
+    );
+    assert!(
+        !ledger_may_open,
+        "the ledger must not open while another process holds the import"
     );
 }

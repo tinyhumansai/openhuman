@@ -198,7 +198,8 @@ impl Tool for DocumentTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        self.run(args, None).await
+        self.run(args, None, &crate::core::runtime::DispatchCtx::ambient())
+            .await
     }
 
     async fn execute_with_context(
@@ -208,7 +209,12 @@ impl Tool for DocumentTool {
         context: Option<&dyn tinytools::ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
-        self.run(args, approval.chat.as_ref()).await
+        self.run(
+            args,
+            approval.chat.as_ref(),
+            &crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context),
+        )
+        .await
     }
 }
 
@@ -219,6 +225,7 @@ impl DocumentTool {
         &self,
         args: Value,
         chat: Option<&crate::security::approval::ApprovalChatContext>,
+        _ctx: &crate::core::runtime::DispatchCtx,
     ) -> anyhow::Result<ToolResult> {
         // The document wire contract is `deny_unknown_fields`, so the optional
         // `artifact_id` is read here (and stripped from the args before

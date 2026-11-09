@@ -24,7 +24,7 @@ fn x402_approval_is_bound_to_the_exact_chat_owner_and_payment_facts() {
         }),
     };
     let origin =
-        |thread: &str, client: &str| crate::security::turn_origin::AgentTurnOrigin::WebChat {
+        |thread: &str, client: &str| crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
             thread_id: thread.into(),
             client_id: client.into(),
             request_id: Some("request-1".into()),
@@ -44,7 +44,7 @@ fn x402_approval_is_bound_to_the_exact_chat_owner_and_payment_facts() {
     // Only a WebChat turn can own an x402 payment: another origin, or none, never matches.
     assert!(!x402_request_owner_matches(
         &request,
-        Some(&crate::security::turn_origin::AgentTurnOrigin::Cli)
+        Some(&crate::core::runtime::turn_origin::AgentTurnOrigin::Cli)
     ));
     assert!(!x402_request_owner_matches(&request, None));
 
@@ -300,6 +300,105 @@ fn native_solana_approval_rejects_an_unverified_signed_message() {
 
     assert!(!native_approval_matches_request(&quote, &request));
     assert!(!consume_approval(ApprovalKind::Native, &quote.quote_id));
+    drop(permit);
+}
+
+const TRON_USDT: &str = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+const TRON_RECIPIENT: &str = "TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH";
+/// `transfer(TRON_RECIPIENT, 25)` without the selector.
+const TRC20_PAY_25: &str = "000000000000000000000000c8599111f29c1e1e061265b4af93ea1f274ad78a\
+                            0000000000000000000000000000000000000000000000000000000000000019";
+
+fn trc20_quote(quote_id: &str) -> PreparedTransaction {
+    PreparedTransaction {
+        chain: WalletChain::Tron,
+        kind: PreparedKind::TokenTransfer,
+        evm_network: None,
+        from_address: "TSender".into(),
+        to_address: TRON_RECIPIENT.into(),
+        asset_symbol: "USDT".into(),
+        amount_raw: "25".into(),
+        amount_formatted: "0.000025".into(),
+        token_address: Some(TRON_USDT.into()),
+        ..native_quote(quote_id)
+    }
+}
+
+fn trc20_request(
+    quote: PreparedTransaction,
+    expected_to: &str,
+    parameter_hex: &str,
+) -> AuthorizeNativeWalletExecutionRequest {
+    AuthorizeNativeWalletExecutionRequest {
+        quote_id: quote.quote_id.clone(),
+        operation: "transfer".into(),
+        quote,
+        intent: NativeWalletExecutionIntent::Transaction {
+            transaction: TransactionSpec::Tron {
+                raw_data_hex: "00".into(),
+                expected_to: expected_to.into(),
+                expected_txid: "txid".into(),
+                transfer: tinywallet_bus::TronTransfer::Trc20 {
+                    parameter_hex: parameter_hex.into(),
+                },
+            },
+        },
+    }
+}
+
+/// The module's TRC-20 intent targets the token contract, so the confirmed
+/// transfer must be accepted (it used to be refused against the recipient).
+#[test]
+fn native_trc20_approval_accepts_the_confirmed_token_recipient_and_amount() {
+    let quote = trc20_quote("trc20-valid");
+    let permit = ApprovalPermit::new(
+        ApprovalKind::Native,
+        &quote.quote_id,
+        Some(quote.clone()),
+        None,
+    );
+    let request = trc20_request(quote.clone(), TRON_USDT, TRC20_PAY_25);
+
+    assert!(native_approval_matches_request(&quote, &request));
+    drop(permit);
+}
+
+/// Any well-formed hex used to pass: a 25-unit quote approved any amount to
+/// anyone.
+#[test]
+fn native_trc20_approval_rejects_another_amount_recipient_or_token() {
+    let wrong_amount = TRC20_PAY_25.replace("019", "01a");
+    let wrong_recipient = TRC20_PAY_25.replace("c8599111", "c8599112");
+    for (case, expected_to, parameter_hex) in [
+        ("amount", TRON_USDT, wrong_amount.as_str()),
+        ("recipient", TRON_USDT, wrong_recipient.as_str()),
+        ("token", TRON_RECIPIENT, TRC20_PAY_25),
+        ("arbitrary hex", TRON_USDT, "deadbeef"),
+        ("empty", TRON_USDT, ""),
+    ] {
+        let quote = trc20_quote(&format!("trc20-{case}"));
+        let permit = ApprovalPermit::new(
+            ApprovalKind::Native,
+            &quote.quote_id,
+            Some(quote.clone()),
+            None,
+        );
+        let request = trc20_request(quote.clone(), expected_to, parameter_hex);
+
+        assert!(!native_approval_matches_request(&quote, &request), "{case}");
+        drop(permit);
+    }
+
+    let mut no_token = trc20_quote("trc20-no-token");
+    no_token.token_address = None;
+    let permit = ApprovalPermit::new(
+        ApprovalKind::Native,
+        &no_token.quote_id,
+        Some(no_token.clone()),
+        None,
+    );
+    let request = trc20_request(no_token.clone(), TRON_USDT, TRC20_PAY_25);
+    assert!(!native_approval_matches_request(&no_token, &request));
     drop(permit);
 }
 

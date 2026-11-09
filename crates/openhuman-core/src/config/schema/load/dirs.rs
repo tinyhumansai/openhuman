@@ -161,7 +161,7 @@ fn active_workspace_state_path(default_dir: &Path) -> PathBuf {
     default_dir.join(ACTIVE_WORKSPACE_STATE_FILE)
 }
 
-async fn load_persisted_workspace_dirs(
+pub(crate) async fn load_persisted_workspace_dirs(
     default_config_dir: &Path,
 ) -> Result<Option<(PathBuf, PathBuf)>> {
     let state_path = active_workspace_state_path(default_config_dir);

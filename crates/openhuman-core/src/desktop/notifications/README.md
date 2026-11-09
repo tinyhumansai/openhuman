@@ -106,7 +106,7 @@ port has no `GROUP BY`. With no backend configured (the desktop default)
 - `crate::core::bus::BUS` and `crate::core::events::DomainEvent` (`BUS.subscribe` for the bridge, `BUS.publish` for triage results); the `EventHandler` trait comes from `tinybus`.
 - `crate::core::all` (`ControllerFuture`, `RegisteredController`) and `crate::core` (`ControllerSchema`, `FieldSchema`, `TypeSchema`), controller registry contract.
 - `crate::config`: `Config` (workspace dir for the DB path), `config::rpc::load_config_with_timeout` in handlers, `active_workspace_snapshot` / `workspace_handle` for the workspace gate.
-- `crate::triage`: `run_triage`, `apply_decision`, `TriageOutcome`, `TriggerEnvelope`, `TriggerSource`, `TriageAction` for the background scoring/routing pipeline; `crate::security::turn_origin::with_origin` scopes the routing turn.
+- `crate::triage`: `run_triage`, `apply_decision`, `TriageOutcome`, `TriggerEnvelope`, `TriggerSource`, `TriageAction` for the background scoring/routing pipeline; `crate::core::runtime::turn_origin::with_origin` scopes the routing turn.
 - `crate::core::Outcome`: RPC response shaping.
 - External crates: `rusqlite` (store), `chrono`, `uuid`, `serde_json`, `tokio`, `once_cell`, `async_trait`.
 

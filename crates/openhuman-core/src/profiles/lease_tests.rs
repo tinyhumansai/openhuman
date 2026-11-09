@@ -1,6 +1,7 @@
+#![cfg(feature = "storage-sqlite")]
+
 use super::*;
 use crate::core::runtime::{CoreContext, DomainSet, SaasConfig};
-use crate::storage::MemoryStorage;
 
 const TTL_SECS: u64 = 30;
 
@@ -29,8 +30,8 @@ fn node(
     )
 }
 
-fn shared() -> Arc<dyn StorageBackend> {
-    Arc::new(MemoryStorage::new())
+fn shared() -> crate::storage::test_support::SqliteBackend {
+    crate::storage::test_support::sqlite_backend().unwrap()
 }
 
 fn profile(name: &str) -> ProfileId {
@@ -54,8 +55,8 @@ async fn a_profile_open_on_one_node_is_refused_on_another_naming_the_holder() {
     let tmp = tempfile::tempdir().unwrap();
     let backend = shared();
     let (a, b) = (
-        node(tmp.path(), "node-a", Some(&backend)),
-        node(tmp.path(), "node-b", Some(&backend)),
+        node(tmp.path(), "node-a", Some(&backend.backend)),
+        node(tmp.path(), "node-b", Some(&backend.backend)),
     );
     let alice = profile("alice");
     assert!(a.provision(&alice).await.unwrap());
@@ -92,8 +93,8 @@ async fn release_hands_a_profile_to_another_node_at_once() {
     let tmp = tempfile::tempdir().unwrap();
     let backend = shared();
     let (a, b) = (
-        node(tmp.path(), "node-a", Some(&backend)),
-        node(tmp.path(), "node-b", Some(&backend)),
+        node(tmp.path(), "node-a", Some(&backend.backend)),
+        node(tmp.path(), "node-b", Some(&backend.backend)),
     );
     let alice = profile("alice");
     a.provision(&alice).await.unwrap();
@@ -125,10 +126,10 @@ async fn eviction_and_shutdown_release_the_lease() {
     let a = ProfileHost::with_backend(
         config,
         CoreContext::for_test(DomainSet::full(), None),
-        Some(Arc::clone(&backend)),
+        Some(Arc::clone(&backend.backend)),
     )
     .unwrap();
-    let b = node(tmp.path(), "node-b", Some(&backend));
+    let b = node(tmp.path(), "node-b", Some(&backend.backend));
     let (alice, bob) = (profile("alice"), profile("bob"));
     a.provision(&alice).await.unwrap();
     a.provision(&bob).await.unwrap();
@@ -154,7 +155,7 @@ async fn eviction_and_shutdown_release_the_lease() {
 async fn renewal_keeps_the_lease_and_a_lost_lease_fences_the_profile() {
     let tmp = tempfile::tempdir().unwrap();
     let backend = shared();
-    let a = node(tmp.path(), "node-a", Some(&backend));
+    let a = node(tmp.path(), "node-a", Some(&backend.backend));
     let alice = profile("alice");
     a.provision(&alice).await.unwrap();
     let state = a.open(&alice).await.unwrap();
@@ -170,7 +171,6 @@ async fn renewal_keeps_the_lease_and_a_lost_lease_fences_the_profile() {
         crate::web_chat::track_parallel_turn_for_test(
             &crate::core::runtime::DispatchCtx::new(Arc::clone(state.context())),
             "t1",
-            "req-1",
             turn.clone(),
         ),
     )
@@ -187,7 +187,7 @@ async fn renewal_keeps_the_lease_and_a_lost_lease_fences_the_profile() {
     // Another node takes the profile over once the lease has (by its clock)
     // run out.
     let thief = crate::storage::lease::DocumentLeases::cluster(
-        backend.as_ref(),
+        backend.backend.as_ref(),
         "node-b",
         None,
         Duration::from_secs(TTL_SECS),
@@ -204,15 +204,28 @@ async fn renewal_keeps_the_lease_and_a_lost_lease_fences_the_profile() {
     assert_eq!(report.fenced, vec![alice.clone()]);
     assert!(state.is_fenced(), "the profile is fenced");
     assert!(!a.is_open(&alice), "and closed");
-    assert!(turn.is_cancelled(), "its in-flight turns are stopped");
+    // The turn unwinds through the runner, which announces it afterwards.
+    tokio::time::timeout(Duration::from_secs(10), turn.cancelled())
+        .await
+        .expect("its in-flight turns are stopped");
     // The cancelled event goes to the client that started the turn, so its
     // stream resolves rather than staying "running".
-    let mut cancelled_for = None;
-    while let Ok(event) = events.try_recv() {
-        if event.event == "chat_cancelled" && event.request_id == "req-1" {
-            cancelled_for = Some(event.client_id);
+    let cancelled_for = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match events.recv().await {
+                Ok(event)
+                    if event.event_name() == "chat_cancelled"
+                        && event.context().thread_id == "t1" =>
+                {
+                    return event.context().client_id.clone();
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(error) => panic!("event stream closed: {error}"),
+            }
         }
-    }
+    })
+    .await
+    .ok();
     assert_eq!(cancelled_for.as_deref(), Some("test-client"));
 }
 
@@ -293,6 +306,10 @@ impl LeaseStore for PausingRenewals {
     async fn holder(&self, key: &str) -> Result<Option<LeaseRecord>, LeaseError> {
         self.inner.holder(key).await
     }
+
+    async fn holder_readonly(&self, key: &str) -> Result<Option<LeaseRecord>, LeaseError> {
+        self.inner.holder_readonly(key).await
+    }
 }
 
 /// An operator release that lands while the heartbeat is renewing the same
@@ -305,7 +322,7 @@ async fn a_release_during_a_heartbeat_renewal_releases_the_renewed_grant() {
     let mut a = ProfileHost::with_backend(
         saas(tmp.path(), "node-a"),
         CoreContext::for_test(DomainSet::full(), None),
-        Some(Arc::clone(&backend)),
+        Some(Arc::clone(&backend.backend)),
     )
     .unwrap();
     let pausing = Arc::new(PausingRenewals {
@@ -316,7 +333,7 @@ async fn a_release_during_a_heartbeat_renewal_releases_the_renewed_grant() {
     });
     a.leases = Arc::clone(&pausing) as Arc<dyn LeaseStore>;
     let a = Arc::new(a);
-    let b = node(tmp.path(), "node-b", Some(&backend));
+    let b = node(tmp.path(), "node-b", Some(&backend.backend));
     let alice = profile("alice");
     a.provision(&alice).await.unwrap();
     drop(a.open(&alice).await.unwrap());

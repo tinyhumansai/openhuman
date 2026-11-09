@@ -19,9 +19,10 @@
 use std::sync::{Arc, OnceLock};
 
 use tinystoragedrivers::secrets::{DerivedKeys, DocumentSecrets, KeyProvider};
+pub use tinystoragedrivers::secrets::{MemorySecrets, SecretStore};
 use zeroize::Zeroizing;
 
-use super::{current_scoped, ScopedStorage, StorageError};
+use super::{current_scope, current_scoped, Scope, Storage, StorageError};
 
 /// The key provider every scope's secrets use, built once per process.
 pub(crate) fn keys() -> Result<Arc<dyn KeyProvider>, StorageError> {
@@ -49,12 +50,12 @@ pub fn current() -> Result<Option<DocumentSecrets>, StorageError> {
     let Some(scoped) = current_scoped()? else {
         return Ok(None);
     };
-    Ok(Some(over(&scoped, keys()?)))
+    Ok(Some(over(&scoped, current_scope()?, keys()?)))
 }
 
 /// Secrets in `scoped` under `keys` (tests and explicit scopes).
-pub fn over(scoped: &ScopedStorage, keys: Arc<dyn KeyProvider>) -> DocumentSecrets {
-    DocumentSecrets::new(scoped, keys)
+pub fn over(scoped: &Storage, scope: Scope, keys: Arc<dyn KeyProvider>) -> DocumentSecrets {
+    DocumentSecrets::new(scoped, scope.to_storage_scope(), keys)
 }
 
 /// Reads secret `name` from synchronous code.
@@ -86,7 +87,3 @@ pub fn set_blocking(
     let value = Zeroizing::new(value.to_vec());
     super::block_on(async move { secrets.set(&name, &value).await })
 }
-
-#[cfg(test)]
-#[path = "secrets_tests.rs"]
-mod tests;

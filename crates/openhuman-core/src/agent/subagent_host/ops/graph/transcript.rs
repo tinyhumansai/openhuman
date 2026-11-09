@@ -9,7 +9,7 @@ use crate::agent::tinyagents::host::OpenHumanRunContext;
 use tinyagents_session::transcript::{TranscriptLocator, TranscriptMessage, TranscriptTurn};
 
 use super::dispatch::AggregatedUsage;
-use crate::threads::worker_mirror::mirror_worker_thread_from_history;
+use crate::agent::subagent_host::ops::mirror_worker_thread_from_history;
 
 /// The history a failed sub-agent run persists, plus the unanswered steps as
 /// text (#6281).
@@ -56,7 +56,7 @@ pub(super) fn failed_run_history(
 pub(super) fn subagent_transcripts(
     run_context: &OpenHumanRunContext,
     workspace_dir: &std::path::Path,
-) -> Arc<dyn TranscriptLocator> {
+) -> anyhow::Result<Arc<dyn TranscriptLocator>> {
     subagent_transcripts_in(run_context, workspace_dir, crate::core::runtime::is_saas())
 }
 
@@ -64,9 +64,9 @@ pub(super) fn subagent_transcripts_in(
     run_context: &OpenHumanRunContext,
     workspace_dir: &std::path::Path,
     saas: bool,
-) -> Arc<dyn TranscriptLocator> {
+) -> anyhow::Result<Arc<dyn TranscriptLocator>> {
     if let Some(transcripts) = run_context.transcripts.clone() {
-        return transcripts;
+        return Ok(transcripts);
     }
     let core = run_context.core.as_ref().and_then(std::sync::Weak::upgrade);
     let fallback = run_context
@@ -81,17 +81,16 @@ pub(super) fn subagent_transcripts_in(
                 "[subagent_host:graph] no turn-tree store and no carried context in SaaS mode; \
                  transcript kept in memory only"
             );
-            return tinyagents_session::port::SessionStoreProvider::for_agent(
-                &tinyagents_session::port::InMemorySessionStores::new(),
-                fallback,
-            )
-            .transcripts;
+            return detached_memory_transcripts(fallback);
         }
         let key = crate::storage::sessions::agent_key_for(
             &crate::core::runtime::Tenant::default(),
             fallback,
         );
-        return crate::storage::sessions::transcripts_or_files(&key, workspace_dir);
+        return Ok(crate::storage::sessions::transcripts_or_files(
+            &key,
+            workspace_dir,
+        ));
     };
     let tenant = crate::core::runtime::Tenant::of(&core);
     let key = crate::storage::sessions::agent_key_for(&tenant, fallback);
@@ -99,7 +98,34 @@ pub(super) fn subagent_transcripts_in(
         profile = tenant.profile.is_some(),
         "[subagent_host:graph] no turn-tree transcript store; using the carried context's"
     );
-    crate::storage::sessions::transcripts_or_files_in(&core, &key, workspace_dir)
+    Ok(crate::storage::sessions::transcripts_or_files_in(
+        &core,
+        &key,
+        workspace_dir,
+    ))
+}
+
+/// Creates an intentionally isolated, process-lifetime transcript store for
+/// a detached SaaS task whose carried tenant context has already been dropped.
+/// It never opens the installed operator/profile backend.
+fn detached_memory_transcripts(fallback_agent: &str) -> anyhow::Result<Arc<dyn TranscriptLocator>> {
+    let backend =
+        crate::storage::block_on(crate::storage::open("memory")).map_err(anyhow::Error::msg)?;
+    let factory_backend = Arc::clone(&backend);
+    let factory: tinyagents_session::port::AgentStorageFactory = Arc::new(move |agent_id| {
+        let scope = crate::storage::scope_for_agent(agent_id);
+        let storage = factory_backend.for_scope(&scope)?;
+        Ok(tinyagents_storage_kit::ScopedStorage::new(
+            storage,
+            (*scope).clone(),
+        ))
+    });
+    let provider =
+        tinyagents_session::DriverSessionStores::new(factory).map_err(anyhow::Error::msg)?;
+    Ok(provider
+        .try_for_agent(fallback_agent)
+        .map_err(anyhow::Error::msg)?
+        .transcripts)
 }
 
 /// Persist a sub-agent turn's raw transcript to `transcripts` under
@@ -166,6 +192,7 @@ pub(super) fn persist_subagent_transcript(
         updated: now,
         turn_count: 1,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         cached_input_tokens: usage.cached_input_tokens,

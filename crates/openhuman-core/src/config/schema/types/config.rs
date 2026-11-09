@@ -21,6 +21,11 @@ pub(crate) struct ConfigDocumentSnapshot {
 #[doc(hidden)]
 #[derive(Debug, Default)]
 pub struct ConfigRuntimeState {
+    pub(crate) provenance: super::super::load::ConfigProvenance,
+    pub(crate) load_diagnostics: super::super::load::LoadDiagnostics,
+    pub(crate) doctor_profile_layout_version:
+        Option<crate::config::schema::profile_layout::LayoutVersion>,
+    pub(crate) doctor_profile_resolution_source: Option<String>,
     pub(crate) document_snapshot: std::sync::Mutex<ConfigDocumentSnapshot>,
     pub(crate) context_snapshot: Option<std::sync::Weak<std::sync::Mutex<Config>>>,
     pub(crate) context_overlay: std::sync::Mutex<
@@ -31,6 +36,10 @@ pub struct ConfigRuntimeState {
 impl Clone for ConfigRuntimeState {
     fn clone(&self) -> Self {
         Self {
+            provenance: self.provenance.clone(),
+            load_diagnostics: self.load_diagnostics.clone(),
+            doctor_profile_layout_version: self.doctor_profile_layout_version,
+            doctor_profile_resolution_source: self.doctor_profile_resolution_source.clone(),
             document_snapshot: std::sync::Mutex::new(
                 self.document_snapshot.lock().unwrap().clone(),
             ),
@@ -177,6 +186,13 @@ pub struct Config {
     #[serde(default)]
     pub output_language: Option<String>,
 
+    /// Trusted interface locale for user-facing native channel replies and
+    /// failure copy. This is separate from `output_language`, which guides
+    /// the assistant's model-authored response. Unsupported or unset locales
+    /// use English for host-generated copy.
+    #[serde(default)]
+    pub channels_locale: Option<String>,
+
     /// The user's IANA time zone (`Asia/Kolkata`), chosen in Settings →
     /// Account. `None` follows the device. Read it through
     /// [`Config::time_zone`], which also validates it.
@@ -197,6 +213,10 @@ pub struct Config {
 
     #[serde(default)]
     pub autonomy: AutonomyConfig,
+
+    /// Durable security audit settings (`[audit]`).
+    #[serde(default)]
+    pub audit: AuditConfig,
 
     /// Operator tool rules (`[tool_rules]`): allow / deny / hide / approval
     /// patterns over tool names, families and tags, applied to every agent's
@@ -224,6 +244,25 @@ pub struct Config {
     /// (#4435, epic #4256).
     #[serde(default)]
     pub privacy: PrivacyConfig,
+
+    /// Whether untrusted input is screened for prompt injection
+    /// (`[prompt_screen]`). Missing block → enforced, failing closed when
+    /// TinySecurity gives no verdict.
+    #[serde(default)]
+    pub prompt_screen: PromptScreenConfig,
+
+    /// Whether the checks OpenHuman delegates to TinySecurity run
+    /// (`[security]`). Missing block → enforced, failing closed when the
+    /// module cannot answer. `off` allows every delegated check and implies
+    /// the prompt screen is off.
+    #[serde(default)]
+    pub security: SecurityModeConfig,
+
+    /// The Jev judge's route when the host supplies its own credential.
+    /// Absent from the user wire format: it holds a secret.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub security_judge: Option<SecurityJudgeRoute>,
 
     #[serde(default)]
     pub sandbox: SandboxConfig,
@@ -273,7 +312,8 @@ pub struct Config {
     /// session-memory extraction cadence. Consumed by
     /// the agent context middleware configuration.
     #[serde(default)]
-    pub context: ContextConfig,
+    #[schemars(with = "super::super::context::ContextConfigSchema")]
+    pub context: ContextSettings,
 
     #[serde(default)]
     pub model_routes: Vec<ModelRouteConfig>,
@@ -366,9 +406,6 @@ pub struct Config {
     /// custom agents and persisted enable/disable/tool-policy overrides.
     #[serde(default)]
     pub agent_registry: crate::agent_registry::types::AgentRegistryConfig,
-
-    #[serde(default)]
-    pub agents: HashMap<String, DelegateAgentConfig>,
 
     #[serde(default)]
     pub local_ai: LocalAiConfig,
@@ -466,14 +503,13 @@ pub struct Config {
     #[serde(default)]
     pub tokenjuice: TokenjuiceConfig,
 
-    /// TinyMemes remix tuning (`[memes]`); the switch is `[components] memes`.
-    #[serde(default)]
-    pub memes: MemesConfig,
-
     /// Inbound event queues (`[inbound]`); the switch is
     /// `[components] eventqueues`.
     #[serde(default)]
     pub inbound: InboundConfig,
+    /// Per-conversation batching of inbound channel messages (`[inbound_debounce]`).
+    #[serde(default)]
+    pub inbound_debounce: InboundDebounceConfig,
 
     /// Per-dependency switches (`[components]`). Narrow-only; applied at the
     /// next core start.
@@ -531,6 +567,10 @@ pub struct Config {
     #[serde(default)]
     pub update: UpdateConfig,
 
+    /// Spoken-reply policy for channels (`[channel_voice]`).
+    #[serde(default)]
+    pub channel_voice: ChannelVoiceConfig,
+
     /// Whether the user has completed the **React UI** onboarding flow.
     ///
     /// Set by `OnboardingOverlay.tsx::handleDone` and the multi-step
@@ -551,6 +591,41 @@ pub struct Config {
 
     #[serde(default)]
     pub model_registry: Vec<ModelRegistryEntry>,
+}
+
+impl Config {
+    /// Pins read-only doctor selection metadata to this in-memory snapshot.
+    pub(crate) fn set_doctor_profile_metadata(
+        &mut self,
+        layout_version: Option<crate::config::schema::profile_layout::LayoutVersion>,
+        resolution_source: Option<String>,
+    ) {
+        self.runtime_state.doctor_profile_layout_version = layout_version;
+        self.runtime_state.doctor_profile_resolution_source = resolution_source;
+    }
+
+    /// Metadata recorded when this snapshot was selected for doctor inspection.
+    pub(crate) fn doctor_profile_metadata(
+        &self,
+    ) -> (
+        Option<crate::config::schema::profile_layout::LayoutVersion>,
+        Option<String>,
+    ) {
+        (
+            self.runtime_state.doctor_profile_layout_version,
+            self.runtime_state.doctor_profile_resolution_source.clone(),
+        )
+    }
+
+    /// Diagnostics captured while the loader parsed or migrated this snapshot.
+    pub(crate) fn load_diagnostics(&self) -> &super::super::load::LoadDiagnostics {
+        &self.runtime_state.load_diagnostics
+    }
+
+    /// Mutable access for the config loader while it assembles diagnostics.
+    pub(crate) fn load_diagnostics_mut(&mut self) -> &mut super::super::load::LoadDiagnostics {
+        &mut self.runtime_state.load_diagnostics
+    }
 }
 
 /// Shared default so `#[serde(default)]` and `Config::default()` stay in sync.

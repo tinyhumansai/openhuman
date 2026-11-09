@@ -43,7 +43,7 @@ with its own store (or a test binary with an in-memory engine) runs the
 whole lifecycle without a TinyHumans session or a CortexDB key.
 
 Whatever engine is bound, TinyMemory's native `EngineBinder` wraps it in a
-scrubbing decorator using `security::scrub::host_policy` and a timing
+scrubbing decorator using `memory::host_policy::host_policy` and a timing
 decorator. Every text a `StoreItem` carries is scrubbed before the engine sees
 it. This also covers writes TinyMemory makes through its own types
 (`AgentMemory::pre_turn`, `Brain::ingest`, background ingests). The timing
@@ -133,6 +133,17 @@ memory_summarizer -------> prefetch::compaction
  memory_summarizer.rs)        queues recall of the folded-away turns
 ```
 
+A finished plan's notes go to memory at the same point. The agent writes
+facts and blockers through the `todo` tool while it works (TinyAgents
+`scratchpad`, shown in the run-state block). After the commit, the session
+host calls `agent::tinyagents::state_block::close_finished_plan`; if the
+thread's plan has steps and none open, its notes move to the thread's "last
+finished task" (the block shows them on the next turns, before recall could
+return them), and [`lifecycle/plan_notes.rs`](./lifecycle/plan_notes.rs)
+queues each one as a learning through the memory tool's write queue: facts as
+`fact`, blockers as `correction`, with the goal or first plan step as
+evidence. An open plan's notes stay in the scratchpad for the next turn.
+
 Turn indices follow the committed transcript: the user message of the turn
 after `n` committed turns is `2n` and its reply `2n + 1`. They are stable
 across retries and restarts, which is what lets TinyMemory treat a retried
@@ -155,6 +166,27 @@ preserving queued logs; engine/credential invalidation also clears pending
 refreshes. Scoped spawns retain the caller's core context; the key carries the
 resolved identity, so queued work needs nothing ambient.
 
+A host can ask for recall of the **current** message instead
+(`[memory] recall_each_turn_ms`, set by embed's `MemoryBinding::recall_each_turn`).
+`pre_turn` then queues the same work, and waits at most that long for its
+pack while the rest of turn setup runs (the session host joins the two). In
+time, the pack reaches `MemoryPackMiddleware` like any other and its
+citations are recorded; late, missing or skipped, the turn gets no note
+(`[memory:recall] deadline` at debug for a timeout, warn for work that ended
+without an answer) and the work still finishes into the cache.
+`RecallEachTurn::excluding` is the seam for de-duplicating against memory a
+host already puts in the system prompt: a pack whose every cited hit it
+excludes is left out (TinyMemory renders the pack, so single lines cannot be
+dropped yet).
+
+The memory block a new transcript generation renders (see
+`agent/session_host/runtime_session/memory_block.rs`) can likewise be taken off
+the turn's path: `[memory] memory_block_deadline_ms` (embed:
+`MemoryBinding::memory_block_deadline`) bounds the wait, a render that lapses
+is kept for the next generation start (`[memory_block] deferred`), and
+`Agent::prewarm_memory_block(thread_id)` renders it ahead of a turn. Its
+beliefs and learnings are read concurrently.
+
 The live prelude and compaction summarizer call the underlying work directly
 from the scoped prefetch workers. Their background deadlines bound engine I/O
 without a second manual timeout wrapper.
@@ -170,7 +202,9 @@ module to forget only that channel's conversations. With
 in `lifecycle::date_hint` for one small model call to work out which days the
 user means; a late or bad answer just leaves the pack in its normal order.
 The web chat citation sink records citations only when a cached pack is
-returned to the turn and drained for the chat's memory chips.
+returned to the turn and drained for the chat's memory chips. An agent with a
+`memory_block` also gets beliefs then learnings rendered into its system
+prompt by [`lifecycle/memory_block.rs`](./lifecycle/memory_block.rs), only when a transcript generation starts.
 
 ### Background work
 
@@ -290,6 +324,7 @@ trusted call facts; queued writes retain that call's narrower reach.
 | [`lifecycle/hooks.rs`](./lifecycle/hooks.rs)                                                             | Lifecycle operations and bounded manual wrappers; `TurnPack`, `MemoryTurn`.                                                                                                                                                                                                                                 |
 | [`lifecycle/prefetch.rs`](./lifecycle/prefetch.rs)                                                       | Host adapter over `tinymemory_tools::prefetch::Prefetcher`: the key (workspace, config fingerprint, identity, thread), the per-context cache registry, the tokio runtime port and the turn-pack work.                                                                                                       |
 | [`lifecycle/jobs.rs`](./lifecycle/jobs.rs)                                                               | Host adapter over `tinymemory_tools::queue::JobQueue`: a file `QueueStore` over `memory/jobs.json`, one queue per workspace, the engine and build delay, and the `memory_background` cron run.                                                                                                              |
+| [`lifecycle/memory_block.rs`](./lifecycle/memory_block.rs) | Reads beliefs then learnings for an identity and renders the system prompt's `<memory>` block within a token budget. |
 | [`lifecycle/views.rs`](./lifecycle/views.rs)                                                             | Policy get/set, pack preview, agents list, jobs list/run for the UI.                                                                                                                                                                                                                                        |
 | [`lifecycle/sender.rs`](./lifecycle/sender.rs)                                                           | Maps a channel message's sender to an observed actor.                                                                                                                                                                                                                                                       |
 | [`lifecycle/date_hint.rs`](./lifecycle/date_hint.rs)                                                     | Optional model call that works out which days a turn refers to.                                                                                                                                                                                                                                             |
@@ -323,8 +358,8 @@ trusted call facts; queued writes retain that call's narrower reach.
   `scope::identity_pins` (`scope.rs`): derive and resolve the acting identity
   a turn's run context carries.
 - `lifecycle::prefetch::pre_turn` and `compaction`
-  (`lifecycle/prefetch.rs`): synchronous reads of completed packs plus scoped
-  background refresh. `lifecycle::hooks` contains the underlying operations;
+  (`lifecycle/prefetch.rs`): reads of completed packs plus scoped background
+  refresh, or a deadline-bounded wait for the current message's pack. `lifecycle::hooks` contains the underlying operations;
   `post_turn` is spawned after durable commit.
 - `lifecycle::jobs::enqueue` and `run_due` (`lifecycle/jobs.rs`): the
   background queue.
@@ -360,9 +395,10 @@ forget` tool. `learn` stamps the item with facts the model does not choose:
 - Upstream `tinymemory_api::Error` values map at the RPC boundary ([`error.rs`](./error.rs)):
   every RPC failure carries one of `MEMORY_OFF`,
   `UNSUPPORTED`, `INVALID_REQUEST`, `UNAUTHORIZED`, `INSUFFICIENT_CREDITS`,
-  `UNAVAILABLE` or `ENGINE` in `data.code`. The two account-wide refusals are
-  split out so a caller can tell "top up" and "try later" apart from an
-  engine fault.
+  `PLAN_REQUIRED`, `UNAVAILABLE` or `ENGINE` in `data.code`. The account-wide
+  refusals are split out so a caller can tell "top up", "upgrade" and "try
+  later" apart from an engine fault. `PLAN_REQUIRED` (memory not in the
+  account's plan, a hosted 403) never signs the user out (#8081).
 
 ## RPC / CLI surface
 
@@ -423,7 +459,7 @@ sits in the app directory shared by all accounts
   middleware and the compaction summarizer live under `agent/`.
 - Chat transcripts are owned by `threads`; this folder only reads them for
   backfill and forgets their memory on delete.
-- Credentials come from `security::credentials` and the host's session
+- Credentials come from `credentials` and the host's session
   owner. The core does not sign in or refresh anything here.
 - Cron scheduling is `cron`'s; this folder only handles the due events.
 

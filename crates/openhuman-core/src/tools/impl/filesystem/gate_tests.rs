@@ -1,6 +1,6 @@
 //! The filesystem tools driven through the real [`SecurityPolicy`] adapter.
 //!
-//! The tools' own behavior is tested in `tinytools_std::filesystem` against a
+//! The tools' own behavior is tested in `tinyagents_harness_tools::fs::filesystem` against a
 //! fake gate. What can only be tested here is the policy semantics the adapter
 //! exposes to them: the autonomy tiers, the workspace boundary, symlink
 //! escapes, the action budget, the approval flag, and the per-call workspace
@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::json;
-use tinytools::{Tool, ToolCallOptions, ToolRunContext, WorkspaceDescriptor};
-use tinytools_std::filesystem::{
+use tinyagents_harness_tools::fs::filesystem::{
     ApplyPatchTool, CsvExportTool, EditFileTool, FileReadTool, FileWriteTool, FsGate,
     GitOperationsTool, GlobTool, GrepTool, ListFilesTool,
 };
+use tinytools::{Tool, ToolCallOptions, ToolRunContext, WorkspaceDescriptor};
 
 use crate::security::{AutonomyLevel, SecurityPolicy};
 use tinytools::status::POLICY_BLOCKED_MARKER;

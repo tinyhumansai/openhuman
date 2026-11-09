@@ -96,6 +96,24 @@ impl Provider {
         }
     }
 
+    /// Set provider-specific defaults on this routed provider. Requests may
+    /// override these values by key.
+    pub fn provider_options(mut self, options: serde_json::Value) -> Self {
+        if let Some(route) = self.route.as_mut() {
+            route.provider_options = Some(options);
+        }
+        self
+    }
+
+    /// Set the reasoning effort used for this provider's model, including
+    /// runtime-owned scheduled work.
+    pub fn reasoning_effort(mut self, effort: tinyinference_llm::model::ReasoningEffort) -> Self {
+        if let Some(route) = self.route.as_mut() {
+            route.reasoning_effort = Some(effort);
+        }
+        self
+    }
+
     /// Use whatever inference the machine's own configuration resolves to —
     /// the account's managed backend, or a local Ollama / LM Studio, or a BYOK
     /// provider.

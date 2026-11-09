@@ -59,7 +59,13 @@ const waitForAuthSettled = (): Promise<void> =>
   });
 
 vi.mock('../../lib/coreState/store', () => ({
-  getCoreStateSnapshot: () => ({ isBootstrapping: false, snapshot: { sessionToken: null } }),
+  // Report the refreshed snapshot as already committed (currentUser + sessionToken)
+  // so the listener's post-login commit poll observes it at once instead of
+  // running out its real 15 s deadline in every successful-login test.
+  getCoreStateSnapshot: () => ({
+    isBootstrapping: false,
+    snapshot: { sessionToken: 'stored-jwt', currentUser: { id: 'user-1' } },
+  }),
   patchCoreStateSnapshot: vi.fn(),
 }));
 
@@ -435,6 +441,25 @@ describe('desktopDeepLinkListener', () => {
       expect(state.isProcessing).toBe(false);
     } finally {
       window.removeEventListener('core-state:session-token-updated', sessionTokenUpdated);
+    }
+  });
+
+  it('does not install the deep-link simulator in a shipped (non dev-like) build', async () => {
+    const win = window as Window & { __simulateDeepLink?: unknown };
+    delete win.__simulateDeepLink;
+    vi.resetModules();
+    vi.doMock('../config', async importOriginal => ({
+      ...(await importOriginal<typeof import('../config')>()),
+      IS_DEV_LIKE: false,
+    }));
+    try {
+      const { setupDesktopDeepLinkListener: setupShipped } =
+        await import('../desktopDeepLinkListener');
+      await setupShipped();
+      expect(win.__simulateDeepLink).toBeUndefined();
+    } finally {
+      vi.doUnmock('../config');
+      vi.resetModules();
     }
   });
 

@@ -1,6 +1,8 @@
+#![cfg(feature = "storage-sqlite")]
+
 use super::*;
 use crate::cron::client::testing as cron_store;
-use crate::storage::MemoryStorage;
+use crate::storage::test_support::sqlite_backend;
 
 fn copy_tree(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
@@ -27,9 +29,9 @@ fn run_with_imports_legacy_cron_jobs_whatever_the_flows_gate() {
         workspace_dir: dir.path().to_path_buf(),
         ..Config::default()
     };
-    let backend: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let backend = sqlite_backend().unwrap();
 
-    let reports = run_with(&backend, &config);
+    let reports = run_with(&backend.backend, &config);
     let cron = reports
         .iter()
         .find(|report| report.domain == CRON_DOMAIN)
@@ -38,6 +40,6 @@ fn run_with_imports_legacy_cron_jobs_whatever_the_flows_gate() {
         Outcome::Imported { written, .. } => assert!(*written > 0),
         other => panic!("expected the cron jobs to import, got {other:?}"),
     }
-    let jobs = cron_store::list_jobs(&backend, &Scope::local()).unwrap();
+    let jobs = cron_store::list_jobs(&backend.backend, &Scope::local()).unwrap();
     assert!(!jobs.is_empty());
 }

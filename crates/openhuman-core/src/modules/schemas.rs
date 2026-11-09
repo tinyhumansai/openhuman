@@ -15,7 +15,9 @@ use std::sync::Arc;
 use tinycomputer_bus::browser::SessionOptions;
 
 use super::ops;
-use crate::core::all::{ControllerFuture, RegisteredController};
+use crate::core::all::{
+    BoundRegisteredController, ControllerEntry, ControllerFuture, RegisteredController,
+};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -56,6 +58,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_computer_status,
         },
     ]
+}
+
+pub(crate) fn all_controller_entries() -> Vec<ControllerEntry> {
+    all_registered_controllers()
+        .into_iter()
+        .map(|controller| {
+            if controller.schema.method_name() == "modules.computer_status" {
+                return computer_status_controller_entry();
+            }
+            ControllerEntry::legacy(controller)
+        })
+        .collect()
 }
 
 pub fn schemas(function: &str) -> ControllerSchema {
@@ -269,12 +283,7 @@ fn handle_browser_forget_sites(ctx: DispatchCtx, params: Map<String, Value>) -> 
 }
 
 fn handle_computer_status(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let load = params.get("load").and_then(Value::as_bool).unwrap_or(false);
-        let config = ctx.load_config().await?;
-        crate::core::runtime::components::require_config(&config, "computer")?;
-        controller_value(super::computer::status(&config, load).await)
-    })
+    computer_status_controller_entry().invoke(ctx, params)
 }
 
 fn controller_value(value: impl serde::Serialize) -> Result<Value, String> {
@@ -329,3 +338,41 @@ fn string_param(params: &Map<String, Value>, key: &str) -> Option<String> {
 #[cfg(test)]
 #[path = "schemas_tests.rs"]
 mod tests;
+
+fn computer_status_load(params: &Map<String, Value>) -> bool {
+    params.get("load").and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn parse_computer_status_params(params: Map<String, Value>) -> Result<bool, String> {
+    Ok(computer_status_load(&params))
+}
+
+fn run_computer_status(ctx: DispatchCtx, load: bool) -> ControllerFuture {
+    Box::pin(async move {
+        let config = ctx.load_config().await?;
+        crate::core::runtime::components::require_config(&config, "computer")?;
+        controller_value(super::computer::status(&config, load).await)
+    })
+}
+
+fn computer_status_controller_entry() -> ControllerEntry {
+    ControllerEntry::bound(BoundRegisteredController::typed(
+        schemas("computer_status"),
+        parse_computer_status_params,
+        run_computer_status,
+    ))
+}
+
+#[cfg(test)]
+pub(crate) fn computer_status_parameter_contract() -> crate::core::all::ControllerParamContract {
+    crate::core::all::ControllerParamContract {
+        method: "modules.computer_status",
+        required: &[],
+        optional: &["load"],
+        examples: vec![
+            serde_json::json!({}),
+            serde_json::json!({"load":false}),
+            serde_json::json!({"load":true}),
+        ],
+    }
+}

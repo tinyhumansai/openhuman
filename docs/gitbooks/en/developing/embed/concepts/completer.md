@@ -52,3 +52,7 @@ Set `CompletionRequest::timeout_ms(120_000)` to bound each physical provider HTT
 A physical timeout is an RPC transport failure, so an explicit `CompletionLadder` can try its next route. By contrast, `Completer::timeout(duration)` bounds the entire logical completion, including repair attempts, and returns terminal `DeadlineExceeded`. Cancellation also stops the ladder without fallback. You can use both bounds when the host needs separate physical and logical limits.
 
 A timed-out physical attempt has unknown reported cost. Ladder aggregate cost stays unknown, and a budgeted call keeps its conservative reservation if no authoritative usage arrived. The remaining budget may therefore refuse a fallback before it sends another request. See the [routing guide](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/ROUTING.md) for the explicit ladder API.
+
+## Provider dispatch observation
+
+Attach `Completer::physical_observer` to receive one content-free start and terminal outcome for each provider invocation. The observer runs inside budget admission, so a request refused by the budget produces no dispatch event. A dropped in-flight request reports cancellation; terminal outcomes carry duration and provider-reported usage when available. The existing `CompletionObserver` remains a logical completion hook and still fires once for the whole call, including structured repair attempts.

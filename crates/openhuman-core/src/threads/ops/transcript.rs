@@ -3,7 +3,8 @@
 use super::support::{counts, envelope, transcript_store};
 use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
-use crate::threads::{ApiEnvelope, PaginationMeta};
+use crate::threads::{store as conversations, ApiEnvelope, PaginationMeta};
+use tinyagents_session::transcript::view::DisplayItem;
 
 /// Request for [`transcript_get`]: the thread to project, plus newest-first
 /// pagination controls. `cursor` is the opaque token from a prior page's
@@ -33,10 +34,11 @@ pub async fn transcript_get(
     let locator = transcript_store(ctx, &thread_id).await?.locator();
     let cursor = request.cursor.clone();
     let limit = request.limit;
-    let page = tokio::task::spawn_blocking(move || {
+    let page_thread_id = thread_id.clone();
+    let mut page = tokio::task::spawn_blocking(move || {
         tinyagents_session::transcript::view::get_page_in(
             locator.as_ref(),
-            &thread_id,
+            &page_thread_id,
             None,
             cursor.as_deref(),
             limit,
@@ -44,6 +46,7 @@ pub async fn transcript_get(
     })
     .await
     .map_err(|e| format!("transcript page task: {e}"))?;
+    attach_voice_note_metadata(ctx, &thread_id, &mut page.items).await?;
     let counts = counts([
         ("items", page.items.len()),
         ("total", page.total),
@@ -61,6 +64,90 @@ pub async fn transcript_get(
         count: page.total,
     });
     Ok(envelope(page, Some(counts), pagination))
+}
+
+/// Add voice-note references from the thread's durable UI rows to the
+/// transcript projection. Conversation rows own UI-only metadata; copying it
+/// into TinyAgents' transcript would change the frozen model history.
+async fn attach_voice_note_metadata(
+    ctx: &DispatchCtx,
+    thread_id: &str,
+    items: &mut [DisplayItem],
+) -> Result<(), String> {
+    let workspace_dir = ctx
+        .load_config()
+        .await
+        .map_err(|error| format!("load config for voice-note projection: {error}"))?
+        .workspace_dir;
+    let rows =
+        conversations::blocking::get_messages(ctx.clone(), workspace_dir, thread_id.to_string())
+            .await?;
+
+    for item in items {
+        let (content, sender, request_id, projected_metadata) = match item {
+            DisplayItem::UserMessage {
+                content,
+                request_id,
+                extra_metadata,
+                ..
+            } => (
+                content.as_str(),
+                "user",
+                request_id.as_deref(),
+                extra_metadata,
+            ),
+            DisplayItem::AssistantMessage {
+                content,
+                request_id,
+                extra_metadata,
+                ..
+            } => (
+                content.as_str(),
+                "agent",
+                request_id.as_deref(),
+                extra_metadata,
+            ),
+            _ => continue,
+        };
+
+        let matching_rows = rows
+            .iter()
+            .filter(|row| row.sender == sender)
+            .filter(|row| {
+                let row_request_id = row
+                    .extra_metadata
+                    .get("requestId")
+                    .and_then(serde_json::Value::as_str);
+                match (request_id, row_request_id) {
+                    // A request id identifies the exact turn even when the
+                    // transcript decorates the user text with model context.
+                    // Assistant turns may contain several messages, so their
+                    // content still selects the persisted final reply row.
+                    (Some(projected), Some(stored)) => {
+                        projected == stored && (sender == "user" || row.content == content)
+                    }
+                    // Legacy rows have no turn identity, so use exact content
+                    // only when both sides are legacy.
+                    (None, None) => row.content == content,
+                    // A modern transcript item cannot fall back to a different
+                    // or missing row request id. Legacy rows match only legacy
+                    // items, and the unique-content check below stays strict.
+                    _ => false,
+                }
+            })
+            .collect::<Vec<_>>();
+        if matching_rows.len() != 1 {
+            continue;
+        }
+        let Some(voice_note) = matching_rows[0].extra_metadata.get("voiceNote") else {
+            continue;
+        };
+        let metadata = projected_metadata.get_or_insert_with(|| serde_json::json!({}));
+        if let Some(object) = metadata.as_object_mut() {
+            object.insert("voiceNote".into(), voice_note.clone());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

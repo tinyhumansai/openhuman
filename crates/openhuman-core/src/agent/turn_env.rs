@@ -18,8 +18,8 @@ use std::sync::Arc;
 use tinyagents_harness::cancel::CancellationToken;
 use tinyagents_harness::turn_deadline::TurnDeadline;
 
-use crate::agent::tinyagents::budget::ModelBudget;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
+use tinyagents_harness::cost::ModelBudget;
 
 /// Per-turn values an entry point hands to the session it runs.
 ///
@@ -27,6 +27,12 @@ use crate::agent::tinyagents::host::OpenHumanRunContext;
 /// turn exactly as it ran before any host policy existed.
 #[derive(Clone, Default)]
 pub struct HostTurnEnv {
+    /// Host-issued media refs belonging only to this external turn.
+    pub(crate) native_staged_parts: Vec<tinychannels_bus::ContentPart>,
+    /// Provider message identity used when binding staged media after commit.
+    pub(crate) native_message_id: Option<String>,
+    /// Root-only cleanup/commit state for the staged native refs above.
+    pub(crate) native_staged_lease: Option<crate::threads::attachments::NativeStagedLease>,
     /// Exact child-process environment values supplied by the embedding host.
     ///
     /// The map is carried through the run context so module-backed shell
@@ -35,6 +41,9 @@ pub struct HostTurnEnv {
     /// Shared model-spend ledger and per-call bounds every model call of the
     /// turn tree is charged against.
     pub model_budget: Option<ModelBudget>,
+    /// Shared physical-dispatch policy for this turn and its synchronous or
+    /// detached children.
+    pub dispatch_admission: Option<Arc<dyn super::tinyagents::budget::PhysicalDispatchAdmission>>,
     /// A narrower model-directed delegation depth than the product ceiling.
     pub spawn_depth_limit: Option<usize>,
     /// The caller's cancellation, shared with every child run. `None` runs the
@@ -77,8 +86,11 @@ pub struct HostTurnEnv {
 impl std::fmt::Debug for HostTurnEnv {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HostTurnEnv")
+            .field("native_staged_parts", &self.native_staged_parts.len())
+            .field("has_native_message_id", &self.native_message_id.is_some())
             .field("command_environment", &self.command_environment.is_some())
             .field("model_budget", &self.model_budget.is_some())
+            .field("dispatch_admission", &self.dispatch_admission.is_some())
             .field("spawn_depth_limit", &self.spawn_depth_limit)
             .field("cancellation", &self.cancellation.is_some())
             .field("turn_deadline", &self.turn_deadline.is_some())

@@ -31,13 +31,16 @@ pub(super) async fn load_write_config(
     }
 }
 
-pub(super) fn enforce_write_policy_for_config(
+pub(super) async fn enforce_write_policy_for_config(
     tool_name: &str,
     config: &Config,
 ) -> Result<(), ToolCallError> {
     let policy =
         SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
-    match policy.enforce_tool_operation(ToolOperation::Act, tool_name) {
+    match policy
+        .enforce_tool_operation(ToolOperation::Act, tool_name)
+        .await
+    {
         Ok(()) => Ok(()),
         Err(message) => {
             log::debug!(

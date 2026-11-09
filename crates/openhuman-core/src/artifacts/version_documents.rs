@@ -14,10 +14,11 @@
 //! Only the records move. A file version's bytes stay in a file
 //! (`ArtifactVersion::file`), as the legacy card's do.
 //!
-//! The first call of a process imports the records an earlier build kept as
-//! `<workspace>/artifacts/versioned/<id>.json` (once per backend instance,
-//! scope and workspace). Only absent records are written, so the import never
-//! overwrites a newer one and is safe to repeat; deleting an artifact removes
+//! An explicit artifact call imports the records an earlier build kept as
+//! `<workspace>/artifacts/versioned/<id>.json` through its supplied scope.
+//! Imports write only absent records, so they never overwrite a newer one and
+//! are safe to repeat. The compatibility constructor uses the current scope
+//! and retains its once-per-backend optimization; deleting an artifact removes
 //! its legacy file first, so a restart does not bring it back.
 
 use std::path::{Path, PathBuf};
@@ -32,7 +33,6 @@ use super::storage_schema::{version_body, version_record, VERSIONS};
 use crate::storage::documents::Repo;
 use crate::storage::schema_support::key_of;
 use crate::storage::DocumentStoreExt;
-
 const DOMAIN: &str = "artifacts::versions";
 
 fn collections() -> Vec<CollectionSpec> {
@@ -43,6 +43,7 @@ fn collections() -> Vec<CollectionSpec> {
 #[derive(Clone, Debug)]
 pub struct DocumentArtifactStore {
     workspace_dir: PathBuf,
+    scoped: Option<crate::storage::Storage>,
 }
 
 impl DocumentArtifactStore {
@@ -50,6 +51,16 @@ impl DocumentArtifactStore {
     pub fn new(workspace_dir: impl Into<PathBuf>) -> Self {
         Self {
             workspace_dir: workspace_dir.into(),
+            scoped: None,
+        }
+    }
+
+    /// The version records over the same explicit tenant scope as this
+    /// artifact service's file store.
+    pub fn over(workspace_dir: impl Into<PathBuf>, scoped: &crate::storage::Storage) -> Self {
+        Self {
+            workspace_dir: workspace_dir.into(),
+            scoped: Some(scoped.clone()),
         }
     }
 
@@ -61,7 +72,10 @@ impl DocumentArtifactStore {
     /// The repo for this call (resolved here, in the caller's context, for its
     /// scope), after the one-time legacy import.
     async fn repo(&self) -> Result<Repo> {
-        let repo = Repo::current_for(&self.workspace_dir, DOMAIN, collections)?;
+        let repo = match &self.scoped {
+            Some(scoped) => Repo::over(scoped, DOMAIN, collections),
+            None => Repo::current_for(&self.workspace_dir, DOMAIN, collections)?,
+        };
         let legacy = self.legacy_dir();
         on_blocking(repo.clone(), move |repo| {
             let key = legacy.display().to_string();
@@ -138,7 +152,7 @@ impl ArtifactStore for DocumentArtifactStore {
                 Ok(()) => {}
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
                 Err(err) => {
-                    return Err(err).with_context(|| format!("remove {}", legacy.display()))
+                    return Err(err).with_context(|| format!("remove {}", legacy.display()));
                 }
             }
         }

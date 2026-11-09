@@ -241,7 +241,7 @@ async fn billing_calls_send_schema_current_requests() {
     }
 
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
     get_transactions(&config, None, None).await.unwrap();
     top_up_credits(&config, 5.0, Some(" Coinbase ".into()))
         .await
@@ -270,7 +270,7 @@ async fn billing_calls_send_schema_current_requests() {
 #[tokio::test]
 async fn update_card_rejects_non_object_payload() {
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, "http://127.0.0.1:9");
+    let config = test_support::signed_in(&tmp, "http://127.0.0.1:9").await;
     let err = update_card(&config, "pm_1", json!([1])).await.unwrap_err();
     assert_eq!(err, "card update payload must be an object");
 }

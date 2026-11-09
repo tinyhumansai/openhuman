@@ -1,6 +1,5 @@
 id = "video_agent"
 display_name = "Video Creator"
-delegate_name = "create_video"
 when_to_use = "Video-generation specialist: short clips from a prompt, or animate a supplied image. Route make/generate-a-video and animate-this-image requests here. Takes a few minutes, then saves the clip to the configured Files folder and returns its local path; paths from earlier media calls there can be reused as frames or references."
 temperature = 0.6
 max_iterations = 8

@@ -1,12 +1,14 @@
 //! The prompt of a `session_target: current` run: a fresh session that is shown
 //! a bounded tail of the conversation that created the job, plus a fixed
-//! preamble saying the run is unattended.
+//! preamble saying the run is unattended. Only a job whose prompt opts into
+//! silence ([`job_allows_no_reply`]) is offered `NO_REPLY`.
 
+use super::origin_delivery::job_allows_no_reply;
 use crate::config::Config;
 use crate::core::runtime::DispatchCtx;
 use {
-    crate::cron::channel_bridge, tinyflows_bus::schedule::types::CronJob,
-    tinyflows_bus::schedule::types::JobOrigin,
+    tinyflows_bus::schedule::types::CronJob, tinyflows_bus::schedule::types::JobOrigin,
+    tinyflows_bus::schedule::ChannelSessionIdentity,
 };
 
 /// At most this many trailing messages of the origin conversation.
@@ -14,8 +16,12 @@ pub(crate) const CONTEXT_MAX_MESSAGES: usize = 10;
 /// At most this many characters across the whole tail; the newest are kept.
 pub(crate) const CONTEXT_MAX_CHARS: usize = 1400;
 
-/// Fixed preamble for an unattended scheduled run.
-pub(crate) const UNATTENDED_PREAMBLE: &str = "This is a scheduled run, not a live chat. Your final reply is delivered to the user as-is. If there is nothing worth sending, reply exactly NO_REPLY.";
+/// Preamble for an unattended run that must deliver: the user asked to
+/// receive this message.
+pub(crate) const DELIVERING_PREAMBLE: &str = "This is a scheduled run, not a live chat. The user asked to receive this message, and your final reply is delivered to them as-is. Always reply with the message itself.";
+
+/// Preamble for an unattended run whose task allows sending nothing.
+pub(crate) const CONDITIONAL_PREAMBLE: &str = "This is a scheduled run, not a live chat. Your final reply is delivered to the user as-is. When the task's condition is not met, reply exactly NO_REPLY.";
 
 /// Render the newest messages that fit within `max_messages` / `max_chars` as
 /// `role: text` lines, oldest first. A message that does not fit whole is cut
@@ -85,14 +91,122 @@ async fn origin_messages(
                 }
             }
         }
-        JobOrigin::Channel { history_key, .. } => channel_bridge::history_messages(history_key),
+        JobOrigin::Channel {
+            channel_session: Some(identity),
+            channel,
+            ..
+        } => match validated_channel_session(ctx, config, channel, identity) {
+            Ok((session_key, agent_id, tenant)) => {
+                let Some(core) = ctx.core() else {
+                    tracing::warn!("[cron] channel origin has no resolved core context");
+                    return Vec::new();
+                };
+                let locator = crate::storage::sessions::transcripts_or_files_in(
+                    core,
+                    &crate::storage::sessions::agent_key_for(&tenant, &agent_id),
+                    &config.workspace_dir,
+                );
+                let session =
+                    tinyagents_session::transcript::SessionRef::scoped(session_key, agent_id);
+                let head = locator.head_generation(&session);
+                locator
+                    .read_session_transcript(&head)
+                    .and_then(|read| read.read_session().ok().flatten())
+                    .map(|history| {
+                        history
+                            .messages
+                            .into_iter()
+                            .filter_map(|message| {
+                                let role = match message.role.as_str() {
+                                    "user" => "user",
+                                    "assistant" => "assistant",
+                                    _ => return None,
+                                };
+                                Some((role.to_string(), message.content))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+            Err(error) => {
+                tracing::warn!(%error, "[cron] refusing unscoped channel origin context");
+                Vec::new()
+            }
+        },
+        JobOrigin::Channel { .. } => Vec::new(),
     }
 }
 
-/// Prompt for a `current` run: tagged task, unattended preamble, the bounded
-/// context tail (when there is one), then the task itself.
-pub(crate) fn compose_current_prompt(job_id: &str, name: &str, prompt: &str, tail: &str) -> String {
-    let mut out = format!("[cron:{job_id} {name}] {UNATTENDED_PREAMBLE}\n\n");
+/// Validate persisted channel identity claims against the current callback
+/// tenant and the config-owned channel-to-agent selection.
+pub(super) fn validated_channel_session(
+    ctx: &DispatchCtx,
+    config: &Config,
+    channel: &str,
+    identity: &ChannelSessionIdentity,
+) -> Result<(String, String, crate::core::runtime::Tenant), String> {
+    let tenant = ctx.tenant().map_err(|error| error.to_string())?;
+    let tenant_scope = crate::core::runtime::tenant_key(&tenant, "");
+    if identity.tenant_key != tenant_scope {
+        return Err("channel origin belongs to a different tenant".into());
+    }
+    let provider = tinychannels_bus::provider_id(channel);
+    let account_id = identity
+        .account_id
+        .as_deref()
+        .filter(|account| !account.trim().is_empty())
+        .ok_or_else(|| "channel origin has no configured account identity".to_string())?;
+    if identity.provider != provider
+        || tinychannels_bus::provider_id(account_id) != provider
+        || identity.session_key.trim().is_empty()
+        || identity.agent_id.trim().is_empty()
+        || identity.conversation.id.trim().is_empty()
+    {
+        return Err("channel origin identity does not match its trusted route".into());
+    }
+    let configured_agent = if tenant.profile.is_some() {
+        "orchestrator"
+    } else {
+        config
+            .agent
+            .channel_agents
+            .get(channel)
+            .or_else(|| config.agent.channel_agents.get(provider))
+            .map(|agent| agent.trim())
+            .filter(|agent| !agent.is_empty())
+            .unwrap_or("")
+    };
+    let selected_agent = if configured_agent.is_empty() {
+        crate::web_chat::pick_target_agent_id(config)
+    } else {
+        configured_agent.to_string()
+    };
+    if selected_agent != identity.agent_id {
+        return Err("channel origin agent no longer matches its configured route".into());
+    }
+    Ok((
+        crate::core::runtime::tenant_key(&tenant, &identity.session_key),
+        identity.agent_id.clone(),
+        tenant,
+    ))
+}
+
+/// Prompt for a `current` run: tagged task, unattended preamble (the
+/// conditional one when `allows_no_reply`), the bounded context tail (when
+/// there is one), then the task itself.
+pub(crate) fn compose_current_prompt(
+    job_id: &str,
+    name: &str,
+    prompt: &str,
+    tail: &str,
+    allows_no_reply: bool,
+) -> String {
+    let preamble = if allows_no_reply {
+        CONDITIONAL_PREAMBLE
+    } else {
+        DELIVERING_PREAMBLE
+    };
+    let mut out = format!("[cron:{job_id} {name}] {preamble}\n\n");
     if !tail.is_empty() {
         out.push_str("Recent conversation this task was created in (context only):\n");
         out.push_str(tail);
@@ -129,12 +243,14 @@ pub(crate) async fn build_run_prompt(
                 }
                 None => String::new(),
             };
+            let allows_no_reply = job_allows_no_reply(job);
             tracing::debug!(
                 job_id = %job.id,
                 tail_chars = tail.chars().count(),
+                allows_no_reply,
                 "[cron] composed current-session prompt"
             );
-            compose_current_prompt(&job.id, name, &prompt, &tail)
+            compose_current_prompt(&job.id, name, &prompt, &tail, allows_no_reply)
         }
     }
 }

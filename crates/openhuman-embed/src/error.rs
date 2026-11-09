@@ -55,6 +55,17 @@ pub enum CoreError {
         /// Refusal including spend so far and outstanding reservations.
         source: crate::budget::BudgetExceeded,
     },
+    /// Physical model dispatch refused by the host before provider invocation.
+    #[error("{method}: {source}")]
+    DispatchAdmission {
+        /// Method that attempted the call.
+        method: &'static str,
+        /// Typed host policy refusal.
+        #[source]
+        source: crate::budget::DispatchRefusal,
+        /// Usage from completed calls in this logical completion, if any.
+        usage: Option<crate::complete::CompletionUsage>,
+    },
     /// The host cancelled this turn through its cancellation handle.
     #[error("{method}: turn cancelled")]
     TurnCancelled {
@@ -207,6 +218,7 @@ impl CoreError {
             | CoreError::InsecureRoute { method, .. }
             | CoreError::InvalidRoute { method }
             | CoreError::AgentRemoved { method, .. }
+            | CoreError::DispatchAdmission { method, .. }
             | CoreError::TurnCancelled { method } => method,
         }
     }
@@ -223,6 +235,7 @@ impl CoreError {
         matches!(
             self,
             CoreError::BudgetExceeded { .. }
+                | CoreError::DispatchAdmission { .. }
                 | CoreError::Domain {
                     expected_user_state: true,
                     ..

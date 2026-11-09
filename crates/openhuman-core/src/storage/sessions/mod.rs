@@ -14,23 +14,29 @@
 //! OpenHuman runs one runtime per process. With nothing installed, the core
 //! keeps today's on-disk layout.
 
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, LazyLock, PoisonError, RwLock};
 
 use tinyagents_session::port::{AgentStores, SessionStoreProvider};
 
+mod host_stores;
 mod rebound;
 mod tenant_router;
-mod workspace;
 
+pub use host_stores::{
+    artifact_blobs_for, artifact_scoped_for_in, attachment_stash_for, current_documents_for,
+    default_turn_states_for, ledger_for, provider_for_workspace, provider_for_workspace_in,
+    release_workspace, release_workspace_defaults, require_ledger, session_scope, status_store_for,
+    stores_for, stores_or_ephemeral, turn_states_for, with_ledger, with_ledger_async,
+    WorkspaceSessionStores,
+};
 pub use rebound::{rebind_all, ReboundSessionStores, StoreRegistry};
 pub use tenant_router::TenantSessionStores;
-pub use workspace::{
-    artifact_blobs_for, attachment_stash_for, current_documents_for, default_turn_states_for,
-    ledger_for, provider_for_workspace, release_workspace, release_workspace_defaults,
-    require_ledger, session_scope, status_store_for, stores_for, stores_or_ephemeral,
-    turn_states_for, with_ledger, with_ledger_async, WorkspaceSessionStores,
-};
+
+/// Drops cached stores for a profile after its lease is released. Existing
+/// handles retain their original fence; a later profile open gets fresh ones.
+pub fn release_profile(profile: &str) {
+    rebound::release_profile(profile);
+}
 
 static PROVIDER: LazyLock<RwLock<Option<Arc<dyn SessionStoreProvider>>>> =
     LazyLock::new(|| RwLock::new(None));
@@ -179,69 +185,17 @@ pub fn transcripts_or_files_in(
     }
 }
 
-/// The workspace stores this process holds open, so repeat lookups share one
-/// backend ([`release_workspace_stores`] drops them for a data reset).
-static OPEN_WORKSPACE_STORES: LazyLock<
-    Mutex<HashMap<(std::path::PathBuf, String), tinyagents_session::port::WorkspaceStores>>,
-> = LazyLock::new(Mutex::default);
-
-/// Drops the workspace transcript stores held open by [`workspace_transcripts`].
-pub fn release_workspace_stores() {
-    OPEN_WORKSPACE_STORES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clear();
-}
-
-/// Drops the workspace transcript stores held open for `workspace_dir` (every
-/// agent's), leaving other workspaces' alone.
-pub fn release_workspace_stores_for(workspace_dir: &std::path::Path) {
-    OPEN_WORKSPACE_STORES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .retain(|(dir, _), _| dir != workspace_dir);
-}
-
-/// `agent_id`'s transcripts for a host that only has a workspace directory:
-/// TinyAgents' `WorkspaceStores` (the driver ports over a SQLite store under
-/// the workspace). It imports the workspace's classic `session_raw/*.jsonl`
-/// files once, read-only, so no file API is involved.
-///
-/// A workspace whose store cannot be opened (read-only disk) degrades to an
-/// in-memory locator for the process rather than failing the turn.
+/// `agent_id`'s transcripts for a host that has a workspace path but no
+/// separately installed provider. The workspace default backend and owner
+/// session collections are used; a refused backend returns refusing stores.
 #[must_use]
 pub fn workspace_transcripts(
     agent_id: &str,
     workspace_dir: &std::path::Path,
 ) -> Arc<dyn tinyagents_session::transcript::TranscriptLocator> {
-    let key = (workspace_dir.to_path_buf(), agent_id.to_string());
-    let mut open = OPEN_WORKSPACE_STORES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    if let Some(stores) = open.get(&key) {
-        return stores.transcripts();
-    }
-    match tinyagents_session::port::WorkspaceStores::open(workspace_dir, agent_id) {
-        Ok(stores) => {
-            log::debug!(
-                "[session_store] transcripts via the workspace store agent={agent_id} import={:?}",
-                stores.import_outcome()
-            );
-            let transcripts = stores.transcripts();
-            open.insert(key, stores);
-            transcripts
-        }
-        Err(error) => {
-            log::error!(
-                "[session_store] workspace store unavailable agent={agent_id} workspace={}: {error:#}; \
-                 transcripts are not kept",
-                workspace_dir.display()
-            );
-            tinyagents_session::port::InMemorySessionStores::new()
-                .for_agent(agent_id)
-                .transcripts
-        }
-    }
+    host_stores::provider_for_workspace(workspace_dir)
+        .for_agent(agent_id)
+        .transcripts
 }
 
 /// The stores of the tenant the current [`CoreContext`] works for, keyed by

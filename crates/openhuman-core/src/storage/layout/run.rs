@@ -491,6 +491,6 @@ pub async fn auto_migrate(config: &Config) -> bool {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "storage-sqlite"))]
 #[path = "run_tests.rs"]
 mod tests;

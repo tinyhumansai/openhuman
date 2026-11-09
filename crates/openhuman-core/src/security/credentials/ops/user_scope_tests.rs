@@ -27,6 +27,7 @@ fn first_user_activation_queues_prelogin_purge_in_the_removed_workspace() {
     let _env = env.with("OPENHUMAN_WORKSPACE", &root);
     let prelogin_workspace = crate::config::pre_login_user_dir(&root).join("workspace");
     let active_workspace = crate::config::user_openhuman_dir(&root, "new-user").join("workspace");
+    crate::storage::local::use_persistent_default_for_test(&prelogin_workspace);
     let ctx = crate::core::runtime::DispatchCtx::unbound();
     assert!(operator_user_activation_allowed());
     assert!(crate::config::read_active_user_id(&root).is_none());

@@ -1,21 +1,14 @@
 use super::*;
-use serde_json::json;
-use tinystoragedrivers::Meta;
 
 #[test]
-fn a_scopes_config_document_keeps_its_sealed_body_under_the_new_name() {
-    let out = documents_v2(vec![SourceRecord {
-        id: "u:alice/agent:x".into(),
-        body: json!({ "toml_enc": "enc2:abcd" }),
-        meta: Meta::unknown(),
-    }])
-    .unwrap();
-    assert_eq!(out[0].collection, CONFIG_COLLECTION);
-    assert_eq!(out[0].id, "u:alice%2Fagent:x");
-    assert_eq!(out[0].body, json!({ "toml_enc": "enc2:abcd" }));
+fn config_collection_has_a_valid_owner_declaration() {
+    let specs = collection_specs();
+    assert_eq!(specs.len(), 1);
+    assert_eq!(specs[0].name, CONFIG_COLLECTION);
+    specs[0].validate().unwrap();
 }
 
 #[test]
-fn the_schema_composes_under_its_owner() {
-    tinystoragedrivers::schema::Registry::compose([storage_schema()]).unwrap();
+fn config_document_ids_remain_scope_derived() {
+    assert_eq!(document_id("u:alice/agent:x").unwrap(), "u:alice%2Fagent:x");
 }

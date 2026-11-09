@@ -73,6 +73,55 @@ fn typed_credit_errors_are_account_wide_but_other_engine_errors_are_not() {
     assert!(!MemoryError::invalid("bad").is_account_wide());
 }
 
+/// #8081: memory not in the plan is its own account-wide user state, from
+/// both TinyMemory wordings, and its RPC error never reads as an expired
+/// session (which signs the user out).
+#[test]
+fn a_plan_refusal_is_plan_required_not_unauthorized() {
+    use tinymemory_api::Error as E;
+    for error in [
+        E::Unauthorized(
+            "[MEMORY_PLAN_REQUIRED] memory API memory/scopes on h: the session expired or the \
+             API key was rejected (HTTP 403 Forbidden); re-authenticate — memory is not \
+             included in this account's plan"
+                .into(),
+        ),
+        E::Engine(
+            "[MEMORY_PLAN_REQUIRED] memory API memory/scopes on h: memory is not included in \
+             this account's plan (HTTP 403 Forbidden)"
+                .into(),
+        ),
+    ] {
+        let plan = MemoryError::from(error);
+        assert_eq!(plan.code(), PLAN_REQUIRED);
+        assert!(plan.is_account_wide());
+        let structured = plan.to_structured();
+        assert!(structured.expected_user_state);
+        assert!(
+            !crate::core::session_expiry::is_session_expired_error(&String::from(plan)),
+            "{}",
+            structured.message
+        );
+    }
+    // A mention of the code that is not the leading code stays an engine failure.
+    let mention = MemoryError::from(E::Engine(
+        "[HTTP_500] memory API recall on h — unexpected [MEMORY_PLAN_REQUIRED] token".into(),
+    ));
+    assert_eq!(mention.code(), ENGINE);
+    assert!(!mention.is_account_wide());
+    let expired = MemoryError::from(E::Unauthorized(
+        "[UNAUTHORIZED] memory API memory/scopes on h: the session expired (HTTP 401)".into(),
+    ));
+    assert_eq!(expired.code(), UNAUTHORIZED);
+    assert_eq!(
+        MemoryError::refusal_from_skip_reason(
+            "unauthorized: [MEMORY_PLAN_REQUIRED] memory API memory/scopes (HTTP 403 Forbidden)"
+        )
+        .map(|e| e.code()),
+        Some(PLAN_REQUIRED)
+    );
+}
+
 #[test]
 fn recall_skip_reasons_recover_only_account_wide_refusals() {
     let code =

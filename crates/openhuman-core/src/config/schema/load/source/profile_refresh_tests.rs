@@ -1,17 +1,26 @@
 use super::*;
 
+#[cfg(feature = "storage-sqlite")]
 #[tokio::test]
 async fn profile_context_conflict_refresh_keeps_host_owned_restrictions() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let _forced = ForcedDocumentSource::new(
-        scoped(&storage, "tenant-profile-refresh"),
+        scoped(storage.as_ref(), "tenant-profile-refresh"),
         Scope::new("tenant-profile-refresh").unwrap(),
         keys(16),
     );
     let operator = CoreContext::for_test(DomainSet::full(), None);
     let saas = crate::core::runtime::SaasConfig::new(tmp.path());
-    let host = crate::profiles::ProfileHost::new(saas, operator);
+    // A storage-backed lease, so the profile fence carries an atomic write
+    // condition: the fenced backend refuses unguarded (file-lease) handles.
+    let fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let backend: Arc<dyn tinystoragedrivers::StorageBackend> = Arc::clone(&fixture.backend);
+    let host = crate::profiles::ProfileHost::with_backend(saas, operator, Some(backend))
+        .unwrap()
+        .with_fences(Arc::new(crate::storage::fence::FenceRegistry::new(
+            crate::profiles::lease::now_ms,
+        )));
     let id = crate::profiles::ProfileId::for_user(
         "profile-refresh",
         crate::profiles::ProfileIdMode::Raw,

@@ -33,8 +33,8 @@ fn lock_slot() -> MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// One running test: a SQLite backend opened on a fresh directory, and the
-/// lock on the process-wide storage slot. Dropping it empties the slot.
+/// One running test: a configured backend and the lock on the process-wide
+/// storage slot. Dropping it empties the slot.
 pub struct Case {
     /// The URL the backend was opened from.
     pub url: String,
@@ -45,11 +45,23 @@ pub struct Case {
 }
 
 impl Case {
-    /// Opens a SQLite backend on a new temp directory.
+    /// Opens a fresh backend on a new temp directory.
+    ///
+    /// The default is SQLite. Set `OPENHUMAN_TEST_STORAGE_BACKEND=memory` to
+    /// run the same host storage end-to-end cases against TSD's memory driver.
     pub fn open() -> Case {
         let lock = lock_slot();
         let data_dir = tempfile::tempdir().expect("temp dir");
-        let url = format!("sqlite:{}", data_dir.path().join("sqlite").display());
+        let url = match std::env::var("OPENHUMAN_TEST_STORAGE_BACKEND").as_deref() {
+            Ok("memory") => "memory".to_string(),
+            Ok("sqlite") | Err(std::env::VarError::NotPresent) => {
+                format!("sqlite:{}", data_dir.path().join("sqlite").display())
+            }
+            Ok(value) => panic!(
+                "unsupported OPENHUMAN_TEST_STORAGE_BACKEND={value:?}; use `memory` or `sqlite`"
+            ),
+            Err(error) => panic!("read OPENHUMAN_TEST_STORAGE_BACKEND: {error}"),
+        };
         let open_url = url.clone();
         // Opened on the storage bridge's runtime, the one the stores use, so
         // the backend's tasks outlive this call.

@@ -7,5 +7,6 @@
 
 pub use openhuman_core::web_chat::{
     publish_web_channel_event, register_approval_surface_subscriber,
-    register_artifact_surface_subscriber, subscribe_web_channel_events, WebChannelEvent,
+    register_artifact_surface_subscriber, subscribe_web_channel_events, ScopedWebEvent,
+    SubagentProgressDetail, WebChannelEvent, WebEventContext,
 };

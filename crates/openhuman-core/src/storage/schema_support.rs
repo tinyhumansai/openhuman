@@ -5,19 +5,98 @@
 //! these read a clock or the environment.
 
 use serde_json::{Map, Value};
-use tinystoragedrivers::schema::Owner;
 use tinystoragedrivers::{Key, StorageError};
 
-/// The owner named `name`.
-///
-/// # Panics
-///
-/// When `name` is not a valid owner. Every caller passes a constant that
-/// `storage_schema_tests` composes into the registry.
-#[must_use]
-pub fn owner(name: &str) -> Owner {
-    #[allow(clippy::expect_used)]
-    Owner::new(name).expect("a constant owner name satisfies the grammar")
+use crate::storage::import::Record;
+
+/// Source row passed through a typed owner import conversion.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct LegacySourceRecord {
+    pub id: String,
+    pub body: Value,
+    pub meta: tinystoragedrivers::Meta,
+}
+
+/// Target row emitted by a typed owner import conversion.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct LegacyTargetRecord {
+    pub collection: String,
+    pub id: String,
+    pub body: Value,
+    pub created_ms: Option<i64>,
+    pub schema: Option<u32>,
+    pub expires_ms: Option<i64>,
+    pub updated_ms: Option<i64>,
+}
+
+impl LegacyTargetRecord {
+    pub fn new(collection: impl Into<String>, id: impl Into<String>, body: Value) -> Self {
+        Self {
+            collection: collection.into(),
+            id: id.into(),
+            body,
+            created_ms: None,
+            schema: None,
+            expires_ms: None,
+            updated_ms: None,
+        }
+    }
+
+    pub fn created_ms(mut self, created_ms: i64) -> Self {
+        self.created_ms = Some(created_ms);
+        self
+    }
+
+    /// Carries source driver metadata through a body-shape conversion.
+    pub fn source_metadata(mut self, source: tinystoragedrivers::Meta) -> Self {
+        self.schema = (source.schema != 0).then_some(source.schema);
+        self.expires_ms = source.expires_ms;
+        self.updated_ms = Some(source.updated_ms);
+        if self.created_ms.is_none() && source.created_ms != 0 {
+            self.created_ms = Some(source.created_ms);
+        }
+        self
+    }
+}
+
+/// Converts one legacy collection using an owner-specific pure transform.
+/// Records from other collections pass through unchanged.
+pub(crate) fn map_legacy_collection<F>(
+    records: Vec<Record>,
+    source_collection: &str,
+    convert: F,
+) -> anyhow::Result<Vec<Record>>
+where
+    F: FnOnce(Vec<LegacySourceRecord>) -> anyhow::Result<Vec<LegacyTargetRecord>>,
+{
+    let mut source = Vec::new();
+    let mut output = Vec::new();
+    for record in records {
+        if record.collection == source_collection {
+            source.push(LegacySourceRecord {
+                id: record.id,
+                body: record.doc,
+                meta: tinystoragedrivers::Meta {
+                    schema: record.schema.unwrap_or_default(),
+                    created_ms: record.created_ms.unwrap_or_default(),
+                    updated_ms: record.updated_ms.unwrap_or_default(),
+                    expires_ms: record.expires_ms,
+                },
+            });
+        } else {
+            output.push(record);
+        }
+    }
+    output.extend(convert(source)?.into_iter().map(|record| Record {
+        collection: record.collection,
+        id: record.id,
+        doc: record.body,
+        created_ms: record.created_ms,
+        schema: record.schema,
+        expires_ms: record.expires_ms,
+        updated_ms: record.updated_ms,
+    }));
+    Ok(output)
 }
 
 /// Unix epoch milliseconds of an RFC 3339 timestamp, `None` when it does not
@@ -50,7 +129,37 @@ pub fn time_ms(body: &Value, field: &str) -> Option<i64> {
 ///
 /// When `part` is empty.
 pub fn key_of(part: &str) -> Result<String, StorageError> {
-    Key::of([part]).map(|key| key.as_str().to_owned())
+    key_of_parts([part])
+}
+
+/// Builds a validated key from logical parts without allowing a part to
+/// introduce a separator or the reserved leading hash marker.
+pub fn key_of_parts<'a>(parts: impl IntoIterator<Item = &'a str>) -> Result<String, StorageError> {
+    let mut encoded = String::new();
+    for (index, part) in parts.into_iter().enumerate() {
+        if part.is_empty() {
+            return Err(StorageError::invalid_input("key parts must not be empty"));
+        }
+        if index != 0 {
+            encoded.push('/');
+        }
+        for ch in part.chars() {
+            match ch {
+                '%' => encoded.push_str("%25"),
+                '/' => encoded.push_str("%2F"),
+                '\0' => encoded.push_str("%00"),
+                '~' => encoded.push_str("%7E"),
+                _ => encoded.push(ch),
+            }
+        }
+    }
+    Key::new(encoded).map(|key| key.as_str().to_owned())
+}
+
+/// Creates an opaque id for a newly generated owner record.
+#[must_use]
+pub fn fresh_key() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
 }
 
 /// `camelCase` as `snake_case`: `authorId` -> `author_id`.

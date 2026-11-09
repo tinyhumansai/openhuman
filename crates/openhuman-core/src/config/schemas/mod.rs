@@ -44,8 +44,6 @@ pub use controllers::{all_controller_schemas, all_registered_controllers};
 // Re-export items that schemas_tests.rs accesses via `use super::*`.
 // The test module is `schemas::tests` so `super::` resolves to `schemas`.
 #[cfg(test)]
-use crate::core::Outcome;
-#[cfg(test)]
 use crate::core::TypeSchema;
 #[cfg(test)]
 use controllers::{
@@ -53,8 +51,7 @@ use controllers::{
 };
 #[cfg(test)]
 use helpers::{
-    deserialize_params, json_output, optional_bool, optional_json, optional_string,
-    required_string, to_json, AutonomySettingsUpdate, LocalAiSettingsUpdate, MemorySettingsUpdate,
+    deserialize_params, AutonomySettingsUpdate, LocalAiSettingsUpdate, MemorySettingsUpdate,
     ModelSettingsUpdate, OnboardingCompletedSetParams, SetBrowserAllowAllParams,
     WorkspaceOnboardingFlagParams, WorkspaceOnboardingFlagSetParams, DEFAULT_ONBOARDING_FLAG_NAME,
 };

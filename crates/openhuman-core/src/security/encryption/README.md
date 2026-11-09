@@ -1,33 +1,29 @@
-# Encryption
+# Secret encryption RPC compatibility surface
 
-AES-256-GCM at-rest crypto for AI memory storage and the encrypt/decrypt RPC surface. Owns the encrypted-payload format, Argon2id password-derived keys, and the data-directory resolver. The `encrypt_secret` / `decrypt_secret` RPCs are thin shims that delegate to the credentials domain: this module is intentionally small and composable, not a key-management service.
+This module preserves the `encryption.encrypt_secret` and
+`encryption.decrypt_secret` RPC names. The handlers delegate to the credentials
+domain, which uses TinySecurity's cipher bus and the host's consent and key
+storage adapters. This module owns no cipher implementation or key material.
 
 ## Public surface
 
-- `pub struct EncryptedPayload` (`core.rs:18-26`): `{ ciphertext, nonce, salt }` triple persisted to disk.
-- `pub struct EncryptionKey` (`core.rs:29-32`): `[u8; 32]` AES-256 key wrapper.
-- `impl EncryptionKey::derive(password: &str, salt: &[u8]) -> Result<Self, String>` (`core.rs:35`): Argon2id with parameters `m=65536, t=3, p=1`.
-- `pub async fn encrypt_secret(config: &Config, plaintext: &str) -> Result<Outcome<String>, String>` (`ops.rs:6`): RPC handler, delegates to `credentials::rpc::encrypt_secret`.
-- `pub async fn decrypt_secret(config: &Config, ciphertext: &str) -> Result<Outcome<String>, String>` (`ops.rs:13`): RPC handler, delegates to `credentials::rpc::decrypt_secret`.
+- `pub async fn encrypt_secret(config: &Config, plaintext: &str) -> Result<Outcome<String>, String>` (`ops.rs:6`): RPC handler, delegates to `credentials::ops::encrypt_secret`.
+- `pub async fn decrypt_secret(config: &Config, ciphertext: &str) -> Result<Outcome<String>, String>` (`ops.rs:13`): RPC handler, delegates to `credentials::ops::decrypt_secret`.
 - RPC `encryption.{encrypt_secret, decrypt_secret}`, defined in [`schemas.rs`](./schemas.rs) (re-exported via `all_encryption_controller_schemas` / `all_encryption_registered_controllers`).
 - Constants: `SALT_LENGTH = 16`, `NONCE_LENGTH = 12`, `KEY_LENGTH = 32` (private but stable parameters).
 
 ## Calls into
 
-- `argon2` crate for `Argon2id` password-derived keys.
-- `aes-gcm` crate for `Aes256Gcm` AEAD.
-- `crates/openhuman-core/src/config/`: `Config` for workspace-relative data directory.
-- `crates/openhuman-core/src/security/credentials/`: `credentials::rpc::{encrypt_secret, decrypt_secret}` carry the actual key-management responsibility.
+- `crates/openhuman-core/src/credentials/`: `credentials::ops::{encrypt_secret, decrypt_secret}` route operations through TinySecurity.
+- `crates/openhuman-core/src/modules/security/`: host-side bus client and callback binding.
 
 ## Called by
 
-- `crates/openhuman-core/src/security/credentials/`: uses the same `EncryptedPayload` / `EncryptionKey` primitives directly when storing per-channel secrets.
 - `crates/openhuman-core/src/core/all.rs`: registers `all_encryption_*` controllers so the shell and CLI can encrypt configuration secrets.
-- Indirect: `crates/openhuman-core/src/memory/`, `crates/openhuman-core/src/channels/`, and `crates/openhuman-core/src/inference/local/` rely on the credentials domain (which in turn uses this layer) for secrets at rest.
 
 ## Tests
 
-- This domain has no `*_tests.rs` siblings; the underlying crypto round-trips are exercised by `crates/openhuman-core/src/security/secret_storage/encrypted_store_tests.rs` and the credentials tests, which both cover encrypt/decrypt happy paths and tampered-ciphertext rejection.
+The owning credentials and SecretStore test modules cover the host's TinySecurity adapter behavior.
 
 ## Further reading
 

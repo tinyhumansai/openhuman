@@ -137,9 +137,15 @@ cd "$(dirname "$0")/../.."
 # 311 -> 315 on 2026-10-20: tinymemory 2.0.0 makes `async-lock`,
 # `event-listener` and `event-listener-strategy` unconditional; see the
 # 338/315/3 entry in `kernel-floor.limits`.
-# 315 -> 298 on 2026-10-21: the flows profile improved after the flows-bus
-# merge (#8159); see the 318/298/3 entry in `kernel-floor.limits`.
-# See kernel-floor.limits.
-EXPECTED_NAMES=298
+# 315 -> 300 on 2026-10-21: the flows profile includes the harness-owned
+# tinyagents-harness-tools API and sysinfo disk diagnostics; see the
+# 320/300/3 entry in `kernel-floor.limits`.
+# 300 -> 303 on 2026-10-24: #8198 adds two names and the TinyStorageDrivers v2
+# split (#8229/#8231) nets one more; see the 331/303/3 entry in
+# `kernel-floor.limits`.
+# 312 -> 305 on 2026-10-30: the module roll-up's upstream ownership split
+# removes dependencies from the always-on flows graph; measured by both cargo
+# tree and dep-sim. See kernel-floor.limits.
+EXPECTED_NAMES=305
 
 exec python3 scripts/dep-sim.py --cut-nothing --expect-names "${EXPECTED_NAMES}"

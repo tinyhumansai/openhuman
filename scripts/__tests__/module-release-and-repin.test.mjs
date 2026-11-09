@@ -100,6 +100,19 @@ test("rewriteRecord takes version, url, archives and digests verbatim from check
   assert.deepEqual(unusedChecksums(src, "tinyx", sums), []);
 });
 
+test("rewriteRecord uses the selected fork release URL when provided", () => {
+  const releaseUrl = "https://github.com/senamakel/tinyx/releases/tag/v0.3.0";
+  const { src } = rewriteRecord(
+    RECORDS,
+    "tinyx",
+    "0.3.0",
+    parseChecksumToml(CHECKSUM),
+    releaseUrl,
+  );
+
+  assert.match(src, new RegExp(`release_url: "${releaseUrl}"`));
+});
+
 test("rewriteRecord refuses a release that lacks an asset, and an unknown id is unchanged", () => {
   const partial = parseChecksumToml(
     `[sha256]\n"tinyx-module-0.3.0-ubuntu-24.04-x86_64.tar.gz" = "${SHA_X}"\n`,
@@ -122,7 +135,14 @@ test("bumpVersion and parseArgs", () => {
   assert.equal(bumpVersion("0.2.9", "minor"), "0.3.0");
   assert.equal(bumpVersion("0.2.9", "major"), "1.0.0");
   assert.throws(() => bumpVersion("0.2.9", "huge"), /--bump/);
-  assert.deepEqual(parseArgs(["tinyx", "--bump", "minor", "--yes"]), { bump: "minor", yes: true, dryRun: false, id: "tinyx" });
+  assert.deepEqual(parseArgs(["tinyx", "--bump", "minor", "--yes"]), {
+    bump: "minor",
+    yes: true,
+    dryRun: false,
+    owner: "tinyhumansai",
+    workflowInput: "bump",
+    id: "tinyx",
+  });
   assert.throws(() => parseArgs([]), /usage/);
   assert.throws(() => parseArgs(["x", "--bump", "no"]), /--bump/);
 });
@@ -212,6 +232,64 @@ test("dispatching a release asks first and a refusal dispatches nothing", async 
   }
 });
 
+test("fork release dispatch targets the selected owner and ref", async () => {
+  const root = tree();
+  const calls = [];
+  const ref = "epic/8131-storage-primitives";
+  try {
+    const res = await repin(
+      {
+        id: "tinyx",
+        owner: "senamakel",
+        ref,
+        workflowInput: "tag",
+        version: "0.3.0",
+        root,
+      },
+      { run: fakeRun(calls), confirm: async () => true, log: () => {} },
+    );
+    assert.equal(res.version, "0.3.0");
+    assert.deepEqual(res.failed, []);
+    assert.ok(
+      calls.some((call) =>
+        JSON.stringify(call) ===
+        JSON.stringify([
+          "gh",
+          "workflow",
+          "run",
+          "release.yml",
+          "-R",
+          "senamakel/tinyx",
+          "--ref",
+          ref,
+          "-f",
+          "tag=v0.3.0",
+        ]),
+      ),
+    );
+    assert.ok(
+      calls.some((call) =>
+        call[0] === "gh" &&
+        call[1] === "run" &&
+        call.includes("--branch") &&
+        call.includes(ref),
+      ),
+      "the helper watches the dispatched fork branch rather than the fork default branch",
+    );
+    assert.ok(
+      calls.some((call) =>
+        call[0] === "gh" &&
+        call[1] === "release" &&
+        call[2] === "download" &&
+        call.includes("senamakel/tinyx"),
+      ),
+      "checksums come from the selected fork repository",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("--dry-run changes and dispatches nothing", async () => {
   const root = tree();
   const calls = [];
@@ -239,4 +317,27 @@ test("a failed pin gate is reported as failed", async () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("repinning assets with optional library pins updates every archive digest", () => {
+  const records = RECORDS.replaceAll(
+    `sha256: "${OLD}",`,
+    `sha256: "${OLD}",\n            library_sha256: None,`,
+  );
+  const { src } = rewriteRecord(records, "tinyx", "0.3.0", parseChecksumToml(CHECKSUM));
+  const target = src.split('id: "tinyx",')[1];
+  assert.ok(target.includes(`sha256: "${SHA_X}"`));
+  assert.ok(target.includes(`sha256: "${SHA_A}"`));
+  assert.ok(!target.includes("tinyx-module-0.2.0"));
+  assert.ok(target.includes("library_sha256: None"));
+  assert.deepEqual(unusedChecksums(src, "tinyx", parseChecksumToml(CHECKSUM)), []);
+  assert.throws(
+    () => rewriteRecord(records.replaceAll("library_sha256: None", `library_sha256: Some("${OLD}")`),
+      "tinyx", "0.3.0", parseChecksumToml(CHECKSUM)),
+    /verified library pins require published library checksums/,
+  );
+  assert.throws(
+    () => rewriteRecord(records, "tinyx", "0.3.0", new Map()),
+    /no entry for/,
+  );
 });

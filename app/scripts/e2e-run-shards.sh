@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 #
-# Local equivalent of the CI shard matrix — runs each suite group as a
-# separate fresh WDIO session, matching `.github/workflows/e2e-reusable.yml`'s
-# `e2e-linux-full` matrix. Mirroring CI exactly is the only way to reproduce
-# CI failures locally: a single shared session that runs all 87 specs hits
-# CEF/esbuild instability after ~30 specs.
+# Local equivalent of the CI shard matrix — each group gets a fresh WDIO
+# session, matching `.github/workflows/e2e-reusable.yml`.
 #
 # Usage (from repo root, inside the openhuman_ci Docker container):
 #   bash app/scripts/e2e-run-shards.sh
@@ -14,12 +11,10 @@
 #     bash -lc "bash app/scripts/e2e-run-shards.sh"
 #
 # Shards mirror the CI matrix in .github/workflows/e2e-reusable.yml:
-#   foundation   = auth, navigation, system
-#   chat         = chat, skills, journeys
-#   integrations = providers, webhooks, notifications
-#   connectors   = connectors
-#   payments     = payments
-#   settings     = settings
+#   foundation  = auth, navigation, system
+#   chat        = chat, skills, journeys
+#   connections = providers, provider-web, connectors
+#   settings    = settings, notifications
 #
 set -uo pipefail
 
@@ -30,12 +25,8 @@ cd "$REPO_ROOT"
 SHARDS=(
   "foundation:auth,navigation,system"
   "chat:chat,skills,journeys"
-  "providers:providers,notifications"
-  "provider-web:provider-web"
-  "webhooks:webhooks"
-  "connectors:connectors"
-  "payments:payments"
-  "settings:settings"
+  "connections:providers,provider-web,connectors"
+  "settings:settings,notifications"
 )
 
 # Allow filtering: `bash e2e-run-shards.sh foundation chat`
@@ -51,6 +42,10 @@ if [ "$#" -gt 0 ]; then
       fi
     done
   done
+  if [ "${#FILTERED[@]}" -ne "${#WANT[@]}" ]; then
+    echo "unknown or duplicate shard requested: ${WANT[*]}" >&2
+    exit 2
+  fi
   SHARDS=("${FILTERED[@]}")
 fi
 

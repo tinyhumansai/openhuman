@@ -41,7 +41,7 @@ through `env!("CARGO_BIN_EXE_test-mcp-stub")`, which makes Cargo build it for
 every test run: [`tests/mcp_registry_e2e.rs`](../../../../tests/mcp_registry_e2e.rs),
 [`tests/mcp_registry_multi_server.rs`](../../../../tests/mcp_registry_multi_server.rs), [`tests/agent_harness_e2e.rs`](../../../../tests/agent_harness_e2e.rs),
 [`tests/json_rpc_e2e.rs`](../../../../tests/json_rpc_e2e.rs), [`tests/in_process/domain_modules_e2e.rs`](../../../../tests/in_process/domain_modules_e2e.rs) and
-[`tests/raw_coverage/tool_registry_approval_raw_coverage_e2e.rs`](../../../../tests/raw_coverage/tool_registry_approval_raw_coverage_e2e.rs).
+[`tests/raw_coverage/tool_registry_approval_e2e.rs`](../../../../tests/raw_coverage/tool_registry_approval_e2e.rs).
 
 ### openhuman-fleet
 

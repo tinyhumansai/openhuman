@@ -1,5 +1,5 @@
 // Self-test for the CI lane flow: scripts/ci/self-hosted/{lanes-plan,lanes}.mjs
-// (run by ci-fast.yml / ci-fast-hosted.yml through ci-lanes.yml).
+// (run by ci-fast-hosted.yml through ci-lanes.yml).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -45,21 +45,6 @@ const ciLanes = fs.readFileSync(
 const ALL = Object.fromEntries(Object.keys(AREA_ENV).map((k) => [k, true]));
 const NONE = Object.fromEntries(Object.keys(AREA_ENV).map((k) => [k, false]));
 const EX63_ENV = { CI_SCRATCH_DIR: "/scratch" };
-
-test("EX63 verifies preinstalled tools before cache setup and validation", () => {
-  const privateJob = ciLanes.slice(
-    ciLanes.indexOf("  ex63:"),
-    ciLanes.indexOf("  plan:"),
-  );
-  const verify = privateJob.indexOf("- name: Verify private runner contract");
-  const cache = privateJob.indexOf("- name: Setup Tinymold");
-  const detect = privateJob.indexOf("- name: Detect changed areas");
-  const start = privateJob.indexOf("- name: Start lanes");
-  assert.ok(verify >= 0 && cache > verify && detect > cache && start > detect);
-  assert.match(privateJob, /bash scripts\/ci\/self-hosted\/verify-runner\.sh/);
-  assert.doesNotMatch(privateJob, /setup-python|apt-get|JQ_SHA256|sccache/);
-  assert.match(privateJob, /Save Tinymold cache[\s\S]*continue-on-error: true/);
-});
 
 const plans = () => [
   buildPlan({ profile: "ex63", areas: ALL, env: EX63_ENV }),
@@ -139,36 +124,40 @@ test("ex63 runs the core's unit tests under nextest; hosted keeps cargo's runner
   );
 });
 
-test("a core-only change still installs the node deps rust-core-coverage's mock backend imports", () => {
-  const coreOnly = { ...NONE, rustCore: true };
-  for (const plan of [
-    buildPlan({ profile: "ex63", areas: coreOnly, env: EX63_ENV }),
-    buildPlan({ profile: "hosted", areas: coreOnly }),
+test("a core-only or storage-only change still installs the node deps rust-core-coverage's mock backend imports", () => {
+  // Both areas arm rust-core-coverage, so both must arm the install it needs.
+  for (const [area, only] of [
+    ["core", { ...NONE, rustCore: true }],
+    ["storage", { ...NONE, storage: true }],
   ]) {
-    const checks = new Map(
-      plan.lanes.flatMap((l) =>
-        l.checks.map((c) => [`${l.name}:${c.name}`, c]),
-      ),
-    );
-    const cov = checks.get("rust-cov:rust-core-coverage");
-    const install = cov.needs
-      .map((n) => checks.get(n.includes(":") ? n : `rust-cov:${n}`))
-      .find((c) => c.run === "pnpm install --frozen-lockfile");
-    assert.ok(
-      install,
-      `${plan.profile}: rust-core-coverage needs a pnpm install`,
-    );
-    assert.equal(install.when, true, `${plan.profile}: that install runs`);
-    // Exactly one install per profile: ex63 lanes share one checkout.
-    const installs = [...checks.values()].filter(
-      (c) => c.when && c.run === "pnpm install --frozen-lockfile",
-    );
-    assert.equal(installs.length, 1, plan.profile);
+    for (const plan of [
+      buildPlan({ profile: "ex63", areas: only, env: EX63_ENV }),
+      buildPlan({ profile: "hosted", areas: only }),
+    ]) {
+      const label = `${area}/${plan.profile}`;
+      const checks = new Map(
+        plan.lanes.flatMap((l) =>
+          l.checks.map((c) => [`${l.name}:${c.name}`, c]),
+        ),
+      );
+      const cov = checks.get("rust-cov:rust-core-coverage");
+      assert.equal(cov.when, true, `${label}: rust-core-coverage runs`);
+      const install = cov.needs
+        .map((n) => checks.get(n.includes(":") ? n : `rust-cov:${n}`))
+        .find((c) => c.run === "pnpm install --frozen-lockfile");
+      assert.ok(install, `${label}: rust-core-coverage needs a pnpm install`);
+      assert.equal(install.when, true, `${label}: that install runs`);
+      // Exactly one install per profile: ex63 lanes share one checkout.
+      const installs = [...checks.values()].filter(
+        (c) => c.when && c.run === "pnpm install --frozen-lockfile",
+      );
+      assert.equal(installs.length, 1, label);
+    }
+    const hosted = buildPlan({ profile: "hosted", areas: only });
+    const sub = selectLanes(hosted, ["rust-cov"]);
+    assert.deepEqual(validatePlan(sub), []);
+    assert.deepEqual(orderProblems(sub), []);
   }
-  const hosted = buildPlan({ profile: "hosted", areas: coreOnly });
-  const sub = selectLanes(hosted, ["rust-cov"]);
-  assert.deepEqual(validatePlan(sub), []);
-  assert.deepEqual(orderProblems(sub), []);
 });
 
 test("core doctests remain outside PR coverage; embed doctests and tui tests run on PRs", () => {
@@ -293,6 +282,7 @@ test("the storage area arms the core coverage lane, which covers every storage d
       false,
       profile,
     );
+
     if (profile === "hosted") {
       assert.deepEqual(
         hostedMatrix(plan).map((g) => g.group),
@@ -340,6 +330,33 @@ test("hosted matrix only spins up groups with active lanes", () => {
     buildPlan({ profile: "hosted", areas: { ...NONE, installPs1: true } }),
   );
   assert.equal(pester.find((g) => g.group === "pester").container, "");
+});
+
+test("a browser-spec-only change runs the full-inventory skip guard without scripts area", () => {
+  const frontendOnly = buildPlan({
+    profile: "hosted",
+    areas: { ...NONE, frontend: true },
+  });
+  assert.equal(
+    frontendOnly.lanes
+      .find((lane) => lane.name === "frontend")
+      .checks.find((check) => check.name === "browser-test-skip-guard").run,
+    "node scripts/ci/check-browser-test-skips.mjs",
+  );
+  assert.equal(
+    frontendOnly.lanes
+      .find((lane) => lane.name === "frontend")
+      .checks.find((check) => check.name === "e2e-runner-ownership")?.run,
+    "pnpm e2e:ownership:check",
+  );
+
+  const filters = fs.readFileSync(
+    path.join(repoRoot, ".github/ci-paths-filter.yml"),
+    "utf8",
+  );
+  const frontendFilter = filters.split("\nscripts:\n")[0];
+  assert.match(frontendFilter, /'app\/test\/\*\*'/);
+  assert.match(frontendFilter, /'scripts\/ci\/check-browser-test-skips\.mjs'/);
 });
 
 test("private lanes reuse checkout targets, preserve mold through RUSTFLAGS resets, and omit wrappers", () => {
@@ -418,6 +435,7 @@ test("private gates-off and Tauri execute equivalent coverage suites with nextes
   const checks = Object.fromEntries(
     plan.lanes.flatMap((l) => l.checks.map((c) => [c.name, c])),
   );
+  assert.match(checks["gate-contract-tests"].run, /core::schema_test_support::/);
   assert.match(
     checks["gate-contract-tests-features"].run,
     /--features modules,mcp,e2e-test-support/,
@@ -1058,7 +1076,10 @@ test("offline examples build in the dev profile so no release artifacts need cle
   for (const plan of plans()) {
     const lint = plan.lanes.find((lane) => lane.name === "rust-lint");
     const examples = lint.checks.find((c) => c.name === "embed-offline-examples");
-    assert.equal(examples.run, "node scripts/run-embed-examples.mjs --profile dev");
+    assert.equal(
+      examples.run,
+      "set -a && . ci-out/test-modules.env && set +a && node scripts/run-embed-examples.mjs --profile dev",
+    );
     assert.equal(
       lint.checks.some((c) => c.name === "release-example-cleanup"),
       false,
@@ -1067,6 +1088,17 @@ test("offline examples build in the dev profile so no release artifacts need cle
       lint.checks.some((c) => /cargo clean|--release/.test(c.run)),
       false,
     );
+  }
+});
+
+test("offline embed examples install staged modules in their own rust-lint job", () => {
+  for (const plan of plans()) {
+    const lint = plan.lanes.find((lane) => lane.name === "rust-lint");
+    const install = lint.checks.find((check) => check.name === "install-test-modules");
+    const examples = lint.checks.find((check) => check.name === "embed-offline-examples");
+    assert.ok(install, `${plan.profile} rust-lint must provision its module artifacts`);
+    assert.match(install.run, /install-test-modules\.sh/);
+    assert.deepEqual(examples.needs, ["install-test-modules"]);
   }
 });
 

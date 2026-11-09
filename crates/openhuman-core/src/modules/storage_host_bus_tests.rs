@@ -53,14 +53,24 @@ async fn a_module_write_under_a_stale_lease_is_fenced_by_the_host() {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
-    let shared: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
-    let clock = Arc::new(AtomicU64::new(0));
+    let shared_fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let shared: Arc<dyn StorageBackend> = Arc::clone(&shared_fixture.backend);
+    let notes_scope = Scope::new("u:acme/module:alpha").unwrap();
+    shared
+        .for_scope(&notes_scope)
+        .unwrap()
+        .documents()
+        .ensure_collection(&CollectionSpec::new("notes"))
+        .await
+        .unwrap();
+    let start_ms = crate::storage::fence::system_now_ms();
+    let clock = Arc::new(AtomicU64::new(start_ms));
     let reading = Arc::clone(&clock);
     let fences = Arc::new(FenceRegistry::new(move || reading.load(Ordering::SeqCst)));
     let ttl = Duration::from_secs(30);
     let leases: Arc<dyn LeaseStore> =
         Arc::new(DocumentLeases::cluster(shared.as_ref(), "node-a", None, ttl).unwrap());
-    let grant_a = leases.acquire("acme", 0).await.unwrap();
+    let grant_a = leases.acquire("acme", start_ms).await.unwrap();
     fences.register(Arc::new(LeaseFence::new(
         Arc::clone(&leases),
         "acme",
@@ -89,7 +99,7 @@ async fn a_module_write_under_a_stale_lease_is_fenced_by_the_host() {
 
     // The lease runs out; the module's next write is refused by the host's fence,
     // and a read is not.
-    clock.store(10 * 60 * 1000, Ordering::SeqCst);
+    clock.store(start_ms + 10 * 60 * 1000, Ordering::SeqCst);
     let result = call(
         &rig,
         &alpha(),
@@ -162,7 +172,7 @@ async fn the_bus_hands_the_host_the_brokers_sender_and_nothing_else() {
         .call("Get", get("notes", "a"))
         .await
         .unwrap();
-    assert_eq!(found["document_id"], "a");
+    assert_eq!(found["id"], "a");
 
     // ...a peer that is not a module is refused with the denial name, not data.
     let refused = documents(&outsider)

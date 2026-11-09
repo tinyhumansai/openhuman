@@ -18,7 +18,11 @@
 //! Budgeted calls currently accept text only. Input bounds use serialized-byte
 //! counts conservatively; multimodal requests fail before dispatch. Choose
 //! bounds that include model framing and the maximum price on allowed routes.
-pub use openhuman_core::agent::tinyagents::budget::ModelBudget;
+pub use openhuman_core::agent::tinyagents::budget::{
+    ControlledDispatchError, DispatchModelOptions, DispatchRefusal, DispatchRefusalReason,
+    PhysicalDispatchAdmission, PhysicalDispatchPermit,
+};
+pub use tinyagents_harness::cost::ModelBudget;
 pub use tinyinference_llm::model::budget::{
     Budget, BudgetExceeded, BudgetSnapshot, CallBudget, Spend, SpendLimits,
 };

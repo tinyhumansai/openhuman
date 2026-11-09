@@ -9,7 +9,9 @@ pub mod scope;
 mod storage_schema;
 pub mod tools;
 pub mod tracker;
-pub use storage_schema::storage_schema;
+pub(crate) use storage_schema::collection_specs;
+#[cfg(feature = "legacy-import")]
+pub(crate) use storage_schema::upgrade_records;
 mod tracker_documents;
 pub mod types;
 

@@ -1,21 +1,21 @@
 ---
 description: >-
-  How to run the end-to-end suites: the WDIO and tauri-driver harness, a spec
-  locally or in Docker, the environment variables, and which lanes run in CI.
+  How to run end-to-end suites: Playwright against the standalone core, WDIO
+  through the native Wry host, local scripts, environment variables and CI lanes.
 icon: vials
 ---
 
 # E2E testing
 
-End-to-end coverage runs in three lanes: a Rust mock-backend suite, a Playwright web suite, and a desktop suite driven through `tauri-driver`. Only the Linux desktop harness runs in CI. macOS and Windows are manual.
+End-to-end coverage uses the Rust mock backend, Playwright in a real browser, and WebDriverIO (WDIO) through the desktop Wry host. Each assertion has one owner: Playwright owns browser-rendered behavior; WDIO owns behavior that requires the native process, window, operating system or Tauri IPC. Only the supported Linux desktop harness runs in CI. macOS and Windows desktop jobs remain disabled until native drivers are available.
 
 ## Overview
 
 Desktop E2E tests use WebDriverIO (WDIO) to drive the app through a single `tauri-driver` (WebDriver) session against its native Wry/WebKit webview:
 
-| Platform  | Driver                         | Port | App format   | Selectors |
-| --------- | ------------------------------ | ---- | ------------ | --------- |
-| Linux     | tauri-driver + WebKitWebDriver | 4444 | Debug binary | CSS / DOM |
+| Platform | Driver                         | Port | App format   | Selectors |
+| -------- | ------------------------------ | ---- | ------------ | --------- |
+| Linux    | tauri-driver + WebKitWebDriver | 4444 | Debug binary | CSS / DOM |
 
 Linux CI drives the debug binary under Xvfb through `tauri-driver`. macOS and Windows have no automated desktop E2E coverage yet. The Chromium-based driver they used is gone, and a native driver (Appium Mac2 on macOS, WinAppDriver on Windows) would have to replace it. `pnpm --filter openhuman-app test:e2e:build` still produces a `.app` bundle on macOS for manual testing, but there is no supported automated session there.
 
@@ -29,11 +29,20 @@ Linux CI drives the debug binary under Xvfb through `tauri-driver`. macOS and Wi
 # Build the E2E app
 pnpm --filter openhuman-app test:e2e:build
 
-# Run every spec in one shared tauri-driver session
+# Run one native spec through the tauri-driver session
 pnpm --filter openhuman-app test:e2e:session
 
-# Run all flows, sharded by suite category
+# Run the native-only flows in the four desktop suite groups
 pnpm --filter openhuman-app test:e2e:all:flows
+
+# List the Playwright units assigned to lane 1 without launching a core
+bash app/scripts/e2e-web-shards.sh --lane=1 --lanes=4 --list
+
+# Run that Playwright lane (fresh core and workspace for each unit)
+bash app/scripts/e2e-web-shards.sh --lane=1 --lanes=4
+
+# Check that spec basenames have one runner owner
+pnpm e2e:ownership:check
 
 # Run a single spec
 bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
@@ -160,22 +169,62 @@ E2E_PORT_BASE=31000 pnpm --filter openhuman-app test:e2e:web
 
 ### Push / PR checks
 
-The default pull-request gate is `.github/workflows/ci-fast.yml`: quality
+The default pull-request gate is `.github/workflows/ci-fast-hosted.yml`: quality
 checks plus the complete unit-test suites for each changed area. No E2E suite
 runs on a pull request to `main`.
 
 `.github/workflows/ci-full.yml` runs on pull requests targeting `release` and
-on every push to it, and carries three E2E lanes:
+on every push to it. Its final gate requires the Playwright matrix, native
+desktop suite and Rust E2E:
 
-| Lane | Job | Platform |
-| --- | --- | --- |
-| Rust mock backend | `rust-e2e` | Linux |
-| Playwright web | `playwright-e2e` | Linux |
-| Desktop | `e2e-desktop`, via `e2e-reusable.yml` | Linux only |
+| Lane              | Job                                   | Platform                                                                            |
+| ----------------- | ------------------------------------- | ----------------------------------------------------------------------------------- |
+| Rust mock backend | `rust-e2e`                            | Linux                                                                               |
+| Playwright web    | `playwright-e2e`                      | Four required Linux jobs, 16 ordinary shards per job plus round-robin special cases |
+| Desktop           | `e2e-desktop`, via `e2e-reusable.yml` | Four Linux suite groups                                                             |
 
-The desktop lane calls the reusable workflow with `run_linux: true`, `run_macos: false` and `run_windows: false`, so only the Linux harness runs. The job's "3 OS" title names the matrix the reusable workflow can run, not the one CI Full asks for.
+Playwright builds its web bundle and standalone core once, then uploads the same artifact to all four required lanes. The required selection runs 110 of the 111 discovered specs: all 48 active browser owners from the consolidation inventory and their assertion recipients remain required, as do every other healthy browser spec. It schedules 64 ordinary shards and nine isolated cases (Connections aliases, Connections deep links, and seven Skills search/install cases), each with its own core and workspace: 73 required units total. A separate `playwright-legacy-diagnostic` job runs the unchanged `aui-tool-result-elements.spec.ts` as one file-atomic unit. Its component compatibility blocker is tracked in [issue #236](https://github.com/senamakel/openhuman/issues/236#issuecomment-6284472501). Only this diagnostic job is advisory; it is excluded from the final gate, while all four required lanes remain strict. The scheduler continues through assigned units to collect failures and exits nonzero if any required unit fails. CI Full therefore runs 74 fresh Playwright units across the required and diagnostic jobs, without claiming the legacy diagnostic passed. Manual Playwright selects all 111 specs strictly, using the same 64 shards and nine isolated cases (73 units); it has no advisory selection.
 
-macOS and Windows desktop E2E therefore have no scheduled coverage on any branch. `.github/workflows/e2e.yml` is a manual dispatch whose `run_macos` and `run_windows` inputs also default to `false`. To get cross-platform desktop signal before a promotion, someone has to opt in. Both stay off until a native driver exists for each platform.
+The desktop lane calls the reusable workflow with `run_linux: true`, `run_macos: false` and `run_windows: false`, so only the Linux harness runs. Linux uses four fresh WDIO sessions: `foundation` (`auth,navigation,system`), `chat` (`chat,skills,journeys`), `connections` (`providers,provider-web,connectors`), and `settings` (`settings,notifications`). Payments and webhooks have no native flows after their browser owners moved to Playwright, so they are absent from the native shard assignments. The consolidation reviewed 51 same-basename native/Playwright pairs; it retained only five narrowly split mixed cases and retired one obsolete offline-banner pair. The native suite also retains 24 preexisting native-only files outside that duplicate inventory, plus `tauri-commands.spec.ts`, whose browser bootstrap checks moved to the Playwright smoke owner while its native IPC checks remain. The 24 native-only files were not assessed for whether they require the desktop host. The reusable workflow applies the same group definitions to its macOS and Windows full-suite jobs, but those jobs are currently disabled.
+
+macOS and Windows desktop E2E therefore have no scheduled coverage on any branch. `.github/workflows/e2e.yml` is a manual dispatch whose `run_macos` and `run_windows` inputs also default to `false`. The older Chromium-based driver depended on CEF/CDP and is unavailable under Wry; do not describe those jobs as active coverage.
+
+### Runner ownership and mixed host cases
+
+Every spec file belongs to one runner. Put browser-rendered UI, browser routes,
+forms, chat rendering and settings persistence in `app/test/playwright/specs/`.
+Keep `app/test/e2e/specs/` for checks that need a live desktop process, a real
+Tauri command, OS notification permission, native deep-link launch, window
+behavior or a core restart. A JSON-RPC call by itself does not make a test a
+desktop test. Keep shared element actions in
+`app/test/e2e/helpers/element-helpers.ts`.
+
+Five files intentionally exist in both runner directories because each side
+proves a different contract:
+
+| File                               | Native WDIO assertion                                                                   | Playwright assertion                                                         |
+| ---------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `smoke.spec.ts`                    | Live Wry window, app chrome and normal embedded-core startup                            | Browser root/chrome, standalone core bootstrap URL/token and RPC             |
+| `login-flow.spec.ts`               | Desktop window and deep-link token handling, including invalid, expired or bypass cases | Browser callback entry, token/profile outcome, browser bypass and onboarding |
+| `auth-access-control.spec.ts`      | Desktop reauthentication and native auth-expiry event delivery                          | Account/billing/logout/revocation UI and authoritative auth state            |
+| `notifications.spec.ts`            | OS permission state and real notification plugin calls                                  | Rendered notification title/body and System Events/empty Alerts UI           |
+| `settings-data-management.spec.ts` | Reset IPC, user-data wipe and embedded-core restart                                     | Clear-data confirmation and cancellation UI                                  |
+
+The executable guard `pnpm e2e:ownership:check` rejects every other duplicate,
+stale exception or missing file. Before adding a spec, decide which runtime owns
+the behavior, search both spec directories for an equivalent flow (including
+renamed files), and add it only to the owning suite. If host and browser cases
+cover distinct behavior, name and document both responsibilities explicitly;
+never keep a second full copy as extra confidence.
+
+The current inventory has 30 native spec files and 111 Playwright spec files,
+with only the five mixed files above shared by basename. The 24 preexisting
+native-only files were outside the duplicate inventory and were not assessed
+for whether they need a desktop host; `tauri-commands.spec.ts` retains the
+native IPC checks described above.
+The offline-banner E2Es were retired because their only UI consumer was removed
+before this baseline; focused connectivity-selector and listener unit tests
+retain the device/backend distinction, and no E2E banner coverage is claimed.
 
 ---
 
@@ -212,22 +261,21 @@ The first Docker build compiles Rust and installs the E2E harness dependencies. 
 
 ## Spec: notifications
 
-The spec `app/test/e2e/specs/notifications.spec.ts` tests notification RPC methods through the in-process core and the Notifications UI page:
-
-- `notification_ingest`, creates a new notification via core RPC
-- `notification_list`, verifies the ingested notification is returned
-- `notification_mark_read`, marks a notification as read
-- `notification_stats`, checks aggregate statistics shape
-- UI: Notifications page renders the integration notifications section (`[data-testid="integration-notifications-section"]`)
-- UI: Notifications page shows the System Events section (`[data-testid="system-events-section"]`)
-
-Run it with:
+The mixed notification cases have separate owners. Playwright verifies the
+visible notification title/body and the System Events/empty Alerts UI. WDIO
+only checks native permission-state values and calls the operating-system
+notification plugin. Run the browser owner through the lane scheduler or run
+the native owner with:
 
 ```bash
 bash app/scripts/e2e-run-spec.sh test/e2e/specs/notifications.spec.ts notifications
 ```
 
-Both the RPC calls and the UI assertions in this spec run inside the same `tauri-driver` session, which supports `browser.execute()`.
+The native suite uses a live `tauri-driver` session; it does not own ordinary
+notification-list RPC or page-rendering assertions. The former connectivity
+banner E2Es were retired because source history removed their only UI consumer
+before the baseline; focused selector and listener unit tests still cover the
+device/backend connectivity distinction. No browser banner coverage is claimed.
 
 ---
 
@@ -252,7 +300,13 @@ For a canonical, inspectable run that drops screenshots, page-source dumps, and 
 bash app/scripts/e2e-agent-review.sh
 ```
 
-Artifacts land in `app/test/e2e/artifacts/<timestamp>-agent-review/`. Full details and the helper API: [`agent-observability.md`](agent-observability.md). Any failing test triggers `wdio.conf.ts`'s `afterTest` hook, which writes `failure-*.png` and `failure-*.source.xml` into the same run dir.
+Artifacts land in `app/test/e2e/artifacts/<timestamp>-agent-review/` by default;
+set `E2E_ARTIFACT_DIR` to override the path. The script passes that directory
+to Playwright as its output path, where the test result and attachments are
+saved. The review case attaches checkpoint screenshots, page HTML, and a
+redacted mock request log with `testInfo.attach`.
+Playwright also retains its configured trace, screenshot, and video artifacts
+on failure. Full details and the helper API: [`agent-observability.md`](agent-observability.md).
 
 ---
 

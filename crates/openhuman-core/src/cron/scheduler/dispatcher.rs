@@ -53,7 +53,7 @@ pub(crate) async fn run_job_now(
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
     let ctx = ctx.clone();
     let config = config.clone();
-    tokio::spawn(async move {
+    spawn_manual_owner(async move {
         let mut reply_tx = Some(reply_tx);
         let result = own_manual_run(ctx, config, job, run_id, wait, delivery, &mut reply_tx).await;
         if let Err(error) = result {
@@ -62,7 +62,7 @@ pub(crate) async fn run_job_now(
             }
             tracing::warn!(%error, "[cron:scheduler] manual worker owner stopped before acknowledgement");
         }
-    });
+    })?;
     reply_rx
         .await
         .map_err(|_| anyhow!("cron manual worker owner stopped before reporting admission"))?
@@ -550,15 +550,42 @@ impl JobDispatcher {
         Ok(dispatched)
     }
 
+    /// Stop the module's scheduler and wait for it, so its scope is free when
+    /// this returns. A failed stop is left to the retrying stop of `Drop`.
+    pub(crate) async fn stop(mut self) {
+        let Some(started) = self.started.take() else {
+            return;
+        };
+        let config = self.binding.config();
+        let stopped = match module::proxy(&config).await {
+            Ok(proxy) => proxy
+                .call::<()>(members::STOP_SCHEDULER, (started.handle.clone(),))
+                .await
+                .map_err(|error| error.wire_message()),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = stopped {
+            tracing::debug!(%error, "[cron:scheduler] StopScheduler failed; retrying on drop");
+            self.started = Some(started);
+        }
+    }
+
     /// Wait for every dispatched job to finish.
     pub(crate) async fn drain(&mut self) {
-        let config = self.binding.config();
-        if self.started.is_none() {
-            return;
-        }
-        if let Err(error) = self.call::<()>(&config, members::DRAIN_SCHEDULER).await {
+        if let Err(error) = self.try_drain().await {
             tracing::warn!(%error, "[cron:dispatch] a dispatched job failed");
         }
+    }
+
+    /// Wait for every dispatched job to finish; errors with the first run that
+    /// could not be executed or recorded, or when the module cannot be
+    /// reached. A job that ran and failed is recorded, not returned.
+    pub(crate) async fn try_drain(&mut self) -> Result<()> {
+        if self.started.is_none() {
+            return Ok(());
+        }
+        let config = self.binding.config();
+        self.call(&config, members::DRAIN_SCHEDULER).await
     }
 }
 
@@ -598,3 +625,24 @@ impl Drop for JobDispatcher {
         });
     }
 }
+
+/// Run manual ownership on the process-lived module runtime. A caller may
+/// stop driving its runtime immediately after receiving the result (including
+/// by entering a synchronous store bridge), while acknowledgement still uses
+/// the shared module connection.
+fn spawn_manual_owner(
+    work: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<tokio::task::JoinHandle<()>> {
+    #[cfg(feature = "modules")]
+    {
+        Ok(crate::modules::runtime::spawn_cleanup(work)?)
+    }
+    #[cfg(not(feature = "modules"))]
+    {
+        Ok(tokio::spawn(work))
+    }
+}
+
+#[cfg(all(test, feature = "modules"))]
+#[path = "dispatcher_tests.rs"]
+mod tests;

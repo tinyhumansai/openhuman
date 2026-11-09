@@ -19,19 +19,30 @@ fn subscriber_reads_rebound_workspace_from_shared_handle() {
 async fn persists_inbound_and_processed_turns_into_workspace_thread() {
     let temp = TempDir::new().expect("tempdir");
     let subscriber = ConversationPersistenceSubscriber::new(temp.path().to_path_buf());
-    let mut inbound_envelope =
-        tinychannels_runtime::channel::inbound_envelope_from_legacy_message(&ChannelMessage {
+    let mut inbound_envelope = tinychannels_runtime::channel::inbound_envelope_from_legacy_message(
+        &tinychannels_bus::ChannelMessage {
             channel: "slack".into(),
             id: "m1".into(),
             sender: "alice".into(),
             reply_target: "general".into(),
             content: "hello".into(),
             thread_ts: Some("thread-1".into()),
+            topic_id: None,
+            reply_to_id: None,
             timestamp: 0,
             sender_name: None,
-        });
+        },
+    );
     inbound_envelope.conversation.kind = tinychannels_bus::channel::ConversationKind::Channel;
     inbound_envelope.conversation.scope_id = Some("T123".into());
+    // The module owns the session-key format, so the expectation is built by the
+    // same builder rather than spelled out.
+    let expected_session_key =
+        tinychannels_runtime::channel::build_session_key_for_inbound_envelope(
+            "main",
+            &inbound_envelope,
+            Default::default(),
+        );
 
     subscriber
         .handle(&DomainEvent::ChannelMessageReceived {
@@ -81,7 +92,7 @@ async fn persists_inbound_and_processed_turns_into_workspace_thread() {
     assert_eq!(messages[0].sender, "user");
     assert_eq!(
         messages[0].extra_metadata["tinychannelsSessionKey"],
-        "main:slack:default:channel:T123:general:thread-1"
+        expected_session_key
     );
     assert_eq!(messages[1].id, "assistant:m1");
     assert_eq!(messages[1].sender, "assistant");
@@ -169,11 +180,11 @@ fn persisted_channel_thread_id_ignores_blank_thread_ts() {
 #[test]
 fn channel_thread_title_uses_thread_suffix_only_for_non_telegram_threads() {
     assert_eq!(
-        channel_thread_title("slack", "alice", "general", Some(" 123 ")),
+        channel_thread_title("slack", "alice", "general", Some(" 123 "), false),
         "slack · alice · general · thread 123"
     );
     assert_eq!(
-        channel_thread_title("telegram", "alice", "chat-1", Some("123")),
+        channel_thread_title("telegram", "alice", "chat-1", Some("123"), true),
         "telegram · alice · chat-1"
     );
 }

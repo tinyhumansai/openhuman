@@ -42,7 +42,7 @@ Redirects are never followed. A redirect target can sit on a host the allowlist 
 
 ## The allowlist and the URL guard
 
-Every fetch passes the URL guard in `tinytools-std` (`vendor/tinyagents/vendor/tinytools/crates/tinytools-std/src/url_guard/`) before any connection is made. `http_request` and `curl` use the same gate.
+Every fetch passes the shared URL guard in TinyAgents' harness before any connection is made. `http_request` and `curl` use the same gate.
 
 **Shape.** Only `http` and `https` are accepted. URLs with whitespace, a backslash, userinfo (`user:pass@`), a percent-encoded authority or an IPv6 literal host are rejected.
 

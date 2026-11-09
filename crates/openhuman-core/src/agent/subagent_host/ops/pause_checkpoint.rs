@@ -6,8 +6,8 @@
 
 /// Whether `task_id` is usable as a single filename component.
 ///
-/// This is untrusted input on its way into a path join. `continue_subagent`
-/// takes `task_id` straight from its tool arguments — which the model authors —
+/// This is untrusted input on its way into a path join. The same-key async
+/// spawn takes `task_id` straight from its tool arguments — which the model authors —
 /// and passes it back through `SubagentRunOptions::task_id`, so a re-paused
 /// child writes its checkpoint under a name the model chose. Without this,
 /// `../../../../tmp/pwn` walks the write clean out of the checkpoint directory.

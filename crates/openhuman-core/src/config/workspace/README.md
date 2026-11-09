@@ -20,7 +20,7 @@ Owns workspace layout bootstrap and the editable "Persona Pack" prompt files (`S
 | [`crates/openhuman-core/src/config/workspace/rpc.rs`](./rpc.rs) | Pure-domain persona file API: `WorkspaceFile` type, `read_workspace_file` / `write_workspace_file` / `reset_workspace_file`, `MAX_WORKSPACE_FILE_BYTES`, allowlist enforcement (`ensure_editable`). Returns `Outcome<WorkspaceFile>`. |
 | [`crates/openhuman-core/src/config/workspace/schemas.rs`](./schemas.rs) | Controller schemas + `handle_*` fns delegating to `rpc.rs`; loads config to resolve `workspace_dir`. |
 | [`crates/openhuman-core/src/config/workspace/tools.rs`](./tools.rs) | LLM-callable wrappers over the persona-file RPCs: `WorkspaceReadPersonaTool` (default-on), `WorkspaceUpdatePersonaTool`, `WorkspaceResetPersonaTool`, and `WorkspaceInitTool` (all three mutators default-off, gated by the `workspace_manage` toggle in [`tools/user_filter.rs`](../../tools/user_filter.rs)). |
-| `crates/openhuman-core/src/config/workspace/state.rs` | `WatcherStateStore`, a SQLite-backed `path -> last_mtime_secs` table for a vault file watcher, so it can skip re-ingesting unchanged files after a restart. Not otherwise wired to the persona/bootstrap concerns above; currently has no other caller in the tree. |
+| `crates/openhuman-core/src/config/workspace/state.rs` | `WatcherStateStore`, a machine-local TSD KV store for `path -> last_mtime_secs`, so a vault file watcher can skip re-ingesting unchanged files after a restart. It opens its own local backend and does not use a shared remote storage URL. Not otherwise wired to the persona/bootstrap concerns above; currently has no other caller in the tree. |
 
 ## Public surface
 
@@ -61,7 +61,7 @@ The editable surface is restricted to the `BOOTSTRAP_FILES` allowlist (`SOUL.md`
 - `crate::core::Outcome`: uniform RPC return type.
 - Bundled prompt assets via `include_str!("../../agent/prompts/SOUL.md" | "IDENTITY.md")`.
 - `tinytools` (`PermissionLevel`, `Tool`, `ToolResult`) for the agent tools in `tools.rs`.
-- `rusqlite` for `state.rs`'s watcher-state database.
+- The watcher state store uses the configured TSD SQLite driver for its dedicated local database; legacy SQLite table import remains part of host migration.
 
 ## Used by
 

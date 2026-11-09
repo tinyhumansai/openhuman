@@ -1090,6 +1090,87 @@ describe('session expiry fixes (#5868)', () => {
     await waitFor(() => expect(screen.getByTestId('token').textContent).toBe('none'));
   });
 
+  it('refreshes the snapshot when an expiry lands during deep-link suppression', async () => {
+    resetCoreStateStore();
+    setActiveUserId(null);
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot)
+      .mockReset()
+      .mockResolvedValueOnce(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }))
+      .mockResolvedValueOnce(
+        makeSnapshot({ userId: null, sessionToken: null, isAuthenticated: false })
+      );
+    vi.mocked(coreStateApi.listTeams).mockReset().mockResolvedValue([]);
+    vi.mocked(coreStateApi.getTeamMembers).mockReset().mockResolvedValue([]);
+    vi.mocked(coreStateApi.getTeamInvites).mockReset().mockResolvedValue([]);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('token').textContent).toBe('tok1'));
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockClear();
+
+    // The native session owner can clear a rejected credential while a
+    // deep-link delivery is still suppressing destructive re-auth handling.
+    // The expiry event must still reconcile React's cached snapshot with the
+    // core's now-signed-out state.
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:suppress-reauth', { detail: { until: Date.now() + 30_000 } })
+      );
+      window.dispatchEvent(
+        new CustomEvent('openhuman:session-expired', {
+          detail: { source: 'shell.auth/me', reason: 'confirmed' },
+        })
+      );
+    });
+
+    expect(vi.mocked(coreStateApi.fetchCoreAppSnapshot)).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByTestId('token').textContent).toBe('none'));
+    expect(vi.mocked(tauriCommands.logout)).not.toHaveBeenCalled();
+  });
+
+  it('keeps the current session when a stale expiry lands during deep-link suppression', async () => {
+    resetCoreStateStore();
+    setActiveUserId(null);
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot)
+      .mockReset()
+      .mockResolvedValueOnce(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }))
+      .mockResolvedValueOnce(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    vi.mocked(coreStateApi.listTeams).mockReset().mockResolvedValue([]);
+    vi.mocked(coreStateApi.getTeamMembers).mockReset().mockResolvedValue([]);
+    vi.mocked(coreStateApi.getTeamInvites).mockReset().mockResolvedValue([]);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('token').textContent).toBe('tok1'));
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockClear();
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:suppress-reauth', { detail: { until: Date.now() + 30_000 } })
+      );
+      window.dispatchEvent(
+        new CustomEvent('openhuman:session-expired', {
+          detail: { source: 'shell.auth/me', reason: 'confirmed' },
+        })
+      );
+    });
+
+    expect(vi.mocked(coreStateApi.fetchCoreAppSnapshot)).toHaveBeenCalledTimes(1);
+    await act(async () => {});
+    expect(screen.getByTestId('token').textContent).toBe('tok1');
+    expect(vi.mocked(tauriCommands.logout)).not.toHaveBeenCalled();
+  });
+
   it('confirmed session-expiry during bootstrap is replayed after the first snapshot lands (#5868)', async () => {
     // The module-level store may carry isBootstrapping:false from prior tests;
     // reset it so the component mounts with the correct initial value.
@@ -1213,6 +1294,132 @@ describe('session expiry fixes (#5868)', () => {
     });
 
     await waitFor(() => expect(vi.mocked(tauriCommands.logout)).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('failed logout keeps the user signed out', () => {
+  const tok1 = makeJwt({ sub: 'u1', exp: Math.floor(Date.now() / 1000) + 3600 });
+
+  async function renderSignedIn() {
+    resetCoreStateStore();
+    setActiveUserId(null);
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockReset();
+    // The core keeps reporting tok1 because the logout never removed it.
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockResolvedValue(
+      makeSnapshot({ userId: 'u1', sessionToken: tok1 })
+    );
+    vi.mocked(coreStateApi.listTeams).mockResolvedValue([]);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockRejectedValue(new Error('auth_logout timed out'));
+    let ctx: CoreStateContextValue | undefined;
+    render(
+      <CoreStateProvider>
+        <Consumer captureCtx={c => (ctx = c)} />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('token').textContent).toBe(tok1));
+    await act(async () => {
+      await expect(ctx!.clearSession()).rejects.toThrow('auth_logout timed out');
+    });
+    expect(screen.getByTestId('token').textContent).toBe('none');
+    return () => ctx!;
+  }
+
+  it('reports the failure and never shows the logged-out token again', async () => {
+    const ctx = await renderSignedIn();
+
+    // Polls long after any time window: the logged-out token stays hidden.
+    const realNow = Date.now;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 60_000);
+    try {
+      await act(async () => {
+        await ctx().refresh();
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(screen.getByTestId('token').textContent).toBe('none');
+    // No automatic retry: an unkeyed logout could clear a newer session.
+    expect(vi.mocked(tauriCommands.logout)).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps guarding the token when the clear is repeated', async () => {
+    const ctx = await renderSignedIn();
+    await act(async () => {
+      await ctx()
+        .clearSession()
+        .catch(() => undefined);
+    });
+    await act(async () => {
+      await ctx().refresh();
+    });
+    expect(screen.getByTestId('token').textContent).toBe('none');
+  });
+
+  it('a deep-link event carrying the logged-out token does not lift the guard', async () => {
+    const ctx = await renderSignedIn();
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:session-token-updated', { detail: { sessionToken: tok1 } })
+      );
+    });
+    await act(async () => {
+      await ctx().refresh();
+    });
+    expect(screen.getByTestId('token').textContent).toBe('none');
+  });
+
+  it('a stale no-token poll that started before the clear does not lift the guard', async () => {
+    resetCoreStateStore();
+    setActiveUserId(null);
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockReset();
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockResolvedValue(
+      makeSnapshot({ userId: 'u1', sessionToken: tok1 })
+    );
+    vi.mocked(coreStateApi.listTeams).mockResolvedValue([]);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockRejectedValue(new Error('auth_logout timed out'));
+    let ctx: CoreStateContextValue | undefined;
+    render(
+      <CoreStateProvider>
+        <Consumer captureCtx={c => (ctx = c)} />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('token').textContent).toBe(tok1));
+
+    // A poll is in flight when the user logs out; it answers "no token".
+    const stalePoll = deferred<Snapshot>();
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockReturnValueOnce(stalePoll.promise);
+    let polling!: Promise<void>;
+    act(() => {
+      polling = ctx!.refresh();
+    });
+    let clearing!: Promise<void>;
+    act(() => {
+      clearing = ctx!.clearSession().catch(() => undefined);
+    });
+    await act(async () => {
+      stalePoll.resolve(makeSnapshot({ sessionToken: null }));
+      await polling;
+      await clearing;
+    });
+
+    // The core still holds tok1 (the logout failed): it must stay hidden.
+    await act(async () => {
+      await ctx!.refresh();
+    });
+    expect(screen.getByTestId('token').textContent).toBe('none');
+  });
+
+  it('lets a new login with a different token through', async () => {
+    const ctx = await renderSignedIn();
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockResolvedValue(
+      makeSnapshot({ userId: 'u1', sessionToken: 'tok2' })
+    );
+    await act(async () => {
+      await ctx().refresh();
+    });
+    expect(screen.getByTestId('token').textContent).toBe('tok2');
   });
 });
 

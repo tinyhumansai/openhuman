@@ -13,7 +13,7 @@ pub use openhuman_core::core::runtime::{AGENT_WORKER_STACK_BYTES, MAX_BLOCKING_T
 
 /// Scoped ownership for host commands outside an agent turn. After dropping
 /// the scoped future, await `wait()` before acknowledging cancellation.
-pub use tinytools_std::timeout::ProcessCleanup as CommandCleanup;
+pub use tinyagents_harness_tools::exec::timeout::ProcessCleanup as CommandCleanup;
 
 /// Sentry options and event scrubbing shared by desktop and terminal hosts.
 #[cfg(feature = "crash-reporting")]
@@ -118,11 +118,11 @@ pub async fn command_output(
     input: Vec<u8>,
     deadline: std::time::Duration,
 ) -> std::io::Result<std::process::Output> {
-    let cleanup = tinytools_std::timeout::ProcessCleanup::default();
+    let cleanup = tinyagents_harness_tools::exec::timeout::ProcessCleanup::default();
     let result = cleanup
         .scope(tokio::time::timeout(
             deadline,
-            tinytools_std::timeout::output_with_input(command, Some(input)),
+            tinyagents_harness_tools::exec::timeout::output_with_input(command, Some(input)),
         ))
         .await;
     cleanup.wait().await;

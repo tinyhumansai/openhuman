@@ -81,11 +81,13 @@ async fn hosted_cron_sweep_runs_trusted_memory_jobs_in_agent_only_profiles() {
     hosted_memory_cron_sweep_child().await;
 }
 
+#[allow(clippy::await_holding_lock)] // Serializes access to the process-wide installed storage slot.
 async fn hosted_memory_cron_sweep_child() {
+    let _storage_slot = crate::storage::test_support::lock_storage_slot();
     let registry = crate::storage::fence::registry();
     let backend: Arc<dyn crate::storage::StorageBackend> =
         Arc::new(crate::storage::fenced_backend::FencedBackend::new(
-            Arc::new(crate::storage::MemoryStorage::new()),
+            crate::storage::test_support::memory_backend(),
             Arc::clone(&registry),
         ));
     let _storage = RestoreInstalledStorage(crate::storage::install(backend));

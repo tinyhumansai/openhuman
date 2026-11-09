@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.64.18",
+  "version": "0.64.20",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -51,8 +51,8 @@
     "test:e2e:login": "bash ./scripts/e2e-login.sh",
     "test:e2e:auth": "bash ./scripts/e2e-auth.sh",
     "test:e2e:service-connectivity": "OPENHUMAN_SERVICE_MOCK=1 bash ./scripts/e2e-run-spec.sh test/e2e/specs/service-connectivity-flow.spec.ts service-connectivity",
-    "test:e2e:skills-registry": "bash ./scripts/e2e-run-spec.sh test/e2e/specs/skills-registry.spec.ts skills-registry",
-    "test:e2e:cron-jobs": "bash ./scripts/e2e-run-spec.sh test/e2e/specs/cron-jobs-flow.spec.ts cron-jobs",
+    "test:e2e:skills-registry": "pnpm test:e2e:web:build && bash ./scripts/e2e-web-session.sh test/playwright/specs/skills-registry.spec.ts",
+    "test:e2e:cron-jobs": "pnpm test:e2e:web:build && bash ./scripts/e2e-web-session.sh test/playwright/specs/cron-jobs-flow.spec.ts",
     "test:e2e": "pnpm test:e2e:web && pnpm test:e2e:mega",
     "test:e2e:all:flows": "bash ./scripts/e2e-run-all-flows.sh",
     "test:e2e:all": "pnpm test:e2e:web && pnpm test:e2e:all:flows",

@@ -120,7 +120,7 @@ impl SupplementalTrace {
                     .map(|rate| rate * 1_000_000.0),
                 output_per_mtok_usd: price.output_per_token.map(|rate| rate * 1_000_000.0),
             });
-        let billed = crate::inference::provider::model::usage_info_from_response(response);
+        let billed = tinyinference_llm::usage::usage_info_from_response(response);
         let estimated_cost_usd = if response.served_from_cache
             || billed.is_some_and(|usage| usage.charge_reported && !usage.cost_is_estimate)
         {

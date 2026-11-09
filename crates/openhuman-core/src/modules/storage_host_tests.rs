@@ -4,7 +4,8 @@ use std::sync::Mutex;
 
 use serde_json::json;
 use tinystoragedrivers::secrets::DerivedKeys;
-use tinystoragedrivers::{CollectionSpec, MemoryStorage};
+use tinystoragedrivers::CollectionSpec;
+use tinystoragedrivers_testkit::MemoryBackend as MemoryStorage;
 use zeroize::Zeroizing;
 
 struct Directory(HashMap<String, String>);
@@ -191,8 +192,8 @@ async fn a_module_stores_and_reads_its_own_documents() {
     let found = call(&rig, &alpha(), Object::Documents, "Get", get("notes", "a"))
         .await
         .unwrap();
-    assert_eq!(found["document_id"], "a");
-    assert_eq!(found["document_json"], json!({"v": 1}).to_string());
+    assert_eq!(found["id"], "a");
+    assert_eq!(found["doc"], json!({"v": 1}));
 }
 
 #[tokio::test]
@@ -275,7 +276,7 @@ async fn a_module_cannot_name_another_modules_collection() {
     let kept = call(&rig, &alpha(), Object::Documents, "Get", get("notes", "a"))
         .await
         .unwrap();
-    assert_eq!(kept["document_json"], json!({"v": 1}).to_string());
+    assert_eq!(kept["doc"], json!({"v": 1}));
 }
 
 #[tokio::test]
@@ -322,10 +323,7 @@ async fn two_modules_granted_the_same_collection_name_do_not_share_documents() {
         .await
         .unwrap();
     let alphas = ask(alpha(), "Get", get("notes", "a")).await.unwrap();
-    assert_eq!(
-        alphas["document_json"],
-        json!({"owner": "alpha"}).to_string()
-    );
+    assert_eq!(alphas["doc"], json!({"owner": "alpha"}));
 }
 
 #[tokio::test]
@@ -350,7 +348,7 @@ async fn a_module_in_another_scope_does_not_see_the_data() {
     let back = call(&rig, &alpha(), Object::Documents, "Get", get("notes", "a"))
         .await
         .unwrap();
-    assert_eq!(back["document_id"], "a");
+    assert_eq!(back["id"], "a");
 }
 
 #[tokio::test]
@@ -701,7 +699,7 @@ mod bus;
 mod queues;
 
 #[path = "storage_host_cdylib_tests.rs"]
-mod cdylib;
+pub(in crate::modules) mod cdylib;
 #[cfg(test)]
 #[path = "storage_host_stream_tests.rs"]
 mod streams;
@@ -726,4 +724,17 @@ async fn a_key_provider_failure_at_bind_is_retried_not_cached() {
     assert!(set_secret(&rig).await.is_err());
     rig.env.keys_ready.store(true, Ordering::SeqCst);
     set_secret(&rig).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_callback_task_that_does_not_finish_is_a_transport_error() {
+    let error = tokio::spawn(async { panic!("callback preparation panicked") })
+        .await
+        .expect_err("a panicking task fails to join");
+    match callbacks_join_failed(error) {
+        tinybus::Error::Transport(message) => {
+            assert!(message.starts_with("the module storage callbacks did not finish"));
+        }
+        other => panic!("expected a transport error, got {other:?}"),
+    }
 }

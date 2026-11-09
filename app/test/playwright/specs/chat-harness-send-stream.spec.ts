@@ -1,6 +1,11 @@
 import { expect, type Page, test } from '@playwright/test';
 
 import {
+  inFlightThreadKey,
+  persistedThreadMessages,
+  selectedThreadTranscript,
+} from '../helpers/chat-transcript';
+import {
   bootAuthenticatedPage,
   dismissWalkthroughIfPresent,
   waitForAppReady,
@@ -128,15 +133,16 @@ test.describe('Chat Harness - Send Stream', () => {
     // shape and the terminal `{ finish }` entry had nowhere to go.
     type StreamScriptEntry = { text: string; delayMs: number } | { finish: 'stop' | 'tool_calls' };
     const streamScript: StreamScriptEntry[] = [
-      ...REPLY_PIECES.map(text => ({ text, delayMs: 60 })),
+      ...REPLY_PIECES.map(text => ({ text, delayMs: 250 })),
       { finish: 'stop' },
     ];
 
     await setMockBehavior('llmStreamScript', JSON.stringify(streamScript));
     await openChat(page);
-    await createNewThread(page);
+    const threadId = await createNewThread(page);
 
     await sendMessage(page, PROMPT);
+    await expect.poll(() => inFlightThreadKey(threadId)).toBeTruthy();
 
     await expect(page.getByText(/here is the marker\s+canary-9f3c1a/i)).toBeVisible({
       timeout: 30_000,
@@ -151,6 +157,32 @@ test.describe('Chat Harness - Send Stream', () => {
             entry.url.includes('/openai/v1/chat/completions') &&
             entry.body?.includes('"stream":true')
         );
+      })
+      .toBe(true);
+
+    await expect
+      .poll(
+        async () => {
+          try {
+            return (await selectedThreadTranscript(page)).content;
+          } catch {
+            return '';
+          }
+        },
+        { timeout: 10_000 }
+      )
+      .toContain(CANARY);
+    const durable = await selectedThreadTranscript(page);
+    expect(durable.threadId).toBe(threadId);
+    expect(durable.content).toContain(PROMPT);
+    expect(durable.content).toContain(REPLY_PIECES.join(''));
+    expect(durable.total).toBeGreaterThan(0);
+    await expect.poll(() => inFlightThreadKey(durable.threadId)).toBeUndefined();
+    await expect
+      .poll(async () => {
+        const messages = await persistedThreadMessages(threadId);
+        const content = messages.map(message => message.content).join('\n');
+        return content.includes(PROMPT) && content.includes(REPLY_PIECES.join(''));
       })
       .toBe(true);
   });

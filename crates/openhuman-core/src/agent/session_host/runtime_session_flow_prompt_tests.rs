@@ -6,17 +6,20 @@ async fn cold_flow_prompt_uses_the_module_and_warm_resume_does_not_refetch() {
     crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin definitions");
     let temp = tempfile::tempdir().expect("workspace");
-    let config = crate::config::Config {
+    let mut config = crate::config::Config {
         workspace_dir: temp.path().join("workspace"),
         action_dir: temp.path().join("action"),
         config_path: temp.path().join("config.toml"),
         ..Default::default()
     };
+    config.secrets.encrypt = false;
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         "flow_discovery",
     )
+    .await
     .expect("flow_discovery session");
     host.ensure_runtime_session().expect("runtime session");
     let mut prelude = host
@@ -60,12 +63,14 @@ async fn explicit_flow_session_prompt_override_does_not_require_tinyflows_or_con
     use tinyagents_definition::{DefinitionSource, PromptSource};
 
     let temp = tempfile::tempdir().expect("workspace");
-    let config = crate::config::Config {
+    let mut config = crate::config::Config {
         workspace_dir: temp.path().join("workspace"),
         action_dir: temp.path().join("action"),
         config_path: temp.path().join("config.toml"),
         ..Default::default()
     };
+    config.secrets.encrypt = false;
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     let mut definition =
         crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only()
             .get("workflow_builder")
@@ -79,6 +84,7 @@ async fn explicit_flow_session_prompt_override_does_not_require_tinyflows_or_con
         &config,
         &definition,
     )
+    .await
     .expect("explicit flow definition session");
     host.ensure_runtime_session().expect("runtime session");
     let mut prelude = host

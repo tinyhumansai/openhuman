@@ -6,11 +6,12 @@ import { useFlowPreauthorization } from '../../hooks/useFlowPreauthorization';
 import { FLOW_CANVAS_DRAFT_ROUTE, type FlowCanvasDraftState } from '../../lib/flows/canvasDraft';
 import type { WorkflowGraph } from '../../lib/flows/types';
 import { useT } from '../../lib/i18n/I18nContext';
-import { createFlow } from '../../services/api/flowsApi';
+import { createFlow, parseFlowVersionConflict, updateFlow } from '../../services/api/flowsApi';
 import { threadApi } from '../../services/api/threadApi';
 import {
   clearWorkflowProposalForThread,
   markWorkflowProposalCompleted,
+  markWorkflowProposalSaved,
   type WorkflowProposal,
 } from '../../store/chatRuntimeSlice';
 import { useAppDispatch } from '../../store/hooks';
@@ -118,7 +119,11 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
   // (B29 Rule 1) and the follow-up `setFlowEnabled` call hasn't succeeded
   // yet. Non-null means a retry of `save` should skip `createFlow` entirely
   // and only retry the enable step.
-  const [savedFlowId, setSavedFlowId] = useState<string | null>(null);
+  //
+  // Seeded from `proposal.savedFlowId` (Redux, or the source message's
+  // `saved_flow_id` after a reload) so a remount resumes the enable step
+  // instead of persisting the flow a second time.
+  const [savedFlowId, setSavedFlowId] = useState<string | null>(() => proposal.savedFlowId ?? null);
   // Set once the flow is fully persisted AND enabled — the terminal success
   // state. Non-null swaps the card's body from the editable proposal (name/
   // trigger/steps/buttons) to a compact saved confirmation with a link into
@@ -202,9 +207,56 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
    * remount before the user clicks "View workflow" — see the
    * `completedFlowId` state comment above).
    */
+  /**
+   * Record that the flow is persisted but not yet enabled, everywhere a
+   * remount or reload reads it back from: this render, Redux, and the source
+   * message (`saved_flow_id`, merged into its metadata). Fire-and-forget for
+   * the message write: a failed mark only risks a duplicate on a later reload.
+   */
+  const markSaved = (flowId: string) => {
+    setSavedFlowId(flowId);
+    dispatch(
+      markWorkflowProposalSaved({
+        threadId,
+        flowId,
+        name: proposal.name,
+        sourceMessageId: proposal.sourceMessageId,
+      })
+    );
+    if (!proposal.sourceMessageId) return;
+    threadApi
+      .updateMessage(threadId, proposal.sourceMessageId, {
+        scope: 'workflow_proposal',
+        saved_flow_id: flowId,
+      })
+      .catch(e => log('markSaved message write failed (non-fatal): %o', e));
+  };
+
+  /**
+   * The flow already persisted for this proposal and recorded on its source
+   * message (`saved_flow_id`): by an earlier save from this card, or by the
+   * agent when the user asked for the save in chat. Read fresh before
+   * persisting, since an agent-side save never reaches this card's state.
+   * `null` when nothing is recorded; a failed read throws, because treating it
+   * as "nothing recorded" could create a second copy of a saved flow.
+   */
+  const recordedSavedFlowId = async (): Promise<string | null> => {
+    if (!proposal.sourceMessageId) return null;
+    const { messages } = await threadApi.getThreadMessages(threadId);
+    const meta = messages.find(m => m.id === proposal.sourceMessageId)?.extraMetadata;
+    return typeof meta?.saved_flow_id === 'string' ? meta.saved_flow_id : null;
+  };
+
   const markCompleted = (flowId: string) => {
     setCompletedFlowId(flowId);
-    dispatch(markWorkflowProposalCompleted({ threadId, flowId }));
+    dispatch(
+      markWorkflowProposalCompleted({
+        threadId,
+        flowId,
+        name: proposal.name,
+        sourceMessageId: proposal.sourceMessageId,
+      })
+    );
   };
 
   // Consolidated save+enable pre-authorization (Approve all / Deny), rendered
@@ -241,19 +293,55 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
     // what just happened in this attempt.
     let flowId = savedFlowId;
     let flowPersisted = flowId !== null;
+    if (!flowId) {
+      let recorded: string | null;
+      try {
+        recorded = await recordedSavedFlowId();
+      } catch (e) {
+        log('save: could not check for an already-saved flow — not persisting: %o', e);
+        setErrorMsg(t('chat.flowProposal.error'));
+        setSaving(false);
+        return;
+      }
+      if (recorded) {
+        log('save: flow %s already saved for this proposal — resuming at enable', recorded);
+        flowId = recorded;
+        flowPersisted = true;
+        markSaved(recorded);
+      }
+    }
+    // A revision without the version it was derived from (an older persisted
+    // proposal, or a flow edited after its draft was seeded) cannot be checked
+    // against newer edits, so it is never written onto the flow.
+    if (!flowId && proposal.flowId && !proposal.flowVersion) {
+      log('save: revision of %s carries no source version — refusing', proposal.flowId);
+      setErrorMsg(t('chat.flowProposal.versionConflict'));
+      setSaving(false);
+      return;
+    }
     try {
       if (!flowId) {
-        const flow = await createFlow(proposal.name, proposal.graph, proposal.requireApproval);
+        // A proposal that revises a saved flow (`flow_id` on its payload) is
+        // written onto that flow; only a brand-new proposal creates one.
+        const flow = proposal.flowId
+          ? await updateFlow(proposal.flowId, {
+              name: proposal.name,
+              graph: proposal.graph,
+              requireApproval: proposal.requireApproval,
+              // Refuse to overwrite an edit made after the builder read the flow.
+              expectedVersion: proposal.flowVersion,
+            })
+          : await createFlow(proposal.name, proposal.graph, proposal.requireApproval);
         flowId = flow.id;
         flowPersisted = true;
         // Persisted — record the id BEFORE any branch releases `saving`, so a
-        // second click (e.g. while the pre-authorization card below is open)
-        // can never reach `createFlow` again and duplicate the flow.
-        setSavedFlowId(flow.id);
+        // second click (e.g. while the pre-authorization card below is open),
+        // a remount or a reload can never persist the flow again.
+        markSaved(flow.id);
         if (flow.enabled) {
           // Already live — surface the pre-authorization card when grants
           // are missing; otherwise this is the terminal success state.
-          log('save: createFlow returned enabled id=%s — running pre-auth check', flow.id);
+          log('save: flow persisted enabled id=%s — running pre-auth check', flow.id);
           const cardShown = await preauth.checkAfterSave(flow.id, true);
           setSaving(false);
           if (!cardShown) {
@@ -266,7 +354,7 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
         // B29 Rule 1 saved this automatic-trigger flow disabled. This click
         // is the user's own explicit "Save & enable" — not the copilot's
         // silent autosave Rule 1 guards against — so arm it now.
-        log('save: createFlow returned disabled (Rule 1) — arming explicitly id=%s', flow.id);
+        log('save: flow persisted disabled (Rule 1) — arming explicitly id=%s', flow.id);
       }
       // Enable through the pre-authorization check: enables directly when no
       // grants are missing, otherwise the card renders below and the enable
@@ -281,9 +369,13 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
         onSaved?.();
       }
     } catch (e) {
-      log('save failed (createFlow/enable): %o', e);
+      log('save failed (createFlow/updateFlow/enable): %o', e);
       setErrorMsg(
-        flowPersisted ? t('chat.flowProposal.enableError') : t('chat.flowProposal.error')
+        flowPersisted
+          ? t('chat.flowProposal.enableError')
+          : parseFlowVersionConflict(e)
+            ? t('chat.flowProposal.versionConflict')
+            : t('chat.flowProposal.error')
       );
       setSaving(false);
     }

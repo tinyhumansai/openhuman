@@ -15,5 +15,8 @@ test.describe('Local model runtime route', () => {
     await expect
       .poll(async () => page.evaluate(() => window.location.hash))
       .toContain('/connections');
+    const settledHash = await page.evaluate(() => window.location.hash);
+    expect(settledHash).not.toContain('local-model-debug');
+    await expect(page.getByText('Runtime Status')).toHaveCount(0);
   });
 });

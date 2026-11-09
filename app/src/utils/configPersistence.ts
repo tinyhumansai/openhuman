@@ -182,19 +182,6 @@ export function isLocalOrPrivateNetworkHost(hostname: string): boolean {
 }
 
 /**
- * Cloud cores may use HTTPS on any host. Plain HTTP is accepted only for
- * localhost/private networks, including tailnets, to avoid encouraging
- * bearer-token transport over public plaintext links.
- */
-export function isAllowedCloudRpcUrl(url: string): boolean {
-  if (!isValidRpcUrl(url)) return false;
-
-  const parsed = new URL(url.trim());
-  if (parsed.protocol === 'https:') return true;
-  return parsed.protocol === 'http:' && isLocalOrPrivateNetworkHost(parsed.hostname);
-}
-
-/**
  * Normalize an RPC URL by trimming whitespace and trailing slashes.
  * When the user provides a core base URL with no path, treat it as the
  * JSON-RPC endpoint base and append `/rpc`.

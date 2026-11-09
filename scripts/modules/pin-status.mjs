@@ -22,6 +22,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { repositoryGitEnv } from "../lib/git-env.mjs";
+
 import { parseRecords } from "../lib/module-pins.mjs";
 import {
   aheadIds,
@@ -38,6 +40,7 @@ function git(args, cwd) {
   try {
     return execFileSync("git", args, {
       cwd,
+      env: repositoryGitEnv(),
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
@@ -95,12 +98,19 @@ export function collectStatuses(root = DEFAULT_ROOT) {
       actual,
       wantedIsAncestor,
       exemption: byId.get(rec.id),
+      sourceParityContext: {
+        repoPath: dir,
+        assets: rec.assets,
+        actualHead: git(["rev-parse", "HEAD"], dir),
+      },
     });
   });
 }
 
 export function main(argv, root = DEFAULT_ROOT) {
-  const flags = new Set(argv.filter((a) => a.startsWith("--") && a !== "--root"));
+  const flags = new Set(
+    argv.filter((a) => a.startsWith("--") && a !== "--root"),
+  );
   const rootIdx = argv.indexOf("--root");
   if (rootIdx >= 0) root = resolve(argv[rootIdx + 1]);
   const statuses = collectStatuses(root);

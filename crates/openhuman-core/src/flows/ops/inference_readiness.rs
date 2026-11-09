@@ -68,7 +68,10 @@ pub(super) async fn agent_node_role(config: &Config, node_config: &Value) -> &'s
         .map(str::trim)
         .filter(|s| !s.is_empty());
     if let Some(model) = pinned_model {
-        return crate::inference::provider::role_for_model_tier(model);
+        return crate::inference::provider_model::role_for_provider_model(
+            crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+            model,
+        );
     }
     "summarization"
 }

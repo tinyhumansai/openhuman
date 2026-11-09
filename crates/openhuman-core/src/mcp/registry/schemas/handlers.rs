@@ -35,11 +35,7 @@ pub(super) fn handle_registry_get(
     ctx: DispatchCtx,
     params: Map<String, Value>,
 ) -> ControllerFuture {
-    Box::pin(async move {
-        let config = ctx.load_config().await?;
-        let qualified_name = read_required::<String>(&params, "qualified_name")?;
-        to_json(crate::mcp::registry::ops::mcp_clients_registry_get(&config, qualified_name).await?)
-    })
+    super::registry_get_controller_entry().invoke(ctx, params)
 }
 
 pub(super) fn handle_installed_list(
@@ -203,4 +199,8 @@ pub(super) fn handle_registry_settings_set(
             .await?,
         )
     })
+}
+
+pub(super) fn parse_registry_get(params: &Map<String, Value>) -> Result<String, String> {
+    read_required(params, "qualified_name")
 }

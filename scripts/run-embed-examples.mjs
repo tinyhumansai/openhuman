@@ -14,7 +14,7 @@ export function discoverExamples(directory = resolve(root, "crates/openhuman-emb
     }
     const profile = source.match(/^\/\/! Profile: (.+)$/m)?.[1]?.trim() ?? "dev";
     const defaultFeatures = source.match(/^\/\/! Default features: (.+)$/m)?.[1]?.trim() !== "disabled";
-    return { name: file.slice(0, -3), features: feature && feature !== "default" ? [feature] : [], profile, defaultFeatures };
+    return { name: file.slice(0, -3), features: feature && feature !== "default" ? feature.split(",").map((name) => name.trim()) : [], profile, defaultFeatures };
   });
 }
 export function offlineEnvironment(environment) {

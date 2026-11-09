@@ -24,8 +24,8 @@ fn interim_narration_surfaces_and_trims_substantial_text() {
     );
 }
 
-#[test]
-fn session_profile_attribution_none_when_signed_out() {
+#[tokio::test]
+async fn session_profile_attribution_none_when_signed_out() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = crate::config::Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -33,11 +33,11 @@ fn session_profile_attribution_none_when_signed_out() {
         config_path: tmp.path().join("config.toml"),
         ..Default::default()
     };
-    assert!(session_profile_user_attribution(&config).is_none());
+    assert!(session_profile_user_attribution(&config).await.is_none());
 }
 
-#[test]
-fn session_profile_attribution_prefers_email_from_stored_session() {
+#[tokio::test]
+async fn session_profile_attribution_prefers_email_from_stored_session() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = crate::config::Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -45,7 +45,7 @@ fn session_profile_attribution_prefers_email_from_stored_session() {
         config_path: tmp.path().join("config.toml"),
         ..Default::default()
     };
-    let service = crate::security::credentials::AuthService::from_config(&config);
+    let service = crate::credentials::AuthService::from_config(&config);
     let mut metadata = std::collections::HashMap::new();
     metadata.insert(
         "user_json".to_string(),
@@ -54,15 +54,16 @@ fn session_profile_attribution_prefers_email_from_stored_session() {
     metadata.insert("user_id".to_string(), "u-1".to_string());
     service
         .store_provider_token(
-            crate::security::credentials::APP_SESSION_PROVIDER,
-            crate::security::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            crate::credentials::APP_SESSION_PROVIDER,
+            crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
             "session-token",
             metadata,
             true,
         )
+        .await
         .expect("store session profile");
     assert_eq!(
-        session_profile_user_attribution(&config).as_deref(),
+        session_profile_user_attribution(&config).await.as_deref(),
         Some("steven@example.test"),
         "cold-cache attribution must resolve the on-disk session email"
     );
@@ -154,36 +155,6 @@ async fn tool_call_completed_forwards_real_output_on_tool_result() {
     assert_eq!(event.output.as_deref(), Some("real payload"));
     assert_eq!(event.success, Some(true));
     assert_eq!(event.tool_call_id.as_deref(), Some("call-1"));
-}
-
-#[test]
-fn worktree_detail_collapses_empty_changed_files_to_none() {
-    // Non-isolated / clean worker: empty list → `None` so the renderer
-    // omits the "changed files" section instead of showing an empty one.
-    let d = subagent_worktree_detail(None, vec![], None);
-    assert_eq!(d.worktree_path, None);
-    assert_eq!(d.changed_files, None);
-    assert_eq!(d.dirty_status, None);
-}
-
-#[test]
-fn worktree_detail_forwards_isolated_worker_fields() {
-    // Isolated worker with uncommitted changes: fields pass through and a
-    // non-empty list is wrapped in `Some`.
-    let d = subagent_worktree_detail(
-        Some("/repo/.claude/worktrees/run-1".to_string()),
-        vec!["src/lib.rs".to_string(), "README.md".to_string()],
-        Some(true),
-    );
-    assert_eq!(
-        d.worktree_path.as_deref(),
-        Some("/repo/.claude/worktrees/run-1")
-    );
-    assert_eq!(
-        d.changed_files,
-        Some(vec!["src/lib.rs".to_string(), "README.md".to_string()])
-    );
-    assert_eq!(d.dirty_status, Some(true));
 }
 
 // ── #4270 inference heartbeat ────────────────────────────────────────────
@@ -564,83 +535,36 @@ fn cap_wire_args_truncates_oversized_payload_to_a_marker_string() {
     assert!(rendered.contains("truncated"));
 }
 
-/// `SubagentSpawned.parent_call_id` must reach the wire (`subagent.parent_call_id`
-/// on `subagent_spawned`) so the frontend can key the delegation row to the
-/// spawning tool call (#C1).
-#[tokio::test]
-async fn hold_text_stream_suppresses_text_delta_but_keeps_interim() {
-    use crate::progress::AgentProgress;
-    let tmp = tempfile::TempDir::new().unwrap();
-    let config = crate::config::Config {
-        workspace_dir: tmp.path().join("workspace"),
-        action_dir: tmp.path().join("workspace"),
-        config_path: tmp.path().join("config.toml"),
-        ..Default::default()
-    };
-    let store = std::sync::Arc::new(tinyagents_session::port::InMemoryTurnStates::default())
-        as std::sync::Arc<dyn tinyagents_session::port::TurnStates>;
-    let (tx, rx) = tokio::sync::mpsc::channel(16);
-    let mut bus = super::super::event_bus::subscribe_web_channel_events();
-    spawn_progress_bridge(
-        rx,
-        "client-hold".into(),
-        "thread-hold".into(),
-        "req-hold".into(),
-        store,
-        ChatRequestMetadata {
-            hold_text_stream: true,
-            ..Default::default()
-        },
-        config,
-        crate::core::runtime::DispatchCtx::ambient(),
-    );
-
-    tx.send(AgentProgress::TextDelta {
-        delta: "Let me check the release notes for you first.".into(),
-        iteration: 1,
-    })
-    .await
-    .unwrap();
-    tx.send(AgentProgress::ToolCallStarted {
-        call_id: "tc-hold".into(),
-        tool_name: "web_search".into(),
-        arguments: serde_json::json!({}),
-        iteration: 1,
-        display_label: None,
-        display_detail: None,
-    })
-    .await
-    .unwrap();
-
-    let events = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let mut seen = Vec::new();
-        loop {
-            match bus.recv().await {
-                Ok(ev) if ev.thread_id == "thread-hold" => {
-                    let done = ev.event == "chat_interim";
-                    seen.push((ev.event.clone(), ev.full_response.clone()));
-                    if done {
-                        return seen;
-                    }
-                }
-                Ok(_) => continue,
-                Err(err) => panic!("bus closed: {err}"),
-            }
-        }
-    })
-    .await
-    .expect("chat_interim within timeout");
-
-    assert!(!events.iter().any(|(e, _)| e == "text_delta"), "{events:?}");
-    // The interim bubble carries the held narration itself.
-    let interim = events.iter().find(|(e, _)| e == "chat_interim").unwrap();
-    assert_eq!(
-        interim.1.as_deref(),
-        Some("Let me check the release notes for you first.")
-    );
-}
 #[path = "progress_bridge_tool_progress_tests.rs"]
 mod tool_progress_tests;
 
 #[path = "progress_bridge_subagent_tests.rs"]
 mod subagent_tests;
+
+/// A compaction reaches the client as `context_compacting`, for the status
+/// line to say what a long pause before the next model call is.
+#[tokio::test]
+async fn forwards_a_compaction_as_context_compacting() {
+    let mut events = super::super::event_bus::subscribe_web_channel_events();
+    let thread_id = "thread-context-compacting";
+    let request_id = "req-context-compacting";
+    let tx = spawn_test_bridge(thread_id, request_id);
+
+    tx.send(AgentProgress::TurnStarted).await.unwrap();
+    tx.send(AgentProgress::ContextCompacting).await.unwrap();
+
+    // The bus is process-global and never closes: bound the wait so a missing
+    // event fails the test instead of hanging it.
+    let compacting = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let event = recv_for_thread(&mut events, thread_id).await;
+            if event.event == "context_compacting" {
+                break event;
+            }
+        }
+    })
+    .await
+    .expect("the bridge forwards ContextCompacting as context_compacting");
+    assert_eq!(compacting.request_id, request_id);
+    drop(tx);
+}

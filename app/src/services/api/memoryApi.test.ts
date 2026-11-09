@@ -32,6 +32,7 @@ import {
   memorySourcesList,
   memorySourcesRemove,
   memorySourcesSync,
+  memoryStatusError,
 } from './memoryApi';
 
 vi.mock('../coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
@@ -192,12 +193,46 @@ describe('memoryErrorCode', () => {
       'INSUFFICIENT_CREDITS'
     );
     expect(memoryErrorCode(new Error('UNAVAILABLE: timed out'))).toBe('UNAVAILABLE');
+    expect(memoryErrorCode(new Error('PLAN_REQUIRED: not in the plan'))).toBe('PLAN_REQUIRED');
+    // A plan refusal that lost its structured code still names the backend's,
+    // and an older core's UNAUTHORIZED does not shadow it.
+    expect(
+      memoryErrorCode(
+        new Error('unauthorized: [MEMORY_PLAN_REQUIRED] memory API memory/scopes (HTTP 403)')
+      )
+    ).toBe('PLAN_REQUIRED');
+    expect(
+      memoryErrorCode({
+        message: 'unauthorized: [MEMORY_PLAN_REQUIRED] memory API memory/scopes (HTTP 403)',
+        data: { code: 'UNAUTHORIZED' },
+      })
+    ).toBe('PLAN_REQUIRED');
+    // A mention of the code is not a plan refusal.
+    expect(memoryErrorCode(new Error('ENGINE: unexpected [MEMORY_PLAN_REQUIRED] token'))).toBe(
+      'ENGINE'
+    );
   });
 
   it('returns null for an unrelated error', () => {
     expect(memoryErrorCode(new Error('boom'))).toBeNull();
     expect(memoryErrorCode({ data: { code: 'OTHER' } })).toBeNull();
     expect(memoryErrorCode(null)).toBeNull();
+  });
+});
+
+describe('memoryStatusError', () => {
+  const t = (key: string) => `t:${key}`;
+  it('shows a stored plan refusal as its translated explanation (#8081)', () => {
+    expect(
+      memoryStatusError(
+        "engine error: [MEMORY_PLAN_REQUIRED] memory API memory/scopes on api.tinyhumans.ai: memory is not included in this account's plan (HTTP 403 Forbidden)",
+        t
+      )
+    ).toBe('t:memory.error.planRequired');
+  });
+
+  it('shows any other stored error as stored', () => {
+    expect(memoryStatusError('unavailable: timed out', t)).toBe('unavailable: timed out');
   });
 });
 
@@ -217,6 +252,9 @@ describe('helpers', () => {
     expect(memoryErrorMessage(credits, t)).toBe('t:memory.error.insufficientCredits');
     expect(memoryErrorMessage({ message: 'x', data: { code: 'UNAVAILABLE' } }, t)).toBe(
       't:memory.error.unavailable'
+    );
+    expect(memoryErrorMessage({ message: 'x', data: { code: 'PLAN_REQUIRED' } }, t)).toBe(
+      't:memory.error.planRequired'
     );
     // A rejected key and an engine fault keep their own message, and without
     // `t` nothing changes.

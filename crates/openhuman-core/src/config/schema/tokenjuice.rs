@@ -20,8 +20,9 @@ pub struct TokenjuiceConfig {
     /// a `⟦tj:<hash>⟧` retrieval footer. Disabling makes compaction one-way.
     #[serde(default = "default_true")]
     pub ccr_enabled: bool,
-    /// Persist CCR originals to disk under `<workspace>/.tokenjuice/ccr` so
-    /// retrieval survives memory eviction (written by the core only).
+    /// Request durable CCR storage through the host-granted TinyJuice storage
+    /// backend. The legacy `<workspace>/.tokenjuice/ccr` directory is read
+    /// only as migration input; the key is retained for config compatibility.
     #[serde(default)]
     pub ccr_disk_enabled: bool,
     /// Store a large result behind a handle and show the model a stats line, a
@@ -35,12 +36,6 @@ pub struct TokenjuiceConfig {
     /// `juice_retrieve` round trip.
     #[serde(default = "default_true")]
     pub repl_handle_enabled: bool,
-    /// Also write each stored original to
-    /// `<workspace>/.tokenjuice/repl/<handle>.txt` (mode 0600) so the agent can
-    /// script over it. Off by default: it puts raw tool output on disk, and
-    /// nothing prunes the directory.
-    #[serde(default)]
-    pub repl_save_enabled: bool,
     /// Max number of originals retained in the in-memory CCR store.
     #[serde(default = "default_max_cache_entries")]
     pub max_cache_entries: usize,
@@ -90,7 +85,6 @@ impl Default for TokenjuiceConfig {
             router_enabled: true,
             ccr_enabled: true,
             repl_handle_enabled: true,
-            repl_save_enabled: false,
             ccr_disk_enabled: false,
             max_cache_entries: default_max_cache_entries(),
             max_cache_bytes: default_max_cache_bytes(),

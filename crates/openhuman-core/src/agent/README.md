@@ -24,8 +24,8 @@ is adapters that hand TinyAgents the things only OpenHuman knows.
      | (stateful, per thread)            | (stateless, caller owns history)
      v                                   v
   +-----------------------------------------------------------------+
-  | agent/session_host/            agent/bus.rs + harness/graph.rs  |
-  |   builder, hooks, codec, driver                                 |
+  | agent/session_host/            agent/bus.rs + channels/runtime/ |
+  |   builder, hooks, codec, driver  turn_driver.rs                  |
   +-----------------------------------------------------------------+
      |                                   |
      v                                   v
@@ -42,7 +42,7 @@ is adapters that hand TinyAgents the things only OpenHuman knows.
   |   tinyagents-runtime   Session: history, resume, commit         |
   |   tinyagents-session   SessionRef, transcripts, run ledger      |
   |   tinyagents-harness   AgentHarness loop, middleware, RunQueue  |
-  |   tinyagents-graph / -orchestration   delegation, sub-agents    |
+  |   tinyagents-orchestration            delegation, sub-agents    |
   |   tinytools, tinyinference   Tool trait, ChatModel, providers   |
   +-----------------------------------------------------------------+
      |                         |
@@ -63,7 +63,7 @@ the bus path because they keep their own history.
 ### A chat turn, end to end
 
 ```text
- web_chat::run_task (or cron, flows, mcp, ...)
+ web_chat::turn_host (or cron, flows, mcp, ...)
    | build or reuse OpenHumanSessionHost::from_config_for_agent(cfg, id)
    v
  run_single_with_origin(msg, origin)          session_host/runtime/run_loop.rs
@@ -135,7 +135,7 @@ In order:
    ([`tinyagents/observability/event_bridge.rs`](./tinyagents/observability/event_bridge.rs)), which turns it into an
    `AgentProgress` value ([`progress.rs`](./progress.rs)) on the session's `on_progress`
    channel and feeds usage to `platform::cost`. Web chat forwards that
-   stream to the socket in [`web_chat/progress_bridge.rs`](../web_chat/progress_bridge.rs). A `TurnJournal`
+   stream to the socket in [`web_chat/progress.rs`](../web_chat/progress.rs). A `TurnJournal`
    ([`tinyagents/journal.rs`](./tinyagents/journal.rs)) writes the same events to a durable JSONL
    store that the replay RPCs read.
 8. If the loop paused at its model-call cap without a conclusion, the driver
@@ -150,9 +150,11 @@ In order:
     `AgentError`) and returns the final text.
 
 The bus path is shorter. `bus.rs` scopes the origin, sandbox mode and file
-state agent id, then calls `harness::run_channel_turn_via_graph`
-([`harness/graph.rs`](./harness/graph.rs)), which calls `TurnSpec::run`. There is
-no TinyAgents `Session`: the caller owns the history vector, and
+state agent id, then calls
+`channels::runtime::turn_driver::run_channel_turn`
+([`../channels/runtime/turn_driver.rs`](../channels/runtime/turn_driver.rs)),
+which calls `TurnSpec::run`. There is no TinyAgents `Session`: the caller owns
+the history vector, and
 `ask_user_clarification` is an early-exit tool whose question becomes the
 reply.
 
@@ -187,7 +189,7 @@ target `AgentDefinition` and call `subagent_host::run_subagent_with_parent`.
    | tool call: spawn_subagent { agent_id, prompt }
    v
  orchestration/tools/spawn_subagent.rs
-   | read ParentExecutionContext (run context `parent`, harness/fork_context.rs)
+   | read ParentExecutionContext (run context `parent`, subagent_host/fork_context.rs)
    v
  subagent_host::run_subagent_with_parent
    | resolve definition, model, narrowed tools, narrowed prompt,
@@ -205,7 +207,8 @@ The child gets a filtered tool list (the definition's `tools`,
 `disallowed_tools`, `skill_filter`), its own system prompt, and often a
 cheaper model. Its progress shows up on the parent's channel as
 `SubagentSpawned`, `SubagentToolCallStarted`, `SubagentTextDelta` and the
-other `Subagent*` variants. Spawn depth is capped by
+other `Subagent*` variants. Native child agents are leaf turns unless their
+host explicitly grants depth-bounded nested spawning. Spawn depth is capped by
 `tinyagents::budget::MAX_SPAWN_DEPTH`. Detached runs are tracked through TinyAgents'
 `DetachedTaskRegistry` and can be steered through the shared
 `SteeringRegistry` ([`tinyagents/host/steering.rs`](./tinyagents/host/steering.rs)).
@@ -273,7 +276,7 @@ Turn execution:
 | --- | --- |
 | `session_host/` | `OpenHumanSessionHost`: builder, runtime session, driver, hooks, transcript codec, resume and recorded tools ([README](session_host/README.md)) |
 | `tinyagents/` | Adapter seam onto the TinyAgents harness: turn runner, model source, middleware stack, `host/` capability adapters, event bridge, journal, replay RPC ([README](tinyagents/README.md)) |
-| `harness/` | Agent definitions and loader, parent/fork context types, sandbox and spawn-depth context, oversized tool-result artifacts, the channel/CLI turn graph ([README](harness/README.md)) |
+| `harness/` | Agent definitions and loader, parent/fork context types, sandbox and spawn-depth context, oversized tool-result artifacts ([README](harness/README.md)) |
 | `bus.rs` | The `agent.run_turn` native request handler (`AgentTurnRequest` to `AgentTurnResponse`) |
 | `progress.rs` | `AgentProgress`, the event enum every turn streams to its observer |
 | [`progress_sink.rs`](./progress_sink.rs) | The `ProgressSink` channel type an in-process embedder hands a turn (carried on `AgentChatEnv`) |
@@ -297,7 +300,7 @@ Delegation and coordination:
 | `subagent_host/` | Runs a child agent: definition, model and tool narrowing, prompt, checkpoints, progress ([README](subagent_host/README.md)) |
 | `orchestration/` | Spawn/steer/wait tools, teams, command center, workflow runs, worktrees, background delivery ([README](orchestration/README.md)) |
 | `triage/` | Classifies `TriggerEnvelope`s and escalates ([README](triage/README.md)) |
-| `goals/` | Host adapters around `tinyagents_graph::goals` and the `goal_*` tools ([README](goals/README.md)) |
+| `goals/` | Host adapters around `tinyagents_harness_tools::goals` and the `goal_*` tools ([README](goals/README.md)) |
 | `todos/` | Session-scoped todo list over the TinyAgents todo store ([README](todos/README.md)) |
 | [`../plan_review/`](../plan_review/) | `request_plan_review` gate that parks a web-chat turn until the user decides |
 | [`tools.rs`](./tools.rs), `tools/` | Loop control tools: `delegate`, `plan_exit`, `todo`, `run_workflow`/`await_workflow` (with `skills`) ([README](tools/README.md)) |
@@ -344,8 +347,8 @@ Persistence, setup and RPC:
   deltas, cost updates and the `Subagent*` family.
 - `AgentDefinition`, `AgentDefinitionRegistry`, `ToolScope`, `SandboxMode`
   (`../agent_registry/host_definition.rs` + `tinyagents-definition`): what an agent is.
-- `ParentExecutionContext` ([`harness/fork_context.rs`](./harness/fork_context.rs)): explicit parent
-  state a sub-agent reads from the run context (`parent`); `orchestration::parent_context::build_root_parent`
+- `ParentExecutionContext` ([`subagent_host/fork_context.rs`](./subagent_host/fork_context.rs)): explicit parent
+  state a sub-agent reads from the run context (`parent`); `triage::parent_context::build_root_parent`
   builds one for runs with no parent turn.
 - `run_subagent`, `run_subagent_with_parent`, `SubagentRunOptions`
   ([`subagent_host/lifecycle.rs`](./subagent_host/lifecycle.rs), [`subagent_host/types.rs`](./subagent_host/types.rs)).
@@ -374,7 +377,7 @@ All controllers register under `DomainGroup::Agent` in [`core/all.rs`](../core/a
 | `subagent` | [`orchestration/subagent_control.rs`](./orchestration/subagent_control.rs) | `cancel`, `steer` for running sub-agents |
 
 `agent.chat` and `agent.chat_simple` load config and call
-`inference::host_runtime::rpc::agent_chat` / `agent_chat_simple`, which
+`agent_runs::agent_chat::agent_chat` / `inference::host_runtime::ops::agent_chat_simple`, which
 build an `OpenHumanSessionHost`. `chat_simple` is a bare provider call with
 no tools. The JSON-RPC server itself is in [`crates/openhuman-rpc`](../../../openhuman-rpc/).
 

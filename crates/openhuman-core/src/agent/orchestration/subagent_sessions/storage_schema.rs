@@ -11,26 +11,32 @@
 //! saved since. The driver's `updated_ms` is the time of the write, not of the
 //! session's last use.
 
+use anyhow::Result;
 use serde_json::{Map, Value};
-use tinystoragedrivers::schema::{Schema, ScopeClass, SourceRecord, Step, TargetRecord};
-use tinystoragedrivers::{CollectionSpec, Result};
+use tinystoragedrivers::CollectionSpec;
 
-use crate::storage::schema_support::{key_of, owner, time_ms};
+use crate::storage::schema_support::{
+    key_of, map_legacy_collection, time_ms, LegacySourceRecord as SourceRecord,
+    LegacyTargetRecord as TargetRecord,
+};
 
 pub(super) const SESSIONS: &str = "subagents.sessions";
+pub(super) const EPOCHS: &str = "subagents.session_epochs";
 pub(super) const LEGACY_SESSIONS: &str = "subagent_sessions";
-const SCHEMA: u32 = 2;
-
-/// What the session store keeps and the step from the v1 collection.
-#[must_use]
-pub fn storage_schema() -> Schema {
-    Schema::new(owner("subagents"))
-        .collection_with(SCHEMA, spec(), ScopeClass::Agent)
-        .step(Step::new("sessions_v2", SESSIONS, 1, SCHEMA, sessions_v2).source(LEGACY_SESSIONS))
+/// Converts legacy sub-agent session rows into the current owner shape.
+pub(crate) fn upgrade_records(
+    records: Vec<crate::storage::import::Record>,
+) -> Result<Vec<crate::storage::import::Record>> {
+    map_legacy_collection(records, LEGACY_SESSIONS, sessions_v2)
 }
 
 pub(super) fn spec() -> CollectionSpec {
     CollectionSpec::new(SESSIONS)
+}
+
+/// Collections owned by the sub-agent session host.
+pub(crate) fn collection_specs() -> Vec<CollectionSpec> {
+    vec![spec(), CollectionSpec::new(EPOCHS)]
 }
 
 pub(super) fn legacy_collections() -> Vec<CollectionSpec> {
@@ -38,7 +44,7 @@ pub(super) fn legacy_collections() -> Vec<CollectionSpec> {
 }
 
 /// The camelCase v1 field and its snake_case v2 name, for the plain copies.
-const COPIES: [(&str, &str); 17] = [
+const COPIES: [(&str, &str); 19] = [
     ("subagentSessionId", "subagent_session_id"),
     ("parentSession", "parent_session"),
     ("parentThreadId", "parent_thread_id"),
@@ -52,6 +58,8 @@ const COPIES: [(&str, &str); 17] = [
     ("taskTitle", "task_title"),
     ("currentTaskId", "current_task_id"),
     ("lifecycleKey", "lifecycle_key"),
+    ("parentEpoch", "parent_epoch"),
+    ("parentEpoch", "parent_epoch"),
     ("status", "status"),
     ("reusable", "reusable"),
     ("latestHistory", "latest_history"),

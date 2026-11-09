@@ -5,9 +5,14 @@
 //
 //   node scripts/modules/release-and-repin.mjs <id> [--bump patch|minor|major]
 //                                              [--version X.Y.Z] [--yes]
+//                                              [--owner <github-owner>]
+//                                              [--ref <workflow-ref>]
+//                                              [--workflow-input bump|tag]
 //                                              [--dry-run] [--root <dir>]
 //
-// 1. dispatch `release.yml` in tinyhumansai/<id> (`-f bump=...`) and watch it.
+// 1. dispatch `release.yml` in <owner>/<id> and watch it. The default owner
+//    and `bump` input preserve the canonical flow; `tag` dispatches an
+//    existing version tag, and `--ref` selects the workflow definition ref.
 //    Publishing tags is hard to undo, so this ASKS FIRST (`--yes` answers it,
 //    and a non-interactive shell without `--yes` refuses). With `--version`
 //    the release already exists and nothing is dispatched.
@@ -51,11 +56,20 @@ export const DEFAULT_ROOT = resolve(HERE, "..", "..");
 const ORG = "tinyhumansai";
 
 export function parseArgs(argv) {
-  const opts = { bump: "patch", yes: false, dryRun: false };
+  const opts = {
+    bump: "patch",
+    yes: false,
+    dryRun: false,
+    owner: ORG,
+    workflowInput: "bump",
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--bump") opts.bump = argv[++i];
     else if (arg === "--version") opts.version = argv[++i];
+    else if (arg === "--owner") opts.owner = argv[++i];
+    else if (arg === "--ref") opts.ref = argv[++i];
+    else if (arg === "--workflow-input") opts.workflowInput = argv[++i];
     else if (arg === "--root") opts.root = argv[++i];
     else if (arg === "--yes") opts.yes = true;
     else if (arg === "--dry-run") opts.dryRun = true;
@@ -65,6 +79,18 @@ export function parseArgs(argv) {
   }
   if (!opts.id) throw new Error("usage: release-and-repin.mjs <id> [options]");
   bumpVersion("0.0.0", opts.bump); // validates --bump
+  if (!/^[A-Za-z0-9-]+$/.test(opts.owner ?? "")) {
+    throw new Error("--owner must be a GitHub account name");
+  }
+  if (opts.ref !== undefined && (!opts.ref || opts.ref.startsWith("-") || opts.ref.includes("\0"))) {
+    throw new Error("--ref must be a non-empty git ref");
+  }
+  if (!["bump", "tag"].includes(opts.workflowInput)) {
+    throw new Error("--workflow-input must be bump or tag");
+  }
+  if (opts.workflowInput === "tag" && !opts.version) {
+    throw new Error("--workflow-input tag requires --version for an existing tag");
+  }
   if (opts.version && !/^\d+\.\d+\.\d+$/.test(opts.version)) {
     throw new Error(`--version must be X.Y.Z, got ${opts.version}`);
   }
@@ -110,6 +136,11 @@ async function defaultConfirm(question) {
  * injectable so tests never touch GitHub or git.
  */
 export async function repin(opts, deps = {}) {
+  opts = {
+    ...opts,
+    owner: opts.owner ?? ORG,
+    workflowInput: opts.workflowInput ?? "bump",
+  };
   const root = resolve(opts.root ?? DEFAULT_ROOT);
   const run = deps.run ?? defaultRun;
   const confirm = deps.confirm ?? defaultConfirm;
@@ -128,39 +159,52 @@ export async function repin(opts, deps = {}) {
   const registrySrc = readFileSync(file.path, "utf8");
   const spec = parseSourceSpecs(registrySrc).get(opts.id);
   if (!spec) throw new Error(`${opts.id}: record has no SourceSpec submodule`);
-  const repo = `${ORG}/${spec.submodule}`;
+  const repo = `${opts.owner}/${spec.submodule}`;
   const subPath = `vendor/${spec.submodule}`;
   const subDir = join(root, subPath);
   const current = file.record.version;
+  const dispatch = opts.workflowInput === "tag" || !opts.version;
 
   let version = opts.version;
   if (opts.dryRun) {
     log(
       `[dry-run] ${opts.id}: registry ${current}; ` +
         (version
-          ? `would re-pin to existing release v${version}`
-          : `would dispatch release.yml in ${repo} (bump=${opts.bump}) after confirmation`) +
+          ? opts.workflowInput === "tag"
+            ? `would dispatch release.yml in ${repo} (tag=v${version}${opts.ref ? `, ref=${opts.ref}` : ""}) after confirmation`
+            : `would re-pin to existing release v${version} in ${repo}`
+          : `would dispatch release.yml in ${repo} (bump=${opts.bump}${opts.ref ? `, ref=${opts.ref}` : ""}) after confirmation`) +
         `; would check out the tag in ${subPath}`,
     );
     return { version: version ?? null, dryRun: true };
   }
 
-  if (!version) {
+  if (dispatch) {
+    const workflowValue = opts.workflowInput === "tag" ? `v${version}` : opts.bump;
     const ok =
       opts.yes ||
       (await confirm(
-        `Dispatch release.yml in ${repo} with bump=${opts.bump}? This publishes a tag and release artifacts and is hard to undo.`,
+        `Dispatch release.yml in ${repo} with ${opts.workflowInput}=${workflowValue}${opts.ref ? ` on ref ${opts.ref}` : ""}? This publishes release artifacts and may publish a tag, which is hard to undo.`,
       ));
     if (!ok) throw new Error("release not confirmed; nothing was dispatched");
-    must("gh", ["workflow", "run", "release.yml", "-R", repo, "-f", `bump=${opts.bump}`]);
+    const dispatchArgs = ["workflow", "run", "release.yml", "-R", repo];
+    if (opts.ref) dispatchArgs.push("--ref", opts.ref);
+    dispatchArgs.push("-f", `${opts.workflowInput}=${workflowValue}`);
+    must("gh", dispatchArgs);
     log(`dispatched release.yml in ${repo}; waiting for the run`);
-    const runId = must("gh", [
+    const listArgs = [
       "run", "list", "-R", repo, "-w", "release.yml", "-L", "1",
       "--json", "databaseId", "-q", ".[0].databaseId",
-    ]);
+    ];
+    if (opts.ref) listArgs.splice(8, 0, "--branch", opts.ref);
+    const runId = must("gh", listArgs);
     must("gh", ["run", "watch", runId, "-R", repo, "--exit-status"], { inherit: true });
-    const tag = must("gh", ["release", "view", "-R", repo, "--json", "tagName", "-q", ".tagName"]);
-    version = tag.replace(/^v/, "");
+    if (opts.workflowInput === "bump") {
+      const tag = must("gh", ["release", "view", "-R", repo, "--json", "tagName", "-q", ".tagName"]);
+      version = tag.replace(/^v/, "");
+    } else {
+      must("gh", ["release", "view", `v${version}`, "-R", repo, "--json", "tagName", "-q", ".tagName"]);
+    }
   }
   const tag = `v${version}`;
 
@@ -173,7 +217,8 @@ export async function repin(opts, deps = {}) {
     rmSync(scratch, { recursive: true, force: true });
   }
 
-  const rewritten = rewriteRecord(file.text, opts.id, version, checksums);
+  const releaseUrl = `https://github.com/${repo}/releases/tag/${tag}`;
+  const rewritten = rewriteRecord(file.text, opts.id, version, checksums, releaseUrl);
   for (const extra of unusedChecksums(rewritten.src, opts.id, checksums)) {
     log(`note: ${tag} publishes ${extra}, which no registry asset uses`);
   }

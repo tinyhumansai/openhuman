@@ -1,11 +1,14 @@
 use super::*;
 
 impl OpenHumanSessionHost {
-    /// Clears the agent's conversation history.
+    /// Discards this host's cached session composition.
+    ///
+    /// This synchronous compatibility method does not reset durable history;
+    /// callers that serve a user-visible reset command must use
+    /// `reset_bound_history` so the transcript generation changes atomically.
     pub fn clear_history(&mut self) {
-        // Runtime `Session` owns the only generic history and has no mutable
-        // clear operation by design. Dropping this uncommitted/committed
-        // composition starts a fresh runtime session on the next public turn.
+        // Dropping the composition only affects this host instance. Durable
+        // transcript state remains untouched.
         self.runtime_session = None;
         self.runtime_state = Arc::new(std::sync::Mutex::new(
             super::super::super::runtime_session::OpenHumanSessionState::default(),

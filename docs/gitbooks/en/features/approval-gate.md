@@ -7,7 +7,7 @@ icon: shield-check
 
 # Approval gate
 
-The approval gate sits between the agent and the outside world. When the agent wants to do something your autonomy tier says needs a check, the gate stops the call, shows you what is about to happen, and waits for your decision. Actions your tier already allows run without a prompt. On the `full` tier, for example, a write is never prompted.
+The approval gate sits between the agent and the outside world. TinySecurity evaluates policy and owns the durable request state; OpenHuman parks the live call, displays the prompt and carries out the result. When the autonomy tier requires a check, the call waits for your decision. Actions your tier already allows run without a prompt. On the `full` tier, for example, a write is never prompted.
 
 {% hint style="warning" %}
 The autonomy policy is off by default, and the gate is part of it. With `[autonomy] enabled = false`, command classification, the tier table, the allowlist, the hourly action budget, `workspace_only` and `forbidden_paths` do nothing, and acting tool calls run without a prompt. The exceptions are the forced approvals below.
@@ -85,7 +85,17 @@ You can also type "yes" or "no" in chat, and the reply goes to the parked reques
 
 ## Always allow
 
-Choosing **Always allow** saves the tool name to `[autonomy].auto_approve` and reloads the policy. The gate then lets that tool through on later turns. To be prompted again, remove the entry in **Settings > Agent access**.
+Choosing **Always allow** records the approval decision and saves the tool name to `[autonomy].auto_approve`; OpenHuman reloads the host policy. Later calls can skip this prompt, but still pass the active policy checks and hard blocks. To be prompted again, remove the entry in **Settings > Agent access**. An agent's **Always allow** is not copied into the operator's list.
+
+### Jev review
+
+TinySecurity also supports optional Jev scoring for a request that still needs
+approval. It is disabled in OpenHuman's current module configuration. If a host
+explicitly enables it, a qualified score can approve only that exact request
+once, after the decision is durably audited. It cannot override a hard denial
+or create a reusable tool or flow grant. An uncertain score, timeout or service
+error leaves the request for the human approval path; without an available
+human prompt, the request is denied.
 
 The default list is `file_read`, `memory_search`, `memory_list`, `get_time`, `list_dir`, `glob` and `grep`. Four of those names no longer match a registered tool. Memory is now one tool called `memory`, the clock is `current_time`, and directory listing is `list`. So only `file_read`, `glob` and `grep` have any effect.
 
@@ -94,7 +104,7 @@ The default list is `file_read`, `memory_search`, `memory_list`, `get_time`, `li
 `[autonomy].auto_approve_all` approves every call without asking. Before you enable it, know three things:
 
 - A call from an unlabelled call site is still denied, and the hard blocks inside the tools still apply.
-- It skips parking, not just the prompt. A triage dispatch from a connector or webhook payload normally parks and writes an audit row. With this flag it runs at once and writes no audit row, so those dispatches leave no approval trail.
+- It skips the human prompt. TinySecurity still records the automatic host-policy decision in the audit stream; the tool runs without a pending human request.
 - It does not override a forced approval.
 
 ## Forced approvals
@@ -115,7 +125,12 @@ Every path that is not an approval ends in a denial:
 - If saving the request fails or the channel drops, the call is denied.
 - On timeout the gate re-reads the stored decision first, so an approval that landed at the last moment still wins.
 
-Pending requests are stored in SQLite (`{workspace_dir}/approval/approval.db`) and survive a core restart. After an approved tool finishes, the gate records the outcome (success or error) as an audit trail. Error text is sanitized and capped. Everything stored or broadcast is redacted first: personal data and chat content are scrubbed and home paths are stripped.
+TinySecurity owns pending and decided request state, expiry, reusable grants, and
+the audit stream. OpenHuman serves the document-store and prompt callbacks and
+parks the current tool future until a decision or terminal outcome arrives.
+After an approved tool finishes, the host reports its outcome to TinySecurity
+for the audit trail. Sensitive arguments and text are redacted before they are
+stored or shown.
 
 ## What the turn's origin decides
 

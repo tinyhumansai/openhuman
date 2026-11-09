@@ -1,15 +1,17 @@
 use super::schema_defs::schemas;
 use super::*;
-use crate::core::runtime::DispatchCtx;
+use crate::core::all::assert_schema_controller_parity;
 
 #[test]
-fn all_schemas_use_config_namespace_and_have_descriptions() {
-    for s in all_controller_schemas() {
-        assert_eq!(s.namespace, "config", "function {}", s.function);
-        assert!(!s.description.is_empty(), "function {} desc", s.function);
-        assert!(!s.outputs.is_empty(), "function {} outputs", s.function);
-    }
+fn config_schema_catalog_matches_registered_controllers() {
+    crate::core::all::expect_schema_namespace(&all_controller_schemas(), "config");
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "get",
+    );
 }
+use crate::core::runtime::DispatchCtx;
 
 #[test]
 fn every_registered_key_resolves_to_non_unknown_schema() {
@@ -42,68 +44,6 @@ fn every_registered_key_resolves_to_non_unknown_schema() {
         let s = schemas(k);
         assert_ne!(s.function, "unknown", "`{k}` fell through to unknown");
         assert_eq!(s.namespace, "config");
-    }
-}
-
-#[test]
-fn registered_controllers_all_use_config_namespace() {
-    for h in all_registered_controllers() {
-        assert_eq!(h.schema.namespace, "config");
-        assert!(!h.schema.function.is_empty());
-    }
-}
-
-#[test]
-fn json_output_helper_builds_required_json_field() {
-    let f = json_output("result", "desc");
-    assert!(f.required);
-    assert!(matches!(f.ty, TypeSchema::Json));
-}
-
-#[test]
-fn to_json_wraps_rpc_outcome() {
-    let v = to_json(Outcome::single_log(serde_json::json!({"ok": true}), "l")).expect("serialize");
-    assert!(v.get("logs").is_some() || v.get("result").is_some());
-}
-
-// ── Field builder helpers ────────────────────────────────────
-
-#[test]
-fn required_string_builds_required_string_field() {
-    let f = required_string("api_key", "Auth key");
-    assert_eq!(f.name, "api_key");
-    assert_eq!(f.comment, "Auth key");
-    assert!(f.required);
-    assert!(matches!(f.ty, TypeSchema::String));
-}
-
-#[test]
-fn optional_string_builds_option_string_field() {
-    let f = optional_string("model", "model name");
-    assert!(!f.required);
-    match &f.ty {
-        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::String)),
-        other => panic!("expected Option<String>, got {other:?}"),
-    }
-}
-
-#[test]
-fn optional_json_builds_option_json_field() {
-    let f = optional_json("payload", "json payload");
-    assert!(!f.required);
-    match &f.ty {
-        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Json)),
-        other => panic!("expected Option<Json>, got {other:?}"),
-    }
-}
-
-#[test]
-fn optional_bool_builds_option_bool_field() {
-    let f = optional_bool("enabled", "Whether enabled");
-    assert!(!f.required);
-    match &f.ty {
-        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Bool)),
-        other => panic!("expected Option<Bool>, got {other:?}"),
     }
 }
 

@@ -29,11 +29,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(test)]
+use crate::storage::StorageBackend;
+use crate::storage::{CollectionSpec, DocumentStore, Precondition, Storage};
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use sha2::Digest;
-use tinystoragedrivers::secrets::{DocumentSecrets, SecretStore};
-use tinystoragedrivers::{CollectionSpec, DocumentStore, ErrorKind, Precondition, ScopedStorage};
+use tinystoragedrivers::ErrorKind;
+use tinystoragedrivers_api::SecretStore;
 
 use crate::core::runtime::DispatchCtx;
 use crate::storage::rusqlite::{self, Connection, OpenFlags};
@@ -58,6 +61,8 @@ pub(crate) enum Outcome {
     NoBackend,
     /// The marker says this data directory was already imported.
     AlreadyDone,
+    /// Another importer still owns this data directory's claim.
+    InProgress,
     /// Neither legacy file exists.
     NoSource,
     /// The files were read and their records written.
@@ -71,29 +76,87 @@ pub(crate) enum Outcome {
 /// Imports the legacy files under `data_dir` into the module's scope of the
 /// installed backend.
 pub(crate) async fn import_legacy(ctx: &DispatchCtx, data_dir: &Path) -> Result<Outcome> {
-    let Some(backend) = crate::storage::installed() else {
+    if crate::storage::installed().is_none() {
         return Ok(Outcome::NoBackend);
-    };
+    }
+    let clients = data_dir.join(CLIENTS_DB);
+    let audit = data_dir.join(AUDIT_DB);
+    if !clients.exists() && !audit.exists() {
+        return Ok(Outcome::NoSource);
+    }
+
+    let marker = marker_id(data_dir);
+    let marker_for_claim = marker.clone();
+    let data_dir = data_dir.to_path_buf();
+    let import_ctx = ctx.clone();
     let scope = super::storage_host::current_module_scope(ctx, MODULE_ID)
         .map_err(|error| anyhow!("resolve the module scope: {:?}", error.kind()))?;
-    let scoped = backend
-        .for_scope(&scope)
-        .map_err(|error| anyhow!("open the module scope: {:?}", error.kind()))?;
-    let keys = crate::storage::secrets::keys()
-        .map_err(|error| anyhow!("no key provider for module secrets: {:?}", error.kind()))?;
-    let secrets = DocumentSecrets::new(&scoped, keys);
-    import_into(ctx, &scoped, &secrets, data_dir).await
+    let imported = super::storage_import_support::with_module_claim(
+        ctx,
+        MODULE_ID,
+        MARKER_COLLECTION,
+        &marker_for_claim,
+        move |scoped| {
+            crate::storage::block_on_anyhow(async move {
+                if super::storage_import_support::already_imported(
+                    &scoped,
+                    MARKER_COLLECTION,
+                    &marker,
+                )
+                .await?
+                {
+                    return Ok(Outcome::AlreadyDone);
+                }
+                let clients = data_dir.join(CLIENTS_DB);
+                let audit = data_dir.join(AUDIT_DB);
+                if !clients.exists() && !audit.exists() {
+                    return Ok(Outcome::NoSource);
+                }
+                let (legacy_servers, legacy_audit) = import_ctx
+                    .spawn_blocking(move || {
+                        let servers = if clients.exists() {
+                            read_servers(&clients)?
+                        } else {
+                            Vec::new()
+                        };
+                        let audit_rows = if audit.exists() {
+                            read_audit(&audit)?
+                        } else {
+                            Vec::new()
+                        };
+                        Ok::<_, anyhow::Error>((servers, audit_rows))
+                    })
+                    .await
+                    .context("the legacy reader panicked")??;
+                let outcome =
+                    import_payload(&scoped, &scope, legacy_servers, legacy_audit, None).await?;
+                super::storage_import_support::mark_imported(&scoped, MARKER_COLLECTION, &marker)
+                    .await?;
+                Ok(outcome)
+            })
+        },
+    )?;
+    Ok(imported.unwrap_or(Outcome::InProgress))
 }
 
+#[cfg(test)]
 async fn import_into(
-    ctx: &DispatchCtx,
-    scoped: &ScopedStorage,
-    secrets: &dyn SecretStore,
+    backend: &Arc<dyn StorageBackend>,
+    scope: &crate::storage::Scope,
     data_dir: &Path,
+    test_keys: Option<Arc<dyn tinystoragedrivers::secrets::KeyProvider>>,
 ) -> Result<Outcome> {
-    let docs = scoped.documents();
+    let scoped = backend
+        .for_scope(scope)
+        .map_err(|error| anyhow!("open the module scope: {:?}", error.kind()))?;
+    let markers = crate::storage::documents::Repo::on(
+        backend,
+        scope,
+        "storage::import",
+        crate::storage::import_state::collection_specs,
+    )?;
     let marker = marker_id(data_dir);
-    if crate::storage::import_state::host_import_done(scoped, MARKER_COLLECTION, &marker)
+    if crate::storage::import_state::host_import_done(&scoped, MARKER_COLLECTION, &marker)
         .await
         .map_err(|error| anyhow!("read the import state: {:?}", error.kind()))?
     {
@@ -105,24 +168,72 @@ async fn import_into(
         return Ok(Outcome::NoSource);
     }
 
-    // The files are read on a blocking thread, from copies.
-    let (legacy_servers, legacy_audit) = ctx
-        .spawn_blocking(move || -> Result<_> {
-            let servers = if clients.exists() {
-                read_servers(&clients)?
-            } else {
-                Vec::new()
-            };
-            let audit = if audit.exists() {
-                read_audit(&audit)?
-            } else {
-                Vec::new()
-            };
-            Ok((servers, audit))
-        })
-        .await
-        .context("the legacy reader panicked")??;
+    let step = crate::storage::import_state::step_id(MARKER_COLLECTION, &marker);
+    let claimed = crate::storage::import_state::with_claim(
+        &markers,
+        crate::storage::import_state::HOST_OWNER,
+        &step,
+        |condition| {
+            let claimed_markers = markers.conditioned(condition)?;
+            let claimed_backend = crate::storage::import_state::backend_with_condition(
+                Arc::clone(backend),
+                condition.clone(),
+            );
+            let claimed_scoped = claimed_backend
+                .for_scope(scope)
+                .map_err(|error| anyhow!("open claimed module scope: {:?}", error.kind()))?;
+            let scope = scope.clone();
+            crate::storage::block_on_anyhow(async move {
+                if crate::storage::import_state::host_import_done(
+                    claimed_markers.scoped(),
+                    MARKER_COLLECTION,
+                    &marker,
+                )
+                .await
+                .map_err(|error| anyhow!("read the import state: {:?}", error.kind()))?
+                {
+                    return Ok(Outcome::AlreadyDone);
+                }
+                let legacy_servers = if clients.exists() {
+                    read_servers(&clients)?
+                } else {
+                    Vec::new()
+                };
+                let legacy_audit = if audit.exists() {
+                    read_audit(&audit)?
+                } else {
+                    Vec::new()
+                };
+                let result = import_payload(
+                    &claimed_scoped,
+                    &scope,
+                    legacy_servers,
+                    legacy_audit,
+                    test_keys,
+                )
+                .await?;
+                crate::storage::import_state::host_import_mark(
+                    claimed_markers.scoped(),
+                    MARKER_COLLECTION,
+                    &marker,
+                )
+                .await
+                .map_err(|error| anyhow!("write the import state: {:?}", error.kind()))?;
+                Ok(result)
+            })
+        },
+    )?;
+    Ok(claimed.unwrap_or(Outcome::InProgress))
+}
 
+async fn import_payload(
+    scoped: &Storage,
+    scope: &crate::storage::Scope,
+    legacy_servers: Vec<LegacyServer>,
+    legacy_audit: Vec<Value>,
+    test_keys: Option<Arc<dyn tinystoragedrivers::secrets::KeyProvider>>,
+) -> Result<Outcome> {
+    let docs = scoped.documents();
     for name in [SERVERS, SERVER_NAMES] {
         docs.ensure_collection(&CollectionSpec::new(name))
             .await
@@ -130,6 +241,15 @@ async fn import_into(
     }
 
     let (mut servers, mut secret_count) = (0usize, 0usize);
+    let secret_store = if legacy_servers.iter().any(|server| !server.env.is_empty()) {
+        let keys = match test_keys {
+            Some(keys) => keys,
+            None => crate::storage::secrets::keys()?,
+        };
+        Some(crate::storage::secrets::over(scoped, scope.clone(), keys))
+    } else {
+        None
+    };
     for server in legacy_servers {
         if put_absent(docs, SERVERS, &server.id, server.doc).await? {
             servers += 1;
@@ -137,6 +257,9 @@ async fn import_into(
         put_absent(docs, SERVER_NAMES, &server.claim_id, server.claim).await?;
         if !server.env.is_empty() {
             let name = format!("{ENV_SECRET_PREFIX}{}", server.id);
+            let secrets = secret_store
+                .as_ref()
+                .expect("non-empty environment has a secret adapter");
             let present = secrets
                 .get(&name)
                 .await
@@ -169,9 +292,6 @@ async fn import_into(
         }
     }
 
-    crate::storage::import_state::host_import_mark(scoped, MARKER_COLLECTION, &marker)
-        .await
-        .map_err(|error| anyhow!("write the import state: {:?}", error.kind()))?;
     tracing::info!(
         "{LOG_PREFIX} imported servers={servers} secrets={secret_count} audit={audited}"
     );
@@ -393,6 +513,6 @@ fn now_ms() -> u64 {
         .min(u128::from(u64::MAX)) as u64
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "storage-sqlite"))]
 #[path = "storage_import_tinymcp_tests.rs"]
 mod tests;

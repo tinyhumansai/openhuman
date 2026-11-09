@@ -24,6 +24,7 @@
 //! | [`driver`]    | OpenHuman model/harness `SessionDriver`.                         |
 //! | [`hooks`]     | Product preparation/commit/terminal hooks.                       |
 //! | [`runtime`]   | Public accessors and `run_single` / `run_interactive`.           |
+//! | [`session_key`] | Minting and renaming the per-host transcript key.              |
 //!
 //! External callers should import [`OpenHumanSessionHost`] and [`SessionHostBuilder`] from
 //! `crate::agent`, which re-exports them from this module.
@@ -31,44 +32,49 @@
 
 #[cfg(feature = "flows")]
 pub(crate) use builder::provider_role_for_definition;
-pub use builder::{HostOnlyToolPolicy, HostTools, HostTurnTools, TurnContext};
+pub use builder::{HostTools, HostTurnTools, TurnContext};
 
 mod builder;
 mod builder_config;
 mod codec;
 mod driver;
+pub(crate) mod product_copy;
 // Tool surface for live voice sessions (`voice::live`).
 #[cfg(feature = "voice")]
 mod live_tools;
-#[cfg(test)]
-#[path = "resume_bound_session_tests.rs"]
-mod resume_bound_session_tests;
 mod runtime;
 mod runtime_session;
-pub(crate) mod stop_summary;
-mod turn;
-// `pub(crate)` since issue #6014: the tool-call-cap instruction is now appended
-// inside the loop by `tinyagents::middleware::FinalCallWrapUpMiddleware`, so the
-// harness-assembly site has to name it. It stays the one definition — the whole
-// point is that the in-loop conclusion and the out-of-band fallback ask for the
-// same thing.
-pub(crate) mod turn_checkpoint;
+mod session_key;
+pub(crate) mod setup_report;
+pub(crate) mod stop_policy;
 mod types;
+
+#[cfg(test)]
+#[path = "test_support.rs"]
+pub(crate) mod test_support;
 
 pub use codec::OpenHumanTranscriptCodec;
 pub type OpenHumanSessionHooks =
     tinyagents_runtime::FnSessionHooks<crate::agent::tinyagents::host::OpenHumanRunContext>;
+pub(crate) use runtime_session::invalidate_ready_memory_blocks;
+pub use runtime_session::{CompactOptions, CompactOutcome, MemoryBlockPrewarm};
 pub use types::{OpenHumanSessionHost, SessionHostBuilder, TurnOverrides};
 
 // Re-export the duplicate-tool-spec guard for sibling harness modules
 // (`session::runtime`, `subagent_host`) so all provider call sites
 // share one tested implementation.
-pub(crate) use builder::dedup_visible_tool_specs;
 
+#[cfg(all(test, feature = "legacy-import"))]
+mod discovery_pin_tests;
+#[cfg(test)]
+#[path = "imported_history_tests.rs"]
+mod imported_history_tests;
 #[cfg(test)]
 mod orphaned_head_resume_tests;
 #[cfg(test)]
 mod response_shape_turn_tests;
+#[cfg(all(test, feature = "legacy-import"))]
+mod result_expiry_wire_tests;
 #[cfg(test)]
 mod runtime_adapter_session_state_tests;
 #[cfg(test)]
@@ -77,10 +83,10 @@ mod runtime_adapter_tests;
 mod runtime_adapter_trace_tests;
 #[cfg(test)]
 mod runtime_adapter_usage_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-import"))]
 mod transcript_compat_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-import"))]
 #[path = "transcript_resume_stable_tests.rs"]
 mod transcript_resume_stable_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-import"))]
 mod typed_transcript_compat_tests;

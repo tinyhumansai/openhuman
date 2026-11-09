@@ -1,6 +1,5 @@
 use super::*;
 use std::collections::HashMap;
-use tinyinference_embeddings::probe::final_probe_dims;
 // Production code now routes managed construction through
 // `create_embedding_provider_with_config`; this low-level custom-endpoint
 // regression test still drives the credentialed factory directly.
@@ -15,14 +14,14 @@ use tempfile::TempDir;
 /// memory pipeline reverts to sending an empty bearer and Cohere 401s on
 /// every embed. Lock the round-trip: store under `embeddings:<slug>`, read
 /// it back; an unrelated provider must stay empty (no cross-bleed).
-#[test]
-fn resolve_api_key_returns_stored_embeddings_credential() {
+#[tokio::test]
+async fn resolve_api_key_returns_stored_embeddings_credential() {
     let tmp = TempDir::new().unwrap();
     let mut config = Config::default();
     config.config_path = tmp.path().join("config.toml");
 
     // Nothing stored yet → empty (the empty-key guard's "" input).
-    assert_eq!(resolve_api_key(&config, "cohere"), "");
+    assert_eq!(resolve_api_key(&config, "cohere").await, "");
 
     // Store a Cohere embeddings key exactly as `set_api_key` does.
     AuthService::from_config(&config)
@@ -33,11 +32,12 @@ fn resolve_api_key_returns_stored_embeddings_credential() {
             HashMap::new(),
             true,
         )
+        .await
         .unwrap();
 
     // Resolve returns it; a provider with no stored key stays empty.
-    assert_eq!(resolve_api_key(&config, "cohere"), "sk-cohere-test");
-    assert_eq!(resolve_api_key(&config, "voyage"), "");
+    assert_eq!(resolve_api_key(&config, "cohere").await, "sk-cohere-test");
+    assert_eq!(resolve_api_key(&config, "voyage").await, "");
 }
 
 #[tokio::test]
@@ -68,8 +68,8 @@ async fn custom_profile_is_retained_and_returned_while_embeddings_are_disabled()
 /// `custom:<url>` providers must look up under the `embeddings:custom`
 /// slug (the inline URL is not part of the credential key), mirroring the
 /// slug normalization in `embed`/`set_api_key`.
-#[test]
-fn resolve_api_key_normalizes_custom_prefix_to_custom_slug() {
+#[tokio::test]
+async fn resolve_api_key_normalizes_custom_prefix_to_custom_slug() {
     let tmp = TempDir::new().unwrap();
     let mut config = Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -82,315 +82,12 @@ fn resolve_api_key_normalizes_custom_prefix_to_custom_slug() {
             HashMap::new(),
             true,
         )
+        .await
         .unwrap();
 
     assert_eq!(
-        resolve_api_key(&config, "custom:http://localhost:1234"),
+        resolve_api_key(&config, "custom:http://localhost:1234").await,
         "sk-custom-test"
-    );
-}
-
-/// Issue #4056: after a successful probe we adopt the endpoint's real
-/// returned length for auto-detected models, but keep the requested size for
-/// `text-embedding-3-*` (the server returned exactly that). A zero actual
-/// (defensive — empty vectors are already rejected upstream) falls back to
-/// the configured value.
-#[test]
-fn final_probe_dims_adopts_actual_for_auto_detected_models() {
-    // Auto-detected model → adopt the real length, ignoring the guess.
-    assert_eq!(final_probe_dims("bge-m3", 1024, 1024), 1024);
-    assert_eq!(final_probe_dims("bge-m3", 1024, 768), 768);
-    assert_eq!(final_probe_dims("nomic-embed-text", 1024, 768), 768);
-    // text-embedding-3-* → keep the requested size (param was honoured).
-    assert_eq!(final_probe_dims("text-embedding-3-large", 1024, 3072), 3072);
-    // Defensive: zero actual falls back to the configured value.
-    assert_eq!(final_probe_dims("bge-m3", 1024, 0), 1024);
-}
-
-#[test]
-fn normalize_embed_model_id_strips_prefix_and_tag() {
-    assert_eq!(normalize_embed_model_id("text-embedding-bge-m3"), "bge-m3");
-    assert_eq!(normalize_embed_model_id("bge-m3"), "bge-m3");
-    assert_eq!(normalize_embed_model_id("bge-m3:latest"), "bge-m3");
-    assert_eq!(normalize_embed_model_id("TEXT-EMBEDDING-BGE-M3"), "bge-m3");
-    // Exact-after-strip: must not collapse a different model onto bge-m3.
-    assert_ne!(normalize_embed_model_id("bge-m3-distill"), "bge-m3");
-}
-
-#[test]
-fn reject_model_not_served_suggests_normalized_match() {
-    // User entered `bge-m3`; LM Studio serves `text-embedding-bge-m3` —
-    // the feedback names the exact served id to select (issue #3761).
-    let served = vec!["text-embedding-bge-m3".to_string(), "qwen-chat".to_string()];
-    let out = reject_model_not_served("bge-m3", &served);
-    assert_eq!(out.error, "EMBEDDINGS_NO_MODEL_LOADED");
-    assert_eq!(
-        out.suggested_model.as_deref(),
-        Some("text-embedding-bge-m3")
-    );
-    let msg = &out.message;
-    assert!(msg.contains("text-embedding-bge-m3"));
-}
-
-#[test]
-fn reject_model_not_served_without_match_lists_available() {
-    let served = vec!["qwen-chat".to_string(), "llama-3".to_string()];
-    let out = reject_model_not_served("bge-m3", &served);
-    assert_eq!(out.error, "EMBEDDINGS_NO_MODEL_LOADED");
-    assert!(out.suggested_model.is_none());
-    let msg = &out.message;
-    assert!(msg.contains("qwen-chat") && msg.contains("llama-3"));
-}
-
-#[test]
-fn check_requested_model_served_decisions() {
-    // Served exactly → accept (None).
-    assert!(check_requested_model_served(
-        "text-embedding-bge-m3",
-        &["text-embedding-bge-m3".to_string()],
-    )
-    .is_none());
-    // Empty/unknown list → defer to probe (None), never block.
-    assert!(check_requested_model_served("bge-m3", &[]).is_none());
-    // Non-empty list without the model → reject with feedback.
-    let reject = check_requested_model_served("bge-m3", &["text-embedding-bge-m3".to_string()]);
-    assert_eq!(reject.unwrap().error, "EMBEDDINGS_NO_MODEL_LOADED");
-}
-
-#[tokio::test]
-async fn fetch_served_model_ids_parses_openai_models_list() {
-    use axum::{routing::get, Json, Router};
-    let app = Router::new().route(
-        "/v1/models",
-        get(|| async {
-            Json(serde_json::json!({
-                "object": "list",
-                "data": [
-                    { "id": "text-embedding-bge-m3", "object": "model" },
-                    { "id": "qwen-chat", "object": "model" }
-                ]
-            }))
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-
-    let ids = fetch_served_model_ids(&format!("{base}/v1"), "")
-        .await
-        .expect("models list");
-    assert_eq!(ids, vec!["text-embedding-bge-m3", "qwen-chat"]);
-}
-
-/// Helper: pull the `error` code out of a reject payload.
-fn reject_code(outcome: EmbedProbe) -> Option<String> {
-    classify_embed_probe(outcome).map(|reject| reject.error.to_string())
-}
-
-/// A usable vector is the ONLY thing that passes the setup-time gate — the
-/// config is then accepted and persisted.
-#[test]
-fn classify_embed_probe_accepts_only_usable_vector() {
-    assert!(
-        classify_embed_probe(EmbedProbe::Returned(vec![vec![0.1, 0.2, 0.3]])).is_none(),
-        "a non-empty vector must verify the endpoint"
-    );
-}
-
-/// Reachable but empty/zero-dim response is a failed verification, not a
-/// valid embedder — never persist it.
-#[test]
-fn classify_embed_probe_rejects_empty_vectors() {
-    assert_eq!(
-        reject_code(EmbedProbe::Returned(vec![])).as_deref(),
-        Some("EMBEDDINGS_VERIFICATION_FAILED")
-    );
-    assert_eq!(
-        reject_code(EmbedProbe::Returned(vec![vec![]])).as_deref(),
-        Some("EMBEDDINGS_VERIFICATION_FAILED")
-    );
-}
-
-/// LM Studio idle ("No models loaded") must reject the save with the
-/// one-step remediation code so the doomed config is never persisted — the
-/// fix is verifying at setup, not suppressing the later flood.
-#[test]
-fn classify_embed_probe_rejects_no_model_loaded() {
-    let body = r#"Embedding API error (400 Bad Request): {"error":"No models loaded. Please load a model in the developer page or use the 'lms load' command."}"#;
-    let rpc = classify_embed_probe(EmbedProbe::Failed(body.to_string())).unwrap();
-    assert_eq!(Some(rpc.error), Some("EMBEDDINGS_NO_MODEL_LOADED"));
-    // The raw provider detail is preserved for the UI.
-    assert_eq!(rpc.detail.as_deref(), Some(body));
-}
-
-/// A 404/405 (no `/embeddings` route) keeps its dedicated code.
-#[test]
-fn classify_embed_probe_rejects_endpoint_absent() {
-    for detail in [
-        "Embedding API error (404 Not Found): no route",
-        "openai embeddings returned HTTP 404 Not Found: no route",
-    ] {
-        assert_eq!(
-            reject_code(EmbedProbe::Failed(detail.into())).as_deref(),
-            Some("EMBEDDINGS_ENDPOINT_NO_API")
-        );
-    }
-}
-
-/// An unclassified 5xx still rejects with the generic code — it's a real
-/// server fault, not one of the actionable user-config shapes.
-#[test]
-fn classify_embed_probe_rejects_unclassified_5xx_generically() {
-    assert_eq!(
-        reject_code(EmbedProbe::Failed(
-            "openai embeddings returned HTTP 500 Internal Server Error: boom".into()
-        ))
-        .as_deref(),
-        Some("EMBEDDINGS_VERIFICATION_FAILED")
-    );
-}
-
-/// Issue #5017 — the #5017 reporter's exact case: a chat/reasoning model id
-/// (`gpt-5-mini`) that works for chat is pasted into the embeddings model
-/// field. The endpoint IS an embeddings API but rejects the model with a 400;
-/// before the fix this collapsed into the generic "test embed failed", so the
-/// user couldn't tell the model wasn't an embeddings model. Now it maps to a
-/// dedicated, actionable code — across both wire shapes.
-#[test]
-fn classify_embed_probe_distinguishes_incompatible_model() {
-    for detail in [
-        r#"openai embeddings returned HTTP 400 Bad Request: {"error":{"message":"gpt-5-mini does not support embeddings"}}"#,
-        r#"Embedding API error (400 Bad Request): {"error":{"message":"Model gpt-5-mini does not exist"}}"#,
-        r#"openai embeddings returned HTTP 400 Bad Request: {"error":"this is not an embedding model"}"#,
-    ] {
-        assert_eq!(
-            reject_code(EmbedProbe::Failed(detail.into())).as_deref(),
-            Some("EMBEDDINGS_MODEL_INCOMPATIBLE"),
-            "detail should classify as incompatible model: {detail}"
-        );
-    }
-}
-
-/// Issue #5017 — a rejected/absent API key (401/403) is its own actionable
-/// cause: the embeddings key is stored separately from the Chat BYOK key, so
-/// "works for chat" does not imply the embeddings key is set. Both wire
-/// shapes map to the dedicated auth code, not the generic failure.
-#[test]
-fn classify_embed_probe_distinguishes_auth_failure() {
-    for detail in [
-        "openai embeddings returned HTTP 401 Unauthorized: {\"error\":\"invalid api key\"}",
-        "Embedding API error (403 Forbidden): no access",
-        // Bare-status host shape (no parentheses) — the form the observability
-        // classifier covers; must map to auth, not the generic failure (#5017).
-        "Embedding API error 401 Unauthorized: {\"error\":\"invalid token\"}",
-    ] {
-        assert_eq!(
-            reject_code(EmbedProbe::Failed(detail.into())).as_deref(),
-            Some("EMBEDDINGS_AUTH_FAILED"),
-            "detail should classify as auth failure: {detail}"
-        );
-    }
-}
-
-/// Issue #5116 — a **chat** model used as an embeddings model. OpenAI answers
-/// *HTTP 403* "You are not allowed to generate embeddings from this model".
-/// Before the fix this fell through to the 401/403 auth branch and told the
-/// user to "enter a valid key" even though the key was fine — the model is the
-/// problem. It must classify as MODEL_INCOMPATIBLE, ahead of the auth branch.
-#[test]
-fn classify_embed_probe_403_not_an_embeddings_model_is_model_incompatible_not_auth() {
-    for detail in [
-        r#"openai embeddings returned HTTP 403 Forbidden: {"error":{"message":"You are not allowed to generate embeddings from this model","type":"invalid_request_error","param":null,"code":null}}"#,
-        r#"Embedding API error (403 Forbidden): {"error":{"message":"This is not an embedding model"}}"#,
-        r#"openai embeddings returned HTTP 403 Forbidden: {"error":{"message":"unsupported model for embedding"}}"#,
-    ] {
-        assert_eq!(
-            reject_code(EmbedProbe::Failed(detail.into())).as_deref(),
-            Some("EMBEDDINGS_MODEL_INCOMPATIBLE"),
-            "403 model-rejection must be model-incompatible, not auth: {detail}"
-        );
-    }
-}
-
-/// Issue #5116 (security) — a genuine bad key (401 "Incorrect API key
-/// provided: sk-…") must STILL classify as auth, but the surfaced payload must
-/// never carry the key: neither the message nor the redacted detail may
-/// contain an `sk-` substring.
-#[test]
-fn classify_embed_probe_401_bad_key_is_auth_and_redacts_key() {
-    let detail = r#"openai embeddings returned HTTP 401 Unauthorized: {"error":{"message":"Incorrect API key provided: sk-proj-ABC123def456GHI789jkl012MNO. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}"#;
-    let rpc = classify_embed_probe(EmbedProbe::Failed(detail.into()))
-        .expect("bad key must reject the save");
-    assert_eq!(
-        Some(rpc.error),
-        Some("EMBEDDINGS_AUTH_FAILED"),
-        "a genuine 401 bad key must stay classified as auth"
-    );
-    // Nothing in the surfaced payload may leak the key.
-    let surfaced = format!("{} {} {:?}", rpc.error, rpc.message, rpc.detail);
-    assert!(
-        !surfaced.contains("sk-"),
-        "surfaced payload must not contain any sk- key material: {surfaced}"
-    );
-    assert!(
-        rpc.detail
-            .as_deref()
-            .map(|d| d.contains("[redacted-key]"))
-            .unwrap_or(false),
-        "the detail should keep a redaction marker for support diagnosis"
-    );
-}
-
-/// The redaction helper strips whole OpenAI-style keys (incl. the modern
-/// `sk-proj-…` form) and bearer tokens, leaving no `sk-` prefix behind.
-#[test]
-fn redact_secrets_removes_key_and_bearer_material() {
-    let redacted =
-        redact_secrets("key sk-proj-ABC123_def-456 and Authorization: Bearer tok-xyz.789");
-    assert!(
-        !redacted.contains("sk-"),
-        "no sk- prefix survives: {redacted}"
-    );
-    assert!(!redacted.contains("tok-xyz.789"), "bearer token stripped");
-    assert!(redacted.contains("[redacted-key]"));
-    assert!(redacted.contains("Bearer [redacted]"));
-    // Non-secret text is preserved.
-    assert!(redacted.contains("Authorization:"));
-}
-
-/// Issue #5017 — a transport-level failure (DNS / refused connection) is a
-/// reachability problem, distinct from a server that answered. Timeouts fall
-/// in the same bucket.
-#[test]
-fn classify_embed_probe_distinguishes_unreachable() {
-    for detail in [
-        "openai embeddings request to http://127.0.0.1:9/v1/embeddings failed: connection refused",
-        "error trying to connect: dns error: failed to lookup address information",
-    ] {
-        assert_eq!(
-            reject_code(EmbedProbe::Failed(detail.into())).as_deref(),
-            Some("EMBEDDINGS_ENDPOINT_UNREACHABLE"),
-            "detail should classify as unreachable: {detail}"
-        );
-    }
-    // A timeout is a reachability problem too.
-    assert_eq!(
-        reject_code(EmbedProbe::TimedOut).as_deref(),
-        Some("EMBEDDINGS_ENDPOINT_UNREACHABLE")
-    );
-}
-
-/// Issue #5017 — a length guard trip (endpoint ignored the `dimensions`
-/// param and returned its native size) is a dimension problem, not a generic
-/// failure, so the user knows to fix the dimensions field.
-#[test]
-fn classify_embed_probe_distinguishes_dimension_mismatch() {
-    assert_eq!(
-        reject_code(EmbedProbe::Failed(
-            "openai embed dimension mismatch: expected 1024, got 3072".into()
-        ))
-        .as_deref(),
-        Some("EMBEDDINGS_DIMENSION_MISMATCH")
     );
 }
 
@@ -399,7 +96,7 @@ fn classify_embed_probe_distinguishes_dimension_mismatch() {
 /// Bearer key, `{"input":[…],"model":…}` body) verifies successfully. Builds
 /// the live custom provider with the endpoint's known width and drives it
 /// against a mock that echoes the OpenAI embeddings wire shape, asserting the
-/// captured request AND that the probe classifies it as a pass.
+/// captured request and a usable returned vector.
 #[tokio::test]
 async fn conformant_custom_endpoint_verifies_and_sends_expected_request() {
     use std::sync::{Arc, Mutex};
@@ -464,6 +161,7 @@ async fn conformant_custom_endpoint_verifies_and_sends_expected_request() {
         "sk-secret-key",
         Some(&base),
     )
+    .await
     .expect("provider builds");
 
     let vectors = embedder
@@ -476,11 +174,7 @@ async fn conformant_custom_endpoint_verifies_and_sends_expected_request() {
         "auto-detected the endpoint's real vector length"
     );
 
-    // The probe policy accepts the returned vector.
-    assert!(
-        classify_embed_probe(EmbedProbe::Returned(vectors)).is_none(),
-        "a usable vector from a conformant endpoint must pass verification"
-    );
+    assert_eq!(vectors.first().map(Vec::len), Some(4));
 
     // The exact request: user's model forwarded + Bearer key present.
     assert_eq!(
@@ -533,6 +227,48 @@ async fn test_connection_managed_without_provider_reports_backend_unavailable() 
     );
 }
 
+#[tokio::test]
+async fn test_connection_returns_model_construction_failures_as_rpc_errors() {
+    let _guard = crate::inference::inference_test_guard_async().await;
+    let tmp = TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.config_path = tmp.path().join("config.toml");
+
+    let error = test_connection(&config, Some("not-a-provider"), Some("model"), Some(4))
+        .await
+        .expect_err("invalid provider construction must remain an RPC error");
+    assert!(error.contains("unknown embedding provider"), "{error}");
+}
+
+#[tokio::test]
+async fn test_connection_reports_embedding_failures_in_the_failure_payload() {
+    use axum::{http::StatusCode, routing::post, Router};
+
+    let app = Router::new().route(
+        "/api/embed",
+        post(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "embedding unavailable") }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let _guard = crate::inference::inference_test_guard_async().await;
+    let tmp = TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    config.local_ai.base_url = Some(base_url);
+
+    let outcome = test_connection(&config, Some("ollama"), Some("model"), Some(4))
+        .await
+        .expect("model construction succeeded, so the failure stays in the outcome");
+    assert_eq!(outcome.value["success"], false);
+    assert!(outcome.value["error"]
+        .as_str()
+        .unwrap()
+        .contains("embedding"));
+    server.abort();
+}
+
 /// Live `embed` (RPC) for managed also routes through the config-aware
 /// factory; with no session it surfaces the same backend-session error.
 #[tokio::test]
@@ -555,14 +291,16 @@ async fn embed_managed_without_provider_errors_with_backend_unavailable() {
 /// `provider_from_config` (reused by other domains for direct embedding)
 /// routes managed construction through the config-aware factory too — pure
 /// construction, so it builds the cloud provider without a network call.
-#[test]
-fn provider_from_config_managed_builds_cloud() {
+#[tokio::test]
+async fn provider_from_config_managed_builds_cloud() {
     let tmp = TempDir::new().unwrap();
     let mut config = Config::default();
     config.config_path = tmp.path().join("config.toml");
     config.memory.embedding_provider = "managed".to_string();
     config.memory.embedding_model = "voyage-3-large".to_string();
     config.memory.embedding_dimensions = 1024;
-    let provider = provider_from_config(&config).expect("managed provider must build");
+    let provider = provider_from_config(&config)
+        .await
+        .expect("managed provider must build");
     assert_eq!(provider.name(), "cloud");
 }

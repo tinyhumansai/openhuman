@@ -6,6 +6,115 @@ const EXTENSION = "scripts/ci/storage-bypass-extension.json";
 const key = (x) => JSON.stringify([x.rule, x.path, x.text, x.occurrence]);
 const original = (x) =>
   x.path.startsWith(CORE) && ["sqlite-open", "json-write"].includes(x.rule);
+const RELOCATION_SOURCE_COMMIT =
+  "5f01951c9c585c393ea4e8c3ba2907c25809663d";
+const RELOCATION_LOSS_COMMIT =
+  "8efcf6b66016d93af35259b24a7af2fdf37612c2";
+const RELOCATION_RATIONALE =
+  "Preserve legacy desktop credential import while the storage master-key source becomes portable.";
+const CREDENTIAL_RELOCATION_IDENTITIES = new Set([
+  key({ rule: "json-write", path: "crates/openhuman-core/src/security/credentials/http_creds.rs", text: "fs::write(&tmp_path, &json)", occurrence: 1 }),
+  key({ rule: "file-mutation", path: "crates/openhuman-core/src/security/credentials/http_creds.rs", text: "if let Err(e) = fs::rename(&tmp_path, &self.path) {", occurrence: 1 }),
+  key({ rule: "json-write", path: "crates/openhuman-core/src/security/credentials/profiles.rs", text: "let mut file = OpenOptions::new()", occurrence: 1 }),
+  key({ rule: "json-write", path: "crates/openhuman-core/src/security/credentials/profiles.rs", text: "fs::write(path, bytes)", occurrence: 1 }),
+  key({ rule: "file-mutation", path: "crates/openhuman-core/src/security/credentials/profiles.rs", text: "fs::rename(path, &candidate).with_context(|| {", occurrence: 1 }),
+  key({ rule: "json-write", path: "crates/openhuman-core/src/security/credentials/profiles/lock.rs", text: "OpenOptions::new()", occurrence: 1 }),
+  key({ rule: "file-mutation", path: "crates/openhuman-core/src/security/credentials/profiles/persistence.rs", text: "fs::rename(&tmp_path, &self.path).context(\"rename auth profile tmp -> store\")", occurrence: 1 }),
+]);
+const TRACKED_RELOCATION_DEBT = new Map([
+  [
+    key({ rule: "json-write", path: "crates/openhuman-core/src/security/credentials/http_creds.rs", text: "fs::write(&tmp_path, &json)", occurrence: 1 }),
+    key({ rule: "json-write", path: "crates/openhuman-core/src/flows/http_credentials.rs", text: "fs::write(&tmp_path, &json)", occurrence: 1 }),
+  ],
+  [
+    key({ rule: "json-write", path: "crates/openhuman-core/src/security/credentials/profiles.rs", text: "let mut file = OpenOptions::new()", occurrence: 1 }),
+    key({ rule: "json-write", path: "crates/openhuman-core/src/credentials/profiles/persistence.rs", text: "let mut file = OpenOptions::new()", occurrence: 1 }),
+  ],
+  [
+    key({ rule: "json-write", path: "crates/openhuman-core/src/security/credentials/profiles.rs", text: "fs::write(path, bytes)", occurrence: 1 }),
+    key({ rule: "json-write", path: "crates/openhuman-core/src/credentials/profiles/persistence.rs", text: "fs::write(path, bytes)", occurrence: 1 }),
+  ],
+  [
+    key({ rule: "json-write", path: "crates/openhuman-core/src/security/credentials/profiles/lock.rs", text: "OpenOptions::new()", occurrence: 1 }),
+    key({ rule: "json-write", path: "crates/openhuman-core/src/credentials/profiles/lock.rs", text: "OpenOptions::new()", occurrence: 1 }),
+  ],
+]);
+
+/** Exact source identity for the one-time credential fallback relocation ledger. */
+export function validateRelocations(findings, relocations, proof) {
+  if (!Array.isArray(relocations)) return ["Storage relocation ledger must be an array"];
+  const errors = [];
+  const actual = new Set(findings.map(key));
+  const historical = new Set((proof?.findings ?? []).map(key));
+  const seen = new Set();
+  for (const record of relocations) {
+    const id = key(record);
+    if (!CREDENTIAL_RELOCATION_IDENTITIES.has(id))
+      errors.push(`Unrecognized credential relocation: ${record.path}: ${record.text}`);
+    if (seen.has(id)) errors.push(`Duplicate storage relocation: ${record.path}`);
+    seen.add(id);
+    if (!actual.has(id))
+      errors.push(`Stale storage relocation: ${record.path}: ${record.text}`);
+    if (
+      !record.path.startsWith(`${CORE}security/credentials/`) ||
+      record.issue !== "https://github.com/tinyhumansai/openhuman/issues/7421" ||
+      record.rationale !== RELOCATION_RATIONALE
+    )
+      errors.push(`Invalid credential relocation scope: ${record.path}`);
+    if (
+      !record.source ||
+      record.source.path !== record.path ||
+      record.source.rule !== record.rule ||
+      record.source.text !== record.text ||
+      record.source.occurrence !== record.occurrence ||
+      record.source.commit !== proof?.sourceCommit ||
+      !historical.has(key(record.source))
+    )
+      errors.push(`Storage relocation has no matching historical source proof: ${record.path}`);
+    const trackedBefore = TRACKED_RELOCATION_DEBT.get(id);
+    if (
+      (trackedBefore && key(record.trackedBefore ?? {}) !== trackedBefore) ||
+      (!trackedBefore && record.trackedBefore) ||
+      (trackedBefore && !proof?.trackedBefore?.has(trackedBefore))
+    )
+      errors.push(`Storage relocation has no exact pre-refresh debt proof: ${record.path}`);
+  }
+  for (const id of CREDENTIAL_RELOCATION_IDENTITIES)
+    if (!seen.has(id)) errors.push("Credential relocation ledger is incomplete");
+  return errors;
+}
+
+/** Read the fixed pre-refresh source and baseline witnesses for the relocation ledger. */
+export function historicalRelocationProof(root, scanner, relocations) {
+  const git = (args) =>
+    execFileSync("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trimEnd();
+  const sourceCommit = RELOCATION_SOURCE_COMMIT;
+  const lossCommit = RELOCATION_LOSS_COMMIT;
+  git(["merge-base", "--is-ancestor", sourceCommit, lossCommit]);
+  const sourcePaths = new Map();
+  const findings = [];
+  for (const record of relocations) {
+    if (record.source?.commit !== sourceCommit)
+      throw new Error(`Unexpected historical relocation source: ${record.path}`);
+    if (!sourcePaths.has(record.source.path)) {
+      const source = git(["show", `${sourceCommit}:${record.source.path}`]);
+      sourcePaths.set(record.source.path, scanner.scan(record.source.path, source));
+    }
+    findings.push(...sourcePaths.get(record.source.path));
+  }
+  const baseline = JSON.parse(
+    git(["show", `${lossCommit}^:${BASELINE}`]),
+  );
+  return {
+    sourceCommit,
+    findings,
+    trackedBefore: new Set(baseline.map(key)),
+  };
+}
 
 /** Exact existing-debt records never authorize another site or later growth. */
 export function validateCoverageDebt(findings, baseline, extension, history) {
@@ -55,6 +164,33 @@ export function validateCoverageDebt(findings, baseline, extension, history) {
   }
   if (history) {
     const oldCore = new Set(history.baseline.map(key));
+    // A module split can move one existing writer while leaving its original
+    // file in place, so Git does not report a whole-file rename. Carry that
+    // debt forward only when the old path no longer has the site and exactly
+    // one current site has the same rule, source text, and occurrence.
+    for (const record of baseline) {
+      if (oldCore.has(key(record))) continue;
+      const sameSite = (candidate) =>
+        candidate.rule === record.rule &&
+        candidate.text === record.text &&
+        candidate.occurrence === record.occurrence;
+      const previous = history.baseline.filter(
+        (candidate) => sameSite(candidate) && !actual.has(key(candidate)),
+      );
+      const current = findings.filter(
+        (candidate) =>
+          sameSite(candidate) && history.changedPaths?.has(candidate.path),
+      );
+      if (
+        previous.length === 1 &&
+        current.length === 1 &&
+        history.changedPaths?.has(record.path) &&
+        previous[0].path !== record.path &&
+        current[0].path === record.path
+      ) {
+        oldCore.add(key(record));
+      }
+    }
     for (const record of baseline)
       if (!oldCore.has(key(record)))
         errors.push(
@@ -63,8 +199,42 @@ export function validateCoverageDebt(findings, baseline, extension, history) {
     const oldExtension =
       history.extension === null ? null : new Set(history.extension.map(key));
     const oldSites = new Set(history.findings.map(key));
+    const movedExtension = new Set();
+    if (oldExtension) {
+      for (const record of extension) {
+        if (oldExtension.has(key(record))) continue;
+        const sameSite = (candidate) =>
+          candidate.rule === record.rule &&
+          candidate.text === record.text &&
+          candidate.occurrence === record.occurrence;
+        const previous = history.extension.filter(
+          (candidate) =>
+            sameSite(candidate) &&
+            !actual.has(key(candidate)) &&
+            history.changedPaths?.has(candidate.path),
+        );
+        const current = findings.filter(
+          (candidate) =>
+            sameSite(candidate) &&
+            history.changedPaths?.has(candidate.path),
+        );
+        if (
+          previous.length === 1 &&
+          current.length === 1 &&
+          previous[0].path !== record.path &&
+          current[0].path === record.path &&
+          history.changedPaths?.has(record.path)
+        ) {
+          movedExtension.add(key(record));
+        }
+      }
+    }
     for (const record of extension) {
-      if (oldExtension && !oldExtension.has(key(record)))
+      if (
+        oldExtension &&
+        !oldExtension.has(key(record)) &&
+        !movedExtension.has(key(record))
+      )
         errors.push(
           `Extension growth forbidden: ${record.path}: ${record.text}`,
         );
@@ -103,11 +273,14 @@ export function historicalFindings(root, scanner) {
     "diff", "--name-status", "-z", "--find-renames=50%", base, "--", "crates",
   ]).split("\0");
   const renamed = new Map();
+  const changedPaths = new Set();
   for (let at = 0; at < changes.length && changes[at];) {
     const status = changes[at++];
     const from = changes[at++];
+    changedPaths.add(from);
     if (/^[RC]/.test(status)) {
       const to = changes[at++];
+      changedPaths.add(to);
       if (status.startsWith("R")) renamed.set(from, to);
     }
   }
@@ -167,6 +340,7 @@ export function historicalFindings(root, scanner) {
     base,
     findings,
     rawFindings,
+    changedPaths,
     baseline: json(BASELINE),
     extension: json(EXTENSION, true),
     allowances: json("scripts/ci/storage-bypass-allow-reasons.json", true),

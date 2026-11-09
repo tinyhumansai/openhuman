@@ -18,12 +18,33 @@ export interface CoreUpdateStatus {
   update_available: boolean;
 }
 
-export type DoctorSeverity = 'Ok' | 'Warn' | 'Error';
+export type DoctorTier = 'static' | 'connect' | 'live';
+export type DoctorSeverity = 'pass' | 'info' | 'warn' | 'error' | 'skipped';
 export type ModelProbeOutcome = 'Ok' | 'Skipped' | 'AuthOrAccess' | 'Error';
 
+export interface DoctorFinding {
+  check_id: string;
+  severity: DoctorSeverity;
+  message: string;
+  fix_hint: string;
+  config_path?: string;
+  value_source?: 'cli' | 'env' | 'dotenv' | 'file' | 'default';
+  duration_ms: number;
+  affects: string[];
+}
+
 export interface DoctorReport {
-  items: { severity: DoctorSeverity; category: string; message: string }[];
-  summary: { ok: number; warnings: number; errors: number };
+  schema_version: 2;
+  profile: string | null;
+  config_source: 'profile' | 'tenant';
+  profile_layout_version?: 1 | 2;
+  config_resolution_source?: string;
+  tier: DoctorTier;
+  checks_run: string[];
+  checks_skipped: string[];
+  findings: DoctorFinding[];
+  summary: { pass: number; info: number; warn: number; error: number; skipped: number };
+  ok: boolean;
 }
 
 export interface ModelProbeReport {
@@ -305,8 +326,13 @@ export async function setOnboardingCompleted(value: boolean): Promise<boolean> {
   return false;
 }
 
-export async function openhumanDoctorReport(): Promise<CommandResponse<DoctorReport>> {
-  return await callCoreRpc<CommandResponse<DoctorReport>>({ method: 'openhuman.doctor_report' });
+export async function openhumanDoctorReport(
+  tier: DoctorTier = 'connect'
+): Promise<CommandResponse<DoctorReport>> {
+  return await callCoreRpc<CommandResponse<DoctorReport>>({
+    method: 'openhuman.doctor_report',
+    params: { tier },
+  });
 }
 
 export async function openhumanDoctorModels(

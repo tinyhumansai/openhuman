@@ -16,81 +16,6 @@ fn iteration_start_promotes_lifecycle_and_records_round() {
 }
 
 #[test]
-fn transcript_interleaves_narration_thinking_and_tools_in_order() {
-    let (_d, mut m) = fresh("t");
-    // A turn that thinks, narrates, calls a tool, then narrates again. The
-    // transcript must preserve that exact streaming order via `seq`, coalesce
-    // consecutive same-kind deltas in the same round, and carry the server
-    // label through onto the tool row.
-    m.observe(&AgentProgress::ThinkingDelta {
-        delta: "Let me ".into(),
-        iteration: 1,
-    });
-    m.observe(&AgentProgress::ThinkingDelta {
-        delta: "check.".into(),
-        iteration: 1,
-    });
-    m.observe(&AgentProgress::TextDelta {
-        delta: "Reading your inbox".into(),
-        iteration: 1,
-    });
-    m.observe(&AgentProgress::ToolCallStarted {
-        call_id: "tc-1".into(),
-        tool_name: "gmail_read".into(),
-        arguments: serde_json::json!({ "to": "x@y.com" }),
-        iteration: 1,
-        display_label: Some("Reading messages".into()),
-        display_detail: Some("x@y.com".into()),
-    });
-    m.observe(&AgentProgress::TextDelta {
-        delta: "Done.".into(),
-        iteration: 1,
-    });
-
-    let s = m.snapshot();
-    assert_eq!(
-        s.transcript.len(),
-        4,
-        "thinking, narration, tool, narration"
-    );
-    match &s.transcript[0] {
-        TranscriptItem::Thinking { text, seq, .. } => {
-            assert_eq!(text, "Let me check.", "coalesced same-round thinking");
-            assert_eq!(*seq, 0);
-        }
-        other => panic!("expected thinking first, got {other:?}"),
-    }
-    match &s.transcript[1] {
-        TranscriptItem::Narration { text, .. } => assert_eq!(text, "Reading your inbox"),
-        other => panic!("expected narration, got {other:?}"),
-    }
-    match &s.transcript[2] {
-        TranscriptItem::ToolCall { call_id, .. } => assert_eq!(call_id, "tc-1"),
-        other => panic!("expected tool call, got {other:?}"),
-    }
-    match &s.transcript[3] {
-        TranscriptItem::Narration { text, .. } => assert_eq!(text, "Done."),
-        other => panic!("expected trailing narration, got {other:?}"),
-    }
-    // seq is strictly increasing in push order.
-    let seqs: Vec<u32> = s
-        .transcript
-        .iter()
-        .map(|i| match i {
-            TranscriptItem::Narration { seq, .. }
-            | TranscriptItem::Thinking { seq, .. }
-            | TranscriptItem::ToolCall { seq, .. } => *seq,
-        })
-        .collect();
-    assert_eq!(seqs, vec![0, 1, 2, 3]);
-
-    // The server label/detail landed on the timeline row the transcript points to.
-    let row = s.tool_timeline.iter().find(|e| e.id == "tc-1").unwrap();
-    assert_eq!(row.display_name.as_deref(), Some("Reading messages"));
-    assert_eq!(row.detail.as_deref(), Some("x@y.com"));
-}
-
-#[test]
 fn tool_call_start_and_complete_track_timeline() {
     let (_d, mut m) = fresh("t");
     m.observe(&AgentProgress::IterationStarted {
@@ -522,6 +447,9 @@ fn subagent_lifecycle_records_and_clears_active() {
     assert_eq!(activity.tool_calls.len(), 1);
 
     m.observe(&AgentProgress::SubagentCompleted {
+        worktree_path: None,
+        changed_files: Vec::new(),
+        dirty_status: None,
         agent_id: "researcher".into(),
         task_id: "sub-1".into(),
         elapsed_ms: 1234,
@@ -529,15 +457,15 @@ fn subagent_lifecycle_records_and_clears_active() {
         output_chars: 80,
         usage: None,
         output: String::new(),
-        worktree_path: None,
-        changed_files: Vec::new(),
-        dirty_status: None,
         stop: None,
     });
     let s = m.snapshot();
     assert_eq!(s.tool_timeline[0].status, ToolTimelineStatus::Success);
     assert!(s.active_subagent.is_none());
 }
+
+#[path = "mirror_observe_thinking_and_subagent_tests.rs"]
+mod thinking_and_subagent_tests;
 
 #[test]
 fn thinking_blocks_record_start_and_end_timing() {
@@ -629,7 +557,7 @@ fn thinking_timing_wire_shape_is_camel_case_and_backward_compatible() {
 #[test]
 fn subagent_spawned_derives_source_tool_name_from_the_parent_row() {
     // Only `spawn_subagent` ever hardcoded a "spawn_subagent" source. Every
-    // other delegation path (`spawn_parallel_agents`, `spawn_async_subagent`,
+    // other delegation path (`spawn_subagent`,
     // a synthesized `delegate_researcher`, …) must show its own real tool
     // name, derived from the parent call's row by `parent_call_id` — never
     // the historical hardcoded default.
@@ -714,6 +642,9 @@ fn subagent_completed_persists_capped_output_on_the_activity() {
         parent_call_id: Some("call-3".into()),
     });
     m.observe(&AgentProgress::SubagentCompleted {
+        worktree_path: None,
+        changed_files: Vec::new(),
+        dirty_status: None,
         agent_id: "researcher".into(),
         task_id: "sub-3".into(),
         elapsed_ms: 5,
@@ -721,9 +652,6 @@ fn subagent_completed_persists_capped_output_on_the_activity() {
         output_chars: 11,
         usage: None,
         output: "final answer".into(),
-        worktree_path: None,
-        changed_files: Vec::new(),
-        dirty_status: None,
         stop: None,
     });
 
@@ -738,3 +666,5 @@ fn subagent_completed_persists_capped_output_on_the_activity() {
     assert_eq!(activity.output.as_deref(), Some("final answer"));
     assert_eq!(activity.parent_call_id.as_deref(), Some("call-3"));
 }
+
+include!("mirror_observe_compaction_tests.rs");

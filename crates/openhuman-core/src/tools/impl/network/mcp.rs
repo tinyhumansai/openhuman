@@ -13,7 +13,7 @@ use tinytools::{IndirectCall, PermissionLevel, Tool, ToolCallOptions, ToolResult
 use crate::{
     config::Config,
     mcp::{host, module_client::McpConfiguredClient},
-    security::{SecurityPolicy, ToolOperation},
+    security::SecurityPolicy,
 };
 
 /// Lists configured MCP servers through TinyMCP's safe summary operation.
@@ -64,7 +64,7 @@ impl Tool for McpListServersTool {
                 ));
             }
         };
-        let config = host::client_config(&self.config);
+        let config = host::client_config(&self.config).await;
         let summaries: Vec<tinymcp_bus::StaticServerSummary> = match client
             .call_confidential(
                 &config,
@@ -180,7 +180,7 @@ impl Tool for McpListToolsTool {
             .normalize_identifier(&server)
             .await
             .map_err(|error| anyhow::anyhow!(input_module_error_message(error)))?;
-        let client_config = host::client_config(&self.config);
+        let client_config = host::client_config(&self.config).await;
         let remote: Vec<tinymcp_bus::McpRemoteTool> = match client
             .call(
                 &client_config,
@@ -237,7 +237,7 @@ impl Tool for McpListToolsTool {
                 meta: None,
             })
             .collect();
-        let safe = crate::mcp::registry::tools_safe_for_agent(&server, policy_tools);
+        let safe = crate::mcp::registry::tools_safe_for_agent(&server, policy_tools).await;
         let safe_names: std::collections::HashSet<_> =
             safe.into_iter().map(|tool| tool.name).collect();
         let payload = display
@@ -383,10 +383,6 @@ impl Tool for McpCallTool {
         args: Value,
         options: ToolCallOptions,
     ) -> anyhow::Result<ToolResult> {
-        self.security
-            .enforce_tool_operation(ToolOperation::Act, self.name())
-            .map_err(|error| anyhow::anyhow!(error))?;
-
         let server = required_string_arg(&args, "server")?;
         let tool = required_string_arg(&args, "tool")?;
         let arguments = args
@@ -431,7 +427,7 @@ impl Tool for McpCallTool {
                 ));
             }
         };
-        let client_config = host::client_config(&self.config);
+        let client_config = host::client_config(&self.config).await;
         let arguments = match client.normalize_tool_arguments(Some(arguments)).await {
             Ok(arguments) => Value::Object(arguments),
             Err(error) => {

@@ -1,6 +1,13 @@
 use super::*;
+use std::sync::OnceLock;
 
 const TINY_PNG_DATA_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+fn prepare_attachment_workspace() {
+    static WORKSPACE: OnceLock<tempfile::TempDir> = OnceLock::new();
+    let workspace = WORKSPACE.get_or_init(|| tempfile::tempdir().expect("workspace tempdir"));
+    init_attachments_dir(workspace.path().join("attachments"));
+}
 
 #[test]
 fn for_untrusted_channel_input_disables_file_markers_and_remote_fetch() {
@@ -11,6 +18,7 @@ fn for_untrusted_channel_input_disables_file_markers_and_remote_fetch() {
 
 #[tokio::test]
 async fn stash_image_attachments_replaces_marker_with_placeholder() {
+    prepare_attachment_workspace();
     let msg = format!("whats this [IMAGE:{TINY_PNG_DATA_URI}]");
     let out = stash_image_attachments(&msg, &MultimodalConfig::default()).await;
     assert!(out.contains("[Image:"), "placeholder present: {out}");
@@ -21,7 +29,9 @@ async fn stash_image_attachments_replaces_marker_with_placeholder() {
 }
 
 #[tokio::test]
+#[cfg(feature = "storage-sqlite")]
 async fn image_placeholder_rehydrates_to_inline_data_uri() {
+    prepare_attachment_workspace();
     let msg = format!("describe [IMAGE:{TINY_PNG_DATA_URI}]");
     let placeholdered = stash_image_attachments(&msg, &MultimodalConfig::default()).await;
     let messages = vec![TranscriptMessage::user(placeholdered)];
@@ -54,6 +64,7 @@ async fn rehydrate_missing_stash_id_keeps_placeholder_text() {
 
 #[tokio::test]
 async fn stash_image_attachments_caps_at_max_images() {
+    prepare_attachment_workspace();
     let msg = format!("[IMAGE:{TINY_PNG_DATA_URI}]\n[IMAGE:{TINY_PNG_DATA_URI}]");
     let config = MultimodalConfig {
         max_images: 1,
@@ -84,7 +95,9 @@ fn extract_image_placeholders_pulls_attachment_tokens_in_order() {
 }
 
 #[tokio::test]
+#[cfg(feature = "storage-sqlite")]
 async fn sweep_keeps_fresh_attachments() {
+    prepare_attachment_workspace();
     let msg = format!("[IMAGE:{TINY_PNG_DATA_URI}]");
     let placeholdered = stash_image_attachments(&msg, &MultimodalConfig::default()).await;
     let id = placeholdered
@@ -102,6 +115,11 @@ async fn sweep_keeps_fresh_attachments() {
         index.contains_key(&id),
         "fresh attachment retained after sweep"
     );
+}
+
+#[test]
+fn no_workspace_does_not_create_a_process_local_attachment_stash() {
+    assert!(stash_for_workspace(None).is_none());
 }
 
 #[test]

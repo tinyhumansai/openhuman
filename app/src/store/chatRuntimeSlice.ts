@@ -5,6 +5,7 @@ import { mapDisplayItems } from '../features/conversations/derived/mapDisplayIte
 import { threadApi } from '../services/api/threadApi';
 import type { CostSource } from '../services/chatService';
 import type { DerivedTranscriptPage } from '../types/derivedTranscript';
+import type { ArtifactKind } from '../types/threadWire.generated';
 import type {
   AgentRun,
   PersistedSubagentActivity,
@@ -69,26 +70,10 @@ export function isActiveTimelineStatus(status: string | undefined): boolean {
   return status === 'running' || status === 'awaiting_user';
 }
 
-/**
- * Every `subagent:*` timeline row spawned by one `spawn_parallel_agents` tool
- * call — the workers sharing `subagent.parentCallId === parentCallId` (see
- * {@link SubagentActivity.parentCallId}) — in the order they were issued
- * (`seq`). Used by `ParallelAgentsCard` (`features/conversations/aui/
- * ParallelAgentsCard.tsx`) to render the vendored `SubagentList` above the
- * per-child `TaskCard` rows for a `spawn_parallel_agents` call.
- */
-export function selectSubagentChildrenByParentCallId(
-  timeline: ToolTimelineEntry[],
-  parentCallId: string
-): ToolTimelineEntry[] {
-  return timeline
-    .filter(entry => entry.subagent?.parentCallId === parentCallId)
-    .sort((a, b) => a.seq - b.seq);
-}
-
 /** Live progress of the running turn, as the socket handlers maintain it. */
 export interface InferenceStatus {
-  phase: 'thinking' | 'tool_use' | 'subagent';
+  /** `compacting`: summarizing earlier conversation before the next model call. */
+  phase: 'thinking' | 'compacting' | 'tool_use' | 'subagent';
   iteration: number;
   maxIterations: number;
   activeTool?: string;
@@ -125,8 +110,8 @@ export interface SubagentActivity {
    * Identity (`<request_id>:<seq>`) of the `subagent_spawned` event that last
    * started or resumed this delegation.
    *
-   * `continue_subagent` announces a resume by republishing `subagent_spawned`
-   * for the same task/agent, so "an existing row got spawned again" is the
+   * Resuming a paused task republishes `subagent_spawned` for the same
+   * task/agent, so "an existing row got spawned again" is the
    * only resume signal the frontend gets — and a Socket.IO redelivery of the
    * ORIGINAL spawn is indistinguishable from it by shape alone. Comparing
    * identities separates them: a redelivery repeats the pair the core stamped
@@ -203,25 +188,6 @@ export interface SubagentActivity {
    * tool sequence. Absent on legacy/test rows that predate streaming.
    */
   transcript?: SubagentTranscriptItem[];
-  /**
-   * Absolute path to this worker's isolated `git worktree` checkout, when it
-   * ran with `isolation = "worktree"` (#3376). `undefined` for non-isolated
-   * (read-only or shared-workspace) workers. Scaffold-only: the open/diff/
-   * remove action buttons that consume this land in a follow-up PR.
-   */
-  worktreePath?: string;
-  /**
-   * Files (relative to the worktree root) this worker changed, collected from
-   * `git status` after the run. Drives the future diff/overlap UI. Absent or
-   * empty for non-isolated workers and clean worktrees.
-   */
-  changedFiles?: string[];
-  /**
-   * `true` when the worker's worktree had uncommitted changes after the run.
-   * A dirty worktree must not be auto-removed — the cleanup UI will require an
-   * explicit user choice. `undefined` for non-isolated workers.
-   */
-  isDirty?: boolean;
 }
 
 /**
@@ -846,7 +812,49 @@ export interface WorkflowProposal {
    * enable" click would call `createFlow` again and duplicate the flow.
    */
   completedFlowId?: string;
+  /**
+   * The saved flow this proposal revises (`flow_id` on the proposal payload,
+   * set when the builder edited an existing flow). "Save & enable" writes onto
+   * this flow with `flows_update` instead of creating another one.
+   */
+  flowId?: string;
+  /**
+   * `flowId`'s `updated_at` when the builder produced this revision
+   * (`flow_version` on the payload). Sent as `flows_update`'s
+   * `expected_version`, so a save refuses to overwrite a newer edit.
+   */
+  flowVersion?: string;
+  /**
+   * Id of the flow once "Save & enable" persisted it, before the enable step
+   * finished (pre-authorization pending, denied, or failed). Mirrored into
+   * Redux and onto the source message's `saved_flow_id` so a remount or reload
+   * resumes the enable step instead of creating the flow again.
+   */
+  savedFlowId?: string;
 }
+
+/**
+ * A proposal's identity across Redux updates and card remounts: its source
+ * message when it has one, and its name. Also the card's React key, so a
+ * replacement remounts the card and a late save/enable result from the
+ * replaced proposal is ignored instead of landing on the new one.
+ */
+export function workflowProposalKey(
+  proposal: Pick<WorkflowProposal, 'name' | 'sourceMessageId'>
+): string {
+  return `${proposal.sourceMessageId ?? ''}|${proposal.name}`;
+}
+
+/** Payload of the save/completion updates, naming the proposal they belong to. */
+interface WorkflowProposalSaveUpdate {
+  threadId: string;
+  flowId: string;
+  name: string;
+  sourceMessageId?: string;
+}
+
+const isSameProposal = (proposal: WorkflowProposal, update: WorkflowProposalSaveUpdate) =>
+  workflowProposalKey(proposal) === workflowProposalKey(update);
 
 /**
  * Lifecycle status of a single agent-generated artifact, as projected
@@ -869,7 +877,7 @@ export type ArtifactStatus = 'in_progress' | 'ready' | 'failed';
 export interface ArtifactSnapshot {
   artifactId: string;
   /** Kind slug from the Rust `ArtifactKind` enum. */
-  kind: 'presentation' | 'document' | 'image' | 'video' | 'other';
+  kind: ArtifactKind;
   /** Human-readable title; also the on-disk filename stem. */
   title: string;
   status: ArtifactStatus;
@@ -1240,20 +1248,20 @@ function subagentToolCallFromPersisted(call: PersistedSubagentToolCall): Subagen
     callId: call.callId,
     toolName: call.toolName,
     status: call.status,
-    iteration: call.iteration,
-    elapsedMs: call.elapsedMs,
-    outputChars: call.outputChars,
-    displayName: call.displayName,
-    detail: call.detail,
+    iteration: call.iteration ?? undefined,
+    elapsedMs: call.elapsedMs ?? undefined,
+    outputChars: call.outputChars ?? undefined,
+    displayName: call.displayName ?? undefined,
+    detail: call.detail ?? undefined,
     // Carry the persisted arguments so a rehydrated child row keeps its input
     // block, and a degraded generic `tool` name can still derive its search
     // label from `query` (#5987).
-    args: call.args,
+    args: call.args ?? undefined,
     // Carry the persisted failure explanation across the round-trip (#4459).
-    failure: parseToolFailure(call.failure),
+    failure: parseToolFailure(call.failure ?? undefined),
     // Carry the persisted (capped) result text so a rehydrated child row can
     // still show what the tool returned.
-    result: call.output,
+    result: call.output ?? undefined,
   };
 }
 
@@ -1294,18 +1302,17 @@ function subagentTranscriptItemFromPersisted(
   if (item.kind === 'tool') {
     return {
       kind: 'tool',
-      iteration: item.iteration,
+      iteration: item.iteration ?? undefined,
       callId: item.callId,
       toolName: item.toolName,
       status: item.status,
-      elapsedMs: item.elapsedMs,
-      outputChars: item.outputChars,
-      displayName: item.displayName,
-      detail: item.detail,
-      failure: item.failure,
+      elapsedMs: item.elapsedMs ?? undefined,
+      outputChars: item.outputChars ?? undefined,
+      displayName: item.displayName ?? undefined,
+      detail: item.detail ?? undefined,
     };
   }
-  return { kind: item.kind, iteration: item.iteration, text: item.text };
+  return { kind: item.kind, iteration: item.iteration ?? undefined, text: item.text };
 }
 
 function subagentActivityFromPersisted(activity: PersistedSubagentActivity): SubagentActivity {
@@ -1335,15 +1342,15 @@ function subagentActivityFromPersisted(activity: PersistedSubagentActivity): Sub
   return {
     taskId: activity.taskId,
     agentId: activity.agentId,
-    status: activity.status,
-    workerThreadId: activity.workerThreadId,
-    mode: activity.mode,
-    dedicatedThread: activity.dedicatedThread,
-    childIteration: activity.childIteration,
-    childMaxIterations: activity.childMaxIterations,
-    iterations: activity.iterations,
-    elapsedMs: activity.elapsedMs,
-    outputChars: activity.outputChars,
+    status: activity.status ?? undefined,
+    workerThreadId: activity.workerThreadId ?? undefined,
+    mode: activity.mode ?? undefined,
+    dedicatedThread: activity.dedicatedThread ?? undefined,
+    childIteration: activity.childIteration ?? undefined,
+    childMaxIterations: activity.childMaxIterations ?? undefined,
+    iterations: activity.iterations ?? undefined,
+    elapsedMs: activity.elapsedMs ?? undefined,
+    outputChars: activity.outputChars ?? undefined,
     toolCalls,
     // Prefer the persisted prose transcript (reasoning/narration interleaved
     // with tools) so a settled / reloaded run replays its thoughts. Fall back
@@ -1391,16 +1398,16 @@ export function toolTimelineFromPersisted(
     round: entry.round,
     seq,
     status: entry.status,
-    argsBuffer: entry.argsBuffer,
-    displayName: entry.displayName,
-    detail: entry.detail,
-    sourceToolName: entry.sourceToolName,
+    argsBuffer: entry.argsBuffer ?? undefined,
+    displayName: entry.displayName ?? undefined,
+    detail: entry.detail ?? undefined,
+    sourceToolName: entry.sourceToolName ?? undefined,
     subagent: entry.subagent ? subagentActivityFromPersisted(entry.subagent) : undefined,
     // Carry a persisted failure explanation across the round-trip (#4254). The
     // shared parser tolerates both camelCase (persisted) and snake_case (wire).
     failure: parseToolFailure(entry.failure),
     // Persisted (capped) tool result text, when the core recorded one.
-    result: entry.output,
+    result: entry.output ?? undefined,
   };
 }
 
@@ -1428,7 +1435,7 @@ export function toolTimelineFromPersisted(
  * intact preserves the truthful "was waiting for the user" history — and the
  * pulse is already stopped by the row-level `cancelled` above.
  *
- * A detached sub-agent (`spawn_async_subagent`, `mode === 'async'`) is the
+ * A detached sub-agent (`spawn_subagent`, `mode === 'async'`) is the
  * exception, and the parent's snapshot is never allowed to settle it. It is a
  * fire-and-forget task that deliberately outlives the turn that spawned it, so
  * the parent's lifecycle says nothing about whether the child is alive — and
@@ -2011,9 +2018,8 @@ const chatRuntimeSlice = createSlice({
       // event-seen map, so guard here.
       const existing = entries.find(e => e.id === rowId);
       if (existing) {
-        // ...with one exception. `continue_subagent` republishes
-        // `subagent_spawned` for the SAME task/agent when it resumes a paused
-        // child (continue_subagent.rs:330), and that is the only signal the
+        // ...with one exception. Resuming a paused task republishes
+        // `subagent_spawned` for the SAME task/agent, and that is the only signal the
         // frontend gets that the pause is over. Swallowing it left the row
         // stuck on `awaiting_user` for the rest of the run: the card kept
         // asking a question the user had already answered.
@@ -2041,6 +2047,9 @@ const chatRuntimeSlice = createSlice({
             existing.subagent.status = 'running';
             existing.subagent.awaitingQuestion = undefined;
             existing.subagent.spawnEventId = spawnEventId;
+            // Reattach the resumed task card to the newest parent call so the
+            // completed spawn from its earlier turn does not claim this work.
+            if (parentCallId) existing.subagent.parentCallId = parentCallId;
           }
         }
         return;
@@ -2171,24 +2180,10 @@ const chatRuntimeSlice = createSlice({
         outputChars?: number;
         /** The sub-agent's final assistant text; see {@link SubagentActivity.output}. */
         output?: string;
-        worktreePath?: string;
-        changedFiles?: string[];
-        isDirty?: boolean;
       }>
     ) => {
-      const {
-        threadId,
-        rowId,
-        taskId,
-        success,
-        iterations,
-        elapsedMs,
-        outputChars,
-        output,
-        worktreePath,
-        changedFiles,
-        isDirty,
-      } = action.payload;
+      const { threadId, rowId, taskId, success, iterations, elapsedMs, outputChars, output } =
+        action.payload;
       // Settle a still-in-flight row: `running`, or `awaiting_user` (a subagent
       // paused for input that then completes must not stay stuck at
       // awaiting_user). Already-terminal rows are left as-is.
@@ -2200,10 +2195,10 @@ const chatRuntimeSlice = createSlice({
       // running, and a background delivery (a `chat_done` with no
       // `inference_start`) then froze it as its own trail: a card that spun
       // forever under the reply announcing the child's result. Both ids are
-      // turn-independent, so a run resumed by `continue_subagent` (same task
-      // id) also settles the earlier turn's card for it. That is how a paused
+      // turn-independent, so a run resumed with the same task id also settles
+      // the earlier turn's card for it. That is how a paused
       // `awaiting_user` card clears: the resumed run's completion carries the
-      // new `continue_subagent` call as its parent, never the original spawn.
+      // newest `spawn_subagent` call as its parent, never the original spawn.
       // Restored past-turn timelines too, like `subagentCancelResolved`: they
       // hold persisted (core-id) rows the process-source panel shows.
       const coreRowId = taskId !== undefined ? `subagent:${taskId}` : undefined;
@@ -2228,9 +2223,6 @@ const chatRuntimeSlice = createSlice({
         if (elapsedMs !== undefined) s.elapsedMs = elapsedMs;
         if (outputChars !== undefined) s.outputChars = outputChars;
         if (output !== undefined) s.output = output;
-        if (worktreePath !== undefined) s.worktreePath = worktreePath;
-        if (changedFiles !== undefined) s.changedFiles = changedFiles;
-        if (isDirty !== undefined) s.isDirty = isDirty;
       }
     },
     /**
@@ -2611,6 +2603,17 @@ const chatRuntimeSlice = createSlice({
     clearPendingPlanReviewForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.pendingPlanReviewByThread[action.payload.threadId];
     },
+    clearPendingPlanReviewIfRequest: (
+      state,
+      action: PayloadAction<{ threadId: string; requestId: string }>
+    ) => {
+      if (
+        state.pendingPlanReviewByThread[action.payload.threadId]?.requestId ===
+        action.payload.requestId
+      ) {
+        delete state.pendingPlanReviewByThread[action.payload.threadId];
+      }
+    },
     setWorkflowProposalForThread: (
       state,
       action: PayloadAction<{ threadId: string; proposal: WorkflowProposal }>
@@ -2626,15 +2629,26 @@ const chatRuntimeSlice = createSlice({
      * state survives a remount (thread switch, route change) while the
      * proposal is still sitting in `pendingWorkflowProposalsByThread` — see
      * `WorkflowProposal.completedFlowId`. No-op if the proposal was already
-     * cleared (e.g. a race with `clearWorkflowProposalForThread`).
+     * cleared (e.g. a race with `clearWorkflowProposalForThread`) or replaced
+     * by another proposal (see `isSameProposal`).
      */
-    markWorkflowProposalCompleted: (
-      state,
-      action: PayloadAction<{ threadId: string; flowId: string }>
-    ) => {
+    markWorkflowProposalCompleted: (state, action: PayloadAction<WorkflowProposalSaveUpdate>) => {
       const proposal = state.pendingWorkflowProposalsByThread[action.payload.threadId];
-      if (proposal) {
+      if (proposal && isSameProposal(proposal, action.payload)) {
         proposal.completedFlowId = action.payload.flowId;
+      }
+    },
+    /**
+     * Record that a pending proposal's flow is persisted but not yet enabled
+     * (see `WorkflowProposal.savedFlowId`). Applied only to the proposal that
+     * was saved (same name and source message): a newer proposal that replaced
+     * it while the save was in flight must not inherit its flow id. No-op if
+     * the proposal was cleared or replaced.
+     */
+    markWorkflowProposalSaved: (state, action: PayloadAction<WorkflowProposalSaveUpdate>) => {
+      const proposal = state.pendingWorkflowProposalsByThread[action.payload.threadId];
+      if (proposal && isSameProposal(proposal, action.payload)) {
+        proposal.savedFlowId = action.payload.flowId;
       }
     },
     /**
@@ -3212,8 +3226,8 @@ const chatRuntimeSlice = createSlice({
           phase: snapshot.phase ?? 'thinking',
           iteration: snapshot.iteration,
           maxIterations: snapshot.maxIterations,
-          activeTool: snapshot.activeTool,
-          activeSubagent: snapshot.activeSubagent,
+          activeTool: snapshot.activeTool ?? undefined,
+          activeSubagent: snapshot.activeSubagent ?? undefined,
         };
       } else {
         delete state.inferenceStatusByThread[threadId];
@@ -3344,9 +3358,11 @@ export const {
   resolvePendingApprovalForThread,
   setPendingPlanReviewForThread,
   clearPendingPlanReviewForThread,
+  clearPendingPlanReviewIfRequest,
   setWorkflowProposalForThread,
   clearWorkflowProposalForThread,
   markWorkflowProposalCompleted,
+  markWorkflowProposalSaved,
   upsertArtifactInProgressForThread,
   upsertArtifactReadyForThread,
   upsertArtifactFailedForThread,

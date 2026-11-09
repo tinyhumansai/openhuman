@@ -86,7 +86,7 @@ fn every_guided_pack_tool_is_named_in_its_guide_or_by_family() {
 #[tokio::test]
 async fn loading_a_skill_prints_its_guide_before_the_tool_schemas() {
     let web3 = pack("web3").unwrap();
-    let tools = registry_with_all(&["wallet_status", "web3_swap_quote"]);
+    let (tools, _handle) = registry_with_all(&["wallet_status", "web3_swap_quote"]);
     let result = find(&tools, USE_SKILL)
         .execute(json!({"skill": "web3"}))
         .await

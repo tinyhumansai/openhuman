@@ -1,5 +1,5 @@
 use super::*;
-use tinyagents_orchestration::subagent::SteerError;
+use tinyagents_orchestration::steering::SteerError;
 
 /// The context these tests dispatch under: the calling task's own.
 fn cx() -> crate::core::runtime::DispatchCtx {

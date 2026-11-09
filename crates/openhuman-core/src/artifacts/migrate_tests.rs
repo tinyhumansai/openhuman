@@ -325,3 +325,47 @@ async fn an_orphaned_partial_from_an_earlier_run_is_removed() {
     assert_eq!(partials(&files_dir), 0);
     assert_eq!(visible(&files_dir), vec!["notes.docx"]);
 }
+
+/// The migration must not copy a symlink's target out of its artifact directory
+/// into the visible Files folder.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_legacy_file_symlinked_out_of_its_directory_is_not_migrated() {
+    let tmp = TempDir::new().unwrap();
+    let ws = tmp.path().join("ws");
+    let files_dir = tmp.path().join("Files");
+    let secret = tmp.path().join("secret.txt");
+    std::fs::write(&secret, b"private").unwrap();
+    legacy(&ws, "s1", "x.txt", b"placeholder", ArtifactStatus::Ready).await;
+    let link = legacy_path(&ws, "s1", "x.txt");
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&secret, &link).unwrap();
+
+    let report = migrate_legacy_artifacts(&ws, &files_dir).await;
+
+    assert_eq!(report.moved, 0);
+    assert!(visible(&files_dir).is_empty(), "{:?}", visible(&files_dir));
+}
+
+/// A symlinked artifact directory must not make its external files migratable:
+/// the inner guard alone resolves both sides through the same link.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_legacy_artifact_directory_symlinked_outside_is_not_migrated() {
+    let tmp = TempDir::new().unwrap();
+    let ws = tmp.path().join("ws");
+    let files_dir = tmp.path().join("Files");
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    legacy(&ws, "s2", "x.txt", b"placeholder", ArtifactStatus::Ready).await;
+    let dir = ws.join("artifacts").join("s2");
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::write(outside.join("x.txt"), b"private").unwrap();
+    std::os::unix::fs::symlink(&outside, &dir).unwrap();
+
+    let report = migrate_legacy_artifacts(&ws, &files_dir).await;
+
+    assert_eq!(report.moved, 0);
+    assert!(visible(&files_dir).is_empty(), "{:?}", visible(&files_dir));
+    assert!(outside.join("x.txt").exists(), "external file was removed");
+}

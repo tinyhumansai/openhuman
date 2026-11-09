@@ -280,7 +280,7 @@ fn datetime_section_appends_resolve_time_rule_only_when_tool_present() {
     // With `resolve_time` in the agent's tool set, the time-discipline rule
     // is rendered under the date block (prevents the LLM hand-computing epoch
     // timestamps — the bug this tool exists to fix).
-    let timed = vec![Box::new(tinyagents_harness::tools::ResolveTimeTool::new()) as Box<dyn Tool>];
+    let timed = vec![Box::new(tinyagents_harness_tools::ResolveTimeTool::new()) as Box<dyn Tool>];
     let with_prompt_tools = PromptTool::from_tools(&timed);
     let ctx_with = PromptContext {
         workspace_dir: Path::new("/tmp"),

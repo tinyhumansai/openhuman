@@ -1,6 +1,10 @@
 use super::*;
 
 impl OpenHumanSessionHost {
+    pub(crate) fn enable_headless_descendant_settlement(&mut self) {
+        self.settle_headless_descendants = true;
+    }
+
     /// Restricts integration task-fetch tools to tasks touched within `window`
     /// on every later turn of this agent; `None` clears the restriction.
     pub fn set_task_recency_window(&mut self, window: Option<std::time::Duration>) {
@@ -116,36 +120,15 @@ impl OpenHumanSessionHost {
     /// transcripts per thread so each conversation thread gets its own
     /// transcript namespace instead of sharing one by agent type.
     ///
-    /// Also rebuilds [`Self::session_key`] so the next call to
-    /// `persist_session_transcript` writes to a path keyed by the new
-    /// name. Without this, persist would keep using the builder-time
-    /// name (e.g. `"orchestrator"`) while
-    /// `find_latest_transcript` searches for the post-rename name (e.g.
-    /// `"orchestrator_thread-6ad6d"`), and resume on cold boot would
-    /// silently miss every prior transcript — the LLM would then run
-    /// each new turn with no conversation history.
+    /// Also swaps the agent part of [`Self::session_key`] for the new name,
+    /// keeping its timestamp and token.
     pub fn set_agent_definition_name(&mut self, name: impl Into<String>) {
         let name = name.into();
-        let sanitized: String = name
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        // Preserve the original unix-timestamp prefix from the builder
-        // so sub-agent spawn collisions remain impossible. Falls back
-        // to "0" if the existing key is in an unexpected shape.
-        let prefix = self
-            .session_key
-            .split_once('_')
-            .map(|(p, _)| p)
-            .filter(|p| !p.is_empty())
-            .unwrap_or("0");
-        self.session_key = format!("{prefix}_{sanitized}");
+        self.session_key = crate::agent::session_host::session_key::rename(
+            &self.session_key,
+            &self.agent_definition_name,
+            &name,
+        );
         self.agent_definition_name = name;
         self.rebuild_tool_policy_session();
         self.sync_runtime_tool_surface();
@@ -175,7 +158,7 @@ impl OpenHumanSessionHost {
     /// for callers that construct the agent through
     /// [`OpenHumanSessionHost::from_config`](crate::agent::OpenHumanSessionHost::from_config) and
     /// therefore never see the builder — notably the per-turn `cwd` of
-    /// [`agent_chat`](crate::inference::host_runtime::ops::agent_chat).
+    /// [`agent_chat`](crate::agent_runs::agent_chat::agent_chat).
     ///
     /// The descriptor is threaded onto the turn's run context, so it also
     /// propagates to sub-agents spawned from this session. `None` restores the
@@ -187,6 +170,11 @@ impl OpenHumanSessionHost {
     /// from a config whose `action_dir` already permits it.
     pub fn set_workspace_descriptor(&mut self, descriptor: Option<tinytools::WorkspaceDescriptor>) {
         self.workspace_descriptor = descriptor;
+    }
+
+    /// The current workspace binding used by this session's tools.
+    pub(crate) fn live_workspace_descriptor(&self) -> Option<tinytools::WorkspaceDescriptor> {
+        self.workspace_descriptor.clone()
     }
 
     /// Attach an active-run queue for mid-turn steering.

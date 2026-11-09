@@ -22,7 +22,7 @@
 //!   so a record that already exists in the backend (a resumed import, or one
 //!   the new code has since changed) is never overwritten.
 //! - **Runs once.** After a domain's documents are written, the importer is
-//!   recorded as done in `tsd.migrations` of the backend's local scope
+//!   recorded as done in `storage.import_state` of the backend's tenant scope
 //!   ([`super::import_state`], step `storage_import/<domain>@<workspace
 //!   digest>`). A later boot sees it and does nothing, so a record deleted
 //!   since is not resurrected from the untouched legacy file. A marker row an
@@ -43,35 +43,60 @@
 //!
 //! # What is not here
 //!
-//! Sessions, transcripts, turn states and the run ledger are read by
-//! TinyAgents' importer, which owns those formats; see [`sessions`]. The
+//! Sessions, transcripts, turn states and the run ledger are decoded by the
+//! host's read-only compatibility importer; see [`sessions`]. The
 //! tinyflows stores (cron jobs, the flow catalog and checkpoints) are copied
 //! with `tinyflows-import`; see [`tinyflows`].
 
+#[cfg(feature = "legacy-import")]
+pub(crate) mod layout_db;
+#[cfg(feature = "legacy-import")]
+pub(crate) mod layout_status;
 pub mod live;
 mod schemas;
+#[cfg(feature = "legacy-import")]
+pub mod scope_move;
+#[cfg(feature = "legacy-import")]
+pub(crate) mod session_db;
+#[cfg(feature = "legacy-import")]
 pub mod sessions;
+#[cfg(feature = "legacy-import")]
 mod snapshot;
+#[cfg(feature = "legacy-import")]
 pub mod tinyflows;
+#[cfg(feature = "legacy-import")]
+mod tinyflows_reader;
 
 pub use schemas::{
     all_session_import_controller_schemas, all_session_import_registered_controllers,
 };
 
+#[cfg(feature = "legacy-import")]
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
+#[cfg(feature = "legacy-import")]
+use anyhow::{anyhow, Context};
+#[cfg(feature = "legacy-import")]
 use sha2::Digest;
-use tinystoragedrivers::{CollectionSpec, ErrorKind, Precondition};
+use tinystoragedrivers::CollectionSpec;
+#[cfg(feature = "legacy-import")]
+use tinystoragedrivers::{ErrorKind, Precondition, WriteOptions};
 
+#[cfg(feature = "legacy-import")]
+use super::block_on;
+#[cfg(feature = "legacy-import")]
 use super::documents::Repo;
+#[cfg(feature = "legacy-import")]
 use super::rusqlite;
-use super::{block_on, StorageBackend};
+use super::StorageBackend;
 use crate::config::Config;
+#[cfg(feature = "legacy-import")]
 use rusqlite::Connection;
 use serde_json::Value;
 
+#[cfg(feature = "legacy-import")]
 pub use snapshot::Snapshot;
 
 /// One legacy row as a document of the new layout.
@@ -90,6 +115,7 @@ pub struct ImportDoc {
 /// # Errors
 ///
 /// When the catalog cannot be read.
+#[cfg(feature = "legacy-import")]
 pub fn table_exists(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
@@ -108,6 +134,18 @@ pub struct Record {
     pub id: String,
     /// The document body.
     pub doc: serde_json::Value,
+    /// Creation time metadata requested by a legacy conversion, if known.
+    ///
+    /// The import writer uses this as document metadata; owner converters keep
+    /// semantic event times in the body when the old format did so.
+    pub created_ms: Option<i64>,
+    /// Source collection schema metadata when imported from a driver table.
+    pub schema: Option<u32>,
+    /// Absolute document expiry from the source driver's metadata.
+    pub expires_ms: Option<i64>,
+    /// Source update timestamp retained as provenance when the target driver
+    /// cannot set it independently of its own write clock.
+    pub updated_ms: Option<i64>,
 }
 
 impl From<ImportDoc> for Record {
@@ -116,6 +154,10 @@ impl From<ImportDoc> for Record {
             collection: doc.collection.to_string(),
             id: doc.id,
             doc: doc.doc,
+            created_ms: None,
+            schema: None,
+            expires_ms: None,
+            updated_ms: None,
         }
     }
 }
@@ -188,6 +230,7 @@ pub struct Report {
 }
 
 /// The legacy stores the host imports.
+#[cfg(feature = "legacy-import")]
 pub fn sources() -> Vec<Source> {
     vec![
         crate::security::approval::import_source(),
@@ -203,6 +246,7 @@ pub fn sources() -> Vec<Source> {
 ///
 /// Failures are logged and returned in the reports; none stops boot, since
 /// the legacy files are untouched and the import is retried next time.
+#[cfg(feature = "legacy-import")]
 pub async fn run(ctx: &crate::core::runtime::DispatchCtx, config: &Config) -> Vec<Report> {
     let Some(backend) = super::installed() else {
         return Vec::new();
@@ -229,16 +273,42 @@ pub async fn run(ctx: &crate::core::runtime::DispatchCtx, config: &Config) -> Ve
     }
 }
 
+/// Reports that the legacy import boundary is unavailable in this build.
+/// The stub keeps boot and rebind callers explicit: disabling the feature
+/// never makes a detected legacy source look successfully imported.
+#[cfg(not(feature = "legacy-import"))]
+pub async fn run(_ctx: &crate::core::runtime::DispatchCtx, _config: &Config) -> Vec<Report> {
+    unavailable_report()
+}
+
 /// Every importer, in order, over `backend` for `config`'s workspace; from
 /// synchronous code.
+#[cfg(feature = "legacy-import")]
 pub fn run_all(backend: &Arc<dyn StorageBackend>, config: &Config) -> Vec<Report> {
     let mut reports = run_with(backend, config, &sources());
     reports.extend(tinyflows::run_with(backend, config));
     reports.extend(sessions::run_with(backend, config));
+    reports.push(crate::storage::scope_move::run_from_config(backend, config));
     reports
 }
 
+#[cfg(not(feature = "legacy-import"))]
+pub fn run_all(_backend: &Arc<dyn StorageBackend>, _config: &Config) -> Vec<Report> {
+    unavailable_report()
+}
+
+#[cfg(not(feature = "legacy-import"))]
+fn unavailable_report() -> Vec<Report> {
+    vec![Report {
+        domain: "legacy-import",
+        outcome: Err(anyhow::anyhow!(
+            "legacy storage import requires the `legacy-import` feature"
+        )),
+    }]
+}
+
 /// [`run`] over an explicit backend and source list, from synchronous code.
+#[cfg(feature = "legacy-import")]
 pub fn run_with(
     backend: &Arc<dyn StorageBackend>,
     config: &Config,
@@ -301,80 +371,59 @@ pub fn run_with(
 /// Runs `owner`'s document steps over the v1 `records`, in memory, and returns
 /// the v2 records they produce (in input order) with the collection specs to
 /// declare. A record in a collection no step reads passes through unchanged.
+#[cfg(feature = "legacy-import")]
 fn upgrade(owner: &str, records: Vec<Record>) -> Result<(Vec<Record>, Vec<CollectionSpec>)> {
-    use tinystoragedrivers::schema::{Item, SourceRecord, StepBody};
-    use tinystoragedrivers::Meta;
-    let schema = super::schema::owner_schemas()
-        .into_iter()
-        .find(|schema| schema.owner.as_str() == owner)
-        .ok_or_else(|| anyhow!("no storage schema for owner `{owner}`"))?;
-    let specs = schema
-        .items
+    let (upgraded, specs) = match owner {
+        "approvals" => (
+            crate::security::approval::upgrade_records(records)?,
+            crate::security::approval::collection_specs(),
+        ),
+        "devices" => (
+            crate::security::devices::upgrade_records(records)?,
+            crate::security::devices::collection_specs(),
+        ),
+        "notifications" => (
+            crate::desktop::notifications::upgrade_records(records)?,
+            crate::desktop::notifications::collection_specs(),
+        ),
+        "task_sources" => (
+            crate::integrations::task_sources::upgrade_records(records)?,
+            crate::integrations::task_sources::collection_specs(),
+        ),
+        _ => return Err(anyhow!("no legacy record converter for owner `{owner}`")),
+    };
+
+    let used_collections = upgraded
         .iter()
-        .filter_map(|item| match item {
-            Item::Collection { spec, .. } => Some(spec.clone()),
-            _ => None,
-        })
+        .map(|record| record.collection.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let specs = specs
+        .into_iter()
+        .filter(|spec| used_collections.contains(spec.name.as_str()))
         .collect();
-    let mut upgraded = Vec::with_capacity(records.len());
-    let mut by_collection: Vec<(String, Vec<SourceRecord>)> = Vec::new();
-    for record in records {
-        match by_collection
-            .iter_mut()
-            .find(|(collection, _)| *collection == record.collection)
-        {
-            Some((_, batch)) => batch,
-            None => {
-                by_collection.push((record.collection.clone(), Vec::new()));
-                &mut by_collection.last_mut().expect("just pushed").1
-            }
-        }
-        .push(SourceRecord {
-            id: record.id,
-            body: record.doc,
-            meta: Meta::unknown(),
-        });
-    }
-    for (collection, batch) in by_collection {
-        let step = schema.steps.iter().find(|step| {
-            matches!(step.run, StepBody::Documents(_))
-                && step.source.unwrap_or(step.item) == collection
-        });
-        let Some(StepBody::Documents(run)) = step.map(|step| &step.run) else {
-            upgraded.extend(batch.into_iter().map(|r| Record {
-                collection: collection.clone(),
-                id: r.id,
-                doc: r.body,
-            }));
-            continue;
-        };
-        for target in run(batch)? {
-            upgraded.push(Record {
-                collection: target.collection,
-                id: target.id,
-                doc: target.body,
-            });
-        }
-    }
     Ok((upgraded, specs))
 }
 
 /// The marker id for `source` in `workspace`: a backend shared by several
 /// workspaces keeps one marker per workspace.
+#[cfg(feature = "legacy-import")]
 pub(crate) fn marker_id(domain: &str, workspace: &Path) -> String {
     let digest = sha2::Sha256::digest(workspace.as_os_str().as_encoded_bytes());
     format!("{domain}@{}", &hex::encode(digest)[..16])
 }
 
+#[cfg(feature = "legacy-import")]
 fn marker_spec() -> Vec<CollectionSpec> {
     Vec::new()
 }
 
 /// The `tsd.migrations` step of the import of `domain` in `workspace`.
+#[cfg(feature = "legacy-import")]
 pub(crate) fn marker_step(domain: &str, workspace: &Path) -> String {
     super::import_state::step_id(MARKER_KIND, &marker_id(domain, workspace))
 }
 
+#[cfg(feature = "legacy-import")]
 fn import_one(
     backend: &Arc<dyn StorageBackend>,
     config: &Config,
@@ -401,9 +450,11 @@ fn import_one(
         return Ok(Outcome::NoSource);
     }
 
-    let claimed = super::import_state::with_claim(&markers, MARKER_OWNER, &step, || {
+    let claimed = super::import_state::with_claim(&markers, MARKER_OWNER, &step, |condition| {
+        let claimed_markers = markers.conditioned(condition)?;
+        let claimed_repo = repo.conditioned(condition)?;
         // Another process may have finished between our check and the claim.
-        if super::import_state::is_done(&markers, MARKER_OWNER, &step)? {
+        if super::import_state::is_done(&claimed_markers, MARKER_OWNER, &step)? {
             return Ok(Outcome::AlreadyDone);
         }
         let snapshot = Snapshot::of(&legacy, source.db)
@@ -431,18 +482,29 @@ fn import_one(
         let total = found.len();
         let (found, specs) = upgrade(source.owner, found)
             .with_context(|| format!("[{domain}] bring the legacy records to schema v2"))?;
-        let written = repo.run(move |docs| async move {
+        let written = claimed_repo.run(move |docs| async move {
             for spec in &specs {
                 docs.ensure_collection(spec).await?;
             }
             let mut written = 0usize;
             for record in found {
+                let mut options = WriteOptions::new();
+                if let Some(schema) = record.schema {
+                    options = options.schema(schema);
+                }
+                if let Some(created_ms) = record.created_ms {
+                    options = options.created_ms(created_ms);
+                }
+                if let Some(expires_ms) = record.expires_ms {
+                    options = options.expires_ms(expires_ms);
+                }
                 match docs
-                    .put(
+                    .put_with(
                         &record.collection,
                         &record.id,
                         record.doc,
                         Precondition::Absent,
+                        options,
                     )
                     .await
                 {
@@ -454,7 +516,7 @@ fn import_one(
             Ok(written)
         })?;
 
-        super::import_state::set_done(&markers, MARKER_OWNER, &step)?;
+        super::import_state::set_done(&claimed_markers, MARKER_OWNER, &step)?;
         Ok(Outcome::Imported {
             found: total,
             written,
@@ -465,6 +527,7 @@ fn import_one(
 
 /// Whether the import of `source` is recorded as done (test and diagnostics
 /// helper).
+#[cfg(feature = "legacy-import")]
 pub fn is_done(
     backend: &Arc<dyn StorageBackend>,
     config: &Config,
@@ -479,6 +542,10 @@ pub fn is_done(
     })?)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-import"))]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(all(test, not(feature = "legacy-import")))]
+#[path = "disabled_tests.rs"]
+mod disabled_tests;

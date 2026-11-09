@@ -4,7 +4,7 @@ use super::*;
 fn reexported_config_default_is_constructible() {
     let config = Config::default();
 
-    assert!(config.default_model.is_some());
+    assert_eq!(config.default_model, None);
     assert!(config.default_temperature > 0.0);
 }
 

@@ -25,14 +25,15 @@ fn get_thing(opened: &Opened, id: &'static str) -> Option<i64> {
 }
 
 #[test]
+// Ordinary unit test: the cfg(test) default must use the real driver testkit,
+// not create a workspace database as a side effect.
 fn an_uninstalled_call_opens_the_default_for_its_workspace() {
     let dir = tempfile::tempdir().unwrap();
     let opened = open("things", dir.path()).unwrap();
-    assert_eq!(opened.backend.driver(), "sqlite");
     put_thing(&opened, "a", 1);
     assert!(
-        dir.path().join("storage").is_dir(),
-        "the default lives in <workspace>/storage"
+        !dir.path().join("storage").exists(),
+        "ordinary unit tests use an in-memory testkit backend"
     );
     // The same workspace reuses the one backend.
     let again = open("things", dir.path()).unwrap();
@@ -41,6 +42,7 @@ fn an_uninstalled_call_opens_the_default_for_its_workspace() {
 }
 
 #[test]
+// Ordinary unit test: separate workspace defaults must remain isolated.
 fn workspaces_do_not_share_a_default() {
     let one = tempfile::tempdir().unwrap();
     let two = tempfile::tempdir().unwrap();
@@ -51,8 +53,12 @@ fn workspaces_do_not_share_a_default() {
 }
 
 #[test]
+#[cfg(feature = "storage-sqlite")]
+// Persistence test: forgetting the process cache models a restart and must
+// reopen the same durable workspace data.
 fn forgetting_a_workspace_reopens_the_same_data() {
     let dir = tempfile::tempdir().unwrap();
+    super::use_persistent_default_for_test(dir.path());
     let first = open("things", dir.path()).unwrap();
     put_thing(&first, "kept", 3);
     forget(dir.path());
@@ -85,6 +91,25 @@ async fn concurrent_sync_and_async_open_share_one_workspace_backend() {
     assert!(
         Arc::ptr_eq(&sync, &backend_for(dir.path()).unwrap()),
         "later sync opens must reuse the initialized backend"
+    );
+}
+
+#[tokio::test]
+async fn warm_sync_open_reuses_the_backend_without_entering_the_blocking_bridge() {
+    let dir = tempfile::tempdir().unwrap();
+    let warmed = backend_for_async(dir.path()).await.unwrap();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    super::arm_test_sync_backend_entry_signal(dir.path(), entered_tx);
+
+    let synchronous = backend_for(dir.path()).unwrap();
+    let bridge_entry = entered_rx.try_recv();
+    super::clear_test_sync_backend_entry_signal(dir.path());
+
+    assert!(Arc::ptr_eq(&warmed, &synchronous));
+    assert_eq!(
+        bridge_entry,
+        Err(std::sync::mpsc::TryRecvError::Empty),
+        "a warm backend lookup should not block the calling Tokio worker"
     );
 }
 
@@ -147,7 +172,7 @@ fn current_thread_sync_fallback_does_not_deadlock_on_async_backend_initializatio
             .expect("async initialization claimed the workspace cell");
 
         let (sync_entry_tx, sync_entry_rx) = std::sync::mpsc::channel();
-        super::arm_test_sync_backend_entry_signal(sync_entry_tx);
+        super::arm_test_sync_backend_entry_signal(dir.path(), sync_entry_tx);
         let releaser = std::thread::spawn(move || {
             sync_entry_rx
                 .recv_timeout(std::time::Duration::from_secs(30))

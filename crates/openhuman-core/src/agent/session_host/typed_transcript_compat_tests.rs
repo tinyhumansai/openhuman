@@ -85,6 +85,7 @@ fn build_live_image_host(
     config.modules.enabled = false;
     let mut host = crate::agent::SessionHostBuilder::new()
         .with_session_history_locator(super::transcript_compat_tests::store_locator(root))
+        .model_name("fixture/live-image-model".to_string())
         .chat_model_with_config(model, std::sync::Arc::new(config))
         .tools(Vec::new())
         .tool_dispatcher(Box::new(tinytools_agent::dialect::NativeDialect))

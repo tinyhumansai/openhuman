@@ -13,6 +13,9 @@ import { behavior } from "../state.mjs";
  * Behaviour switches (via `setMockBehavior`):
  *   memoryForceStatus  "402" | "401" | "429" | ...  every /memory/* call fails
  *                      with that status and its canonical errorCode.
+ *   memoryForceCode    with memoryForceStatus, the errorCode to answer instead,
+ *                      e.g. "403" + "MEMORY_PLAN_REQUIRED": memory is not in
+ *                      the account's plan (#8081).
  *
  * Like the real memory API:
  *   - a reused `Idempotency-Key` header is a 409 `CONFLICT`, never forwarded;
@@ -100,6 +103,19 @@ function fail(res, status, code, error) {
   });
 }
 
+/** Fails `res` as `memoryForceStatus` asks; false when it asks nothing. */
+function failForced(res) {
+  const forced = Number(behavior().memoryForceStatus || 0);
+  if (forced < 400) return false;
+  const code = behavior().memoryForceCode || STATUS_CODES[forced] || "UPSTREAM_ERROR";
+  const error =
+    code === "MEMORY_PLAN_REQUIRED"
+      ? "memory is not included in this account's plan; nothing was processed"
+      : "forced by mock";
+  fail(res, forced, code, error);
+  return true;
+}
+
 function ok(res, data, status = 200) {
   json(res, status, { success: true, data });
 }
@@ -151,11 +167,7 @@ function eraseAll({ req, res }) {
     fail(res, 401, "UNAUTHORIZED", "missing bearer");
     return true;
   }
-  const forced = Number(behavior().memoryForceStatus || 0);
-  if (forced >= 400) {
-    fail(res, forced, STATUS_CODES[forced] || "UPSTREAM_ERROR", "forced by mock");
-    return true;
-  }
+  if (failForced(res)) return true;
   const store = storeFor(token);
   const scopes = new Set(store.events.map((e) => e.scope)).size;
   store.events = [];
@@ -200,11 +212,7 @@ export async function handleMemory(ctx) {
     fail(res, 401, "UNAUTHORIZED", "missing bearer");
     return true;
   }
-  const forced = Number(behavior().memoryForceStatus || 0);
-  if (forced >= 400) {
-    fail(res, forced, STATUS_CODES[forced] || "UPSTREAM_ERROR", "forced by mock");
-    return true;
-  }
+  if (failForced(res)) return true;
 
   const store = storeFor(token);
   const body = parsedBody && typeof parsedBody === "object" ? parsedBody : {};

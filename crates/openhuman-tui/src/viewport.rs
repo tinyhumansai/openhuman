@@ -48,7 +48,7 @@ impl HeightIndex {
     }
     fn push(&mut self, height: usize) {
         let index = self.tree.len() + 1;
-        let start = index - (index & index.wrapping_neg());
+        let start = index - index.isolate_lowest_one();
         self.tree.push(height + self.total - self.prefix(start));
         self.total += height;
     }
@@ -57,7 +57,7 @@ impl HeightIndex {
         let mut index = index + 1;
         while index <= self.tree.len() {
             self.tree[index - 1] = self.tree[index - 1] - before + after;
-            index += index & index.wrapping_neg();
+            index += index.isolate_lowest_one();
         }
     }
     fn containing(&self, row: usize) -> usize {

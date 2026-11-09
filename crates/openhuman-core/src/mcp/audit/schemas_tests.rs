@@ -34,6 +34,7 @@ async fn handle_list_returns_persisted_audit_records() {
     let config = config_rpc::load_config_with_timeout()
         .await
         .expect("config");
+    crate::mcp::test_module_port::install(&config);
     crate::mcp::audit::record_write(
         &config,
         crate::mcp::audit::NewMcpWriteRecord {

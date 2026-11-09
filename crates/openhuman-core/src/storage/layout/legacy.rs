@@ -139,17 +139,17 @@ pub async fn migrate(target: &Target) -> Result<(), LayoutError> {
         .await
         .map_err(|e| LayoutError::Other(anyhow::anyhow!("schema migration: {e}")))?;
     drop(backend);
-    if let Some((scope, step, message)) = report.failures.first() {
-        return Err(LayoutError::Other(anyhow::anyhow!(
-            "schema migration failed in scope {scope} step {step}: {message}"
-        )));
-    }
+    log::debug!(
+        "[storage::layout] owner collections prepared: scopes={}, collections={}",
+        report.scopes,
+        report.collections
+    );
     if db.is_file() {
         super::db::checkpoint(&db)?;
     }
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "storage-sqlite"))]
 #[path = "legacy_tests.rs"]
 mod tests;

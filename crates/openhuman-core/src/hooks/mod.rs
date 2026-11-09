@@ -3,6 +3,9 @@
 //! The engine and `hooks.json` contract are supplied by `tinyagents-hooks`.
 //! This module keeps the OpenHuman host lifecycle and its stable RPC surface.
 
+#[cfg(test)]
+#[path = "fixture_tests.rs"]
+pub(crate) mod fixture;
 pub mod host;
 pub mod ops;
 pub mod prompt_eval;

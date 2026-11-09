@@ -109,8 +109,8 @@ pub async fn snapshot(config: &Config) -> QueueState {
 /// Runs the selected jobs on the configured engine. Returns the runs it
 /// recorded; see `tinymemory_tools::queue::JobQueue::run` for the retry rules.
 pub async fn run(config: &Config, selection: Selection) -> Result<Vec<JobRun>> {
-    let bound = engine::resolve(config).engine()?;
-    queue_of(&config.workspace_dir)
+    let bound = engine::resolve(config).await.engine()?;
+    let runs = queue_of(&config.workspace_dir)
         .run(
             bound.engine,
             selection,
@@ -119,7 +119,14 @@ pub async fn run(config: &Config, selection: Selection) -> Result<Vec<JobRun>> {
         .await
         .map_err(|error| match error {
             QueueError::NoSuchJob(_) => Error::InvalidRequest(error.to_string()),
-        })
+        })?;
+    if !runs.is_empty() {
+        // A job that ran, even one that failed part way, may have changed
+        // what memory holds (beliefs built, say): a block read before it, or
+        // a read still in flight, must not reach a later prompt.
+        super::prefetch::invalidate(config);
+    }
+    Ok(runs)
 }
 
 /// The cron entry point: runs due jobs unless background work is paused.

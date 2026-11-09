@@ -1,10 +1,10 @@
 use super::*;
 
 fn config_in(dir: &tempfile::TempDir) -> Config {
-    Config {
-        workspace_dir: dir.path().to_path_buf(),
-        ..Config::default()
-    }
+    let mut config =
+        crate::integrations::composio::module_client::test_support::config_in(dir.path());
+    config.workspace_dir = dir.path().to_path_buf();
+    config
 }
 
 fn slack_profile(connection: &str) -> ProviderUserProfile {

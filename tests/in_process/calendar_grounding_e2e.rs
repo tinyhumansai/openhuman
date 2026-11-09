@@ -117,6 +117,7 @@ async fn test_orchestrator_has_current_date_context() -> Result<()> {
         openhuman_core::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
     let mut agent = OpenHumanSessionHost::builder()
+        .model_name("test/session-fixture".to_string())
         .chat_model(model)
         .tools(vec![Box::new(MockCalendarTool)])
         .tool_dispatcher(Box::new(NativeDialect))
@@ -166,9 +167,9 @@ async fn test_subagent_has_current_date_context() -> Result<()> {
     let _ =
         openhuman_core::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
-    let parent = openhuman_core::agent::harness::ParentExecutionContext {
+    let parent = openhuman_core::agent::subagent_host::ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
-        allowed_subagent_ids: ["critic".to_string()].into_iter().collect(),
+        allowed_subagent_ids: ["summarizer".to_string()].into_iter().collect(),
         turn_model_source: openhuman_core::agent::tinyagents::TurnModelSource::from_model(model),
         all_tools: Arc::new(vec![Box::new(MockCalendarTool)]),
         all_tool_specs: Arc::new(vec![Arc::new(MockCalendarTool.spec())]),
@@ -199,7 +200,7 @@ async fn test_subagent_has_current_date_context() -> Result<()> {
     let mut def =
         openhuman_core::agent_registry::host_definition::AgentDefinitionRegistry::global()
             .unwrap()
-            .get("critic")
+            .get("summarizer")
             .unwrap()
             .clone();
     // A Hint sub-agent builds a fresh provider via the workload factory
@@ -215,12 +216,16 @@ async fn test_subagent_has_current_date_context() -> Result<()> {
     // The parent is an explicit value on the run options, not ambient state.
     let mut options = openhuman_core::agent::subagent_host::SubagentRunOptions::default();
     options.run_context.parent = Some(parent);
-    let _ = openhuman_core::agent::subagent_host::run_subagent(
-        &def,
-        "list my calendar events for today",
-        options,
-    )
-    .await;
+    let parent =
+        options
+            .run_context
+            .clone()
+            .into_tinyagents(tinyagents_harness::context::RunConfig::new(
+                "calendar-grounding-subagent-test",
+            ));
+    let _ = openhuman_core::agent::subagent_host::OpenHumanSubagentHost::new(def, options)
+        .run(&parent, "list my calendar events for today".into())
+        .await;
 
     let messages = captured_messages.lock();
     // Use substring search on all user messages

@@ -5,7 +5,8 @@
 use crate::agent::prompts::types::*;
 use crate::prompts::sections::*;
 use anyhow::Result;
-use std::sync::OnceLock;
+use chrono::{DateTime, Utc};
+use std::sync::{Arc, OnceLock};
 use tinytools_agent::dialect::ToolCallFormat;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,28 +57,57 @@ pub fn render_datetime(ctx: &PromptContext<'_>) -> Result<String> {
     DateTimeSection.build(ctx)
 }
 
-/// Canonical one-line "now" stamp, injected per turn alongside the user
-/// message by both the main session loop (`session::turn`) and the
-/// sub-agent runner so every flow reports the current time identically
-/// (#3602). Local time + IANA zone + `%Z`/offset + weekday, so the model
-/// can localize greetings and date math without a tool call.
+type PromptClock = Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>;
+
+static PROMPT_CLOCKS: crate::core::slots::HookSlot<PromptClock> =
+    crate::core::slots::HookSlot::new("openhuman.prompts.clock");
+static NEXT_PROMPT_CLOCK_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// A temporary prompt-clock registration, removed when this guard is dropped.
 ///
-/// Deliberately lives on the *user message*, never the cached
-/// system-prompt prefix: `Local::now()` is volatile, so freezing it into
-/// the prefix both busts the KV cache and goes stale across a long-lived
-/// session. The static grounding *rule* that tells the model to read this
-/// line lives in [`DateTimeSection`] / [`render_datetime`].
+/// Registrations are process-scoped and selected newest-first. Keeping this
+/// guard on the registering thread also keeps the test build's thread-local
+/// HookSlot registration and its removal paired.
+pub struct PromptClockRegistration {
+    id: String,
+    _not_send: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+impl Drop for PromptClockRegistration {
+    fn drop(&mut self) {
+        PROMPT_CLOCKS.unregister(&self.id);
+    }
+}
+
+/// Temporarily provide the instant used by per-turn prompt date lines.
 ///
-/// `zone` is the user's IANA zone ([`crate::config::Config::time_zone`]);
-/// `None`, or a name chrono-tz does not know, stamps the device's.
-pub fn current_datetime_line(zone: Option<&str>) -> String {
+/// This is process-scoped; the most recently registered live clock wins, and
+/// dropping registrations in any order restores the newest remaining clock.
+/// With no registration, prompt rendering uses the system clock.
+pub fn register_prompt_clock(
+    clock: impl Fn() -> DateTime<Utc> + Send + Sync + 'static,
+) -> PromptClockRegistration {
+    let id = format!(
+        "{}",
+        NEXT_PROMPT_CLOCK_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    PROMPT_CLOCKS.register(id.clone(), Arc::new(clock));
+    PromptClockRegistration {
+        id,
+        _not_send: std::marker::PhantomData,
+    }
+}
+
+/// Render the canonical one-line timestamp at a supplied UTC instant.
+///
+/// The zone and profile-force-UTC behavior match [`current_datetime_line`].
+pub fn current_datetime_line_at(now: DateTime<Utc>, zone: Option<&str>) -> String {
     // `library-cpu.sh` sets `OPENHUMAN_PROFILE_FORCE_UTC=1` to skip
     // `iana_time_zone`/CoreFoundation timezone resolution, which is itself a
     // measurable cost in a cold CPU profile. Gated on `rss-bench`, so it does
     // not exist in any shipped build.
     #[cfg(feature = "rss-bench")]
     if std::env::var_os("OPENHUMAN_PROFILE_FORCE_UTC").is_some() {
-        let now = chrono::Utc::now();
         return format!(
             "Current Date & Time: {} UTC (UTC, UTC+00:00), {}",
             now.format("%Y-%m-%d %H:%M:%S"),
@@ -86,7 +116,7 @@ pub fn current_datetime_line(zone: Option<&str>) -> String {
     }
 
     if let Some(tz) = zone.and_then(|zone| zone.parse::<chrono_tz::Tz>().ok()) {
-        let now = chrono::Utc::now().with_timezone(&tz);
+        let now = now.with_timezone(&tz);
         return format!(
             "Current Date & Time: {} {} ({}, UTC{}), {}",
             now.format("%Y-%m-%d %H:%M:%S"),
@@ -98,12 +128,12 @@ pub fn current_datetime_line(zone: Option<&str>) -> String {
     }
 
     // When the host resolves an IANA zone, stamp local time + that zone. When
-    // it can't (CI, stripped containers), fall back to true UTC — formatting
-    // `Utc::now()` so the time, offset, and zone label all agree rather than
-    // pairing a "UTC" label with a local clock/offset.
+    // it can't (CI, stripped containers), fall back to true UTC so the time,
+    // offset, and zone label all agree rather than pairing a "UTC" label with
+    // a local clock/offset.
     match iana_time_zone::get_timezone() {
         Ok(iana) => {
-            let now = chrono::Local::now();
+            let now = now.with_timezone(&chrono::Local);
             format!(
                 "Current Date & Time: {} {} ({}, UTC{}), {}",
                 now.format("%Y-%m-%d %H:%M:%S"),
@@ -114,7 +144,6 @@ pub fn current_datetime_line(zone: Option<&str>) -> String {
             )
         }
         Err(_) => {
-            let now = chrono::Utc::now();
             format!(
                 "Current Date & Time: {} UTC (UTC, UTC+00:00), {}",
                 now.format("%Y-%m-%d %H:%M:%S"),
@@ -122,6 +151,31 @@ pub fn current_datetime_line(zone: Option<&str>) -> String {
             )
         }
     }
+}
+
+/// Canonical one-line "now" stamp, injected per turn alongside the user
+/// message by both the main session loop (`session::turn`) and the
+/// sub-agent runner so every flow reports the current time identically
+/// (#3602). Local time + IANA zone + `%Z`/offset + weekday, so the model
+/// can localize greetings and date math without a tool call.
+///
+/// Deliberately lives on the *user message*, never the cached
+/// system-prompt prefix: the clock is volatile, so freezing it into the
+/// prefix both busts the KV cache and goes stale across a long-lived
+/// session. The static grounding *rule* that tells the model to read this
+/// line lives in [`DateTimeSection`] / [`render_datetime`].
+///
+/// `zone` is the user's IANA zone ([`crate::config::Config::time_zone`]);
+/// `None`, or a name chrono-tz does not know, stamps the device's. The
+/// newest live prompt-clock registration is used when present; otherwise
+/// this reads the system clock.
+pub fn current_datetime_line(zone: Option<&str>) -> String {
+    let now = PROMPT_CLOCKS
+        .entries()
+        .last()
+        .map(|(_, clock)| clock())
+        .unwrap_or_else(Utc::now);
+    current_datetime_line_at(now, zone)
 }
 
 /// What leads every user message: [`current_datetime_line`], then the
@@ -208,3 +262,7 @@ fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
         flow_archetype_text: None,
     }
 }
+
+#[cfg(test)]
+#[path = "section_renderers_tests.rs"]
+mod tests;

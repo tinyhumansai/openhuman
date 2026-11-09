@@ -53,11 +53,9 @@
 //! - Never touches keys/secrets or any other config field.
 
 use crate::config::Config;
-use crate::inference::provider::factory::{
-    LM_STUDIO_PROVIDER_PREFIX, LOCAL_OPENAI_PROVIDER_PREFIX, MLX_PROVIDER_PREFIX,
-    OLLAMA_PROVIDER_PREFIX, OMLX_PROVIDER_PREFIX, PROVIDER_OPENHUMAN,
-};
+use crate::inference::provider::factory::PROVIDER_OPENHUMAN;
 use std::collections::HashSet;
+use tinyinference_providers::route::{ProviderRoute, RouteKind};
 
 /// Counters returned by [`run`] for diagnostics. Logged at INFO once per run.
 #[derive(Debug, Default, Clone)]
@@ -104,20 +102,16 @@ pub fn run(config: &mut Config) -> anyhow::Result<MigrationStats> {
         };
         let s = raw.trim();
 
-        // Managed sentinels and factory-resolvable local providers (ollama:,
-        // lmstudio:, mlx:, omlx:, local-openai:) resolve without a
-        // cloud_providers entry — leave them alone. Keep this in sync with the
-        // local provider prefixes the factory accepts.
+        // Managed sentinels and owner-classified local providers resolve
+        // without a cloud_providers entry — leave them alone.
         // Only embeddings accept `none` as an explicit opt-out.
         if (workload == "embeddings" && s == "none")
             || s.is_empty()
             || s == "cloud"
             || s == PROVIDER_OPENHUMAN
-            || s.starts_with(OLLAMA_PROVIDER_PREFIX)
-            || s.starts_with(LM_STUDIO_PROVIDER_PREFIX)
-            || s.starts_with(MLX_PROVIDER_PREFIX)
-            || s.starts_with(OMLX_PROVIDER_PREFIX)
-            || s.starts_with(LOCAL_OPENAI_PROVIDER_PREFIX)
+            // Only an explicit local route is exempt; bare provider-kind
+            // aliases stay subject to this migration's unresolved-route check.
+            || ProviderRoute::parse(s).is_some_and(|route| matches!(route.kind(), RouteKind::Local(_)))
         {
             continue;
         }

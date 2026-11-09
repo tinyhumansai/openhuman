@@ -2,8 +2,9 @@ import { expect, test } from '@playwright/test';
 
 import {
   bootRuntimeReadyGuestPage,
+  callCoreRpc,
   dismissWalkthroughIfPresent,
-  signInViaBypassUser,
+  signInViaBypassUserPreservingConfig,
   waitForAppReady,
 } from '../helpers/core-rpc';
 
@@ -42,48 +43,60 @@ async function waitForMockRequest(method: string, pathFragment: string, timeoutM
   return null;
 }
 
+async function readOnboardingCompleted(): Promise<boolean> {
+  const response = await callCoreRpc<boolean | { result?: boolean }>(
+    'openhuman.config_get_onboarding_completed',
+    {}
+  );
+  const value = typeof response === 'boolean' ? response : response?.result;
+  expect(typeof value).toBe('boolean');
+  return value as boolean;
+}
+
 test.describe('Runtime picker -> login -> logout', () => {
   test.beforeEach(async ({ page }) => {
     await resetMock();
     await bootRuntimeReadyGuestPage(page);
   });
 
-  // DELETED, not unskipped: `runtime picker validates cloud URL/token inputs
-  // and unreachable hosts` and `returning to cloud-mode guest state keeps
-  // provider login available`.
-  //
-  // Both carried `test.skip(true, 'web Playwright lane does not reliably
-  // surface the desktop-style runtime picker overlay yet')`. That reason is
-  // structural, not flaky, and no amount of rewriting fixes it: every test in
-  // this file boots through `bootRuntimeReadyGuestPage`, which calls
-  // `seedBrowserCoreMode` and writes `openhuman_core_mode`,
-  // `openhuman_core_rpc_url` and `openhuman_core_rpc_token` into localStorage
-  // before the first paint. The app therefore already knows its runtime and
-  // is correct not to show the picker. Removing that seeding leaves the web
-  // build with no core to talk to, so the page never boots — the overlay is
-  // unreachable in this lane by construction.
-  //
-  // The desktop lane covers all of it, and more: see
-  // `app/test/e2e/specs/runtime-picker-login.spec.ts` —
-  //   `clicking "Select a Runtime" opens the runtime picker with both options`,
-  //   `cloud option reveals URL + token inputs and validates them`,
-  //   `"Test Connection" against an unreachable host shows the unreachable pill`,
-  //   `switching back to Local and clicking Continue closes the picker`.
-  // That is a strict superset of the two deleted cases.
+  test('shows current welcome choices and provider sign-in options', async ({ page }) => {
+    await expect(page.getByTestId('welcome-card-self')).toBeVisible();
+    await expect(page.getByTestId('welcome-cta-self')).toBeVisible();
+    await expect(page.getByTestId('welcome-cta-tinyhumans')).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: /Google|GitHub|Twitter|Discord/i }).first()
+    ).toBeVisible();
+  });
+
+  test('self-hosted choice completes the current custom setup wizard', async ({ page }) => {
+    await page.getByTestId('welcome-cta-self').click();
+    await expect(page.getByTestId('onboarding-custom-inference-step')).toBeVisible();
+    await page.getByTestId('onboarding-next-button').click();
+    await expect(page.getByTestId('onboarding-custom-search-step')).toBeVisible();
+    await page.getByTestId('onboarding-search-skip').click();
+    await expect(page.getByTestId('onboarding-custom-vault-step')).toBeVisible();
+    await page.getByTestId('onboarding-next-button').click();
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toContain('#/chat');
+    await expect.poll(readOnboardingCompleted).toBe(true);
+  });
 
   test('provider login reaches home and logout returns to welcome', async ({ page }) => {
-    await signInViaBypassUser(page, 'pw-runtime-picker-login');
+    await callCoreRpc('openhuman.config_set_onboarding_completed', { value: false });
+    await signInViaBypassUserPreservingConfig(page, 'pw-runtime-picker-login');
     await dismissWalkthroughIfPresent(page);
 
     await expect
       .poll(async () => page.evaluate(() => window.location.hash))
       .toMatch(/^#\/(home|chat)(\/|$)/);
     await expect(await waitForMockRequest('GET', '/auth/me')).toBeTruthy();
+    await expect.poll(readOnboardingCompleted).toBe(true);
 
     await page.goto('/#/settings/account');
     await waitForAppReady(page);
     await page.getByTestId('settings-nav-logout').click();
 
     await expect(page.getByText('Welcome to OpenHuman')).toBeVisible();
+    await expect(page.getByTestId('welcome-cta-self')).toBeVisible();
+    await expect(page.getByTestId('welcome-cta-tinyhumans')).toBeVisible();
   });
 });

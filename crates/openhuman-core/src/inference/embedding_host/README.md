@@ -27,17 +27,17 @@ Declared in [`mod.rs`](./mod.rs) and resolved by [`factory.rs`](./factory.rs):
 | File | Role |
 | --- | --- |
 | `mod.rs` | Module docs and re-exports. Declares the provider list above. |
-| `factory.rs` | OpenHuman's binding onto TinyInference's embedding factory: `create_embedding_provider_with_credentials`, `create_embedding_provider_with_config`, and `default_embedding_provider_with_config` (falls back to a `Noop` model if the configured provider fails to build). |
-| [`cloud_adapter.rs`](./cloud_adapter.rs) | `OpenHumanCloudEmbeddingModel`: the managed-provider transport, with OpenHuman's own bearer-token and egress-guard wiring around the crate-owned `CloudEmbeddingModel`. |
+| `factory.rs` | OpenHuman's binding onto TinyInference's embedding factory: `create_embedding_provider_with_credentials`, `create_embedding_provider_with_config`, and `default_embedding_provider_with_config` (falls back to a `Noop` model if the configured provider fails to build). Its managed-model closure retains OpenHuman's registered provider, config-scoped credentials and approval context while using TinyInference's unavailable placeholder if no provider is registered. |
 | [`rpc.rs`](./rpc.rs) + `rpc/` (`api_keys.rs`, `embed.rs`, `settings.rs`) | The `embeddings` RPC handlers: get/update settings, set/clear API key, embed text, test a connection. |
 | [`schemas.rs`](./schemas.rs) | Controller schemas and thin handlers for the `embeddings` RPC namespace, registered as `all_embeddings_controller_schemas` / `all_embeddings_registered_controllers`. |
 
 ## The model contract lives in TinyInference
 
 Callers hold `tinyinference_embeddings::EmbeddingModel` directly (batches are
-`&[String]`). The trait, `format_embedding_signature` and `NoopEmbeddingModel`
-are owned by `tinyinference-embeddings`; this host only binds credentials,
-rate limits and the managed cloud transport onto it.
+`&[String]`). The trait, verification helpers, `UnavailableEmbeddingModel`,
+`format_embedding_signature` and `NoopEmbeddingModel` are owned by
+`tinyinference-embeddings`; this host binds credentials, rate limits and the
+registered managed provider onto them.
 
 ## How it fits
 

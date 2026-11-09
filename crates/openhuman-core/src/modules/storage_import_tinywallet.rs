@@ -22,8 +22,8 @@
 
 use std::path::Path;
 
+use crate::storage::Storage;
 use anyhow::{anyhow, Context, Result};
-use tinystoragedrivers::ScopedStorage;
 
 use super::storage_grant_schemas::tinywallet::{MODULE_ID, PAYMENTS_STREAM};
 use super::storage_import_support as support;
@@ -50,17 +50,29 @@ pub(crate) enum Outcome {
 /// Imports the legacy ledger under `workspace_dir` into the module's scope of
 /// the installed backend.
 pub(crate) async fn import_legacy(ctx: &DispatchCtx, workspace_dir: &Path) -> Result<Outcome> {
-    let Some(scoped) = support::module_scope(ctx, MODULE_ID)? else {
+    if support::module_scope(ctx, MODULE_ID)?.is_none() {
+        return Ok(Outcome::NoBackend);
+    }
+    let ledger = workspace_dir.join(LEDGER_FILE);
+    if !ledger.is_file() {
+        return Ok(Outcome::NoSource);
+    }
+    let marker = support::marker_id("x402", workspace_dir);
+    let workspace_dir = workspace_dir.to_owned();
+    let ctx_for_read = ctx.clone();
+    let result =
+        support::with_module_claim(ctx, MODULE_ID, MARKER_COLLECTION, &marker, move |scoped| {
+            crate::storage::block_on_anyhow(async move {
+                import_into(&ctx_for_read, &scoped, &workspace_dir).await
+            })
+        })?;
+    let Some(outcome) = result else {
         return Ok(Outcome::NoBackend);
     };
-    import_into(ctx, &scoped, workspace_dir).await
+    Ok(outcome)
 }
 
-async fn import_into(
-    ctx: &DispatchCtx,
-    scoped: &ScopedStorage,
-    workspace_dir: &Path,
-) -> Result<Outcome> {
+async fn import_into(ctx: &DispatchCtx, scoped: &Storage, workspace_dir: &Path) -> Result<Outcome> {
     let marker = support::marker_id("x402", workspace_dir);
     if support::already_imported(scoped, MARKER_COLLECTION, &marker).await? {
         return Ok(Outcome::AlreadyDone);

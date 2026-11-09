@@ -143,7 +143,7 @@ describe('a parked approval in the runtime projection', () => {
     const messages = buildRuntimeMessages([msg({ id: 'a1', sender: 'agent' })], null, {
       isRunning: false,
       pendingApproval: detached,
-      liveTimeline: [tool({ id: 'call-parent', name: 'spawn_async_subagent', status: 'success' })],
+      liveTimeline: [tool({ id: 'call-parent', name: 'spawn_subagent', status: 'success' })],
     });
 
     const tail = messages.find(

@@ -19,6 +19,24 @@ pub const BACKEND_UNAVAILABLE_PREFIX: &str = "BACKEND_UNAVAILABLE:";
 /// change.
 pub const API_KEY_REJECTED_PREFIX: &str = "API_KEY_REJECTED:";
 
+/// Sentinel prefix on the error string a backend call returns when the backend
+/// refuses a gated hosted feature because the account balance is too low (an
+/// `errorCode: USER_INSUFFICIENT_CREDITS` response, or a 403 asking the user to
+/// add credits). [`super::expected_error_kind`] demotes it: the fix is a top-up,
+/// not a code change.
+pub const INSUFFICIENT_CREDITS_PREFIX: &str = "INSUFFICIENT_CREDITS:";
+
+/// Sentinel prefix on the error string a backend call returns when the backend
+/// refuses a hosted feature that needs a paid plan (a 403). Demoted like
+/// [`INSUFFICIENT_CREDITS_PREFIX`].
+pub const PAID_PLAN_REQUIRED_PREFIX: &str = "PAID_PLAN_REQUIRED:";
+
+/// Whether `msg` carries the [`INSUFFICIENT_CREDITS_PREFIX`] or
+/// [`PAID_PLAN_REQUIRED_PREFIX`] sentinel anywhere in its chain.
+pub fn is_hosted_billing_refusal_message(msg: &str) -> bool {
+    msg.contains(INSUFFICIENT_CREDITS_PREFIX) || msg.contains(PAID_PLAN_REQUIRED_PREFIX)
+}
+
 /// Whether `msg` carries the [`API_KEY_REJECTED_PREFIX`] sentinel anywhere in
 /// its chain.
 pub fn is_api_key_rejected_message(msg: &str) -> bool {

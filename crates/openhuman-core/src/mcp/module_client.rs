@@ -66,6 +66,20 @@ pub(crate) trait McpModulePort: Send + Sync {
         confidential: bool,
     ) -> Result<Value, ModuleCallError>;
 
+    /// Calls a child object through an already-pinned module owner.
+    /// Implementations must not resolve, load, or pin a module when no owner is
+    /// already available.
+    async fn call_object_if_ready(
+        &self,
+        object_path: &str,
+        member: &str,
+        args: Value,
+        confidential: bool,
+    ) -> Result<Value, ModuleCallError> {
+        let _ = (object_path, member, args, confidential);
+        Err(ModuleCallError::Unavailable)
+    }
+
     async fn prepare_agent_tools(
         &self,
         request: PrepareAgentToolsRequest,
@@ -225,7 +239,7 @@ impl McpConfiguredClient {
             return Ok(Vec::new());
         }
         let client = Self::for_config(config)?;
-        let client_config = crate::mcp::host::client_config(config);
+        let client_config = crate::mcp::host::client_config(config).await;
         let mut sources = Vec::new();
         for declared in &config.mcp_client.servers {
             let server = &declared.server;
@@ -248,6 +262,7 @@ impl McpConfiguredClient {
                         description: tool.description,
                         input_schema: tool.input_schema,
                         meta: None,
+                        annotations: None,
                     })
                     .collect(),
                 None => {
@@ -274,7 +289,8 @@ impl McpConfiguredClient {
                         meta: None,
                     })
                     .collect(),
-            );
+            )
+            .await;
             sources.push(tinymcp_bus::McpToolSourceSpec {
                 server_id: server.name.clone(),
                 label: server.name.clone(),
@@ -360,12 +376,18 @@ impl McpConfiguredClient {
                     // module's idempotent receipt after a cancelled caller.
                     // Servers and audit rows from before the storage contract
                     // move into the module's storage before it reads them.
-                    // Best effort: a failure is retried at the next open.
-                    crate::modules::import_legacy_mcp(
-                        &crate::core::runtime::DispatchCtx::ambient(),
-                        std::path::Path::new(&self.data_dir),
-                    )
-                    .await;
+                    // Best effort: a failure is retried at the next open. While
+                    // another process holds the import, opening would serve
+                    // none of the legacy servers, so wait for the next call.
+                    if let Err(crate::modules::LegacyImportError::ClaimHeld) =
+                        crate::modules::import_legacy_mcp(
+                            &crate::core::runtime::DispatchCtx::ambient(),
+                            std::path::Path::new(&self.data_dir),
+                        )
+                        .await
+                    {
+                        return Err(ModuleCallError::Unavailable);
+                    }
                     let reply = self.port.open_configured(&self.data_dir, &config).await;
                     state.open_replied(reply.clone().map_err(|_| ()));
                     reply?;

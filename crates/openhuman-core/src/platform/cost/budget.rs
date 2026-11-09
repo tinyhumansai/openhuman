@@ -108,7 +108,8 @@ pub fn earliest_start(policies: &[BudgetPolicy], now: DateTime<Utc>) -> Option<D
 fn bucket_of<'a>(scope: BudgetScope, model: &'a str, usage: &'a UsageScope) -> Option<&'a str> {
     match scope {
         BudgetScope::Global => Some("*"),
-        BudgetScope::Model => Some(model),
+        // A call (or record) with no model is outside every model budget.
+        BudgetScope::Model => (!model.is_empty()).then_some(model),
         BudgetScope::Thread => usage.thread_id.as_deref(),
         BudgetScope::Agent => usage.agent_id.as_deref(),
         BudgetScope::SessionAgent => usage.session_agent.as_deref(),

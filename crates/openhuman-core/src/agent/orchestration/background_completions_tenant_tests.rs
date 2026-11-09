@@ -97,25 +97,6 @@ async fn one_profiles_stop_and_delete_never_reach_anothers_thread() {
     assert_eq!(resolved(&bob).as_deref(), Some(ws_b.path()));
 }
 
-#[test]
-fn a_saas_cancel_reaches_only_the_callers_workspace() {
-    use super::running_subagents::{caller_workspace_in, CallerWorkspace};
-    let ws = TestWorkspace::new();
-    let alice = profile("u-alice", ws.path());
-    assert!(matches!(
-        caller_workspace_in(false, None),
-        CallerWorkspace::All
-    ));
-    assert!(matches!(
-        caller_workspace_in(true, None),
-        CallerWorkspace::Nothing
-    ));
-    match caller_workspace_in(true, Some(&alice)) {
-        CallerWorkspace::Only(dir) => assert_eq!(dir, ws.path()),
-        _ => panic!("a scoped SaaS caller reaches its own workspace"),
-    }
-}
-
 /// The explicit context decides, with no ambient scope anywhere: two profiles
 /// recording and resolving the same thread id concurrently, across awaits and
 /// from spawned tasks, never see each other's state.

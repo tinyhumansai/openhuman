@@ -3,14 +3,14 @@
 #![cfg(target_os = "linux")]
 
 use std::time::Duration;
-use tinytools_std::timeout::{output_or_kill, output_unbounded, ProcessCleanup};
+use tinyagents_harness_tools::exec::timeout::{output_or_kill, output_unbounded, ProcessCleanup};
 
 /// A shell child that leads its own process group and dies with its handle, as
 /// the module-owned shell children do.
 fn shell_child(command: &str) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new("sh");
     cmd.arg("-c").arg(command).kill_on_drop(true);
-    tinytools_std::timeout::own_process_group(cmd.as_std_mut());
+    tinyagents_harness_tools::exec::timeout::own_process_group(cmd.as_std_mut());
     cmd
 }
 

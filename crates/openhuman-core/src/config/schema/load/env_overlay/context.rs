@@ -8,30 +8,79 @@ impl Config {
         if let Some(flag) = env.get("OPENHUMAN_CONTEXT_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => self.context.enabled = true,
-                "0" | "false" | "no" | "off" => self.context.enabled = false,
+                "1" | "true" | "yes" | "on" => {
+                    self.context.enabled = true;
+                    self.record_env_override(
+                        env,
+                        "context.enabled",
+                        &["OPENHUMAN_CONTEXT_ENABLED"],
+                    );
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.context.enabled = false;
+                    self.record_env_override(
+                        env,
+                        "context.enabled",
+                        &["OPENHUMAN_CONTEXT_ENABLED"],
+                    );
+                }
                 _ => {}
             }
         }
         if let Some(flag) = env.get("OPENHUMAN_CONTEXT_MICROCOMPACT_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => self.context.microcompact_enabled = true,
-                "0" | "false" | "no" | "off" => self.context.microcompact_enabled = false,
+                "1" | "true" | "yes" | "on" => {
+                    self.context.microcompact_enabled = true;
+                    self.record_env_override(
+                        env,
+                        "context.microcompact_enabled",
+                        &["OPENHUMAN_CONTEXT_MICROCOMPACT_ENABLED"],
+                    );
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.context.microcompact_enabled = false;
+                    self.record_env_override(
+                        env,
+                        "context.microcompact_enabled",
+                        &["OPENHUMAN_CONTEXT_MICROCOMPACT_ENABLED"],
+                    );
+                }
                 _ => {}
             }
         }
         if let Some(flag) = env.get("OPENHUMAN_CONTEXT_AUTOCOMPACT_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => self.context.autocompact_enabled = true,
-                "0" | "false" | "no" | "off" => self.context.autocompact_enabled = false,
+                "1" | "true" | "yes" | "on" => {
+                    self.context.autocompact_enabled = true;
+                    self.record_env_override(
+                        env,
+                        "context.autocompact_enabled",
+                        &["OPENHUMAN_CONTEXT_AUTOCOMPACT_ENABLED"],
+                    );
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.context.autocompact_enabled = false;
+                    self.record_env_override(
+                        env,
+                        "context.autocompact_enabled",
+                        &["OPENHUMAN_CONTEXT_AUTOCOMPACT_ENABLED"],
+                    );
+                }
                 _ => {}
             }
         }
         if let Some(val) = env.get("OPENHUMAN_COMPACTION_STRATEGY") {
             match crate::config::CompactionStrategy::parse(&val) {
-                Some(strategy) => self.context.compaction_strategy = strategy,
+                Some(strategy) => {
+                    self.context.compaction_strategy = strategy;
+                    self.record_env_override(
+                        env,
+                        "context.compaction_strategy",
+                        &["OPENHUMAN_COMPACTION_STRATEGY"],
+                    );
+                }
                 None if val.trim().is_empty() => {}
                 None => tracing::warn!(
                     value = %val.trim(),
@@ -43,9 +92,23 @@ impl Config {
         // empty value clears an override set in `config.toml`.
         if let Some(val) = env.get("OPENHUMAN_COMPACTION_TRIGGER_TOKENS") {
             match val.trim() {
-                "" | "0" => self.context.compaction_trigger_tokens = None,
+                "" | "0" => {
+                    self.context.compaction_trigger_tokens = None;
+                    self.record_env_override(
+                        env,
+                        "context.compaction_trigger_tokens",
+                        &["OPENHUMAN_COMPACTION_TRIGGER_TOKENS"],
+                    );
+                }
                 raw => match raw.parse::<u64>() {
-                    Ok(tokens) => self.context.compaction_trigger_tokens = Some(tokens),
+                    Ok(tokens) => {
+                        self.context.compaction_trigger_tokens = Some(tokens);
+                        self.record_env_override(
+                            env,
+                            "context.compaction_trigger_tokens",
+                            &["OPENHUMAN_COMPACTION_TRIGGER_TOKENS"],
+                        );
+                    }
                     Err(_) => tracing::warn!(
                         value = raw,
                         "[config] ignoring unparseable OPENHUMAN_COMPACTION_TRIGGER_TOKENS"
@@ -56,6 +119,11 @@ impl Config {
         if let Some(val) = env.get("OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES") {
             if let Ok(n) = val.trim().parse::<usize>() {
                 self.context.tool_result_budget_bytes = n;
+                self.record_env_override(
+                    env,
+                    "context.tool_result_budget_bytes",
+                    &["OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES"],
+                );
             }
         }
         // Switch for native tool-output compaction (Stage 1a). On by
@@ -66,8 +134,28 @@ impl Config {
             .or_else(|| env.get("OPENHUMAN_CONTEXT_COMPACTION_ENABLED"))
         {
             match flag.trim().to_ascii_lowercase().as_str() {
-                "1" | "true" | "yes" | "on" => self.context.compaction_enabled = true,
-                "0" | "false" | "no" | "off" => self.context.compaction_enabled = false,
+                "1" | "true" | "yes" | "on" => {
+                    self.context.compaction_enabled = true;
+                    self.record_env_override(
+                        env,
+                        "context.compaction_enabled",
+                        &[
+                            "OPENHUMAN_COMPACTION",
+                            "OPENHUMAN_CONTEXT_COMPACTION_ENABLED",
+                        ],
+                    );
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.context.compaction_enabled = false;
+                    self.record_env_override(
+                        env,
+                        "context.compaction_enabled",
+                        &[
+                            "OPENHUMAN_COMPACTION",
+                            "OPENHUMAN_CONTEXT_COMPACTION_ENABLED",
+                        ],
+                    );
+                }
                 _ => {}
             }
         }
@@ -75,8 +163,14 @@ impl Config {
             let model = model.trim();
             if !model.is_empty() {
                 self.context.summarizer_model = Some(model.to_string());
+                self.record_env_override(
+                    env,
+                    "context.summarizer_model",
+                    &["OPENHUMAN_CONTEXT_SUMMARIZER_MODEL"],
+                );
             }
         }
+        self.apply_summarizer_env(env);
         let context_default =
             tinyagents_harness::config::TurnConfig::default().tool_result_budget_bytes;
         let context_env_set = env.contains("OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES");
@@ -91,6 +185,157 @@ impl Config {
                  `context.tool_result_budget_bytes` in your config.toml"
             );
             self.context.tool_result_budget_bytes = self.agent.tool_result_budget_bytes;
+        }
+    }
+
+    /// The compaction summarizer's rendering and output cap.
+    fn apply_summarizer_env<E: EnvLookup + ?Sized>(&mut self, env: &E) {
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_SUMMARIZER_TOOL_RENDERING") {
+            let rendering = match val.trim().to_ascii_lowercase().as_str() {
+                "" => None,
+                "full" => Some(tinyagents_harness::summarization::ToolRendering::Full),
+                "markers" => Some(tinyagents_harness::summarization::ToolRendering::Markers),
+                _ => {
+                    tracing::warn!(
+                        value = %val.trim(),
+                        "[config] ignoring unknown OPENHUMAN_CONTEXT_SUMMARIZER_TOOL_RENDERING (full | markers)"
+                    );
+                    None
+                }
+            };
+            if let Some(rendering) = rendering {
+                self.context.summarizer_tool_rendering = rendering;
+                self.record_env_override(
+                    env,
+                    "context.summarizer_tool_rendering",
+                    &["OPENHUMAN_CONTEXT_SUMMARIZER_TOOL_RENDERING"],
+                );
+            }
+        }
+        // `0` or an empty value clears a cap set in `config.toml`.
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_SUMMARIZER_MAX_OUTPUT_TOKENS") {
+            let cap = match val.trim() {
+                "" | "0" => Some(None),
+                raw => match raw.parse::<u32>() {
+                    Ok(tokens) => Some(Some(tokens)),
+                    Err(_) => {
+                        tracing::warn!(
+                            value = raw,
+                            "[config] ignoring unparseable OPENHUMAN_CONTEXT_SUMMARIZER_MAX_OUTPUT_TOKENS"
+                        );
+                        None
+                    }
+                },
+            };
+            if let Some(cap) = cap {
+                self.context.summarizer_max_output_tokens = cap;
+                self.record_env_override(
+                    env,
+                    "context.summarizer_max_output_tokens",
+                    &["OPENHUMAN_CONTEXT_SUMMARIZER_MAX_OUTPUT_TOKENS"],
+                );
+            }
+        }
+        // `0` or an empty value clears a budget set in `config.toml`.
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_KEEP_RECENT_TOKENS") {
+            let budget = match val.trim() {
+                "" | "0" => Some(None),
+                raw => match raw.parse::<u32>() {
+                    Ok(tokens) => Some(Some(tokens)),
+                    Err(_) => {
+                        tracing::warn!(
+                            value = raw,
+                            "[config] ignoring unparseable OPENHUMAN_CONTEXT_KEEP_RECENT_TOKENS"
+                        );
+                        None
+                    }
+                },
+            };
+            if let Some(budget) = budget {
+                self.context.keep_recent_tokens = budget;
+                self.record_env_override(
+                    env,
+                    "context.keep_recent_tokens",
+                    &["OPENHUMAN_CONTEXT_KEEP_RECENT_TOKENS"],
+                );
+            }
+        }
+        // `0` or an empty value switches expiry off again.
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_TOOL_RESULT_MAX_AGE_TURNS") {
+            let age = match val.trim() {
+                "" | "0" => Some(None),
+                raw => match raw.parse::<u32>() {
+                    Ok(turns) => Some(Some(turns)),
+                    Err(_) => {
+                        tracing::warn!(
+                            value = raw,
+                            "[config] ignoring unparseable OPENHUMAN_CONTEXT_TOOL_RESULT_MAX_AGE_TURNS"
+                        );
+                        None
+                    }
+                },
+            };
+            if let Some(age) = age {
+                self.context.tool_result_max_age_turns = age;
+                self.record_env_override(
+                    env,
+                    "context.tool_result_max_age_turns",
+                    &["OPENHUMAN_CONTEXT_TOOL_RESULT_MAX_AGE_TURNS"],
+                );
+            }
+        }
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_TOOL_RESULT_EXEMPT_TOOLS") {
+            self.context.tool_result_exempt_tools = val
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect();
+            self.record_env_override(
+                env,
+                "context.tool_result_exempt_tools",
+                &["OPENHUMAN_CONTEXT_TOOL_RESULT_EXEMPT_TOOLS"],
+            );
+        }
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_REPLAY_REASONING") {
+            let replay = match val.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+                "" => None,
+                "all" => Some(crate::config::ReasoningReplay::All),
+                "current_turn" => Some(crate::config::ReasoningReplay::CurrentTurn),
+                _ => {
+                    tracing::warn!(
+                        value = %val.trim(),
+                        "[config] ignoring unknown OPENHUMAN_CONTEXT_REPLAY_REASONING (all | current_turn)"
+                    );
+                    None
+                }
+            };
+            if let Some(replay) = replay {
+                self.context.replay_reasoning = replay;
+                self.record_env_override(
+                    env,
+                    "context.replay_reasoning",
+                    &["OPENHUMAN_CONTEXT_REPLAY_REASONING"],
+                );
+            }
+        }
+        if let Some(raw) = env.get("OPENHUMAN_CONTEXT_PRUNE_RETIRED_TOOLS") {
+            match super::classify_shell_hide_window(&raw) {
+                super::ShellHideWindowParse::Set(value) => {
+                    self.context.prune_retired_tools = value;
+                    self.record_env_override(
+                        env,
+                        "context.prune_retired_tools",
+                        &["OPENHUMAN_CONTEXT_PRUNE_RETIRED_TOOLS"],
+                    );
+                }
+                super::ShellHideWindowParse::Unset => {}
+                super::ShellHideWindowParse::Unrecognized => {
+                    tracing::warn!(
+                        "[config] ignoring a non-boolean OPENHUMAN_CONTEXT_PRUNE_RETIRED_TOOLS"
+                    );
+                }
+            }
         }
     }
 }

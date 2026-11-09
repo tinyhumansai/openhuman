@@ -75,15 +75,6 @@ export async function openConnectorModal(
   waitForTileStatus?: string
 ): Promise<string | null> {
   console.log(`${LOG} opening connector modal for "${name}"`);
-  const candidates = [
-    `Connect ${name}`,
-    `Manage ${name}`,
-    `Reconnect ${name}`,
-    `${name} authorization expired`,
-    `${name} is connected`,
-    'Disconnect',
-  ];
-
   // Click the connector's OWN control, not merely a button that mentions it.
   //
   // This used to take the first button whose aria-label/title/text `includes`
@@ -140,32 +131,63 @@ export async function openConnectorModal(
       [`Connect ${name}`, `Manage ${name}`, `Reconnect ${name}`]
     );
 
+  const readModalHeading = async (): Promise<string | null> =>
+    browser.execute((connectorName: string) => {
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+      if (!dialog || dialog.getClientRects().length === 0) return null;
+      const heading = dialog.querySelector<HTMLElement>(
+        '[role="heading"], h1, h2, h3, [id$="-title"]'
+      );
+      const title = heading?.textContent?.trim();
+      return title && title.toLowerCase().includes(connectorName.toLowerCase()) ? title : null;
+    }, name);
+
   // Click once up front. If the modal appears, stop trying to re-click the
   // underlying card; the backdrop will intercept any later coordinate clicks.
   await waitForText(name, timeout);
   // If a tile status is expected (e.g. 'Auth expired'), wait for it before
   // clicking so the modal opens with connection data already loaded.
   if (waitForTileStatus) {
-    try {
-      const statusDeadline = Date.now() + timeout;
-      while (Date.now() < statusDeadline) {
-        if (await textExists(waitForTileStatus)) break;
-        await browser.pause(300);
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          (connectorName: string, expectedStatus: string) => {
+            const tiles = Array.from(
+              document.querySelectorAll<HTMLButtonElement>(
+                'button[data-testid^="skill-install-composio-"]'
+              )
+            );
+            const tile = tiles.find(button => {
+              const label = button.getAttribute('aria-label') ?? '';
+              const visibleName = button.querySelector('span')?.textContent?.trim() ?? '';
+              return (
+                label.toLowerCase().startsWith(`${connectorName.toLowerCase()},`) ||
+                visibleName.toLowerCase() === connectorName.toLowerCase()
+              );
+            });
+            if (!tile) return false;
+            const state = `${tile.getAttribute('aria-label') ?? ''} ${tile.textContent ?? ''}`;
+            return state.toLowerCase().includes(expectedStatus.toLowerCase());
+          },
+          name,
+          waitForTileStatus
+        ),
+      {
+        timeout,
+        interval: 300,
+        timeoutMsg: `Connector tile "${name}" did not show the requested status "${waitForTileStatus}"`,
       }
-    } catch {
-      /* proceed even if status text never appears */
-    }
+    );
   }
   await ensureModalOpen();
 
   const deadline = Date.now() + timeout;
   let lastReopenAt = 0;
   while (Date.now() < deadline) {
-    for (const candidate of candidates) {
-      if (await textExists(candidate)) {
-        console.log(`${LOG} modal opened: "${candidate}"`);
-        return candidate;
-      }
+    const heading = await readModalHeading();
+    if (heading) {
+      console.log(`${LOG} modal opened: "${heading}"`);
+      return heading;
     }
     const modalVisible = await browser
       .execute(() => Boolean(document.querySelector('[role="dialog"]')))

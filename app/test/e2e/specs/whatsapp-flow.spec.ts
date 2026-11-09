@@ -19,7 +19,7 @@ describe('WhatsApp account integration smoke', () => {
     this.timeout(90_000);
     if (!supportsExecuteScript()) {
       stepLog('Skipping suite on Mac2 — route assertions require script execution');
-      this.skip();
+      this.skip(); // https://github.com/senamakel/openhuman/issues/236 — Playwright owns the matching browser flow.
     }
 
     stepLog('starting mock server');

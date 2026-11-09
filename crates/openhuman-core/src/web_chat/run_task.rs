@@ -35,7 +35,7 @@ pub(crate) async fn run_chat_task(
     locale: Option<String>,
     run_queue: Arc<RunQueue<crate::agent::queued_turn::QueuedTurn>>,
     metadata: ChatRequestMetadata,
-    origin: crate::security::turn_origin::AgentTurnOrigin,
+    origin: crate::core::runtime::turn_origin::AgentTurnOrigin,
     // When true, run as an isolated fork: build a fresh agent seeded from the
     // thread's history-at-start and never touch the shared `THREAD_SESSIONS`
     // cache, so a concurrent same-thread (parallel) turn cannot clobber — or be
@@ -122,7 +122,7 @@ pub(crate) async fn run_chat_task(
     // policy (which grants `action_dir` as a trusted root) and its tools are
     // all built on the thread's folder.
     let thread_dir =
-        crate::threads::ops::thread_working_dir(ctx, config.workspace_dir.clone(), thread_id)
+        crate::threads::ops::thread_working_dir(ctx, &config, config.workspace_dir.clone(), thread_id)
             .await?;
     if let Some(dir) = &thread_dir {
         log::debug!("[web-channel] thread working folder applied thread_id={thread_id}");
@@ -185,12 +185,6 @@ pub(crate) async fn run_chat_task(
     // can attribute the run (`agent.id` attr / `agent.turn:<id>` trace name).
     let mut bridge_metadata = metadata.clone();
     bridge_metadata.agent_id = Some(current_fp.target_agent_id.clone());
-    // A TinyMemes treatment thread surfaces only the remixed reply, so the
-    // original answer text is not streamed ahead of it.
-    #[cfg(feature = "tinymemes")]
-    {
-        bridge_metadata.hold_text_stream = crate::tinymemes::holds_text_stream(&config, thread_id);
-    }
     let bridge = spawn_progress_bridge(
         progress_rx,
         client_id.to_string(),
@@ -206,8 +200,6 @@ pub(crate) async fn run_chat_task(
     // wrappers below hold a pointer rather than inlining the whole future into
     // this already-large `run_chat_task` frame (which otherwise overflows the
     // default test-thread stack — see the channels web-turn coverage tests).
-    #[cfg(feature = "tinymemes")]
-    let turn_started = std::time::Instant::now();
     let turn = Box::pin(agent.run_single_with_approval(message, Some(origin), approval));
     let mut result = match turn.await {
         Ok(response) => {
@@ -283,11 +275,6 @@ pub(crate) async fn run_chat_task(
             }
         }
     };
-    // The agent turn's own duration for the TinyMemes A/B log, taken before
-    // reply speech so synthesis time is not counted as turn time.
-    #[cfg(feature = "tinymemes")]
-    let turn_elapsed = turn_started.elapsed();
-
     if let Ok(ref task_result) = result {
         let speak_reply = matches!(metadata.speak_reply, Some(true));
         let trimmed_response = task_result.full_response.trim();
@@ -296,7 +283,7 @@ pub(crate) async fn run_chat_task(
             // provider is registered by the hosted-backend layer, so a core
             // with none registered logs the error and skips the spoken reply.
             #[cfg(feature = "voice")]
-            let speech = match crate::voice::create_tts_provider("cloud", "", &config) {
+            let speech = match crate::voice::create_tts_provider("cloud", "", &config).await {
                 Ok(provider) => provider
                     .synthesize(&config, &task_result.full_response, None)
                     .await
@@ -322,24 +309,6 @@ pub(crate) async fn run_chat_task(
                 ),
             }
         }
-    }
-
-    // TinyMemes: remix the final reply (slang + memes) when the flag puts this
-    // thread in the treatment arm. Runs after reply speech so TTS reads the
-    // original wording, and skips the budget-exhausted placeholder. Fails open.
-    #[cfg(feature = "tinymemes")]
-    if let Ok(ref mut task_result) = result {
-        crate::tinymemes::remix_task_reply(
-            ctx,
-            &config,
-            thread_id,
-            request_id,
-            message,
-            &mut task_result.full_response,
-            inference_budget_exceeded_user_message(),
-            turn_elapsed,
-        )
-        .await;
     }
 
     // Test hook: wedge the turn after its run, as a stuck save would.

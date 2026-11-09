@@ -13,10 +13,11 @@ use std::sync::Arc;
 use common::{chat_completion, chat_requests, runtime_without_master_key, PointedInference};
 use openhuman_embed::seams::ToolHookDecision;
 use openhuman_embed::{
-    DirectProfileProvider, InMemorySessionStores, PermissionLevel, ProfileRuntime, SaasConfig,
-    SessionStoreProvider, ToolScopeSpec,
+    DirectProfileProvider, PermissionLevel, ProfileRuntime, SaasConfig, SessionStoreProvider,
+    ToolScopeSpec,
 };
 use serde_json::{json, Value};
+use tinyagents_session::port::InMemorySessionStores;
 use wiremock::matchers::{header, method, path_regex};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
@@ -103,7 +104,7 @@ async fn scenario() {
         .mount(&managed)
         .await;
     PointedInference::install(&managed.uri());
-    openhuman_core::storage::install(Arc::new(openhuman_core::storage::MemoryStorage::new()));
+    openhuman_core::storage::install(Arc::new(tinystoragedrivers_testkit::MemoryBackend::new()));
 
     let root = tempfile::tempdir().unwrap();
     let store = Arc::new(InMemorySessionStores::new());

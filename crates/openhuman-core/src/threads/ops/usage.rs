@@ -209,7 +209,7 @@ fn recorded_cost(
         let estimate = model.and_then(|model| {
             crate::agent::cost::estimate_call_cost_usd(
                 model,
-                &crate::inference::provider::BilledUsage::from_counts(
+                &tinyinference_llm::usage::BilledUsage::from_counts(
                     split.unpriced_input_tokens,
                     split.unpriced_output_tokens,
                 )

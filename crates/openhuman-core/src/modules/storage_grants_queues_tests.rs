@@ -84,6 +84,40 @@ fn a_queue_call_without_a_queue_name_is_malformed() {
 }
 
 #[test]
+fn queue_names_and_specs_are_confined_to_the_host_manifest() {
+    assert_eq!(
+        authorize(
+            &with_queues(),
+            Object::Queues,
+            "Stats",
+            &json!({"queue": "other"})
+        ),
+        Err(Denied::QueueNotGranted)
+    );
+    assert_eq!(
+        authorize(
+            &with_queues(),
+            Object::Queues,
+            "EnsureQueue",
+            &json!({"queue": "inbox", "spec": {"max_attempts": 4, "dedupe_window_ms": 60000}})
+        ),
+        Err(Denied::QueueSpec)
+    );
+}
+
+#[test]
+fn kv_connection_probe_is_empty_but_data_access_is_not_granted() {
+    assert_eq!(
+        authorize(&with_queues(), Object::Kv, "Capabilities", &json!(null)),
+        Ok(Plan::Answer(json!({ "capabilities": [] })))
+    );
+    assert_eq!(
+        authorize(&with_queues(), Object::Kv, "Get", &json!({"key":"x"})),
+        Err(Denied::Object)
+    );
+}
+
+#[test]
 fn a_grant_without_queues_answers_features_and_refuses_the_rest() {
     // `BusStorage::connect` asks for queue features on every connect, so a
     // module with no queues must still get an answer, and an empty one.
@@ -157,8 +191,9 @@ fn a_read_only_grant_may_inspect_queues_but_not_lease_or_enqueue() {
 #[test]
 fn validate_refuses_an_invalid_manifest_and_storage_layer_collections() {
     assert!(with_queues().validate().is_ok());
-    let mut broken = (*manifest()).clone();
-    broken.version = 99;
+    let mut broken = serde_json::to_value(manifest()).unwrap();
+    broken["version"] = json!(99);
+    let broken: QueueManifest = serde_json::from_value(broken).unwrap();
     let bad_manifest = StorageGrant {
         queues: Some(Arc::new(broken)),
         queue_backend: None,

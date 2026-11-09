@@ -678,3 +678,33 @@ async fn flows_resume_refuses_when_the_graph_changed_after_park() {
         "a settled/refused run must not be resumable again"
     );
 }
+
+/// Resume guard: a parked run resumes only under the flow it belongs to.
+#[tokio::test]
+async fn flows_resume_refuses_a_run_from_another_flow() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let gated = |name: &str| flows_create(&config, name.into(), approval_gated_graph(), false);
+    let (a, b) = (
+        gated("a").await.unwrap().value.id,
+        gated("b").await.unwrap().value.id,
+    );
+    let run = flows_run(
+        &ctx,
+        &config,
+        &a,
+        json!({ "x": 1 }),
+        Default::default(),
+        FlowRunTrigger::Rpc,
+    )
+    .await
+    .unwrap();
+    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
+    let pending = vec!["gate".to_string()];
+
+    let error = flows_resume(&ctx, &config, &b, &thread_id, pending, vec![])
+        .await
+        .expect_err("run A resumed under flow B");
+    assert!(error.contains("does not belong to flow"), "{error}");
+}

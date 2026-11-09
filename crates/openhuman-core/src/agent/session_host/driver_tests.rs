@@ -40,6 +40,60 @@ fn graph_failure_persists_only_accepted_snapshot_history() {
 }
 
 #[test]
+fn physical_dispatch_refusal_survives_the_neutral_driver_error_boundary() {
+    let sidecar = sidecar();
+    let snapshot = Arc::new(std::sync::Mutex::new(
+        crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshot {
+            model_calls: 1,
+            input_tokens: 8,
+            output_tokens: 3,
+            ..Default::default()
+        },
+    ));
+    let refusal = crate::agent::tinyagents::budget::DispatchRefusal::new(
+        crate::agent::tinyagents::budget::DispatchRefusalReason::CallLimit,
+    );
+
+    let failure = driver_error_with_snapshot(
+        anyhow::Error::new(refusal),
+        &snapshot,
+        &sidecar,
+        std::time::Duration::from_millis(1),
+    );
+
+    assert!(matches!(failure.error, RuntimeError::Driver(_)));
+    let observed = sidecar
+        .lock()
+        .unwrap()
+        .dispatch_refusal
+        .expect("typed refusal is retained per turn");
+    assert_eq!(observed.reason(), refusal.reason());
+    let usage = sidecar.lock().unwrap();
+    assert_eq!(usage.model_calls, 1);
+    assert_eq!(usage.input_tokens, 8);
+    assert_eq!(usage.output_tokens, 3);
+}
+
+#[test]
+fn a_later_driver_failure_clears_a_child_refusal_the_parent_handled() {
+    let sidecar = sidecar();
+    sidecar.lock().unwrap().dispatch_refusal =
+        Some(crate::agent::tinyagents::budget::DispatchRefusal::new(
+            crate::agent::tinyagents::budget::DispatchRefusalReason::CallLimit,
+        ));
+    let snapshot = Arc::new(std::sync::Mutex::new(Default::default()));
+
+    let _failure = driver_error_with_snapshot(
+        anyhow::anyhow!("later unrelated root failure"),
+        &snapshot,
+        &sidecar,
+        std::time::Duration::from_millis(1),
+    );
+
+    assert!(sidecar.lock().unwrap().dispatch_refusal.is_none());
+}
+
+#[test]
 fn stalled_model_stream_reports_completed_evidence_instead_of_its_narration() {
     let snapshot = Arc::new(std::sync::Mutex::new(
         crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshot {

@@ -1,8 +1,8 @@
 /**
  * A redelivered `subagent_spawned` must not cancel a live sub-agent question.
  *
- * `continue_subagent` announces a resume by republishing `subagent_spawned` for
- * the same task/agent, so "a row that already exists got spawned again" is the
+ * Resuming with the same task key republishes `subagent_spawned` for the same
+ * task/agent, so "a row that already exists got spawned again" is the
  * only resume signal the frontend receives — and it is exactly what Socket.IO
  * redelivering the ORIGINAL spawn looks like. This socket reconnects and
  * replays freely (13+ times in one measured session), so the failure is not
@@ -132,7 +132,7 @@ describe('ChatRuntimeProvider — replayed sub-agent spawn', () => {
     expect(row()?.subagent?.awaitingQuestion).toBe(QUESTION);
   });
 
-  it('still resumes on a real continue_subagent spawn', () => {
+  it('resumes on a same-task spawn in the next parent turn', () => {
     const listeners = renderProvider();
 
     act(() => {

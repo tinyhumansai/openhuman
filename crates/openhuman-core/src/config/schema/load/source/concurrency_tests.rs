@@ -5,9 +5,9 @@ use serde_json::json;
 #[tokio::test]
 async fn agent_registry_rpc_preserves_document_conflicts() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let _forced = ForcedDocumentSource::new(
-        scoped(&storage, "tenant-rpc"),
+        scoped(storage.as_ref(), "tenant-rpc"),
         Scope::new("tenant-rpc").unwrap(),
         keys(9),
     );
@@ -28,15 +28,16 @@ async fn agent_registry_rpc_preserves_document_conflicts() {
         .expect("agent registry RPC is registered");
     let ctx = CoreContext::for_test_with_config(DomainSet::full(), stale);
     let error = CoreContext::scope(ctx.clone(), async move {
-        (controller.handler)(
-            DispatchCtx::new(ctx),
-            json!({"id": "orchestrator", "enabled": true})
-                .as_object()
-                .unwrap()
-                .clone(),
-        )
-        .await
-        .unwrap_err()
+        controller
+            .invoke(
+                DispatchCtx::new(ctx),
+                json!({"id": "orchestrator", "enabled": true})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .await
+            .unwrap_err()
     })
     .await;
     let structured = crate::core::StructuredRpcError::decode(&error)
@@ -48,9 +49,9 @@ async fn agent_registry_rpc_preserves_document_conflicts() {
 #[tokio::test]
 async fn memory_engine_rpc_preserves_document_conflicts() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let _forced = ForcedDocumentSource::new(
-        scoped(&storage, "tenant-memory-rpc"),
+        scoped(storage.as_ref(), "tenant-memory-rpc"),
         Scope::new("tenant-memory-rpc").unwrap(),
         keys(10),
     );
@@ -71,12 +72,13 @@ async fn memory_engine_rpc_preserves_document_conflicts() {
         .expect("memory engine RPC is registered");
     let ctx = CoreContext::for_test_with_config(DomainSet::full(), stale);
     let error = CoreContext::scope(ctx.clone(), async move {
-        (controller.handler)(
-            DispatchCtx::new(ctx),
-            json!({"engine": "none"}).as_object().unwrap().clone(),
-        )
-        .await
-        .unwrap_err()
+        controller
+            .invoke(
+                DispatchCtx::new(ctx),
+                json!({"engine": "none"}).as_object().unwrap().clone(),
+            )
+            .await
+            .unwrap_err()
     })
     .await;
     let structured = crate::core::StructuredRpcError::decode(&error)
@@ -91,9 +93,9 @@ mod revision_loader_tests;
 #[tokio::test]
 async fn sequential_config_rpcs_use_the_latest_context_snapshot() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let _forced = ForcedDocumentSource::new(
-        scoped(&storage, "tenant-sequential-config-rpc"),
+        scoped(storage.as_ref(), "tenant-sequential-config-rpc"),
         Scope::new("tenant-sequential-config-rpc").unwrap(),
         keys(11),
     );
@@ -114,7 +116,8 @@ async fn sequential_config_rpcs_use_the_latest_context_snapshot() {
     ] {
         let dispatch = DispatchCtx::new(ctx.clone());
         CoreContext::scope(ctx.clone(), async {
-            (controller.handler)(dispatch, patch.as_object().unwrap().clone())
+            controller
+                .invoke(dispatch, patch.as_object().unwrap().clone())
                 .await
                 .expect(
                     "sequential config settings updates should use the latest context snapshot",
@@ -133,9 +136,9 @@ async fn sequential_config_rpcs_use_the_latest_context_snapshot() {
 #[tokio::test]
 async fn external_config_conflict_refreshes_the_context_before_the_next_read() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let _forced = ForcedDocumentSource::new(
-        scoped(&storage, "tenant-refresh-config-rpc"),
+        scoped(storage.as_ref(), "tenant-refresh-config-rpc"),
         Scope::new("tenant-refresh-config-rpc").unwrap(),
         keys(13),
     );
@@ -157,15 +160,16 @@ async fn external_config_conflict_refreshes_the_context_before_the_next_read() {
         .find(|controller| controller.rpc_method_name() == "openhuman.config_update_model_settings")
         .expect("config model settings RPC is registered");
     let conflict = CoreContext::scope(ctx.clone(), async {
-        (controller.handler)(
-            DispatchCtx::new(ctx.clone()),
-            json!({"default_temperature": 0.8})
-                .as_object()
-                .unwrap()
-                .clone(),
-        )
-        .await
-        .unwrap_err()
+        controller
+            .invoke(
+                DispatchCtx::new(ctx.clone()),
+                json!({"default_temperature": 0.8})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .await
+            .unwrap_err()
     })
     .await;
     assert!(crate::core::StructuredRpcError::decode(&conflict).is_some());
@@ -180,9 +184,9 @@ async fn external_config_conflict_refreshes_the_context_before_the_next_read() {
 #[tokio::test]
 async fn external_config_conflict_refresh_keeps_derived_runtime_overrides() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let _forced = ForcedDocumentSource::new(
-        scoped(&storage, "tenant-refresh-overlay"),
+        scoped(storage.as_ref(), "tenant-refresh-overlay"),
         Scope::new("tenant-refresh-overlay").unwrap(),
         keys(14),
     );
@@ -223,15 +227,16 @@ async fn external_config_conflict_refresh_keeps_derived_runtime_overrides() {
         .find(|controller| controller.rpc_method_name() == "openhuman.config_update_model_settings")
         .expect("config model settings RPC is registered");
     let conflict = CoreContext::scope(ctx.clone(), async {
-        (controller.handler)(
-            DispatchCtx::new(ctx.clone()),
-            json!({"default_temperature": 0.8})
-                .as_object()
-                .unwrap()
-                .clone(),
-        )
-        .await
-        .unwrap_err()
+        controller
+            .invoke(
+                DispatchCtx::new(ctx.clone()),
+                json!({"default_temperature": 0.8})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .await
+            .unwrap_err()
     })
     .await;
     assert!(crate::core::StructuredRpcError::decode(&conflict).is_some());
@@ -253,15 +258,16 @@ async fn external_config_conflict_refresh_keeps_derived_runtime_overrides() {
     assert!(refreshed.composio.host_credential.is_some());
 
     CoreContext::scope(ctx.clone(), async {
-        (controller.handler)(
-            DispatchCtx::new(ctx.clone()),
-            json!({"default_temperature": 0.6})
-                .as_object()
-                .unwrap()
-                .clone(),
-        )
-        .await
-        .expect("a save after conflict refresh should use the advanced revision");
+        controller
+            .invoke(
+                DispatchCtx::new(ctx.clone()),
+                json!({"default_temperature": 0.6})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .await
+            .expect("a save after conflict refresh should use the advanced revision");
     })
     .await;
 
@@ -285,15 +291,16 @@ async fn external_config_conflict_refresh_keeps_derived_runtime_overrides() {
     later_external.autonomy.enabled = false;
     later_external.save().await.unwrap();
     let later_conflict = CoreContext::scope(grandchild.clone(), async {
-        (controller.handler)(
-            DispatchCtx::new(grandchild.clone()),
-            json!({"default_temperature": 0.7})
-                .as_object()
-                .unwrap()
-                .clone(),
-        )
-        .await
-        .unwrap_err()
+        controller
+            .invoke(
+                DispatchCtx::new(grandchild.clone()),
+                json!({"default_temperature": 0.7})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .await
+            .unwrap_err()
     })
     .await;
     assert!(crate::core::StructuredRpcError::decode(&later_conflict).is_some());
@@ -325,9 +332,9 @@ async fn external_config_conflict_refresh_keeps_derived_runtime_overrides() {
 #[tokio::test]
 async fn nested_context_refresh_does_not_pin_a_previous_external_value() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let _forced = ForcedDocumentSource::new(
-        scoped(&storage, "tenant-refresh-nested-overlay"),
+        scoped(storage.as_ref(), "tenant-refresh-nested-overlay"),
         Scope::new("tenant-refresh-nested-overlay").unwrap(),
         keys(15),
     );
@@ -355,15 +362,16 @@ async fn nested_context_refresh_does_not_pin_a_previous_external_value() {
     external.default_model = Some("external-first".into());
     external.save().await.unwrap();
     let first_conflict = CoreContext::scope(first_context.clone(), async {
-        (controller.handler)(
-            DispatchCtx::new(first_context.clone()),
-            json!({"default_temperature": 0.8})
-                .as_object()
-                .unwrap()
-                .clone(),
-        )
-        .await
-        .unwrap_err()
+        controller
+            .invoke(
+                DispatchCtx::new(first_context.clone()),
+                json!({"default_temperature": 0.8})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .await
+            .unwrap_err()
     })
     .await;
     assert!(crate::core::StructuredRpcError::decode(&first_conflict).is_some());
@@ -387,15 +395,16 @@ async fn nested_context_refresh_does_not_pin_a_previous_external_value() {
     external.default_model = Some("external-second".into());
     external.save().await.unwrap();
     let second_conflict = CoreContext::scope(nested.clone(), async {
-        (controller.handler)(
-            DispatchCtx::new(nested.clone()),
-            json!({"default_temperature": 0.7})
-                .as_object()
-                .unwrap()
-                .clone(),
-        )
-        .await
-        .unwrap_err()
+        controller
+            .invoke(
+                DispatchCtx::new(nested.clone()),
+                json!({"default_temperature": 0.7})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .await
+            .unwrap_err()
     })
     .await;
     assert!(crate::core::StructuredRpcError::decode(&second_conflict).is_some());
@@ -414,13 +423,13 @@ async fn nested_context_refresh_does_not_pin_a_previous_external_value() {
 #[tokio::test]
 async fn config_snapshot_cannot_be_saved_into_a_different_tenant_scope() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let path = tmp.path().join("config.toml");
     let workspace = tmp.path().join("workspace");
 
     let (from_tenant_a, tenant_a_version) = {
         let _source = ForcedDocumentSource::new(
-            scoped(&storage, "tenant-source-a"),
+            scoped(storage.as_ref(), "tenant-source-a"),
             Scope::new("tenant-source-a").unwrap(),
             keys(12),
         );
@@ -439,7 +448,7 @@ async fn config_snapshot_cannot_be_saved_into_a_different_tenant_scope() {
 
     let (tenant_b_version, tenant_b_model) = {
         let _source = ForcedDocumentSource::new(
-            scoped(&storage, "tenant-source-b"),
+            scoped(storage.as_ref(), "tenant-source-b"),
             Scope::new("tenant-source-b").unwrap(),
             keys(12),
         );
@@ -453,7 +462,7 @@ async fn config_snapshot_cannot_be_saved_into_a_different_tenant_scope() {
             .lock()
             .unwrap()
             .version;
-        let docs = Arc::clone(scoped(&storage, "tenant-source-b").documents());
+        let docs = Arc::clone(scoped(storage.as_ref(), "tenant-source-b").documents());
         let stored = docs
             .get(
                 super::super::storage_schema::CONFIG_COLLECTION,
@@ -475,7 +484,7 @@ async fn config_snapshot_cannot_be_saved_into_a_different_tenant_scope() {
     from_tenant_a.default_model = Some("must-not-cross-tenant-boundary".into());
     let error = {
         let _source = ForcedDocumentSource::new(
-            scoped(&storage, "tenant-source-b"),
+            scoped(storage.as_ref(), "tenant-source-b"),
             Scope::new("tenant-source-b").unwrap(),
             keys(12),
         );
@@ -492,7 +501,7 @@ async fn config_snapshot_cannot_be_saved_into_a_different_tenant_scope() {
 
     let tenant_b = {
         let _source = ForcedDocumentSource::new(
-            scoped(&storage, "tenant-source-b"),
+            scoped(storage.as_ref(), "tenant-source-b"),
             Scope::new("tenant-source-b").unwrap(),
             keys(12),
         );
@@ -508,11 +517,11 @@ async fn config_snapshot_is_bound_to_its_backend_instance() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("config.toml");
     let workspace = tmp.path().join("workspace");
-    let storage_a = MemoryStorage::new();
-    let storage_b = MemoryStorage::new();
+    let storage_a = memory_backend();
+    let storage_b = memory_backend();
     let config_a = {
         let _source = ForcedDocumentSource::new(
-            scoped(&storage_a, "tenant-same-anchor"),
+            scoped(storage_a.as_ref(), "tenant-same-anchor"),
             Scope::new("tenant-same-anchor").unwrap(),
             keys(14),
         );
@@ -523,7 +532,7 @@ async fn config_snapshot_is_bound_to_its_backend_instance() {
     };
     let (config_b, version_b) = {
         let _source = ForcedDocumentSource::new(
-            scoped(&storage_b, "tenant-same-anchor"),
+            scoped(storage_b.as_ref(), "tenant-same-anchor"),
             Scope::new("tenant-same-anchor").unwrap(),
             keys(14),
         );
@@ -567,7 +576,7 @@ async fn config_snapshot_is_bound_to_its_backend_instance() {
 
     let error = {
         let _source = ForcedDocumentSource::new(
-            scoped(&storage_b, "tenant-same-anchor"),
+            scoped(storage_b.as_ref(), "tenant-same-anchor"),
             Scope::new("tenant-same-anchor").unwrap(),
             keys(14),
         );
@@ -599,9 +608,9 @@ async fn a_file_snapshot_can_seed_an_absent_document_after_storage_bootstrap() {
         Some(ConfigSourceAnchor::File(_))
     ));
 
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let _source = ForcedDocumentSource::new(
-        scoped(&storage, "tenant-file-bootstrap"),
+        scoped(storage.as_ref(), "tenant-file-bootstrap"),
         Scope::new("tenant-file-bootstrap").unwrap(),
         keys(15),
     );
@@ -619,10 +628,10 @@ async fn a_file_snapshot_can_seed_an_absent_document_after_storage_bootstrap() {
 #[tokio::test]
 async fn document_source_write_uses_its_last_read_revision() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let path = tmp.path().join("config.toml");
-    let first = document_source(&storage, "tenant-source-cas", &path);
-    let stale = document_source(&storage, "tenant-source-cas", &path);
+    let first = document_source(storage.as_ref(), "tenant-source-cas", &path);
+    let stale = document_source(storage.as_ref(), "tenant-source-cas", &path);
 
     first.write("default_model = \"seed\"\n").await.unwrap();
     first.read().await.unwrap();
@@ -639,10 +648,10 @@ async fn document_source_write_uses_its_last_read_revision() {
 #[tokio::test]
 async fn an_unobserved_document_source_write_is_create_only() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let path = tmp.path().join("config.toml");
-    let seed = document_source(&storage, "tenant-source-create-only", &path);
-    let blind = document_source(&storage, "tenant-source-create-only", &path);
+    let seed = document_source(storage.as_ref(), "tenant-source-create-only", &path);
+    let blind = document_source(storage.as_ref(), "tenant-source-create-only", &path);
 
     seed.write("default_model = \"seed\"\n").await.unwrap();
     let error = blind

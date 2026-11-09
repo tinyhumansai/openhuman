@@ -59,8 +59,8 @@ survive that boundary on its own.
   user-facing tools that call into this runner.
 - `crate::agent::session_host` for the parent turn that sets up the
   `ParentExecutionContext` a sub-agent reads.
-- [`vendor/tinyagents`](../../../../../vendor/tinyagents/) (`tinyagents-orchestration::subagent`,
-  `tinyagents-graph`) for the lifecycle and delegation-graph mechanics this
+- [`vendor/tinyagents`](../../../../../vendor/tinyagents/) (`tinyagents-orchestration::subagent`)
+  for the lifecycle mechanics this
   module adapts rather than reimplements.
 
 ## Further reading

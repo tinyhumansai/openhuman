@@ -330,7 +330,7 @@ Capability {
         name: "View Execution History",
         domain: "automation",
         category: CapabilityCategory::Automation,
-        description: "Inspect past runs and results for scheduled jobs.",
+        description: "Inspect past runs and results for scheduled jobs, including completed work delegated to sub-agents.",
         how_to: "Settings > Cron Jobs",
         status: CapabilityStatus::Beta,
         privacy: None,

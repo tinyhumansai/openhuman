@@ -7,7 +7,6 @@
     "tinychannels",
     "tinychannels-runtime",
     "tinyhosts",
-    "tinymemes",
     "tinybox-core",
     "tinybox-jail",
     "tinybox-docker",
@@ -43,13 +42,15 @@
     "tinymcp-",
     "tinychannels-",
     "tinyhosts-",
-    "tinymemes-",
     "tinybox-",
     "tinywallet-",
     "tinycomputer-",
     "tinyvoice-",
     "tinydocs-",
     "tinysearch-"
+  ],
+  "hostAdapterPackages": [
+    "tinyjuice-host"
   ],
   "contracts": [
     {
@@ -103,11 +104,6 @@
       "owner": "https://github.com/tinyhumansai/tinyhosts"
     },
     {
-      "name": "tinymemes-bus",
-      "manifest": "vendor/tinymemes/crates/tinymemes-bus/Cargo.toml",
-      "owner": "https://github.com/tinyhumansai/tinymemes"
-    },
-    {
       "name": "tinybox-bus",
       "manifest": "vendor/tinybox/crates/tinybox-bus/Cargo.toml",
       "owner": "https://github.com/tinyhumansai/tinybox"
@@ -132,21 +128,6 @@
   "pendingContracts": [],
   "exceptions": [
     {
-      "scope": "tinychannels-bus",
-      "package": "anyhow",
-      "reason": "tinychannels-bus (vendor/tinychannels) still carries a provider trait with async-trait/anyhow/tokio::sync; the contract needs to be split upstream in tinyhumansai/tinychannels before this edge can go (tracked under #7523)."
-    },
-    {
-      "scope": "tinychannels-bus",
-      "package": "async-trait",
-      "reason": "tinychannels-bus (vendor/tinychannels) still carries a provider trait with async-trait/anyhow/tokio::sync; the contract needs to be split upstream in tinyhumansai/tinychannels before this edge can go (tracked under #7523)."
-    },
-    {
-      "scope": "tinychannels-bus",
-      "package": "tokio",
-      "reason": "tinychannels-bus (vendor/tinychannels) still carries a provider trait with async-trait/anyhow/tokio::sync; the contract needs to be split upstream in tinyhumansai/tinychannels before this edge can go (tracked under #7523)."
-    },
-    {
       "scope": "tinyconnectors-bus",
       "package": "hmac",
       "reason": "TinyConnectors #72 adds optional pure Composio webhook verification helpers to the bus contract for hosts that own the endpoint; this edge is enabled only by its opt-in webhook feature and is recorded for contract-boundary review."
@@ -162,44 +143,10 @@
       "reason": "tinyflows-bus schedule contract v3 carries the job, run and schedule records (CronJob, CronRun, Schedule, DeliveryConfig, ...) with their DateTime<Utc> fields so hosts redeclare none of them. chrono is time arithmetic and RFC3339 serde only, with no I/O or runtime; the schedule maths themselves (cron expressions, time zones) run in the module. Recorded for contract-boundary review (tinyflows#143, openhuman cron cutover #7397)."
     },
     {
-      "scope": "tinyjuice-bus",
-      "package": "tinystoragedrivers-core",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-core still carries async-trait/tokio/zstd in its own closure, which is not approved contract vocabulary: recorded for contract-boundary review, to be removed by splitting a ports-only crate out of tinystoragedrivers upstream."
-    },
-    {
-      "scope": "tinyconnectors-bus",
-      "package": "tinystoragedrivers-core",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-core still carries async-trait/tokio/zstd in its own closure, which is not approved contract vocabulary: recorded for contract-boundary review, to be removed by splitting a ports-only crate out of tinystoragedrivers upstream."
-    },
-    {
-      "scope": "tinymcp-bus",
-      "package": "tinystoragedrivers-core",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-core still carries async-trait/tokio/zstd in its own closure, which is not approved contract vocabulary: recorded for contract-boundary review, to be removed by splitting a ports-only crate out of tinystoragedrivers upstream."
-    },
-    {
-      "scope": "tinychannels-bus",
-      "package": "tinystoragedrivers-core",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-core still carries async-trait/tokio/zstd in its own closure, which is not approved contract vocabulary: recorded for contract-boundary review, to be removed by splitting a ports-only crate out of tinystoragedrivers upstream."
-    },
-    {
-      "scope": "tinywallet-bus",
-      "package": "tinystoragedrivers-core",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-core still carries async-trait/tokio/zstd in its own closure, which is not approved contract vocabulary: recorded for contract-boundary review, to be removed by splitting a ports-only crate out of tinystoragedrivers upstream."
-    },
-    {
-      "scope": "tinymemes-bus",
-      "package": "tinystoragedrivers-core",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-core still carries async-trait/tokio/zstd in its own closure, which is not approved contract vocabulary: recorded for contract-boundary review, to be removed by splitting a ports-only crate out of tinystoragedrivers upstream."
-    },
-    {
-      "scope": "tinyeventqueues-bus",
-      "package": "tinystoragedrivers-core",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-core still carries async-trait/tokio/zstd in its own closure, which is not approved contract vocabulary: recorded for contract-boundary review, to be removed by splitting a ports-only crate out of tinystoragedrivers upstream."
-    },
-    {
-      "scope": "tinybox-bus",
-      "package": "tinystoragedrivers-core",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-core still carries async-trait/tokio/zstd in its own closure, which is not approved contract vocabulary: recorded for contract-boundary review, to be removed by splitting a ports-only crate out of tinystoragedrivers upstream."
+      "scope": "hosts",
+      "package": "tinyflows",
+      "parent": "openhuman",
+      "reason": "OpenHuman still uses TinyFlows graph types and compatibility helpers in the flows and run projection adapters while its implementation remains behind tinyflows-bus. Moving the remaining adapter surface and legacy import path is part of the openhuman core shrink tracked in #7390 (including the cron importer decision in #8055)."
     }
   ],
   "excludedSubsystems": [

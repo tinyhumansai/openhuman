@@ -5,7 +5,8 @@
 //! through the host agent resolver ([`crate::agent::host_agents`]) and run as
 //! that agent -- its definition, its host tools, its context -- instead of
 //! going over the bus to the orchestrator. Everything else about the channel
-//! stays: per-chat history, typing, drafts, the reply back to the chat.
+//! stays: durable session identity, typing, progressive events, and the reply
+//! back to the chat.
 //!
 //! A binding the resolver cannot satisfy (the embedder has not created the
 //! agent yet, or dropped it) is **refused**, with a short reply to the chat
@@ -20,16 +21,48 @@ use std::sync::Arc;
 
 use crate::agent::host_agents::HostAgent;
 use crate::channels::context::ChannelRuntimeContext;
-use crate::channels::{ChannelSendExt, SendMessage};
+use crate::channels::SendMessage;
 use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use tinychannels_bus as traits;
-
 pub(crate) mod posture;
 mod turn;
 
-pub(crate) use turn::{run_host_agent_turn, seed_rows, HostChannelTurn};
+pub(crate) use turn::{run_host_agent_turn, HostChannelTurn};
+
+/// Resolve the config-owned target selected for an unbound channel into the
+/// same trusted host-agent carrier used by channel bindings. The effective
+/// provider/model remain the channel's configured route.
+pub(crate) async fn configured_agent(
+    ctx: &ChannelRuntimeContext,
+    route: &crate::channels::context::ChannelRouteSelection,
+) -> Result<HostAgent, String> {
+    let dispatch = ctx.dispatch_ctx();
+    let mut config = match &ctx.config {
+        Some(config) => config.as_ref().clone(),
+        None => dispatch
+            .load_config()
+            .await
+            .map_err(|error| error.to_string())?,
+    };
+    let agent_id = crate::web_chat::pick_target_agent_id(&config);
+    config.chat_provider = Some(
+        if route.provider == crate::inference::provider::factory::INFERENCE_BACKEND_ID {
+            crate::inference::provider::factory::INFERENCE_BACKEND_ID.to_string()
+        } else {
+            format!("{}:{}", route.provider, route.model)
+        },
+    );
+    config.default_model = Some(route.model.clone());
+    config.default_temperature = ctx.temperature;
+    // Keep the operator's actual count, MIME, and byte limits for the
+    // host-issued opaque media grants. External marker/path resolution remains
+    // disabled by the ExternalChannel attachment scope, and remote fetch stays
+    // off; the zero sentinel here would also reject these exact trusted refs.
+    config.multimodal_files.allow_remote_fetch = false;
+    HostAgent::from_config(&dispatch, config, &agent_id).map_err(|error| error.to_string())
+}
 
 /// What a channel's binding resolves to for one message.
 pub(crate) enum HostRoute {
@@ -112,7 +145,7 @@ pub(crate) const AGENT_UNAVAILABLE_REPLY: &str =
 pub(crate) async fn refuse_missing_agent(
     ctx: &ChannelRuntimeContext,
     msg: &traits::ChannelMessage,
-    target_channel: Option<&Arc<dyn crate::channels::Channel>>,
+    target_channel: Option<&Arc<crate::channels::runtime::ChannelHandle>>,
     agent_id: &str,
 ) {
     if let Some(channel) = target_channel {

@@ -235,7 +235,8 @@ fn close_request(turn: &StoppedTurn<'_>, evidence: &Evidence) -> ModelRequest {
         system.push_str("\n\n");
         system.push_str(&directive);
     }
-    provider::openhuman_backend_model::without_reasoning(
+    crate::inference::registry::provider_request_without_reasoning(
+        crate::inference::provider::factory::PROVIDER_OPENHUMAN,
         ModelRequest::new(vec![Message::system(system), Message::user(user_prompt)])
             .with_temperature(0.2),
     )
@@ -254,7 +255,8 @@ async fn model_reply(
     }
     let request_id = turn.request_id;
     let (chat_model, model) =
-        match provider::create_chat_model_with_model_id_in(ctx, "summarization", config, 0.2) {
+        match provider::create_chat_model_with_model_id_in(ctx, "summarization", config, 0.2).await
+        {
             Ok(resolved) => resolved,
             Err(error) => {
                 log::warn!("{LOG_PREFIX} provider init failed request_id={request_id}: {error}");

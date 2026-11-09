@@ -1,4 +1,5 @@
 use super::*;
+use crate::tools::ShellTool;
 
 #[tokio::test]
 async fn shell_blocks_rate_limited() {

@@ -2,7 +2,7 @@
 # Changed-area filters shared by every PR CI workflow (dorny/paths-filter).
 #
 # Read by ci-lite.yml's `changes` job and by the lane runner behind
-# ci-fast.yml / ci-fast-hosted.yml (ci-lanes.yml). One copy, so the two flows
+# ci-fast-hosted.yml (ci-lanes.yml). One copy, so the two flows
 # cannot disagree about which areas a PR touches.
 #
 # An area switches a WHOLE suite on or off. Nothing downstream may narrow a
@@ -27,6 +27,9 @@ frontend:
   # job exists to check them, so a PR that touches only a spec has to
   # match this filter or the job skips and the check reads as green.
   - 'app/test/**'
+  # The skip policy checker is part of browser-test validation; changing it
+  # must also arm the frontend lane that invokes it.
+  - 'scripts/ci/check-browser-test-skips.mjs'
   - 'app/tsconfig*.json'
   - 'app/vite.config.*'
   - 'app/tailwind.config.*'
@@ -154,6 +157,7 @@ scripts:
   - 'scripts/ci/nextest-coverage.sh'
   - 'scripts/ci/nextest-report.mjs'
   - 'scripts/ci/check-module-boundaries.mjs'
+  - 'scripts/ci/check-browser-test-skips.mjs'
   - 'scripts/ci/module-boundaries.json'
   - 'scripts/ci/check-storage-bypass.mjs'
   - 'scripts/ci/storage-bypass-debt.mjs'
@@ -186,6 +190,10 @@ scripts:
   - 'app/scripts/e2e-ports.sh'
   - 'app/scripts/e2e-web-build.sh'
   - 'app/scripts/e2e-web-session.sh'
+  # The native E2E runners, whose schedule and shard lists
+  # scripts/__tests__/e2e-run-shards.test.mjs cross-checks.
+  - 'app/scripts/e2e-run-all-flows.sh'
+  - 'app/scripts/e2e-run-shards.sh'
   # Shared logic behind the gate CLIs, and the module-pin gate's own
   # files. Without these a change to the checking logic would skip
   # the lane that tests it — the gate would stop watching itself.
@@ -254,7 +262,7 @@ storage:
   - 'crates/openhuman-core/src/security/approval/**'
   - 'crates/openhuman-core/src/security/devices/**'
   - 'crates/openhuman-core/src/security/secret_storage/**'
-  - 'crates/openhuman-core/src/security/credentials/**'
+  - 'crates/openhuman-core/src/credentials/**'
   - 'crates/openhuman-core/src/desktop/notifications/**'
   - 'crates/openhuman-core/src/integrations/task_sources/**'
   - 'crates/openhuman-core/src/agent/orchestration/**'

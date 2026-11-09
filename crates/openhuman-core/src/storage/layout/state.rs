@@ -64,7 +64,9 @@ pub enum LayoutError {
     #[error("LAYOUT_LOCKED: another migration holds {0}")]
     Locked(PathBuf),
     /// The running core serves this profile's v1 database.
-    #[error("LAYOUT_LIVE: this process serves {0}; stop the core and migrate offline, or set [storage] auto_migrate_layout and restart")]
+    #[error(
+        "LAYOUT_LIVE: this process serves {0}; stop the core and migrate offline, or set [storage] auto_migrate_layout and restart"
+    )]
     Live(String),
     /// A test stopped the migration after `Step`'s work, before recording it.
     #[error("LAYOUT_CRASH: injected crash after {0:?}")]

@@ -122,3 +122,25 @@ async fn private_agent_progress_advances_cursor_without_leaking_text_or_replayin
     assert_eq!(terminal_events, [(run_id, "completed".into())]);
     assert!(collector.progress.lock().unwrap().is_empty());
 }
+
+#[test]
+fn run_event_poller_survives_the_invocations_runtime() {
+    let caller = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (release, wait) = tokio::sync::oneshot::channel();
+    let (finished, result) = std::sync::mpsc::channel();
+    caller.block_on(async {
+        spawn_poller(async move {
+            let _ = wait.await;
+            let _ = finished.send(());
+        })
+        .unwrap();
+    });
+    drop(caller);
+    let _ = release.send(());
+    result
+        .recv_timeout(Duration::from_secs(5))
+        .expect("run event polling outlives the invocation runtime");
+}

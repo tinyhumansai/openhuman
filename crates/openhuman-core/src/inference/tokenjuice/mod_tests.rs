@@ -1,9 +1,117 @@
 use super::*;
+use serde_json::json;
+use tinytools::Tool;
+
+#[test]
+fn host_tools_keep_the_published_recovery_names_and_schemas() {
+    // Pin the actual tool the registry constructs before removing the local
+    // forwarding wrapper; this protects the model-facing contract byte for
+    // byte across the ownership move to tinyjuice-host.
+    let retrieve =
+        tinyjuice_host::retrieve_tool::RetrieveToolOutputTool::new(std::sync::Arc::new(|_, _| {
+            Box::pin(async { Ok(None) })
+        }));
+    assert_eq!(retrieve.name(), "juice_retrieve");
+    assert_eq!(
+        retrieve.permission_level(),
+        tinytools::PermissionLevel::ReadOnly
+    );
+    assert!(!retrieve.external_effect());
+    assert_eq!(
+        serde_json::to_vec(&retrieve.parameters_schema()).unwrap(),
+        serde_json::to_vec(&json!({
+            "type": "object",
+            "properties": {
+                "token": {
+                    "type": "string",
+                    "description": "The token named in the output's footer (or a ⟦tj:…⟧ marker's hash)."
+                },
+                "range": {
+                    "type": "object",
+                    "description": "Optional slice of the original to return.",
+                    "properties": {
+                        "start": { "type": "integer", "minimum": 0 },
+                        "end": { "type": "integer", "minimum": 0 },
+                        "unit": { "type": "string", "enum": ["bytes", "lines"] }
+                    },
+                    "required": ["start", "end"]
+                }
+            },
+            "required": ["token"]
+        }))
+        .unwrap()
+    );
+
+    let expected = [
+        (
+            "juice_find",
+            json!({
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "the handle named in the output's footer" },
+                    "query": { "type": "string" },
+                    "mode": { "type": "string", "enum": ["text", "grep", "regex", "rank", "sed", "awk", "jq"] },
+                    "ignore_case": { "type": "boolean" },
+                    "context": { "type": "integer" },
+                    "top_k": { "type": "integer" },
+                    "scope": { "type": "string" },
+                    "unit": { "type": "string", "enum": ["lines", "chars"] }
+                },
+                "required": ["handle", "query"]
+            }),
+        ),
+        (
+            "juice_extract",
+            json!({
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "the handle named in the output's footer" },
+                    "what": { "type": "string", "enum": ["links", "headings"] },
+                    "scope": { "type": "string" },
+                    "unit": { "type": "string", "enum": ["lines", "chars"] }
+                },
+                "required": ["handle", "what"]
+            }),
+        ),
+        (
+            "juice_summarize",
+            json!({
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "the handle named in the output's footer" },
+                    "hint": { "type": "string", "description": "what you need from it" },
+                    "max_chars": { "type": "integer" },
+                    "scope": { "type": "string" },
+                    "unit": { "type": "string", "enum": ["lines", "chars"] }
+                },
+                "required": ["handle"]
+            }),
+        ),
+    ];
+    let tools = repl_tools();
+    assert_eq!(
+        tools.iter().map(|tool| tool.name()).collect::<Vec<_>>(),
+        expected.iter().map(|(name, _)| *name).collect::<Vec<_>>()
+    );
+    for (tool, (name, schema)) in tools.iter().zip(expected) {
+        assert_eq!(tool.name(), name);
+        let actual = serde_json::to_vec(&tool.parameters_schema()).unwrap();
+        let expected = serde_json::to_vec(&schema).unwrap();
+        assert_eq!(
+            actual,
+            expected,
+            "schema changed for {name}: actual={}, expected={}",
+            String::from_utf8_lossy(&actual),
+            String::from_utf8_lossy(&expected),
+        );
+    }
+}
 
 #[test]
 fn recovery_tool_aliases_remain_stable() {
     assert!(is_recovery_tool(tinyjuice_bus::tools::RETRIEVE));
-    assert!(is_recovery_tool(LEGACY_RETRIEVE_TOOL_NAME));
+    assert!(is_recovery_tool(tinyjuice_bus::tools::LEGACY_RETRIEVE));
+    assert!(is_recovery_tool("retrieve_tool_output"));
     assert!(!is_recovery_tool("shell"));
 }
 
@@ -194,8 +302,7 @@ fn install_request_turns_on_the_handle_preview_by_default() {
     assert!(request.options.router_enabled);
     assert!(request.options.ccr_enabled);
     assert!(request.options.repl_handle);
-    // The plain-text copy on disk is opt-in.
-    assert_eq!(request.options.repl_save_dir, None);
+    assert!(!request.ccr_durable);
 }
 
 #[test]
@@ -209,26 +316,19 @@ fn install_request_handle_mode_follows_every_switch_it_needs() {
     ] {
         let mut config = crate::config::Config::default();
         flip(&mut config);
-        config.tokenjuice.repl_save_enabled = true;
         let request = install_request(&config);
         assert!(!request.options.repl_handle);
-        assert_eq!(
-            request.options.repl_save_dir, None,
-            "no handle, so nothing to save a copy of"
-        );
+        assert!(!request.ccr_durable);
     }
 }
 
 #[test]
-fn install_request_saves_a_copy_under_the_workspace_when_asked() {
+fn install_request_enables_durable_ccr_when_configured() {
     let mut config = crate::config::Config::default();
     config.workspace_dir = std::path::PathBuf::from("/ws");
-    config.tokenjuice.repl_save_enabled = true;
+    config.tokenjuice.ccr_disk_enabled = true;
     let request = install_request(&config);
-    assert_eq!(
-        request.options.repl_save_dir,
-        Some(std::path::PathBuf::from("/ws/.tokenjuice/repl"))
-    );
+    assert!(request.ccr_durable);
 }
 
 #[test]

@@ -18,6 +18,9 @@ PKG_DIR="$WORK_DIR/$PKG_NAME"
 
 mkdir -p "$PKG_DIR/usr/bin"
 mkdir -p "$PKG_DIR/DEBIAN"
+# The Debian format requires its control directory to be at least 0755. Keep
+# package metadata readable even when the caller builds under a private umask.
+chmod 755 "$PKG_DIR" "$PKG_DIR/usr" "$PKG_DIR/usr/bin" "$PKG_DIR/DEBIAN"
 
 install -m 755 "$CORE_BINARY" "$PKG_DIR/usr/bin/openhuman"
 install -m 755 "$TUI_BINARY" "$PKG_DIR/usr/bin/openhuman-tui"

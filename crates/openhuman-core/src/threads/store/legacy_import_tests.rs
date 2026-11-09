@@ -1,5 +1,11 @@
 use super::*;
+#[cfg(feature = "storage-sqlite")]
+use sha2::Digest;
 use std::path::Path;
+#[cfg(feature = "storage-sqlite")]
+use std::sync::Arc;
+#[cfg(feature = "storage-sqlite")]
+use tinystoragedrivers::{CollectionSpec, Precondition, WriteOptions};
 
 fn hex(id: &str) -> String {
     id.bytes().map(|b| format!("{b:02x}")).collect()
@@ -47,8 +53,10 @@ fn snapshot(root: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
 }
 
 #[test]
+#[cfg(feature = "storage-sqlite")]
 fn legacy_jsonl_conversations_are_imported_and_the_files_stay_byte_identical() {
     let dir = tempfile::tempdir().unwrap();
+    crate::storage::local::use_persistent_default_for_test(dir.path());
     let root = backend::legacy_root(dir.path());
     let (m1, m2) = (
         message("m1", "hello", "2026-01-01T00:00:01Z"),
@@ -82,9 +90,91 @@ fn legacy_jsonl_conversations_are_imported_and_the_files_stay_byte_identical() {
     assert_eq!(snapshot(&root), before, "legacy files must not change");
 }
 
+#[cfg(feature = "storage-sqlite")]
 #[test]
+fn legacy_tsd_v1_threads_and_messages_are_migrated_before_owner_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let sqlite = crate::storage::test_support::sqlite_backend().unwrap();
+    let backend = Arc::clone(&sqlite.backend);
+    let _installed =
+        crate::storage::test_support::install_for_test(&sqlite.url, Arc::clone(&backend));
+    let scope = crate::storage::Scope::local();
+    let scoped = backend.for_scope(&scope).unwrap();
+    let thread_id = "legacy-thread".to_owned();
+    let incarnation = "6f9619ff-8b86-d011-b42d-00c04fc964ff".to_owned();
+    let digest = hex::encode(sha2::Sha256::digest(thread_id.as_bytes()));
+    let stream = format!("conversation_messages_v1:{digest}:{incarnation}");
+
+    let legacy_thread_id = thread_id.clone();
+    let legacy_incarnation = incarnation.clone();
+    let legacy_digest = digest.clone();
+    crate::storage::block_on(async move {
+        let docs = scoped.documents();
+        docs.ensure_collection(&CollectionSpec::new("conversation_threads_v1"))
+            .await?;
+        docs.put_with(
+            "conversation_threads_v1",
+            &legacy_digest,
+            serde_json::json!({
+                "schema": 1,
+                "incarnation": legacy_incarnation,
+                "deleted": false,
+                "visible_end": 1,
+                "thread": {
+                    "id": legacy_thread_id,
+                    "title": "Historical thread",
+                    "isActive": true,
+                    "messageCount": 1,
+                    "lastMessageAt": "2026-01-02T00:00:02Z",
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "labels": ["history"]
+                }
+            }),
+            Precondition::Absent,
+            WriteOptions::new().created_ms(1_700_000_000_000),
+        )
+        .await?;
+        scoped
+            .streams()
+            .append(
+                &stream,
+                serde_json::json!({
+                    "schema": 1,
+                    "incarnation": incarnation,
+                    "message": {
+                        "id": "legacy-message",
+                        "content": "message from the TSD v1 profile",
+                        "type": "text",
+                        "extraMetadata": {},
+                        "sender": "user",
+                        "createdAt": "2026-01-02T00:00:02Z"
+                    }
+                }),
+            )
+            .await?;
+        Ok::<(), crate::storage::StorageError>(())
+    })
+    .unwrap();
+
+    let store = ConversationStore::new(
+        crate::core::runtime::DispatchCtx::ambient(),
+        dir.path().to_path_buf(),
+    );
+    let listed = store.list_threads().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, thread_id);
+    assert_eq!(listed[0].title, "Historical thread");
+    let messages = store.get_messages(&thread_id).unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].id, "legacy-message");
+    assert_eq!(messages[0].content, "message from the TSD v1 profile");
+}
+
+#[test]
+#[cfg(feature = "storage-sqlite")]
 fn legacy_import_runs_once_even_when_the_files_change_afterwards() {
     let dir = tempfile::tempdir().unwrap();
+    crate::storage::local::use_persistent_default_for_test(dir.path());
     let root = backend::legacy_root(dir.path());
     let m1 = message("m1", "hello", "2026-01-01T00:00:01Z");
     write_legacy(&root, &[&upsert("t1", "First")], &[("t1", &[m1.as_str()])]);

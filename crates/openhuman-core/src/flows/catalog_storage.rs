@@ -22,14 +22,16 @@ use tinyflows_bus::catalog::{
     DocGetRequest, DocPutRequest, DocQueryRequest,
 };
 use tinystoragedrivers::StorageBackend;
-use tinystoragedrivers::{
-    Capability, CollectionSpec, DocumentStore, Filter, Page, Precondition, Query, Scope,
-    StorageError, Versioned, WriteOptions,
+use tinystoragedrivers_api::DocumentStore;
+use tinystoragedrivers_types::{
+    Capability, CollectionSpec, Filter, Page, Precondition, Query, StorageError, Versioned,
+    WriteOptions,
 };
 
 use crate::config::Config;
 use crate::core::runtime::DispatchCtx;
 use crate::modules::tinyflows as module;
+use crate::storage::Scope;
 
 /// A callback scope captured from a dispatch, with no ambient identity or
 /// backend handle retained. The workspace backend is resolved for each call.
@@ -48,10 +50,11 @@ impl DocScope {
         }
     }
 
-    fn documents(&self) -> Result<Arc<dyn DocumentStore>, StorageError> {
+    async fn documents(&self) -> Result<Arc<dyn DocumentStore>, StorageError> {
         let backend = match &self.backend {
             Some(backend) => Arc::clone(backend),
-            None => crate::storage::local::backend_for(&self.workspace_dir)
+            None => crate::storage::local::backend_for_async(&self.workspace_dir)
+                .await
                 .map_err(|error| StorageError::unavailable(error.to_string()))?,
         };
         let scoped = backend.for_scope(&self.scope)?;
@@ -278,8 +281,9 @@ fn path_for(key: &RegistrationKey) -> String {
 
 /// Catalog-owned collections and their legacy migration sources. Keep this
 /// list aligned with the released module adapter; shared TSD collections are
-/// further restricted to flow-owned record keys below.
-const COLLECTIONS: [&str; 16] = [
+/// further restricted to flow-owned record keys below. The graph checkpointer
+/// migration reads its legacy collections through this same scoped port.
+const COLLECTIONS: [&str; 25] = [
     "flows.definitions",
     "flows.revisions",
     "flows.runs",
@@ -288,6 +292,15 @@ const COLLECTIONS: [&str; 16] = [
     "graph.checkpoints",
     "graph.threads",
     "graph.writes",
+    "graph_checkpoints",
+    "graph_threads",
+    "graph_writes",
+    "delegation_graph_checkpoints",
+    "delegation_graph_threads",
+    "delegation_graph_writes",
+    "flows_graph_checkpoints",
+    "flows_graph_threads",
+    "flows_graph_writes",
     "flows_definitions",
     "flows_revisions",
     "flows_runs",
@@ -301,13 +314,22 @@ const COLLECTIONS: [&str; 16] = [
 const SHARED_COLLECTIONS: [&str; 4] = ["tsd.kv", "tsd.leases", "tsd.counters", "tsd.migrations"];
 const GRAPH_COLLECTIONS: [&str; 3] = ["graph.checkpoints", "graph.threads", "graph.writes"];
 const FLOW_KEY_PREFIX: &str = "flows/";
-const FLOW_MIGRATION_IDS: [&str; 6] = [
+const FLOW_MIGRATION_IDS: [&str; 15] = [
     "flows/flows.definitions/definitions_v2",
     "flows/flows.revisions/revisions_v2",
     "flows/flows.runs/runs_v2",
     "flows/flows.suggestions/suggestions_v2",
     "flows/flows.drafts/drafts_v2",
     "flows/kv_import",
+    "graph/graph.checkpoints/checkpoints_graph_v2",
+    "graph/graph.checkpoints/checkpoints_delegation_v2",
+    "graph/graph.checkpoints/checkpoints_flows_v2",
+    "graph/graph.threads/threads_graph_v2",
+    "graph/graph.threads/threads_delegation_v2",
+    "graph/graph.threads/threads_flows_v2",
+    "graph/graph.writes/writes_graph_v2",
+    "graph/graph.writes/writes_delegation_v2",
+    "graph/graph.writes/writes_flows_v2",
 ];
 
 fn allowed_collection(collection: &str) -> Result<(), StorageError> {
@@ -327,7 +349,17 @@ fn allowed_record(collection: &str, id: &str) -> Result<(), StorageError> {
             "record is outside the catalog migration progress keys",
         ));
     }
-    if (SHARED_COLLECTIONS.contains(&collection) || GRAPH_COLLECTIONS.contains(&collection))
+    if GRAPH_COLLECTIONS.contains(&collection)
+        && ![FLOW_KEY_PREFIX, "graph/", "delegation/"]
+            .iter()
+            .any(|prefix| id.starts_with(prefix))
+    {
+        return Err(StorageError::invalid_input(
+            "record is outside the workflow catalog owner's keys",
+        ));
+    }
+    if SHARED_COLLECTIONS.contains(&collection)
+        && collection != "tsd.migrations"
         && !id.starts_with(FLOW_KEY_PREFIX)
     {
         return Err(StorageError::invalid_input(
@@ -391,14 +423,15 @@ struct CatalogStoragePort {
 #[tinybus::interface(name = "ai.tinyhumans.tinyflows.CatalogStorage")]
 impl CatalogStoragePort {
     async fn doc_capabilities(&self) -> BusResult<CatalogStorageReply> {
-        let result = self
-            .scope
-            .documents()
-            .map(|documents| catalog::CatalogStorageCapabilities {
-                record_metadata: documents
-                    .capabilities()
-                    .contains(Capability::RecordMetadata),
-            });
+        let result =
+            self.scope
+                .documents()
+                .await
+                .map(|documents| catalog::CatalogStorageCapabilities {
+                    record_metadata: documents
+                        .capabilities()
+                        .contains(Capability::RecordMetadata),
+                });
         Ok(catalog_reply(result))
     }
 
@@ -406,7 +439,7 @@ impl CatalogStoragePort {
         let result = async {
             allowed_collection(&request.spec.name)?;
             let spec: CollectionSpec = decoded(encoded(request.spec)?)?;
-            self.scope.documents()?.ensure_collection(&spec).await
+            self.scope.documents().await?.ensure_collection(&spec).await
         }
         .await;
         Ok(catalog_reply(result))
@@ -417,7 +450,8 @@ impl CatalogStoragePort {
             allowed_record(&request.collection, &request.id)?;
             let value: Option<Versioned<Value>> = self
                 .scope
-                .documents()?
+                .documents()
+                .await?
                 .get(&request.collection, &request.id)
                 .await?;
             value
@@ -444,7 +478,7 @@ impl CatalogStoragePort {
         let result = async {
             allowed_record(&request.collection, &request.id)?;
             let precondition: Precondition = decoded(encoded(request.precondition)?)?;
-            let documents = self.scope.documents()?;
+            let documents = self.scope.documents().await?;
             documents
                 .put_with(
                     &request.collection,
@@ -468,7 +502,8 @@ impl CatalogStoragePort {
             allowed_record(&request.collection, &request.id)?;
             let precondition: Precondition = decoded(encoded(request.precondition)?)?;
             self.scope
-                .documents()?
+                .documents()
+                .await?
                 .delete(&request.collection, &request.id, precondition)
                 .await
         }
@@ -483,7 +518,8 @@ impl CatalogStoragePort {
             query.filter = flow_namespace_filter(&request.collection, query.filter);
             let page: Page<Versioned<Value>> = self
                 .scope
-                .documents()?
+                .documents()
+                .await?
                 .query(&request.collection, &query)
                 .await?;
             Ok(catalog::CatalogDocumentPage {
@@ -518,7 +554,8 @@ impl CatalogStoragePort {
             let filter: Filter = decoded(encoded(request.filter)?)?;
             let filter = flow_namespace_filter(&request.collection, filter);
             self.scope
-                .documents()?
+                .documents()
+                .await?
                 .delete_where(&request.collection, &filter)
                 .await
         }

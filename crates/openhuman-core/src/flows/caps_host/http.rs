@@ -15,11 +15,11 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::config::{Config, HttpRequestConfig};
+use crate::flows::http_credentials::{HttpCredential, HttpCredentialsStore};
 use crate::modules::tinyflows as module;
-use crate::security::credentials::{HttpCredential, HttpCredentialsStore};
+use crate::security::policy::CommandClass;
 use crate::security::SecurityPolicy;
 use crate::tools::http_request_tool;
-use tinybox_bus::CommandClass;
 use tinytools::Tool as _;
 
 use super::{
@@ -28,7 +28,7 @@ use super::{
 use super::{EngineError, Result};
 
 /// [`HttpClient`] adapter over `HttpRequestTool`
-/// (`tinytools_std::network::HttpRequestTool`, built by `tools/impl/network/host.rs`). Allowlist + DNS-rebind
+/// (`tinyagents_harness_tools::net::network::HttpRequestTool`, built by `tools/impl/network/host.rs`). Allowlist + DNS-rebind
 /// guard live inside `execute`, so this adapter gets them for free.
 ///
 /// **B2:** also routes through the OpenHuman `ApprovalGate` before dispatch
@@ -61,7 +61,7 @@ pub struct OpenHumanHttp {
 /// Resolve the exact name returned by the module's credential parser. Trim
 /// only at the host's encrypted-store lookup boundary to preserve the prior
 /// credential identifier policy.
-pub(crate) fn resolve_http_credential(
+pub(crate) async fn resolve_http_credential(
     store: &HttpCredentialsStore,
     credential_name: Option<&str>,
 ) -> Result<Option<HttpCredential>> {
@@ -74,7 +74,7 @@ pub(crate) fn resolve_http_credential(
             "http_request connection_ref has an empty http_cred name".to_owned(),
         ));
     }
-    match store.get(name) {
+    match store.get(name).await {
         Ok(Some(cred)) => {
             tracing::debug!(
                 target: "flows",
@@ -109,6 +109,30 @@ pub(crate) fn resolve_http_credential(
     }
 }
 
+/// Refuse a request that would carry a stored credential over plain HTTP to a
+/// remote host. Only `https` and loopback `http` are allowed; an unparsable or
+/// missing URL fails closed.
+pub(crate) fn refuse_credential_over_plain_http(request: &Value) -> Result<()> {
+    let url = request
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let https = url::Url::parse(url).is_ok_and(|parsed| parsed.scheme() == "https");
+    if https || crate::integrations::composio::client::is_loopback_http_url(url) {
+        return Ok(());
+    }
+    tracing::warn!(
+        target: "flows",
+        "[flows] http_request: refusing to send a stored credential over plain http to a \
+         non-loopback host"
+    );
+    Err(EngineError::Capability(
+        "http_request refuses to send a stored credential over plain http to a non-loopback \
+         host; use https"
+            .to_owned(),
+    ))
+}
+
 impl OpenHumanHttp {
     pub(crate) async fn request(&self, mut request: Value, conn: Option<&str>) -> Result<Value> {
         const TOOL_NAME: &str = "flows_http_request";
@@ -122,7 +146,7 @@ impl OpenHumanHttp {
         let security =
             Arc::new(current_tier_policy(&self.ctx, &self.config, &self.security).await?);
         let tier_decision =
-            enforce_node_tier_gate(&security, CommandClass::Network, "http_request")?;
+            enforce_node_tier_gate(&security, CommandClass::Network, "http_request").await?;
 
         let portability = module::portability_proxy(&self.config)
             .await
@@ -138,18 +162,23 @@ impl OpenHumanHttp {
             .await
             .map_err(|error| EngineError::Capability(error.to_string()))?;
 
+        // Check before the approval prompt and before any dispatch, so a request
+        // that can never be sent safely is neither prompted for nor attempted.
+        if inspected.credential_name.is_some() {
+            refuse_credential_over_plain_http(&request)?;
+        }
+
         // The approval gate summarizes/redacts the request BEFORE any credential
         // is injected, so a stored secret never lands in the approval UI or
         // audit trail. Injection happens strictly after this point.
         let summary = inspected.redacted_summary;
-        let redacted = crate::security::approval::redact_args(&request);
         let (outcome, audit_id) = gate_call_for_tier(
             &self.ctx,
             &self.approval,
             tier_decision,
             TOOL_NAME,
             &summary,
-            redacted,
+            serde_json::to_value(&request).unwrap_or_default(),
         )
         .await;
         if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
@@ -160,7 +189,7 @@ impl OpenHumanHttp {
         // header server-side. An unknown name fails the request closed (see
         // `resolve_http_credential`) — we never send it unauthenticated.
         if let Some(cred) =
-            resolve_http_credential(&self.http_creds, inspected.credential_name.as_deref())?
+            resolve_http_credential(&self.http_creds, inspected.credential_name.as_deref()).await?
         {
             let (header, value) = cred
                 .to_header()

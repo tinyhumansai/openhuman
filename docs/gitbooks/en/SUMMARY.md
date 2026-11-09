@@ -19,6 +19,7 @@
   - [Move OpenHuman to a new PC](guides/move-to-new-pc.md)
   - [Organize my project folders](guides/organize-project-folders.md)
   - [Create a doctor-specific assistant](guides/doctor-assistant.md)
+  - [Run health diagnostics](guides/doctor.md)
   - [Create a safe companion for a child](guides/child-safe-companion.md)
 
 ## Features

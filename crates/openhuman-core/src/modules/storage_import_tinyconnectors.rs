@@ -11,6 +11,9 @@
 //! upgraded with preferences set (a denied write, say) must not lose them.
 //!
 //! * **Legacy files are never modified.** They are only read.
+//! * **Current owner shapes.** Preferences are encoded with the TinyConnectors
+//!   bus contract and written to its v2 collection; trigger records go to the
+//!   current owner stream prefix.
 //! * **Nothing is overwritten.** A preference document that already exists is
 //!   kept, and a day's stream that already holds records is not appended to,
 //!   so a retry cannot duplicate and records the module wrote since are never
@@ -22,19 +25,20 @@
 
 use std::path::Path;
 
+use crate::storage::{CollectionSpec, Storage};
 use anyhow::{anyhow, Context, Result};
-use serde_json::{json, Value};
-use tinystoragedrivers::{CollectionSpec, ScopedStorage};
+use serde_json::Value;
+use tinystoragedrivers_types::WriteOptions;
 
-use super::storage_grant_schemas::tinyconnectors::{
-    MODULE_ID, PREFS_COLLECTION, TRIGGER_STREAM_PREFIX,
-};
+use super::storage_grant_schemas::tinyconnectors::MODULE_ID;
 use super::storage_import_support as support;
 use crate::core::runtime::DispatchCtx;
 
 const LOG_PREFIX: &str = "[connectors-import]";
 const PREFS_DIR: &str = "composio-user-scopes";
 const TRIGGERS_DIR: &str = "triggers";
+const PREFS_COLLECTION: &str = tinyconnectors_bus::storage::PREFS_NAMESPACE;
+const TRIGGER_STREAM_PREFIX: &str = tinyconnectors_bus::storage::STREAM_PREFIX;
 /// Host-only: not in the module's grant, so the module cannot see it.
 const MARKER_COLLECTION: &str = "tinyconnectors_host_import";
 
@@ -58,10 +62,27 @@ pub(crate) enum Outcome {
 /// Imports the legacy files under `state_dir` into the module's scope of the
 /// installed backend.
 pub(crate) async fn import_legacy(ctx: &DispatchCtx, state_dir: &Path) -> Result<Outcome> {
-    let Some(scoped) = support::module_scope(ctx, MODULE_ID)? else {
+    if support::module_scope(ctx, MODULE_ID)?.is_none() {
+        return Ok(Outcome::NoBackend);
+    }
+    let prefs_dir = state_dir.join(PREFS_DIR);
+    let triggers_dir = state_dir.join(TRIGGERS_DIR);
+    if !prefs_dir.is_dir() && !triggers_dir.is_dir() {
+        return Ok(Outcome::NoSource);
+    }
+    let marker = support::marker_id("connectors", state_dir);
+    let state_dir = state_dir.to_owned();
+    let ctx_for_read = ctx.clone();
+    let result =
+        support::with_module_claim(ctx, MODULE_ID, MARKER_COLLECTION, &marker, move |scoped| {
+            crate::storage::block_on_anyhow(async move {
+                import_into(&ctx_for_read, &scoped, &state_dir).await
+            })
+        })?;
+    let Some(outcome) = result else {
         return Ok(Outcome::NoBackend);
     };
-    import_into(ctx, &scoped, state_dir).await
+    Ok(outcome)
 }
 
 /// A preference file: the toolkit key and its bare JSON value.
@@ -82,16 +103,12 @@ struct Legacy {
     skipped: usize,
 }
 
-async fn import_into(
-    ctx: &DispatchCtx,
-    scoped: &ScopedStorage,
-    state_dir: &Path,
-) -> Result<Outcome> {
-    let docs = scoped.documents();
+async fn import_into(ctx: &DispatchCtx, scoped: &Storage, state_dir: &Path) -> Result<Outcome> {
     let marker = support::marker_id("connectors", state_dir);
     if support::already_imported(scoped, MARKER_COLLECTION, &marker).await? {
         return Ok(Outcome::AlreadyDone);
     }
+    let docs = scoped.documents();
     let prefs_dir = state_dir.join(PREFS_DIR);
     let triggers_dir = state_dir.join(TRIGGERS_DIR);
     if !prefs_dir.is_dir() && !triggers_dir.is_dir() {
@@ -108,8 +125,16 @@ async fn import_into(
         .map_err(|error| anyhow!("declare {PREFS_COLLECTION}: {:?}", error.kind()))?;
     let mut prefs = 0usize;
     for pref in legacy.prefs {
-        let doc = json!({ "value": pref.value });
-        if support::put_absent(docs, PREFS_COLLECTION, &pref.key, doc).await? {
+        let doc = tinyconnectors_bus::storage::encode_preference(&pref.value);
+        if support::put_absent_with(
+            docs,
+            PREFS_COLLECTION,
+            &pref.key,
+            doc,
+            WriteOptions::new().schema(tinyconnectors_bus::storage::PREFS_SCHEMA_VERSION),
+        )
+        .await?
+        {
             prefs += 1;
         }
     }

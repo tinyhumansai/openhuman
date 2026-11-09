@@ -17,12 +17,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-use crate::security::credentials::session_support::{
-    has_backend_credential, SESSION_EXPIRES_AT_META,
-};
-use crate::security::credentials::{
-    api_key, AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
-};
+use crate::credentials::backend_credential::has_backend_credential;
+use crate::credentials::session_state::SESSION_EXPIRES_AT_META;
+use crate::credentials::{api_key, AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 
 /// The kind of credential the gateway installs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,7 +36,7 @@ pub enum UserCredentialKind {
 ///
 /// `expires_at` (RFC 3339) lets the core reject an expired session locally
 /// instead of sending a doomed request.
-pub fn store(
+pub async fn store(
     config: &Config,
     kind: UserCredentialKind,
     token: &str,
@@ -49,10 +46,12 @@ pub fn store(
     if token.is_empty() {
         return Err("credential is blank".to_string());
     }
-    let _serial = replacing();
+    let _serial = replacing().await;
     match kind {
         UserCredentialKind::ApiKey => {
-            api_key::store_api_key(config, token).map_err(|e| e.to_string())?;
+            api_key::store_api_key(config, token)
+                .await
+                .map_err(|e| e.to_string())?;
         }
         UserCredentialKind::Session => {
             let mut metadata = HashMap::new();
@@ -69,6 +68,7 @@ pub fn store(
                     metadata,
                     true,
                 )
+                .await
                 .map_err(|e| e.to_string())?;
         }
     }
@@ -77,8 +77,8 @@ pub fn store(
     // so a failure here never leaves the profile with none; it is reported so
     // the gateway can retry.
     let replaced = match kind {
-        UserCredentialKind::Session => remove_provider(config, api_key::API_KEY_PROVIDER),
-        UserCredentialKind::ApiKey => remove_provider(config, APP_SESSION_PROVIDER),
+        UserCredentialKind::Session => remove_provider(config, api_key::API_KEY_PROVIDER).await,
+        UserCredentialKind::ApiKey => remove_provider(config, APP_SESSION_PROVIDER).await,
     };
     if let Err(error) = replaced {
         log::warn!(
@@ -101,10 +101,10 @@ pub fn store(
 
 /// Remove every credential profile `config` holds, under any profile name.
 /// Returns whether there was one.
-pub fn clear(config: &Config) -> Result<bool, String> {
-    let _serial = replacing();
-    let had_key = remove_provider(config, api_key::API_KEY_PROVIDER)?;
-    let had_session = remove_provider(config, APP_SESSION_PROVIDER)?;
+pub async fn clear(config: &Config) -> Result<bool, String> {
+    let _serial = replacing().await;
+    let had_key = remove_provider(config, api_key::API_KEY_PROVIDER).await?;
+    let had_session = remove_provider(config, APP_SESSION_PROVIDER).await?;
     Ok(had_key || had_session)
 }
 
@@ -112,20 +112,20 @@ pub fn clear(config: &Config) -> Result<bool, String> {
 /// cannot interleave their write and their removal and leave the profile with
 /// neither. Operator credential changes are rare; one process-wide lock is
 /// enough.
-fn replacing() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+async fn replacing() -> tokio::sync::MutexGuard<'static, ()> {
+    static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    LOCK.lock().await
 }
 
 /// Remove every profile of `provider` in profile `config`'s store, not just the
 /// default one: the resolver would pick up any active profile left behind.
-fn remove_provider(config: &Config, provider: &str) -> Result<bool, String> {
+async fn remove_provider(config: &Config, provider: &str) -> Result<bool, String> {
     let auth = AuthService::from_config(config);
     let provider_id =
-        crate::security::credentials::normalize_provider(provider).map_err(|e| e.to_string())?;
+        crate::credentials::normalize_provider(provider).map_err(|e| e.to_string())?;
     let names: Vec<String> = auth
         .load_profiles()
+        .await
         .map_err(|e| e.to_string())?
         .profiles
         .values()
@@ -136,18 +136,20 @@ fn remove_provider(config: &Config, provider: &str) -> Result<bool, String> {
     for name in names {
         removed |= auth
             .remove_profile(provider, &name)
+            .await
             .map_err(|e| e.to_string())?;
     }
     // The default profile under its legacy key, if any.
     removed |= auth
         .remove_profile(provider, DEFAULT_AUTH_PROFILE_NAME)
+        .await
         .map_err(|e| e.to_string())?;
     Ok(removed)
 }
 
 /// Whether profile `config` holds a credential.
-pub fn has(config: &Config) -> bool {
-    has_backend_credential(config)
+pub async fn has(config: &Config) -> bool {
+    has_backend_credential(config).await
 }
 
 #[cfg(test)]

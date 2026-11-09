@@ -50,6 +50,15 @@ pub enum SandboxModeSpec {
     Sandboxed,
 }
 
+/// A memory block at the end of an agent's system prompt; see
+/// [`AgentDefinitionSpec::memory_block`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryBlockSpec {
+    /// The most tokens the block may take, its markers and instruction line
+    /// included. Memories past the budget are left out, beliefs first in.
+    pub max_tokens: u32,
+}
+
 /// Starting definition: a named built-in or a complete host-supplied definition.
 #[derive(Debug, Clone)]
 pub enum DefinitionBase {
@@ -81,6 +90,8 @@ pub struct AgentDefinitionSpec {
     system_prompt: Option<String>,
     /// The prompt is the whole system prompt, with nothing composed around it.
     bare_prompt: bool,
+    refresh_prompt_on_resume: Option<bool>,
+    memory_block: Option<MemoryBlockSpec>,
     tools: Option<ToolScopeSpec>,
     disallowed_tools: Vec<String>,
     tool_rules: Option<tinytools::ToolRules>,
@@ -145,6 +156,10 @@ impl AgentDefinitionSpec {
             self.system_prompt = lower.system_prompt;
             self.bare_prompt = lower.bare_prompt;
         }
+        self.refresh_prompt_on_resume = self
+            .refresh_prompt_on_resume
+            .or(lower.refresh_prompt_on_resume);
+        self.memory_block = self.memory_block.or(lower.memory_block);
         self.tools = self.tools.or(lower.tools);
         self.disallowed_tools.extend(lower.disallowed_tools);
         // Tool rules must retain both layers' restrictions; core also enforces config rules.
@@ -188,6 +203,49 @@ impl AgentDefinitionSpec {
     pub fn bare_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.system_prompt = Some(prompt.into());
         self.bare_prompt = true;
+        self
+    }
+
+    /// Give a resumed thread the prompt this agent renders now, not the one
+    /// recorded when the thread began.
+    ///
+    /// Off by default: a resumed thread replays its recorded system prompt
+    /// verbatim, which keeps the provider's prefix cache warm across a
+    /// restart, so prompt edits reach only new threads. On, the prompt is
+    /// rendered again on every resumed turn, and a thread whose recorded
+    /// prompt differs continues under the current one with its conversation
+    /// intact; the session seals the transcript generation it was on and
+    /// carries the conversation into the next, and that turn's user message
+    /// opens with a one-time note that the instructions changed. Each change
+    /// costs one uncached prompt; an unchanged prompt costs nothing and
+    /// writes nothing.
+    /// With [`bare_prompt`](Self::bare_prompt) the prompt changes only when
+    /// the host's text does; a composed prompt also changes with the live
+    /// state it renders (connected integrations, skills, AGENTS.md).
+    pub fn refresh_prompt_on_resume(mut self, refresh: bool) -> Self {
+        self.refresh_prompt_on_resume = Some(refresh);
+        self
+    }
+
+    /// End the system prompt with what long-term memory knows about the user.
+    ///
+    /// The block is read from the agent's [`MemoryBinding`](crate::MemoryBinding):
+    /// the beliefs memory built, then the durable learnings at its root,
+    /// within `spec.max_tokens`, between `<memory>` and `</memory>` and
+    /// introduced as background knowledge, not instructions. It is the
+    /// prompt's last system message, after every static byte.
+    ///
+    /// It is rendered only when a transcript generation starts: a new
+    /// thread, a resumed thread recorded without one, a turn whose prompt
+    /// changes anyway ([`refresh_prompt_on_resume`](Self::refresh_prompt_on_resume)),
+    /// and the first turn after a compaction carried an old block into a new
+    /// generation. Every other turn re-sends the recorded block byte for
+    /// byte, so the provider's prefix cache stays warm, and a memory change
+    /// on its own never seals a generation nor adds the prompt-update note.
+    /// Nothing remembered sends no block; a memory read error sends whatever
+    /// the thread recorded (none on a new thread) and the turn goes on.
+    pub fn memory_block(mut self, spec: MemoryBlockSpec) -> Self {
+        self.memory_block = Some(spec);
         self
     }
 
@@ -290,6 +348,16 @@ impl AgentDefinitionSpec {
             }
             None => {}
         }
+        if let Some(refresh) = self.refresh_prompt_on_resume {
+            def.extensions.refresh_prompt_on_resume = refresh;
+        }
+        if let Some(block) = self.memory_block {
+            def.extensions.memory_block = Some(
+                openhuman_core::agent_registry::host_definition::MemoryBlock {
+                    max_tokens: block.max_tokens,
+                },
+            );
+        }
         if custom_base {
             if let Some(requested) = &self.tools {
                 let narrows = match (requested, &def.tools) {
@@ -353,13 +421,15 @@ impl AgentDefinitionSpec {
             def.temperature = t;
         }
         log::debug!(
-            "[embed][agent] definition id={id} prompt={} tools={:?} sandbox={:?} max_iterations={}",
+            "[embed][agent] definition id={id} prompt={} refresh_prompt_on_resume={} memory_block={:?} tools={:?} sandbox={:?} max_iterations={}",
             match &def.system_prompt {
                 PromptSource::Inline(_) => "inline",
                 PromptSource::File { .. } => "file",
                 PromptSource::Dynamic(_) => "dynamic",
                 PromptSource::Verbatim(_) => "verbatim",
             },
+            def.extensions.refresh_prompt_on_resume,
+            def.extensions.memory_block.map(|block| block.max_tokens),
             def.tools,
             def.sandbox_mode,
             def.max_iterations

@@ -1,18 +1,21 @@
 use super::*;
-use crate::inference::provider::is_raw_passthrough_model;
 use serde_json::json;
 
 #[test]
-fn raw_provider_models_override_the_role_default() {
+fn unowned_model_ids_override_the_role_default() {
     for raw in ["claude-opus-4", "deepseek-v4-pro"] {
-        assert!(is_raw_passthrough_model(raw));
+        assert!(crate::inference::provider_model::is_raw_model(
+            crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+            raw
+        ));
         assert_eq!(resolve_host_model(Some(raw), "chat-v1".to_owned()), raw);
     }
 }
 
 #[test]
-fn managed_model_tiers_keep_the_provider_resolved_model() {
-    for tier in ["chat-v1", "hint:reasoning", "hint:garbage"] {
+fn registered_provider_aliases_and_hints_keep_the_resolved_model() {
+    crate::agent::session_host::test_support::install_model_fixture();
+    for tier in ["fixture-reasoning", "hint:reasoning", "hint:garbage"] {
         assert_eq!(
             resolve_host_model(Some(tier), "reasoning-v1".to_owned()),
             "reasoning-v1"

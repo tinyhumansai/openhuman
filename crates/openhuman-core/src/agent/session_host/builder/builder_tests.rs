@@ -1,7 +1,8 @@
 //! Tests for the builder module — dedup_visible_tool_specs and related logic.
 
-use super::{dedup_visible_tool_specs, visible_tool_specs_for_policy};
+use super::visible_tool_specs_for_policy;
 use serde_json::json;
+use tinyagents_runtime::dedup_visible_tool_specs;
 use tinytools::ToolSpec;
 
 fn spec(name: &str) -> ToolSpec {
@@ -21,14 +22,28 @@ fn spec(name: &str) -> ToolSpec {
 // `AgentDefinitionRegistry` singleton's init-once state.
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn test_config(tmp: &tempfile::TempDir) -> crate::config::Config {
-    let config = crate::config::Config {
-        workspace_dir: tmp.path().join("workspace"),
-        action_dir: tmp.path().join("workspace"),
-        config_path: tmp.path().join("config.toml"),
-        ..crate::config::Config::default()
-    };
+fn test_config_without_inference(tmp: &tempfile::TempDir) -> crate::config::Config {
+    let mut config = crate::config::Config::default();
+    config.workspace_dir = tmp.path().join("workspace");
+    config.action_dir = tmp.path().join("workspace");
+    config.config_path = tmp.path().join("config.toml");
+    // This fixture only needs a local credential to satisfy model readiness;
+    // cipher and keychain behavior is covered by credential tests.
+    config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
+    config
+}
+
+async fn test_config(tmp: &tempfile::TempDir) -> crate::config::Config {
+    let mut config = test_config_without_inference(tmp);
+    crate::agent::session_host::test_support::install_model_fixture();
+    config.default_model = Some("test/session-fixture".to_string());
+    // Building the model passes the backend-session gate; a standing API key in
+    // this session's own state dir satisfies it, and the fixture answers
+    // instead of a real provider.
+    crate::credentials::api_key::store_api_key(&config, "test-builder-key")
+        .await
+        .expect("test api key");
     config
 }
 
@@ -63,6 +78,8 @@ mod explicit_definition_tests;
 mod host_only_tests;
 #[path = "builder_tests_host_tools_tests.rs"]
 mod host_tools_tests;
+#[path = "builder_tests_model_source_tests.rs"]
+mod model_source_tests;
 #[path = "builder_tests_session_definition_tests.rs"]
 mod session_definition_tests;
 #[path = "builder_tests_tool_exposure_tests.rs"]
@@ -112,7 +129,7 @@ fn use_skill_spec_from_registry() -> ToolSpec {
     crate::tools::toolpacks::append_pack_tools(&mut tools);
     let tool = tools
         .iter()
-        .find(|t| t.name() == tinyagents_harness::tool::packs::USE_SKILL)
+        .find(|t| t.name() == tinyagents_harness_tools::skills::USE_SKILL)
         .expect("append_pack_tools registers use_skill");
     ToolSpec {
         name: tool.name().to_string(),
@@ -123,8 +140,8 @@ fn use_skill_spec_from_registry() -> ToolSpec {
 
 /// Proves the scoping is actually WIRED, not merely available. A correct helper
 /// nobody calls advertises every pack exactly as before.
-#[test]
-fn visible_specs_scope_use_skills_index_to_the_session() {
+#[tokio::test]
+async fn visible_specs_scope_use_skills_index_to_the_session() {
     // `Arc` leaves, because the three spec views share them — the assertions
     // below are unchanged, only the carrier is.
     let specs: Vec<std::sync::Arc<ToolSpec>> =
@@ -132,12 +149,12 @@ fn visible_specs_scope_use_skills_index_to_the_session() {
     let visible: std::collections::HashSet<String> = specs.iter().map(|s| s.name.clone()).collect();
     // Reachable: one workflows tool. Everything else in every other pack is
     // denied, exactly like the orchestrator against `system` / `audio`.
-    let session = session_allowing(&["run_workflow", tinyagents_harness::tool::packs::USE_SKILL]);
+    let session = session_allowing(&["run_workflow", tinyagents_harness_tools::skills::USE_SKILL]);
 
     let out = visible_tool_specs_for_policy(&specs, &visible, &session);
     let load = out
         .iter()
-        .find(|s| s.name == tinyagents_harness::tool::packs::USE_SKILL)
+        .find(|s| s.name == tinyagents_harness_tools::skills::USE_SKILL)
         .expect("use_skill is still offered — workflows is reachable");
 
     assert!(
@@ -162,14 +179,14 @@ fn visible_specs_scope_use_skills_index_to_the_session() {
 }
 
 /// A session that can reach no pack at all should not carry the pack tool.
-#[test]
-fn visible_specs_drop_the_pack_tool_when_no_pack_is_reachable() {
+#[tokio::test]
+async fn visible_specs_drop_the_pack_tool_when_no_pack_is_reachable() {
     // `Arc` leaves, because the three spec views share them — the assertions
     // below are unchanged, only the carrier is.
     let specs: Vec<std::sync::Arc<ToolSpec>> =
         vec![std::sync::Arc::new(use_skill_spec_from_registry())];
     let visible: std::collections::HashSet<String> = specs.iter().map(|s| s.name.clone()).collect();
-    let session = session_allowing(&[tinyagents_harness::tool::packs::USE_SKILL]);
+    let session = session_allowing(&[tinyagents_harness_tools::skills::USE_SKILL]);
 
     let out = visible_tool_specs_for_policy(&specs, &visible, &session);
     assert!(
@@ -188,8 +205,8 @@ fn visible_specs_drop_the_pack_tool_when_no_pack_is_reachable() {
 /// that. A predicate built on `is_denied` therefore reported *no* pack as
 /// reachable and dropped `use_skill` from the wire — deleting
 /// the only route to every withheld tool.
-#[test]
-fn a_realistic_withheld_session_keeps_its_packs_advertised() {
+#[tokio::test]
+async fn a_realistic_withheld_session_keeps_its_packs_advertised() {
     use crate::tools::toolpacks::{append_pack_tools, strip_packed_from_visible};
     use tinytools::ToolPolicyEngine;
 
@@ -246,12 +263,12 @@ fn a_realistic_withheld_session_keeps_its_packs_advertised() {
     let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
 
     assert!(
-        names.contains(&tinyagents_harness::tool::packs::USE_SKILL),
+        names.contains(&tinyagents_harness_tools::skills::USE_SKILL),
         "use_skill must survive — the pack it opens is reachable: {names:?}"
     );
     let load = out
         .iter()
-        .find(|s| s.name == tinyagents_harness::tool::packs::USE_SKILL)
+        .find(|s| s.name == tinyagents_harness_tools::skills::USE_SKILL)
         .expect("use_skill spec");
     assert!(
         load.description.contains("`goals`"),
@@ -272,8 +289,8 @@ fn a_realistic_withheld_session_keeps_its_packs_advertised() {
 /// (`skill` alone, no `tool`) is always `ReadOnly` per
 /// `permission_level_with_args`, and every OTHER pack's tools stay reachable
 /// through it regardless of what one dangerous tool in some other pack needs.
-#[test]
-fn use_skill_survives_a_ceiling_that_excludes_it_when_a_pack_is_still_reachable() {
+#[tokio::test]
+async fn use_skill_survives_a_ceiling_that_excludes_it_when_a_pack_is_still_reachable() {
     // `allowed_tool_names` deliberately omits `USE_SKILL` itself — simulating
     // the real engine having excluded it because *some* packed tool (not
     // `run_workflow`) exceeded the channel's permission ceiling.
@@ -281,7 +298,7 @@ fn use_skill_survives_a_ceiling_that_excludes_it_when_a_pack_is_still_reachable(
     assert!(
         !session
             .allowed_tool_names
-            .contains(tinyagents_harness::tool::packs::USE_SKILL),
+            .contains(tinyagents_harness_tools::skills::USE_SKILL),
         "precondition: use_skill itself is not in the allowlist"
     );
 
@@ -292,7 +309,7 @@ fn use_skill_survives_a_ceiling_that_excludes_it_when_a_pack_is_still_reachable(
     let out = visible_tool_specs_for_policy(&specs, &visible, &session);
     let load = out
         .iter()
-        .find(|s| s.name == tinyagents_harness::tool::packs::USE_SKILL)
+        .find(|s| s.name == tinyagents_harness_tools::skills::USE_SKILL)
         .expect(
             "use_skill must survive even though it is not itself in allowed_tool_names — \
              its listing action is always ReadOnly and the workflows pack is reachable",
@@ -334,12 +351,13 @@ async fn an_empty_named_scope_advertises_no_tools_at_all() {
     let _ = crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let agent = OpenHumanSessionHost::from_config_for_agent(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         "summarizer",
     )
+    .await
     .expect("summarizer is a shipped agent definition");
 
     let visible = &agent.visible_tool_names;
@@ -368,12 +386,13 @@ async fn a_zero_tool_agent_does_not_gain_the_compaction_recovery_tool() {
     let _ = crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let agent = OpenHumanSessionHost::from_config_for_agent(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         "trigger_triage",
     )
+    .await
     .expect("trigger_triage is a shipped agent definition");
 
     assert!(
@@ -384,8 +403,8 @@ async fn a_zero_tool_agent_does_not_gain_the_compaction_recovery_tool() {
     );
 }
 
-#[test]
-fn the_no_tools_sentinel_can_never_name_a_real_tool() {
+#[tokio::test]
+async fn the_no_tools_sentinel_can_never_name_a_real_tool() {
     // The value is load-bearing: it works only because no registry can contain
     // it. Leading underscores are not a legal tool name for any provider's
     // function-calling schema, which is why this shape was chosen.
@@ -394,8 +413,8 @@ fn the_no_tools_sentinel_can_never_name_a_real_tool() {
     assert!(!NO_TOOLS_SENTINEL.chars().next().unwrap().is_alphanumeric());
 }
 
-#[test]
-fn is_empty_tool_scope_distinguishes_the_three_states() {
+#[tokio::test]
+async fn is_empty_tool_scope_distinguishes_the_three_states() {
     use crate::agent_registry::host_definition::{is_empty_tool_scope, NO_TOOLS_SENTINEL};
     use std::collections::HashSet;
 
@@ -426,7 +445,7 @@ async fn a_summarized_agent_sees_the_recovery_tool_with_compaction_off() {
     let _ = crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let mut config = test_config(&tmp);
+    let mut config = test_config(&tmp).await;
     config.context.compaction_enabled = false;
     assert!(super::summarizes_tool_output("orchestrator", &config));
     let agent = OpenHumanSessionHost::from_config_for_agent(
@@ -434,6 +453,7 @@ async fn a_summarized_agent_sees_the_recovery_tool_with_compaction_off() {
         &config,
         "orchestrator",
     )
+    .await
     .expect("orchestrator is a shipped agent definition");
     let visible = &agent.visible_tool_names;
     assert!(
@@ -442,8 +462,8 @@ async fn a_summarized_agent_sees_the_recovery_tool_with_compaction_off() {
     );
 }
 
-#[test]
-fn the_recovery_tool_joins_a_belt_only_when_something_can_point_at_it() {
+#[tokio::test]
+async fn the_recovery_tool_joins_a_belt_only_when_something_can_point_at_it() {
     let belt = || std::collections::HashSet::from(["web_fetch".to_string()]);
 
     let mut unused = belt();
@@ -455,14 +475,14 @@ fn the_recovery_tool_joins_a_belt_only_when_something_can_point_at_it() {
     assert!(needed.contains(tinyjuice_bus::tools::RETRIEVE));
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let mut config = test_config(&tmp);
+    let mut config = test_config(&tmp).await;
     assert!(!super::summarizes_tool_output("researcher", &config));
     config.context.summarizer_payload_threshold_tokens = 0;
     assert!(!super::summarizes_tool_output("orchestrator", &config));
 }
 
-#[test]
-fn the_repl_tools_join_a_belt_only_while_handle_mode_is_active() {
+#[tokio::test]
+async fn the_repl_tools_join_a_belt_only_while_handle_mode_is_active() {
     use crate::agent_registry::host_definition::NO_TOOLS_SENTINEL;
     let belt = || std::collections::HashSet::from(["web_fetch".to_string()]);
 
@@ -499,7 +519,7 @@ async fn a_curated_orchestrator_sees_and_holds_every_juice_tool_in_handle_mode()
     let _ = crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let mut config = test_config(&tmp);
+    let mut config = test_config(&tmp).await;
     config.context.compaction_enabled = true;
     config.tokenjuice.router_enabled = true;
     config.tokenjuice.ccr_enabled = true;
@@ -511,6 +531,7 @@ async fn a_curated_orchestrator_sees_and_holds_every_juice_tool_in_handle_mode()
         &config,
         "orchestrator",
     )
+    .await
     .expect("orchestrator is a shipped agent definition");
     let visible = &agent.visible_tool_names;
     assert!(

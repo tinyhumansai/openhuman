@@ -29,6 +29,8 @@ On Debian and Ubuntu the install script picks the `.deb`. Elsewhere it picks the
 
 If that happens on Debian or Ubuntu, use the `.deb`. On Fedora, openSUSE and other distributions, include the distro version, kernel version, GPU and driver stack, and the exact AppImage filename when you report the problem. That helps maintainers tell host restrictions from a bad AppImage runtime.
 
+The AppImage uses your system's graphics drivers. If your system has `webkit2gtk-4.1` installed and it is at least as new as the bundled copy, the AppImage also uses the system WebKitGTK, so the WebKit build matches your drivers. It prints `using host WebKitGTK from ...` when it does this. To force the bundled copy, launch it with `OPENHUMAN_APPIMAGE_WEBKIT=bundled`.
+
 ## Why native matters
 
 Native beats a web wrapper for three reasons.

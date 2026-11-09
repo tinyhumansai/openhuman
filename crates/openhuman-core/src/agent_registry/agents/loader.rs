@@ -57,22 +57,6 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         toml: include_str!("orchestrator/agent.toml"),
         prompt_fn: super::orchestrator::build,
     },
-    // `planner` and `critic` are not delegable from chat (the orchestrator does
-    // not list them): they exist for the `parallel_research_cross_check`
-    // workflow-run template (`orchestration/workflow_runs/ops.rs`), whose
-    // read-only safety tier admits only read-only agents. Planning and
-    // code review in chat are the orchestrator's own `## Plans` rules and
-    // skill `coding`.
-    BuiltinAgent {
-        id: "planner",
-        toml: include_str!("planner/agent.toml"),
-        prompt_fn: super::planner::build,
-    },
-    BuiltinAgent {
-        id: "critic",
-        toml: include_str!("critic/agent.toml"),
-        prompt_fn: super::critic::build,
-    },
     BuiltinAgent {
         id: "task_manager_agent",
         toml: include_str!("task_manager_agent/agent.toml"),
@@ -176,12 +160,10 @@ pub fn load_builtins() -> Result<Vec<AgentDefinition>> {
 
 /// Compile-time gate for built-ins whose deck/document tool is feature-gated.
 ///
-/// `presentation_agent` delegates deck creation to `generate_presentation`,
+/// `presentation_agent` creates decks with `generate_presentation`,
 /// which only registers under the `documents` feature (see `tools::ops`). In a
-/// slim build without `documents`, the agent would still be advertised as
-/// `make_presentation` while its filtered tool surface no longer contains any
-/// tool able to produce a deck, so it is dropped from the registry in lockstep
-/// with its tool.
+/// slim build without `documents`, the agent would have no tool able to
+/// produce a deck, so it is dropped from the registry in lockstep with its tool.
 fn builtin_enabled(_b: &BuiltinAgent) -> bool {
     #[cfg(not(feature = "documents"))]
     if _b.id == "presentation_agent" {

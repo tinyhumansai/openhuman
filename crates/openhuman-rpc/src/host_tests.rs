@@ -21,6 +21,40 @@ fn cli_builder_is_the_cli_preset_with_server_and_http_host() {
 
 #[cfg(feature = "server")]
 #[test]
+fn doctor_builder_is_preloaded_inspection_with_no_services_or_storage() {
+    let root = tempfile::tempdir().expect("temp root");
+    let config = doctor_fallback_config(root.path());
+    let summary = doctor_builder(config).into_embed().summary();
+
+    assert!(matches!(
+        summary.workspace,
+        openhuman_tinyhumans::embed::Workspace::Inherit
+    ));
+    assert_eq!(
+        summary.config_source,
+        openhuman_tinyhumans::embed::ConfigSource::Resolved
+    );
+    assert_eq!(summary.services, Some(ServiceSet::none()));
+    assert!(summary.fixed_token);
+    assert!(!summary.has_api_key);
+    assert!(!summary.has_session_store);
+    assert!(!summary.has_memory_engine);
+    assert!(summary.has_server_launcher);
+}
+
+#[cfg(feature = "server")]
+#[test]
+fn invalid_profile_fallback_config_is_pinned_to_the_selected_root() {
+    let root = tempfile::tempdir().expect("temp root");
+    let config = doctor_fallback_config(root.path());
+
+    assert_eq!(config.config_path, root.path().join("config.toml"));
+    assert_eq!(config.workspace_dir, root.path().join("workspace"));
+    assert_eq!(config.action_dir, root.path().join("action"));
+}
+
+#[cfg(feature = "server")]
+#[test]
 fn desktop_builder_carries_bearer_listener_and_services() {
     let options = DesktopOptions {
         host: Some("127.0.0.1".into()),
@@ -163,6 +197,27 @@ fn cli_storage_is_opened_for_one_shot_commands_only() {
     // `help` as an option value is not a help request.
     assert!(uses(&["cron", "add", "--name", "help"]));
     assert!(uses(&["--model", "help", "cron", "list"]));
+}
+
+#[test]
+#[cfg(feature = "server")]
+fn legacy_doctor_namespace_commands_do_not_preopen_storage() {
+    let args = |parts: &[&str]| parts.iter().map(|p| p.to_string()).collect::<Vec<_>>();
+    let uses = |parts: &[&str]| cli_command_uses_storage(&args(parts), |_| true);
+
+    for invocation in [
+        &["doctor", "report"][..],
+        &["doctor", "report", "--tier", "static"][..],
+        &["--model", "x", "doctor", "report", "--only", "config/parse"][..],
+        &["doctor", "models"][..],
+        &["doctor", "models", "--use-cache", "false"][..],
+        &["--provider=x", "doctor", "models", "--use-cache", "true"][..],
+    ] {
+        assert!(
+            !uses(invocation),
+            "legacy doctor inspection must not open storage before namespace dispatch: {invocation:?}"
+        );
+    }
 }
 
 #[test]

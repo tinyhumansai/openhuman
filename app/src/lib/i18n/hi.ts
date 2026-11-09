@@ -583,6 +583,8 @@ const messages: TranslationMap = {
   'desktop.pendingUnavailable':
     'लंबित डेस्कटॉप अनुमोदन लोड नहीं हो सके। फिर कोशिश करने के लिए रीफ़्रेश करें।',
   'desktop.unsupported': 'इस रनटाइम में डेस्कटॉप नियंत्रण उपलब्ध नहीं है।',
+  'desktop.unsupportedWindows':
+    'Windows पर डेस्कटॉप नियंत्रण अभी उपलब्ध नहीं है। ब्राउज़र नियंत्रण Windows पर अभी काम करता है।',
   'desktop.localOnly': 'यह सेटिंग केवल इस कंप्यूटर पर लागू होती है।',
   'desktop.permissions': 'सिस्टम अनुमतियाँ',
   'desktop.openSettings': 'सेटिंग्स खोलें',
@@ -602,6 +604,10 @@ const messages: TranslationMap = {
     'अभी मेमोरी तक नहीं पहुँचा जा सकता। संग्रहीत कुछ भी खोया नहीं है; थोड़ी देर में फिर से कोशिश करें।',
   'memory.outOfCredits.title': 'क्रेडिट खत्म हो गए',
   'memory.outOfCredits.action': 'टॉप अप करें',
+  'memory.error.planRequired':
+    'आपके मौजूदा प्लान में मेमोरी शामिल नहीं है, इसलिए OpenHuman जो सीखता है उसे न सहेज सकता है, न खोज सकता है। मेमोरी चालू करने के लिए अपग्रेड करें, या सेटिंग्स में कोई दूसरा मेमोरी विकल्प चुनें।',
+  'memory.planRequired.title': 'मेमोरी आपके प्लान का हिस्सा नहीं है',
+  'memory.planRequired.action': 'प्लान देखें',
   'alerts.title': 'अलर्ट',
   'alerts.empty': 'अभी कोई अलर्ट नहीं',
   'alerts.markAllRead': 'सभी पढ़ा हुआ मार्क करें',
@@ -663,6 +669,15 @@ const messages: TranslationMap = {
   'invites.title': 'इनवाइट्स',
   'invites.noInvites': 'कोई पेंडिंग इनवाइट नहीं',
   'devOptions.titleDiagnostics': 'डेवलपर और डायग्नोस्टिक्स',
+  'devOptions.doctor.run': 'डायग्नोस्टिक्स चलाएँ',
+  'devOptions.doctor.runLive': 'लाइव जाँच चलाएँ',
+  'devOptions.doctor.liveWarning':
+    'लाइव जाँच मॉडल या एम्बेडिंग कॉल पर टोकन खर्च कर सकती है। जारी रखें?',
+  'devOptions.doctor.severity.pass': 'पास',
+  'devOptions.doctor.severity.info': 'जानकारी',
+  'devOptions.doctor.severity.warn': 'चेतावनी',
+  'devOptions.doctor.severity.error': 'त्रुटि',
+  'devOptions.doctor.severity.skipped': 'छोड़ा गया',
   'devOptions.diagnostics': 'डायग्नोस्टिक्स',
   'devOptions.toolPolicyDiagnosticsDesc':
     'उपकरण सूची, नीति मुद्रा, MCP अनुमतिसूची, और हाल के ब्लॉक',
@@ -1298,6 +1313,8 @@ const messages: TranslationMap = {
   'chat.failedToLoadMessages': 'मैसेज लोड नहीं हो पाए',
   'chat.thinkingDots': 'सोच रहा है...',
   'chat.status.thinkingElapsed': 'सोच रहा है · {elapsed}',
+  'chat.status.compacting': 'पिछली बातचीत का सारांश बना रहा है…',
+  'chat.status.compactingElapsed': 'पिछली बातचीत का सारांश बना रहा है · {elapsed}',
   'chat.status.waitingApproval': 'आपकी स्वीकृति की प्रतीक्षा',
   'chat.status.waitingReview': 'आपकी समीक्षा की प्रतीक्षा',
   'chat.status.waitingAnswer': 'आपके उत्तर की प्रतीक्षा',
@@ -1632,6 +1649,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'कैनवास में खोलें',
   'chat.flowProposal.dismiss': 'खारिज करें',
   'chat.flowProposal.error': 'वर्कफ़्लो सहेजा नहीं जा सका। कृपया फिर से प्रयास करें।',
+  'chat.flowProposal.versionConflict':
+    'प्रस्ताव बनने के बाद यह वर्कफ़्लो बदल गया, इसलिए इसे ओवरराइट नहीं किया गया। नया संशोधन माँगें।',
   'chat.flowProposal.enableError':
     'वर्कफ़्लो सहेजा गया, लेकिन सक्षम नहीं किया जा सका। फिर से प्रयास करें, या Workflows पेज से इसे सक्षम करें।',
   'chat.flowProposal.savedConfirmation': 'सहेजा गया',
@@ -1823,11 +1842,6 @@ const messages: TranslationMap = {
   'chat.todos.ofTotal': '{total} में से {done}',
   'chat.todos.receipt': 'प्रगति अपडेट हुई · {done}/{total}',
   'chat.subagents.ranFor': '{duration} तक चला',
-  'chat.subagents.ofTotal': '{total} में से {complete}',
-  'chat.subagents.runningCount': '{count} चल रहे हैं',
-  'chat.subagents.failedCount': '{count} विफल',
-  'chat.subagents.incompleteCount': '{count} अधूरे',
-  'chat.subagents.settled': 'उप-कार्य पूरे हुए। उनके परिणाम संसाधित हो रहे हैं।',
   'conversations.planReview.title': 'योजना की समीक्षा करें',
   'conversations.planReview.subtitle':
     'इसे चलाने के लिए स्वीकृत करें, हटाने के लिए अस्वीकार करें, या संशोधित करने के लिए प्रतिक्रिया भेजें।',
@@ -1863,7 +1877,6 @@ const messages: TranslationMap = {
   'conversations.mcpUi.confirmAllow': 'अनुमति दें',
   'conversations.mcpUi.confirmDeny': 'अस्वीकार करें',
   'conversations.tools.delegatedTo': '{agent} को सौंपा गया',
-  'conversations.tools.parallelAgentsAggregating': 'परिणाम एकत्रित किए जा रहे हैं',
   'conversations.tools.openInBrowser': 'ब्राउज़र में खोलें',
   'conversations.tools.status.running': 'चल रहा है',
   'conversations.tools.status.done': 'पूरा',
@@ -1931,22 +1944,6 @@ const messages: TranslationMap = {
     'फिर से कोशिश विफल। लेटेस्ट ऐप बिल्ड डाउनलोड करके दोबारा कोशिश करें।',
   'daemon.serviceBlockingGate.retrying': 'फिर से कोशिश हो रही है...',
   'daemon.serviceBlockingGate.title': 'OpenHuman कोर उपलब्ध नहीं है',
-  'worktree.label': 'वर्कट्री',
-  'worktree.dirty': 'बिना कमिट किए बदलाव',
-  'worktree.clean': 'साफ़',
-  'worktree.removing': 'हटाया जा रहा है…',
-  'worktree.removeFailed': 'वर्कट्री हटाने में विफल',
-  'worktree.diffFailed': 'डिफ़ लोड करने में विफल',
-  'worktree.diffLoading': 'डिफ़ लोड हो रहा है…',
-  'worktree.diffEmpty': 'HEAD की तुलना में कोई बदलाव नहीं।',
-  'worktree.dirtyConfirm':
-    'इस वर्कट्री में बिना कमिट किए बदलाव हैं। इसे हटाने पर वह काम छूट जाएगा। वर्कर ब्रांच बनी रहती है।',
-  'worktree.action.open': 'फ़ोल्डर खोलें',
-  'worktree.action.diff': 'डिफ़',
-  'worktree.action.hideDiff': 'डिफ़ छिपाएँ',
-  'worktree.action.remove': 'हटाएँ',
-  'worktree.action.removeAnyway': 'छोड़ें और हटाएँ',
-  'worktree.action.preserve': 'सुरक्षित रखें',
   'notifications.card.dismiss': 'नोटिफिकेशन हटाएं',
   'notifications.card.importanceTitle': 'महत्व: {pct}%',
   'notifications.center.empty': 'अभी कोई नोटिफिकेशन नहीं',
@@ -3464,6 +3461,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'मॉडल लोड हो रहे हैं…',
   'composer.voiceMode': 'वॉइस मोड',
   'composer.humanMode': 'मानव मोड',
+  'voiceNote.record': 'वॉइस नोट रिकॉर्ड करें',
+  'voiceNote.stop': 'रिकॉर्डिंग रोकें',
+  'voiceNote.discard': 'वॉइस नोट हटाएँ',
+  'voiceNote.send': 'वॉइस नोट भेजें',
+  'voiceNote.recording': 'रिकॉर्ड हो रहा है…',
+  'voiceNote.play': 'वॉइस नोट चलाएँ',
+  'voiceNote.pause': 'वॉइस नोट रोकें',
+  'voiceNote.seek': 'वॉइस नोट में आगे-पीछे जाएँ',
+  'voiceNote.transcript': 'ट्रांसक्रिप्ट',
+  'voiceNote.noTranscript': 'कोई ट्रांसक्रिप्ट उपलब्ध नहीं',
+  'voiceNote.label': 'वॉइस नोट {duration}',
+  'voiceNote.micDenied': 'माइक्रोफ़ोन की अनुमति अस्वीकृत या अनुपलब्ध है।',
+  'voiceNote.transcribeFailed': 'वॉइस नोट का ट्रांसक्रिप्शन नहीं हो सका।',
+  'voiceNote.loadFailed': 'यह वॉइस नोट लोड नहीं हो सका।',
+  'voiceNote.sendFailed': 'वॉइस नोट भेजा नहीं जा सका।',
 
   // Sync budget dialog
 
@@ -3858,6 +3870,10 @@ const messages: TranslationMap = {
     'एजेंट ने एक टर्न में अधिकतम टूल चरण चलाए, फिर भी काम पूरा नहीं हुआ। इसका आम तौर पर मतलब है कि कोई टूल बार-बार विफल होता रहा (अक्सर वेब फ़ेच पर रेट लिमिट के कारण)। सीमा हटने पर आप इसी थ्रेड में वही सवाल दोबारा पूछ सकते हैं।',
   'chat_error.turn_timeout':
     'यह टर्न अपने समय-बजट से आगे निकल गया और पूरा नहीं हुआ, इसलिए इसे रोक दिया गया ताकि यह अटका न रहे। इसका आम तौर पर मतलब है कि कोई टूल कॉल या सौंपा गया सब-एजेंट अटक गया। आप इसी थ्रेड में अपना सवाल दोबारा पूछ सकते हैं।',
+  'chat_error.disk_full':
+    'आपकी डिस्क भर गई है, इसलिए यह बातचीत सहेजी नहीं जा सकी। कुछ डिस्क स्थान खाली करें, फिर इसी थ्रेड में अपना संदेश दोबारा भेजें।',
+  'chat_error.prompt_screened':
+    'OpenHuman की सुरक्षा जाँच ने इस संदेश को रोक लिया, इसलिए इसे मॉडल को नहीं भेजा गया। अगर इसमें किसी असिस्टेंट के लिए लिखे निर्देश उद्धृत हैं (जैसे किसी वेब पेज या ईमेल से), तो उन्हें हटाकर फिर कोशिश करें। अगर सामान्य संदेश भी रोके जा रहे हैं, तो सुरक्षा मॉड्यूल उपलब्ध नहीं हो सकता: OpenHuman को फिर से शुरू करें और दोबारा कोशिश करें।',
   'chat_error.empty_response':
     'मॉडल ने खाली उत्तर लौटाया। कृपया फिर कोशिश करें। अगर यह बार-बार हो, तो कोई दूसरा मॉडल आज़माएँ या कनेक्शन → API कुंजियाँ → LLM में उसकी सेटिंग जाँचें।',
   'chat_error.chat_template_rejected':
@@ -4345,6 +4361,10 @@ const messages: TranslationMap = {
     'माइक्रोफ़ोन की अनुमति नहीं मिली। सिस्टम सेटिंग में अनुमति दें और फिर कोशिश करें।',
   'voice.live.error.micUnavailable': 'कोई माइक्रोफ़ोन उपलब्ध नहीं है।',
   'voice.live.error.connection': 'वॉइस एजेंट से कनेक्ट नहीं हो सका।',
+  'voice.live.error.insufficientCredits':
+    'लाइव वॉइस के लिए और क्रेडिट चाहिए। जारी रखने के लिए क्रेडिट जोड़ें।',
+  'voice.live.error.paidPlanRequired':
+    'लाइव वॉइस के लिए पेड प्लान ज़रूरी है। जारी रखने के लिए अपग्रेड करें।',
   'voice.live.toolRunning': '{name} चल रहा है',
   'voice.live.toolOk': '{name} पूरा हुआ',
   'voice.live.toolFailed': '{name} विफल रहा',
@@ -4629,11 +4649,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'नेमस्पेस प्रक्रिया जेल',
   'settings.sandbox.backendHint.bubblewrap': 'लाइटवेट यूज़र नेमस्पेस',
   'settings.sandbox.backendHint.none': 'सीधे उपकरण चलाएं, unisolated',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'टूल सूची',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'कुल टूल',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'सक्रिय टूल',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP stdio टूल',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC टूल',
   'devOptions.toolPolicyDiagnostics.posture.title': 'नीति की स्थिति',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'स्वायत्तता स्तर',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'केवल कार्यक्षेत्र',
@@ -4848,8 +4863,6 @@ const messages: TranslationMap = {
   'conversations.tools.updateLearnings.done': 'सीखी बातें अपडेट कीं',
   'conversations.tools.delegateTask.active': 'कार्य सौंप रहा है',
   'conversations.tools.delegateTask.done': 'कार्य सौंपा',
-  'conversations.tools.runAgentsInParallel.active': 'एजेंट समानांतर चला रहा है',
-  'conversations.tools.runAgentsInParallel.done': 'एजेंट समानांतर चलाए',
   'conversations.tools.messageAgent.active': 'एजेंट को संदेश भेज रहा है',
   'conversations.tools.messageAgent.done': 'एजेंट को संदेश भेजा',
   'conversations.tools.waitForAgent.active': 'एजेंट की प्रतीक्षा कर रहा है',
@@ -4886,6 +4899,8 @@ const messages: TranslationMap = {
   'conversations.tools.checkGoal.done': 'लक्ष्य जाँचा',
   'conversations.tools.completeGoal.active': 'लक्ष्य पूरा कर रहा है',
   'conversations.tools.completeGoal.done': 'लक्ष्य पूरा किया',
+  'conversations.tools.resumeGoal.active': 'लक्ष्य फिर से शुरू कर रहा है',
+  'conversations.tools.resumeGoal.done': 'लक्ष्य फिर से शुरू किया',
   'conversations.tools.scheduleTask.active': 'कार्य शेड्यूल कर रहा है',
   'conversations.tools.scheduleTask.done': 'कार्य शेड्यूल किया',
   'conversations.tools.checkSchedules.active': 'शेड्यूल जाँच रहा है',
@@ -5079,6 +5094,55 @@ const messages: TranslationMap = {
   'onboarding.custom.localDefaultDisabledReason':
     'प्रबंधित सेटअप के लिए OpenHuman खाता आवश्यक है। लोकल सेशन में आपको हर सेवा खुद कॉन्फ़िगर करनी होती है।',
   'settings.layout.contrast.strong': 'मज़बूत',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'इस कोर में नीति निदान शामिल नहीं है।',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'सक्रिय सुरक्षा नीति',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'स्वायत्तता',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'केवल कार्यक्षेत्र',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'प्रति घंटे अधिकतम कार्रवाइयाँ',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'मध्यम जोखिम के लिए स्वीकृति आवश्यक',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'उच्च जोखिम वाले कमांड रोकें',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'अनुमत कमांड',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'कोई कमांड स्पष्ट रूप से अनुमत नहीं है।',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'नीति',
+  'settings.approvalHistory.judgeScores':
+    'इरादा {intent} · वापस करने योग्य {reversible} · डेटा निकासी {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'कैश किया गया',
+  'settings.approvalHistory.judgeExpires': '{time} पर समाप्त',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'हमेशा अनुमत टूल',
+  'keyring.settings.toolTrustDescription':
+    'इस सुरक्षा दायरे में ये टूल बिना स्वीकृति माँगे चल सकते हैं।',
+  'keyring.settings.toolTrustLoading': 'अनुमत टूल लोड हो रहे हैं…',
+  'keyring.settings.toolTrustLoadFailed': 'अनुमत टूल लोड नहीं हो सके।',
+  'keyring.settings.toolTrustRevokeFailed': 'इस टूल की अनुमति वापस नहीं ली जा सकी।',
+  'keyring.settings.toolTrustEmpty': 'कोई टूल हमेशा अनुमत नहीं है।',
+  'keyring.settings.toolTrustRetry': 'फिर कोशिश करें',
+  'keyring.settings.toolTrustRevoke': 'वापस लें',
+  'keyring.settings.toolTrustRevoking': 'वापस लिया जा रहा है…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'कीरिंग पहुँच अनुरोध',
+  'keyring.operation.description':
+    'TinySecurity एक कीरिंग आइटम तक पहुँच चाहता है। निर्णय लेने से पहले कार्रवाई देखें।',
+  'keyring.operation.access': 'पहुँच',
+  'keyring.operation.requester': 'अनुरोधकर्ता',
+  'keyring.operation.origin': 'स्रोत',
+  'keyring.operation.purpose': 'उद्देश्य',
+  'keyring.operation.name': 'कीरिंग आइटम',
+  'keyring.operation.access.read': 'पढ़ना',
+  'keyring.operation.access.write': 'लिखना',
+  'keyring.operation.access.delete': 'मिटाना',
+  'keyring.operation.allow': 'एक बार अनुमति दें',
+  'keyring.operation.deny': 'अस्वीकार करें',
+  'keyring.operation.submitting': 'भेजा जा रहा है…',
+  'keyring.operation.expires': 'अनुरोध {seconds} सेकंड में समाप्त होगा।',
+  'keyring.operation.error': 'निर्णय भेजा नहीं जा सका। अनुरोध समाप्त हो चुका हो सकता है।',
 };
 
 export default messages;

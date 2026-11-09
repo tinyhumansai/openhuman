@@ -7,12 +7,12 @@ use super::*;
 #[test]
 fn decoration_prefixes_are_order_independent() {
     for id in [
-        "chat-v1",
-        "hint:chat-v1",
-        "openhuman/chat-v1",
-        "hint:openhuman/chat-v1",
-        "openhuman/hint:chat-v1",
-        "  HINT:OpenHuman/Chat-V1  ",
+        "openrouter/test/chat-v1",
+        "hint:openrouter/test/chat-v1",
+        "openhuman/openrouter/test/chat-v1",
+        "hint:openhuman/openrouter/test/chat-v1",
+        "openhuman/hint:openrouter/test/chat-v1",
+        "  HINT:OpenHuman/OpenRouter/Test/Chat-V1  ",
     ] {
         assert_eq!(
             route_for_model(id),
@@ -33,37 +33,29 @@ fn decorations_do_not_promote_a_byok_model_to_managed() {
     }
 }
 
-use crate::config::{LEGACY_TIER_MODELS, MODEL_MANAGED_DEFAULT};
-
 /// The managed default is an `openrouter/...` passthrough id and bills as
 /// managed like every other catalog model the backend serves.
 #[test]
 fn managed_default_model_is_managed() {
-    assert_eq!(route_for_model(MODEL_MANAGED_DEFAULT), CostRoute::Managed);
+    assert_eq!(
+        route_for_model("openrouter/deepseek/deepseek-v4-flash"),
+        CostRoute::Managed
+    );
 }
 
 #[test]
-fn managed_tier_slugs_are_managed() {
-    for slug in MANAGED_MODEL_SLUGS {
-        assert_eq!(
-            route_for_model(slug),
-            CostRoute::Managed,
-            "tier slug {slug} must bill as managed"
-        );
+fn retired_provider_aliases_need_a_registered_provider_policy() {
+    for tier in [
+        "chat-v1",
+        "reasoning-v1",
+        "agentic-v1",
+        "burst-v1",
+        "coding-v1",
+        "vision-v1",
+        "summarization-v1",
+    ] {
+        assert_eq!(route_for_model(tier), CostRoute::Byok);
     }
-}
-
-/// The retired slug list is the config's own legacy table, so an old cost
-/// record carrying any of them still counts toward the managed budget.
-#[test]
-fn managed_tier_slugs_stay_in_sync() {
-    for tier in LEGACY_TIER_MODELS {
-        assert!(
-            MANAGED_MODEL_SLUGS.contains(&tier),
-            "retired tier {tier} is not classified as managed"
-        );
-    }
-    assert_eq!(MANAGED_MODEL_SLUGS.len(), LEGACY_TIER_MODELS.len());
 }
 
 #[test]
@@ -89,10 +81,15 @@ fn byok_and_local_models_are_not_managed() {
 
 #[test]
 fn normalizes_case_whitespace_and_prefixes() {
-    assert_eq!(route_for_model("  Chat-V1 "), CostRoute::Managed);
-    assert_eq!(route_for_model("hint:chat-v1"), CostRoute::Managed);
+    crate::agent::session_host::test_support::install_model_fixture();
+    assert_eq!(route_for_model("  FIXTURE-REASONING "), CostRoute::Managed);
+    assert_eq!(route_for_model("fixture-reasoning"), CostRoute::Managed);
     assert_eq!(
-        route_for_model("openhuman/reasoning-v1"),
+        route_for_model("hint:fixture-reasoning"),
+        CostRoute::Managed
+    );
+    assert_eq!(
+        route_for_model("openhuman/fixture-reasoning"),
         CostRoute::Managed
     );
 }

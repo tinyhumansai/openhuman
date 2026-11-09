@@ -5,7 +5,7 @@ fn cost_config_defaults() {
     let c = CostConfig::default();
     assert!(c.enabled);
     assert_eq!(c.monthly_limit_usd, 100.0);
-    assert!(!c.prices.is_empty());
+    assert!(c.prices.is_empty());
     assert!(c.dashboard.enabled);
     assert_eq!(c.dashboard.currency, "USD");
     assert!((c.dashboard.warn_threshold - 0.8).abs() < f64::EPSILON);
@@ -27,22 +27,6 @@ fn cost_dashboard_config_serde_roundtrip() {
     assert_eq!(c.dashboard.currency, "EUR");
     assert!((c.dashboard.warn_threshold - 0.5).abs() < f64::EPSILON);
     assert!((c.dashboard.alert_threshold - 0.9).abs() < f64::EPSILON);
-}
-
-/// Pre-existing failure, unrelated to the spend cap: dc5c014da consolidated
-/// pricing onto a single managed default and left this asserting `>= 3`, which
-/// `get_default_pricing` — one entry — can never satisfy. Pinning the entry
-/// that must exist says what the default pricing is actually for; a count says
-/// nothing and goes stale the next time the catalogue is consolidated.
-#[test]
-fn cost_config_default_pricing_has_known_models() {
-    let c = CostConfig::default();
-    assert!(
-        c.prices
-            .contains_key(crate::config::schema::types::MODEL_MANAGED_DEFAULT),
-        "default pricing must cover the managed default model; got {:?}",
-        c.prices.keys().collect::<Vec<_>>()
-    );
 }
 
 #[test]

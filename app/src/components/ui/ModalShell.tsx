@@ -15,7 +15,7 @@ export interface ModalClosePolicy {
 
 export interface ModalShellProps {
   children: ReactNode;
-  onClose: () => void;
+  onClose?: () => void;
   title: ReactNode;
   titleId: string;
   subtitle?: ReactNode;
@@ -24,6 +24,8 @@ export interface ModalShellProps {
   maxWidthClassName?: string;
   contentClassName?: string;
   panelClassName?: string;
+  /** Optional scrim stacking override for system-critical blocking dialogs. */
+  overlayClassName?: string;
   labelledBy?: string;
   describedBy?: string;
   closePolicy?: ModalClosePolicy;
@@ -72,6 +74,7 @@ export function ModalShell({
   maxWidthClassName = 'max-w-md',
   contentClassName = 'px-5 py-4',
   panelClassName,
+  overlayClassName,
   labelledBy,
   describedBy,
   closePolicy,
@@ -79,9 +82,11 @@ export function ModalShell({
   testId,
 }: ModalShellProps) {
   const { t } = useT();
-  const allowEscapeClose = closePolicy?.escape ?? true;
-  const allowBackdropClose = closePolicy?.backdrop ?? true;
-  const allowButtonClose = closePolicy?.button ?? true;
+  // Without a close handler, dismiss affordances would be inert. Recovery
+  // dialogs deliberately omit it and remain open until the host recovers.
+  const allowEscapeClose = Boolean(onClose) && (closePolicy?.escape ?? true);
+  const allowBackdropClose = Boolean(onClose) && (closePolicy?.backdrop ?? true);
+  const allowButtonClose = Boolean(onClose) && (closePolicy?.button ?? true);
 
   useEffect(() => {
     const previousFocus = document.activeElement as HTMLElement | null;
@@ -92,11 +97,13 @@ export function ModalShell({
     <DialogRoot
       open
       onOpenChange={next => {
-        if (!next) onClose();
+        if (!next) onClose?.();
       }}>
       <DialogContent
         container={container}
+        overlayClassName={overlayClassName}
         data-testid={testId}
+        aria-modal="true"
         aria-labelledby={labelledBy ?? titleId}
         aria-describedby={describedBy}
         className={cn('mx-4', maxWidthClassName, panelClassName)}

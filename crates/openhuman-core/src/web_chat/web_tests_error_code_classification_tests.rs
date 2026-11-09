@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn classify_inference_error_empty_response_does_not_claim_credit_exhaustion() {
     // An empty successful completion provides no evidence about the user's
-    // balance. A real credit error has its own backend errorCode classification.
+    // balance. A real credit failure has its own provider classification.
     let raw = "run_chat_task failed client_id=abc thread_id=t-1 request_id=r-1 \
                error=The model returned an empty response. Please try again.";
     let classified = classify_inference_error(raw);
@@ -205,14 +205,13 @@ fn classify_inference_error_model_not_found_404_stays_model_unavailable() {
 }
 
 #[test]
-fn classify_inference_error_rate_limited_code_branches_first() {
-    // F2: a managed RATE_LIMITED carries the structured `retryAfter`, which
-    // the classifier must prefer and surface as a countdown hint.
-    let raw = managed_error(
-        "429 Too Many Requests",
-        r#"{"error":{"message":"slow down","errorCode":"RATE_LIMITED","retryAfter":30}}"#,
+fn backend_rate_limit_metadata_drives_retry_copy_and_countdown() {
+    let raw = "OpenHuman API error (429 Too Many Requests): managed fixture Retry-After: 30";
+    let classified = classify_with_backend_metadata(
+        raw,
+        crate::inference::registry::BackendErrorKind::RateLimited,
+        false,
     );
-    let classified = classify_inference_error(&raw);
     assert_eq!(classified.error_type, "rate_limited");
     assert!(classified.retryable, "rate limit is retryable in-thread");
     assert_eq!(
@@ -233,12 +232,12 @@ fn classify_inference_error_rate_limited_code_branches_first() {
 }
 
 #[test]
-fn classify_inference_error_user_insufficient_credits_is_the_only_top_up_case() {
-    let raw = managed_error(
-        "402 Payment Required",
-        r#"{"error":{"errorCode":"USER_INSUFFICIENT_CREDITS","message":"no credits"}}"#,
+fn backend_credit_metadata_is_the_only_top_up_case() {
+    let classified = classify_with_backend_metadata(
+        "OpenHuman API error (402 Payment Required): managed fixture",
+        crate::inference::registry::BackendErrorKind::InsufficientCredits,
+        false,
     );
-    let classified = classify_inference_error(&raw);
     assert_eq!(classified.error_type, "budget_exhausted");
     assert!(!classified.retryable, "out of credits is non-retryable");
     assert_eq!(classified.source, "openhuman_billing");
@@ -251,14 +250,14 @@ fn classify_inference_error_user_insufficient_credits_is_the_only_top_up_case() 
 }
 
 #[test]
-fn classify_inference_error_upstream_unavailable_drops_user_blaming_copy() {
+fn backend_upstream_unavailable_metadata_drops_user_blaming_copy() {
     // F4: operator fault → "temporarily unavailable — we've been notified",
     // never "check your API key".
-    let raw = managed_error(
-        "503 Service Unavailable",
-        r#"{"error":{"errorCode":"UPSTREAM_UNAVAILABLE","message":"upstream 5xx"}}"#,
+    let classified = classify_with_backend_metadata(
+        "OpenHuman API error (503 Service Unavailable): managed fixture",
+        crate::inference::registry::BackendErrorKind::UpstreamUnavailable,
+        false,
     );
-    let classified = classify_inference_error(&raw);
     assert_eq!(classified.error_type, "provider_error");
     assert!(classified.retryable);
     assert!(
@@ -275,15 +274,15 @@ fn classify_inference_error_upstream_unavailable_drops_user_blaming_copy() {
 }
 
 #[test]
-fn classify_inference_error_model_unavailable_code_is_operator_fault_not_user_pick() {
+fn backend_model_unavailable_metadata_is_operator_fault_not_user_pick() {
     // F6: a managed MODEL_UNAVAILABLE is an operator registry/routing
     // misconfig — route to provider_error, NOT the user "pick a different
     // model" copy.
-    let raw = managed_error(
-        "404 Not Found",
-        r#"{"error":{"errorCode":"MODEL_UNAVAILABLE","message":"no route for model"}}"#,
+    let classified = classify_with_backend_metadata(
+        "OpenHuman API error (404 Not Found): managed fixture",
+        crate::inference::registry::BackendErrorKind::ModelUnavailable,
+        false,
     );
-    let classified = classify_inference_error(&raw);
     assert_eq!(
         classified.error_type, "provider_error",
         "managed MODEL_UNAVAILABLE is provider_error, not model_unavailable"
@@ -305,13 +304,12 @@ fn classify_inference_error_model_unavailable_code_is_operator_fault_not_user_pi
 }
 
 #[test]
-fn classify_inference_error_payload_too_large_is_new_non_retryable_bucket() {
-    // F3.
-    let raw = managed_error(
-        "413 Payload Too Large",
-        r#"{"error":{"errorCode":"PAYLOAD_TOO_LARGE","message":"too big"}}"#,
+fn backend_payload_limit_metadata_is_non_retryable() {
+    let classified = classify_with_backend_metadata(
+        "OpenHuman API error (413 Payload Too Large): managed fixture",
+        crate::inference::registry::BackendErrorKind::PayloadTooLarge,
+        false,
     );
-    let classified = classify_inference_error(&raw);
     assert_eq!(classified.error_type, "payload_too_large");
     assert!(!classified.retryable, "payload too large is non-retryable");
     assert!(
@@ -322,12 +320,12 @@ fn classify_inference_error_payload_too_large_is_new_non_retryable_bucket() {
 }
 
 #[test]
-fn classify_inference_error_context_length_exceeded_reuses_context_overflow() {
-    let raw = managed_error(
-        "400 Bad Request",
-        r#"{"error":{"errorCode":"CONTEXT_LENGTH_EXCEEDED","message":"too long"}}"#,
+fn backend_context_limit_metadata_reuses_context_overflow() {
+    let classified = classify_with_backend_metadata(
+        "OpenHuman API error (400 Bad Request): managed fixture",
+        crate::inference::registry::BackendErrorKind::ContextLengthExceeded,
+        false,
     );
-    let classified = classify_inference_error(&raw);
     assert_eq!(classified.error_type, "context_overflow");
     assert!(!classified.retryable);
     assert!(
@@ -338,12 +336,12 @@ fn classify_inference_error_context_length_exceeded_reuses_context_overflow() {
 }
 
 #[test]
-fn classify_inference_error_user_param_bad_request_is_actionable() {
-    let raw = managed_error(
-        "400 Bad Request",
-        r#"{"error":{"errorCode":"BAD_REQUEST","message":"unsupported parameter"}}"#,
+fn backend_request_rejected_metadata_is_actionable() {
+    let classified = classify_with_backend_metadata(
+        "OpenHuman API error (400 Bad Request): unsupported parameter",
+        crate::inference::registry::BackendErrorKind::BadRequest,
+        false,
     );
-    let classified = classify_inference_error(&raw);
     assert_eq!(classified.error_type, "provider_request_rejected");
     assert!(!classified.retryable);
     assert!(
@@ -354,14 +352,14 @@ fn classify_inference_error_user_param_bad_request_is_actionable() {
 }
 
 #[test]
-fn classify_inference_error_malformed_bad_request_uses_rephrase_copy() {
-    // F8: malformed (backend-flagged) → "rephrase, or new thread if it
+fn malformed_bad_request_metadata_uses_rephrase_copy() {
+    // Malformed (backend-flagged) → "rephrase, or new thread if it
     // persists" — NOT an outright "start a new thread".
-    let raw = managed_error(
-        "400 Bad Request",
-        r#"{"error":{"errorCode":"BAD_REQUEST","malformed":true,"message":"unparseable"}}"#,
+    let classified = classify_with_backend_metadata(
+        "OpenHuman API error (400 Bad Request): unparseable fixture",
+        crate::inference::registry::BackendErrorKind::BadRequest,
+        true,
     );
-    let classified = classify_inference_error(&raw);
     assert_eq!(classified.error_type, "provider_request_rejected");
     assert!(!classified.retryable);
     assert!(
@@ -372,12 +370,12 @@ fn classify_inference_error_malformed_bad_request_uses_rephrase_copy() {
 }
 
 #[test]
-fn classify_inference_error_internal_error_is_generic_retryable() {
-    let raw = managed_error(
-        "500 Internal Server Error",
-        r#"{"error":{"errorCode":"INTERNAL_ERROR","message":"boom"}}"#,
+fn backend_internal_error_metadata_is_generic_retryable() {
+    let classified = classify_with_backend_metadata(
+        "OpenHuman API error (500 Internal Server Error): managed fixture",
+        crate::inference::registry::BackendErrorKind::Internal,
+        false,
     );
-    let classified = classify_inference_error(&raw);
     assert_eq!(classified.error_type, "inference");
     assert!(classified.retryable);
     assert!(
@@ -389,9 +387,8 @@ fn classify_inference_error_internal_error_is_generic_retryable() {
 
 #[test]
 fn classify_inference_error_byo_no_code_keeps_user_actionable_copy() {
-    // Managed-vs-BYO: a BYO provider key bad (direct 401, no errorCode) must
-    // STILL get the user-actionable "check your API key" copy via the
-    // substring fallback — the errorCode branch must not steal it.
+    // A BYO provider key failure must still get the user-actionable
+    // "check your API key" copy via the generic message fallback.
     let auth = r#"openai API error (401 Unauthorized): {"error":{"message":"Incorrect API key provided"}}"#;
     let classified = classify_inference_error(auth);
     assert_eq!(classified.error_type, "auth_error");
@@ -401,9 +398,8 @@ fn classify_inference_error_byo_no_code_keeps_user_actionable_copy() {
         classified.message
     );
 
-    // BYO model misconfig (no errorCode) stays `model_unavailable` with the
-    // "check your model settings" copy — distinct from the managed
-    // MODEL_UNAVAILABLE provider_error route above (F6).
+    // BYO model misconfiguration stays `model_unavailable` with the
+    // "check your model settings" copy.
     let model = r#"custom_openai API error (404 Not Found): {"error":{"message":"model unavailable on this endpoint"}}"#;
     let classified = classify_inference_error(model);
     assert_eq!(classified.error_type, "model_unavailable");
@@ -415,17 +411,13 @@ fn classify_inference_error_byo_no_code_keeps_user_actionable_copy() {
 }
 
 #[test]
-fn classify_inference_error_byo_with_error_code_token_is_not_managed() {
-    // CodeRabbit: a BYO / direct-provider error whose body happens to carry an
-    // `errorCode`-shaped field must NOT be classified on the managed-code
-    // branch — the managed-envelope gate keeps it on the substring ladder so
-    // the user-actionable BYO copy is preserved (and FE Sentry is unaffected).
-    let raw = r#"custom_openai API error (429 Too Many Requests): {"error":{"errorCode":"RATE_LIMITED","message":"slow down"}}"#;
+fn classify_byo_rate_limit_keeps_provider_copy() {
+    // Direct-provider failures use the generic copy ladder when no hosted
+    // classifier metadata is installed.
+    let raw = "custom_openai API error (429 Too Many Requests): slow down";
     let classified = classify_inference_error(raw);
-    // Still classified as rate_limited via the substring ladder, but through
-    // the BYO path: the message uses the existing substring-arm copy ("This is
-    // a transient upstream limit"), NOT the managed errorCode copy ("You can
-    // retry in this thread.").
+    // Still classified as rate_limited via generic text matching: the direct
+    // provider copy offers the existing transient-upstream guidance.
     assert_eq!(classified.error_type, "rate_limited");
     assert!(
         classified.message.contains("transient upstream limit"),
@@ -441,13 +433,15 @@ fn web_channel_catalog_has_chat_and_cancel() {
     let s = all_web_channel_controller_schemas();
     let c = all_web_channel_registered_controllers();
     assert_eq!(s.len(), c.len());
-    assert_eq!(s.len(), 5);
+    assert_eq!(s.len(), 7);
     let fns: Vec<&str> = s.iter().map(|x| x.function).collect();
     assert!(fns.contains(&"web_chat"));
     assert!(fns.contains(&"web_cancel"));
     assert!(fns.contains(&"web_queue_status"));
     assert!(fns.contains(&"web_queue_clear"));
     assert!(fns.contains(&"web_queue_remove"));
+    assert!(fns.contains(&"web_voice_note_store"));
+    assert!(fns.contains(&"web_voice_note_read"));
 }
 
 #[test]
@@ -601,7 +595,7 @@ fn classify_inference_error_local_offline_profile_is_not_an_expired_session() {
     // arm matches the sentinel anywhere in the chain.
     let raw = format!(
         "run_chat_task failed client_id=abc thread_id=t-1 error={}",
-        crate::security::credentials::session_support::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
+        crate::credentials::backend_credential::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
     );
     let classified = classify_inference_error(&raw);
 
@@ -629,7 +623,7 @@ fn classify_inference_error_a_mixed_fallback_chain_reports_the_provider_that_fai
     // than at the head of the ladder.
     let raw = format!(
         "All providers/models failed. Attempts: {}; openai API error (401 Unauthorized): invalid api key",
-        crate::security::credentials::session_support::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
+        crate::credentials::backend_credential::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
     );
     let classified = classify_inference_error(&raw);
 
@@ -647,7 +641,7 @@ fn classify_inference_error_the_refusal_alone_keeps_the_exhausted_chain_flag() {
     // aggregate metadata rides along instead of being dropped.
     let raw = format!(
         "All providers/models failed. Attempts: {}",
-        crate::security::credentials::session_support::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
+        crate::credentials::backend_credential::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE
     );
     let classified = classify_inference_error(&raw);
 

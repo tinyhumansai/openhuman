@@ -1,3 +1,5 @@
+#![cfg(feature = "storage-sqlite")]
+
 use super::*;
 use crate::core::runtime::{CoreContext, DomainSet, SaasConfig};
 use crate::profiles::lease::{now_ms, renew_once};
@@ -5,9 +7,9 @@ use crate::profiles::ProfileHost;
 use crate::storage::fence::{fence_error, FenceError, FenceRegistry};
 use crate::storage::fenced_backend::FencedBackend;
 use crate::storage::lease::DocumentLeases;
-use crate::storage::{MemoryStorage, Scope, StorageBackend};
+use crate::storage::{Scope, StorageBackend};
 use serde_json::json;
-use tinystoragedrivers::Precondition;
+use tinystoragedrivers_types::Precondition;
 
 const TTL_SECS: u64 = 30;
 
@@ -90,13 +92,22 @@ fn a_profiles_fence_covers_its_scope_and_its_sessions() {
 #[tokio::test]
 async fn a_takeover_fences_the_old_holders_writes_before_its_heartbeat_runs() {
     let tmp = tempfile::tempdir().unwrap();
-    let backend: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let backend: Arc<dyn StorageBackend> = Arc::clone(&fixture.backend);
     let (a, a_storage) = node(tmp.path(), "node-a", &backend);
     let alice = profile("alice");
+    let tenant_scope = crate::storage::scope_for_profile(alice.as_str())
+        .as_str()
+        .to_owned();
+    let agent_scope = crate::storage::scope_for_profile(alice.as_str())
+        .agent("default")
+        .unwrap()
+        .as_str()
+        .to_owned();
     a.provision(&alice).await.unwrap();
     let state = a.open(&alice).await.unwrap();
-    write(&a_storage, "u:alice").await.unwrap();
-    write(&a_storage, "u:alice/agent:default").await.unwrap();
+    write(&a_storage, &tenant_scope).await.unwrap();
+    write(&a_storage, &agent_scope).await.unwrap();
 
     // Another node takes the profile over (by its clock the lease ran out).
     let thief = DocumentLeases::cluster(
@@ -112,9 +123,7 @@ async fn a_takeover_fences_the_old_holders_writes_before_its_heartbeat_runs() {
         .unwrap();
 
     // Node A's next write is refused at once, and the profile is latched.
-    let refused = write(&a_storage, "u:alice/agent:default")
-        .await
-        .unwrap_err();
+    let refused = write(&a_storage, &agent_scope).await.unwrap_err();
     assert!(matches!(
         fence_error(&refused),
         Some(FenceError::Superseded { .. })
@@ -128,16 +137,17 @@ async fn a_takeover_fences_the_old_holders_writes_before_its_heartbeat_runs() {
     // writes) while the profile's state is still held.
     let report = renew_once(&a).await;
     assert_eq!(report.fenced, vec![alice.clone()]);
-    assert!(write(&a_storage, "u:alice").await.is_err());
+    assert!(write(&a_storage, &tenant_scope).await.is_err());
     drop(state);
     // Nothing holds the fenced context any more: the tombstone is pruned.
-    write(&a_storage, "u:alice").await.unwrap();
+    write(&a_storage, &tenant_scope).await.unwrap();
 }
 
 #[tokio::test]
 async fn a_clean_release_retires_the_fence_and_a_reopen_registers_a_new_one() {
     let tmp = tempfile::tempdir().unwrap();
-    let backend: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let backend: Arc<dyn StorageBackend> = Arc::clone(&fixture.backend);
     let (a, _) = node(tmp.path(), "node-a", &backend);
     let alice = profile("alice");
     a.provision(&alice).await.unwrap();
@@ -162,7 +172,8 @@ async fn a_clean_release_retires_the_fence_and_a_reopen_registers_a_new_one() {
 #[tokio::test]
 async fn background_jobs_are_not_started_for_a_superseded_profile() {
     let tmp = tempfile::tempdir().unwrap();
-    let backend: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let backend: Arc<dyn StorageBackend> = Arc::clone(&fixture.backend);
     let (a, _) = node(tmp.path(), "node-a", &backend);
     let alice = profile("alice");
     a.provision(&alice).await.unwrap();

@@ -7,10 +7,23 @@ fn config_in(dir: &Path) -> Config {
 }
 
 #[cfg(feature = "modules")]
-#[test]
-fn sandbox_workspace_is_a_dedicated_directory_inside_the_core_workspace() {
+fn path_floor_port(
+    protected: impl IntoIterator<Item = PathBuf>,
+    credentials: Vec<PathBuf>,
+) -> crate::modules::security::gap::PathFloorPortGuard {
+    crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new(protected, credentials),
+    )
+}
+
+#[cfg(feature = "modules")]
+#[tokio::test]
+async fn sandbox_workspace_is_a_dedicated_directory_inside_the_core_workspace() {
     let tmp = tempfile::tempdir().unwrap();
-    let sandbox = stdio_sandbox(&config_in(tmp.path())).expect("a sandbox");
+    let _port = path_floor_port([], vec![]);
+    let sandbox = stdio_sandbox(&config_in(tmp.path()))
+        .await
+        .expect("a sandbox");
     let expected = tmp.path().join(WORKSPACE_DIR).canonicalize().unwrap();
     assert_eq!(sandbox.workspace, expected.to_string_lossy());
     assert!(expected.is_dir());
@@ -18,9 +31,10 @@ fn sandbox_workspace_is_a_dedicated_directory_inside_the_core_workspace() {
 }
 
 #[cfg(feature = "modules")]
-#[test]
-fn configured_grants_pass_the_host_floor() {
+#[tokio::test]
+async fn configured_grants_pass_the_host_floor() {
     let tmp = tempfile::tempdir().unwrap();
+    let _port = path_floor_port([PathBuf::from("/etc")], vec![]);
     let granted = tmp.path().join("tools");
     std::fs::create_dir_all(&granted).unwrap();
     let mut config = config_in(tmp.path());
@@ -30,7 +44,7 @@ fn configured_grants_pass_the_host_floor() {
         "relative/path".into(),
         "/no/such/dir/anywhere".into(),
     ];
-    let sandbox = stdio_sandbox(&config).expect("a sandbox");
+    let sandbox = stdio_sandbox(&config).await.expect("a sandbox");
     let granted = granted
         .canonicalize()
         .unwrap()
@@ -43,21 +57,6 @@ fn configured_grants_pass_the_host_floor() {
 fn isolation_floor_is_required_except_for_the_macos_desktop() {
     assert!(require_process_isolation(true));
     assert_eq!(require_process_isolation(false), !cfg!(target_os = "macos"));
-}
-
-#[test]
-fn a_grant_that_contains_a_credential_store_is_not_admitted() {
-    let home = Path::new("/home/user");
-    assert!(exposes_credentials(Path::new("/home/user"), Some(home)));
-    assert!(exposes_credentials(
-        Path::new("/home/user/.ssh"),
-        Some(home)
-    ));
-    assert!(!exposes_credentials(
-        Path::new("/home/user/tools"),
-        Some(home)
-    ));
-    assert!(!exposes_credentials(Path::new("/home/user"), None));
 }
 
 #[test]
@@ -78,38 +77,36 @@ fn enforcement_is_declared_only_where_the_host_accepts_a_best_effort_backend() {
 }
 
 #[cfg(feature = "modules")]
-#[test]
-fn built_sandbox_enforcement_follows_the_isolation_requirement() {
+#[tokio::test]
+async fn built_sandbox_enforcement_follows_the_isolation_requirement() {
     let tmp = tempfile::tempdir().unwrap();
-    let sandbox = stdio_sandbox(&config_in(tmp.path())).expect("a sandbox");
+    let _port = path_floor_port([], vec![]);
+    let sandbox = stdio_sandbox(&config_in(tmp.path()))
+        .await
+        .expect("a sandbox");
     assert_eq!(
         sandbox.enforcement,
         enforcement(sandbox.require_process_isolation)
     );
 }
 
-/// Runs `body` with a thread-local subscriber that enables every level, so the
-/// warnings the refusal paths log are evaluated rather than skipped.
-fn with_logging<T>(body: impl FnOnce() -> T) -> T {
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_test_writer()
-        .finish();
-    tracing::subscriber::with_default(subscriber, body)
-}
-
 #[cfg(feature = "modules")]
-#[test]
-fn an_unusable_workspace_refuses_stdio_servers_instead_of_running_them_unconfined() {
+#[tokio::test]
+async fn an_unusable_workspace_refuses_stdio_servers_instead_of_running_them_unconfined() {
     let tmp = tempfile::tempdir().unwrap();
+    let _port = path_floor_port([], vec![]);
     let file = tmp.path().join("not-a-dir");
     std::fs::write(&file, b"").unwrap();
-    assert!(with_logging(|| stdio_sandbox(&config_in(&file))).is_none());
+    assert!(stdio_sandbox(&config_in(&file)).await.is_none());
 }
 
-#[test]
-fn home_relative_grants_expand_and_forbidden_ones_are_refused() {
+#[tokio::test]
+async fn home_relative_grants_expand_and_forbidden_ones_are_refused() {
     let home = tempfile::tempdir().unwrap();
+    let _port = path_floor_port(
+        [PathBuf::from("/etc"), home.path().to_path_buf()],
+        vec![home.path().join(".ssh")],
+    );
     std::fs::create_dir_all(home.path().join("tools")).unwrap();
     let raw = vec![
         "~/tools".to_string(),
@@ -118,7 +115,7 @@ fn home_relative_grants_expand_and_forbidden_ones_are_refused() {
         home.path().to_string_lossy().into_owned(),
     ];
     std::fs::create_dir_all(home.path().join(".ssh")).unwrap();
-    let admitted = with_logging(|| admit_all(&raw, Some(home.path())));
+    let admitted = admit_all(&raw, Some(home.path())).await;
     let tools = home.path().join("tools").canonicalize().unwrap();
     assert_eq!(admitted, vec![tools.to_string_lossy().into_owned()]);
 }
@@ -138,31 +135,37 @@ fn merged_grants_are_deduplicated() {
 }
 
 #[cfg(feature = "modules")]
-#[test]
-fn existing_credential_stores_are_denied_by_their_real_path() {
+#[tokio::test]
+async fn existing_credential_stores_are_denied_by_their_real_path() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
     let ssh = home.join(".ssh");
     std::fs::create_dir_all(&ssh).unwrap();
     let workspace = tmp.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
+    let _port = path_floor_port([], vec![ssh.clone()]);
     let config = config_in(&workspace);
-    let denied = credential_denials(&config, Some(&home), &workspace);
+    let denied = credential_denials(&config, Some(&home), &workspace)
+        .await
+        .unwrap();
     let ssh = ssh.canonicalize().unwrap().to_string_lossy().into_owned();
     assert!(denied.contains(&ssh), "{denied:?}");
     assert_eq!(denied.iter().filter(|d| **d == ssh).count(), 1);
 }
 
 #[cfg(feature = "modules")]
-#[test]
-fn a_workspace_inside_a_credential_store_is_not_denied_to_itself() {
+#[tokio::test]
+async fn a_workspace_inside_a_credential_store_is_not_denied_to_itself() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
     let workspace = home.join(".ssh").join("mcp_stdio");
     std::fs::create_dir_all(&workspace).unwrap();
+    let _port = path_floor_port([], vec![home.join(".ssh")]);
     let workspace = workspace.canonicalize().unwrap();
     let config = config_in(&workspace);
-    let denied = with_logging(|| credential_denials(&config, Some(&home), &workspace));
+    let denied = credential_denials(&config, Some(&home), &workspace)
+        .await
+        .unwrap();
     let ssh = home.join(".ssh").canonicalize().unwrap();
     assert!(
         !denied.contains(&ssh.to_string_lossy().into_owned()),
@@ -174,8 +177,9 @@ fn a_workspace_inside_a_credential_store_is_not_denied_to_itself() {
 #[tokio::test]
 async fn toolchain_grants_only_ever_add_to_the_configured_grants() {
     let tmp = tempfile::tempdir().unwrap();
+    let _port = path_floor_port([], vec![]);
     let config = config_in(tmp.path());
-    let mut sandbox = stdio_sandbox(&config).expect("a sandbox");
+    let mut sandbox = stdio_sandbox(&config).await.expect("a sandbox");
     let before = sandbox.read_only.clone();
     let subscriber = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)

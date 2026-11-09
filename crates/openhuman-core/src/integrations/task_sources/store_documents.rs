@@ -33,12 +33,15 @@ use crate::integrations::composio::contract::NormalizedTask;
 use crate::storage::documents::{compare_and_swap, text, Repo};
 use crate::storage::{DocumentStoreExt, StorageError};
 
+#[cfg(feature = "legacy-import")]
+use super::storage_schema::legacy_collections;
+use super::storage_schema::specs;
 pub(super) use super::storage_schema::{ingested_id, INGESTED, SOURCES};
-use super::storage_schema::{legacy_collections, specs};
 use crate::storage::schema_support::key_of;
 const DOMAIN: &str = "task_sources::store";
 
 /// The legacy `sources.db`, as the storage importer reads it.
+#[cfg(feature = "legacy-import")]
 pub(crate) fn import_source() -> crate::storage::import::Source {
     crate::storage::import::Source {
         domain: "task_sources",
@@ -159,7 +162,7 @@ pub(super) struct Docs(Repo);
 
 impl Docs {
     #[cfg(test)]
-    pub(super) fn over(scoped: &crate::storage::ScopedStorage) -> Self {
+    pub(super) fn over(scoped: &crate::storage::Storage) -> Self {
         Self(Repo::over(scoped, DOMAIN, collections))
     }
 

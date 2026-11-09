@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use tinyagents_harness::media::{GenerateImageTool, GenerateVideoTool, MediaOutput};
 use tinyagents_harness::tinyinference_image::ImageGenerator;
 use tinyagents_harness::tinyinference_video::{VideoGenerator, WaitPolicy};
+use tinyagents_harness_tools::media::MediaJobProgress;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 use super::artifact_tool::MediaArtifactTool;
@@ -104,7 +105,11 @@ fn media_tools_from_with_allowlist(
 ) -> Vec<Box<dyn Tool>> {
     let files = files_dir.into();
     let generators = Arc::new(generators);
-    let output = MediaOutput::new(action_dir).with_reference_policy(reference_policy(
+    let Some(blobs) = crate::storage::sessions::artifact_blobs_for(workspace_dir) else {
+        log::warn!("[media] scoped blob storage unavailable; media tools are not registered");
+        return Vec::new();
+    };
+    let output = MediaOutput::new(action_dir, blobs).with_reference_policy(reference_policy(
         action_dir,
         workspace_dir,
         Arc::clone(&allowed_artifacts),
@@ -132,8 +137,10 @@ fn media_tools_from_with_allowlist(
             .with_per_call_inner({
                 let generators = Arc::clone(&generators);
                 let output = output.clone();
-                move |_observer, chat| {
-                    let routed = generators.routed(chat);
+                move |_observer, context| {
+                    let approval =
+                        crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+                    let routed = generators.routed(approval.chat.as_ref());
                     GenerateImageTool::new(routed.image, output.clone())
                         .with_name(IMAGE_TOOL_NAME)
                         .with_description(IMAGE_DESCRIPTION)
@@ -154,8 +161,22 @@ fn media_tools_from_with_allowlist(
             .with_per_call_inner({
                 let generators = Arc::clone(&generators);
                 let output = output.clone();
-                move |observer, chat| {
-                    let routed = generators.routed(chat);
+                move |progress, context| {
+                    let approval =
+                        crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+                    let routed = generators.routed(approval.chat.as_ref());
+                    let observer = Arc::new(
+                        move |status: &tinyagents_harness::tinyinference_video::VideoJobStatus| {
+                            progress(&MediaJobProgress {
+                                id: status.id.clone(),
+                                state: status.state.to_string(),
+                                outputs: status.outputs,
+                                output_indices: status.output_indices.clone(),
+                                cost_usd: status.cost_usd,
+                                error: status.error.clone(),
+                            });
+                        },
+                    );
                     video_tool(
                         &routed.video,
                         &output,
@@ -200,12 +221,6 @@ pub(crate) fn reference_policy(
         if path.components().any(|c| matches!(c, Component::ParentDir)) {
             return Err(format!(
                 "reference path {} may not contain '..'",
-                path.display()
-            ));
-        }
-        if crate::security::SecurityPolicy::is_always_forbidden(path) {
-            return Err(format!(
-                "reference path {} is in a protected location",
                 path.display()
             ));
         }
@@ -288,7 +303,7 @@ impl Tool for MediaListModelsTool {
                 Err(error) => {
                     return Ok(ToolResult::error(format!(
                         "Listing image models failed: {error}"
-                    )))
+                    )));
                 }
             }
         }
@@ -308,7 +323,7 @@ impl Tool for MediaListModelsTool {
                 Err(error) => {
                     return Ok(ToolResult::error(format!(
                         "Listing video models failed: {error}"
-                    )))
+                    )));
                 }
             }
         }

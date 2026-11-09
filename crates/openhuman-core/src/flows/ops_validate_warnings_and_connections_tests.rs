@@ -419,6 +419,7 @@ async fn flows_list_connections_aggregates_http_creds_and_tolerates_composio() {
     let store = HttpCredentialsStore::from_config(&config);
     store
         .upsert(&HttpCredential::bearer("stripe", "sk_live_seed_secret"))
+        .await
         .unwrap();
 
     let outcome = flows_list_connections(&crate::core::runtime::DispatchCtx::ambient(), &config)

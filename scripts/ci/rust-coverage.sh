@@ -241,7 +241,7 @@ run_integration_target() {
     # as scripts/test-rust-with-mock.sh does.
     suite "${target}" llvm_cov --no-report --no-fail-fast -p openhuman-cli \
       --test "${target}" -- --test-threads=1
-  elif [ "${target}" = "json_rpc_e2e" ]; then
+  elif [[ "${target}" =~ ^json_rpc_.*_e2e$ ]]; then
     # JSON-RPC tests share runtime/config globals and must remain serial.
     suite "${target}" llvm_cov --no-report --no-fail-fast -p openhuman-cli \
       --test "${target}" -- --test-threads=1
@@ -263,7 +263,17 @@ if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
   # process's counters online into a pool of 8 files per instrumented binary as
   # it exits. cargo-llvm-cov reads the pattern from LLVM_PROFILE_FILE_NAME.
   export LLVM_PROFILE_FILE_NAME="${LLVM_PROFILE_FILE_NAME:-openhuman-%8m.profraw}"
+  # The harness retries a failing model call on a 3/6/12/24 s schedule (about
+  # 45 s per turn). Suites that drive an unreachable or erroring upstream sat
+  # through it on a worker slot doing nothing: 9 of the 10 slowest tests in the
+  # warm EX63 run (60-90 s each) were that wait. The same schedule, with the
+  # waits scaled to 100 ms, keeps every retry and every assertion. The
+  # schedule itself is pinned by a unit test that ignores this variable.
+  export OPENHUMAN_MODEL_RETRY_BACKOFF_MS="${OPENHUMAN_MODEL_RETRY_BACKOFF_MS:-100}"
 fi
+# Credential saves ask the user to approve each TinySecurity keyring operation;
+# the test builds answer for them (keyring_consent/test_responder.rs).
+export OPENHUMAN_TEST_KEYRING_CONSENT="${OPENHUMAN_TEST_KEYRING_CONSENT:-approve}"
 
 log "running complete instrumented Rust suite (runner: ${OH_COV_RUNNER:-cargo})"
 llvm_cov clean --workspace
@@ -364,15 +374,20 @@ if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
   suite "openhuman-embed" llvm_cov_embed --no-report --no-fail-fast -p openhuman-embed --all-targets
 fi
 suite "openhuman-rpc" llvm_cov_package --no-report --no-fail-fast -p openhuman-rpc --all-targets \
-  --features storage-sqlite
+  --features storage-sqlite,secret-file
 if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
   suite "openhuman-tinyhumans" llvm_cov_product_facade --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets
 fi
 if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
   # Contributor/default features are distinct from product features. Keep both
   # configurations instrumented rather than dropping the default-only surface.
-  suite "openhuman-embed (default)" llvm_cov_package --no-report --no-fail-fast -p openhuman-embed --all-targets
-  suite "openhuman-tinyhumans (default)" llvm_cov_package --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets
+  # Integration tests use the facade's in-memory session store testkit, and
+  # storage-backed tests need the contributor SQLite driver even though it is
+  # not part of the small default feature set.
+  suite "openhuman-embed (default)" llvm_cov_package --no-report --no-fail-fast -p openhuman-embed --all-targets \
+    --features testkit,storage-sqlite
+  suite "openhuman-tinyhumans (default)" llvm_cov_package --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets \
+    --features storage-sqlite
 fi
 # The terminal frontend builds the core a third time (default features, not the
 # product set). It is on by default and on in the PR lane; OH_COV_TUI=0 is an
@@ -398,7 +413,7 @@ fi
 # parallel lane instead (CI Fast on the EX63) sets OH_COV_DOCTESTS=0.
 if [ "${OH_COV_DOCTESTS:-1}" = "1" ]; then
   suite "openhuman doctests" bash scripts/ci-cancel-aware.sh cargo test -p openhuman \
-    --doc --features "${PRODUCT_FEATURES}"
+    --doc --features "${CORE_PRODUCT_FEATURES}"
 else
   log "skipping doctests (OH_COV_DOCTESTS=${OH_COV_DOCTESTS}); the caller runs them"
 fi

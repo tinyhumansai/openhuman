@@ -1,6 +1,6 @@
 // Regression tests for test enumeration in scripts/test-rust-e2e.sh (#6236).
 //
-// `run_json_rpc_e2e_suite` lists the json_rpc_e2e cases with
+// `run_json_rpc_e2e_suite` lists the namespace target's cases with
 // `cargo test -- --list`, then runs each in a fresh process. The listing used to
 // be read through a process substitution, whose exit status nothing checks:
 // when the target failed to compile, cargo listed nothing, the loop ran zero
@@ -135,6 +135,7 @@ function runSuite({ listStdout, listStatus, failTest = "", includeExtraArgs = tr
     'SCRIPT_DIR="$STUB_DIR"',
     'CARGO_BIN="$STUB_DIR/cargo"',
     'PRODUCT_FEATURES="voice"',
+    'suite="json_rpc_threads_e2e"',
     // Non-empty on purpose: it proves EXTRA_ARGS still reaches every case, and
     // bash before 4.4 (macOS /bin/bash is 3.2) treats an empty "${a[@]}" as
     // unbound under `set -u`, which would fail these tests locally for a
@@ -187,7 +188,7 @@ function runSuite({ listStdout, listStatus, failTest = "", includeExtraArgs = tr
 }
 
 const runOf = (name, includeExtraArgs = true) =>
-  `test --manifest-path Cargo.toml --features voice --test json_rpc_e2e ${name} -- --exact --test-threads=1${includeExtraArgs ? " --nocapture" : ""}`;
+  `test --manifest-path Cargo.toml --features voice --test json_rpc_threads_e2e ${name} -- --exact --test-threads=1${includeExtraArgs ? " --nocapture" : ""}`;
 
 test("a listing that fails before printing any name fails the suite", () => {
   // The case from #6236: the target does not compile, so there is nothing to
@@ -200,7 +201,7 @@ test("a listing that fails before printing any name fails the suite", () => {
     `an enumeration failure must fail the suite:\n${res.output}`,
   );
   assert.doesNotMatch(res.output, /SUITE-REPORTED-SUCCESS/);
-  assert.match(res.output, /could not enumerate json_rpc_e2e tests/);
+  assert.match(res.output, /could not enumerate json_rpc_threads_e2e/);
   assert.deepEqual(res.runs, []);
 });
 

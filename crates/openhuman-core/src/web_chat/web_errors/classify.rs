@@ -33,7 +33,8 @@ pub(crate) struct ClassifiedError {
     /// `session_expired`, `budget_exhausted`, `provider_error`,
     /// `context_overflow`, `model_unavailable`, `payload_too_large`,
     /// `provider_request_rejected`, `capability_unsupported`,
-    /// `chat_template_rejected`, `empty_response`, `network`, `inference`.
+    /// `chat_template_rejected`, `empty_response`, `disk_full`,
+    /// `prompt_screened`, `network`, `inference`.
     pub(crate) error_type: &'static str,
     /// User-facing copy (already includes provider detail block and the
     /// retry-after countdown sentence when available).
@@ -45,6 +46,9 @@ pub(crate) struct ClassifiedError {
     /// - `"openhuman_billing"` — OpenHuman credit/quota exhaustion
     /// - `"transport"`        — network / DNS / TLS / timeout
     /// - `"config"`           — auth, model, context, generic
+    /// - `"local_storage"`    — the user's own disk is full (#8508)
+    /// - `"security"`         — OpenHuman's prompt-injection screen held the
+    ///   turn before the model was called (`prompt_screened`)
     pub(crate) source: &'static str,
     /// Can the user retry the same prompt in the same thread? `false` for
     /// non-retryable business 429s, auth failures, model_unavailable,
@@ -57,7 +61,7 @@ pub(crate) struct ClassifiedError {
     pub(crate) retry_after_ms: Option<u64>,
     /// Provider name extracted from the leading
     /// `"<provider> API error (...)"` envelope emitted by
-    /// `inference::provider::ops::api_error`. `None` for non-provider
+    /// `inference::provider::http_error::api_error`. `None` for non-provider
     /// errors (OpenHuman budget cap, agent loop) and for transport
     /// failures that don't carry an identifiable provider prefix.
     pub(crate) provider: Option<String>,
@@ -160,7 +164,7 @@ pub(super) fn classified_plain(
 fn only_local_session_refused(err: &str) -> bool {
     const AGGREGATE: &str = "All providers/models failed";
     let sentinel =
-        crate::security::credentials::session_support::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE;
+        crate::credentials::backend_credential::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE;
     if !err.contains(sentinel) {
         return false;
     }
@@ -173,6 +177,17 @@ fn only_local_session_refused(err: &str) -> bool {
             .filter(|attempt| !attempt.is_empty())
             .all(|attempt| attempt.contains(sentinel)),
     }
+}
+
+/// Whether `lower` is one of the host's prompt-screen refusals: the session
+/// guard's (`session_host/runtime/run_loop.rs`) or the hosted gate's
+/// (`agent/tinyagents/host/security_gate_impl.rs`). The caller only asks for
+/// an error that names no provider: a provider's own error body may carry the
+/// same words, and is the provider's refusal, not the screen's.
+fn is_prompt_screen_refusal(lower: &str) -> bool {
+    lower.contains("prompt flagged for security review")
+        || lower.contains("prompt blocked by security policy")
+        || lower.contains("rejected by the prompt-injection screen")
 }
 
 pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
@@ -209,7 +224,13 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
     // "iteration", so they MUST be checked before the generic provider-429
     // branch — otherwise users see a confusing "your AI provider is
     // rate-limiting you" message for limits OpenHuman itself enforced (#2364).
-    let classified = if only_local_session_refused(err) {
+    let classified = if provider.is_none() && is_prompt_screen_refusal(&lower) {
+        // The turn never reached the model: the prompt-injection screen held
+        // the message or a tool output. Saying "something went wrong" with
+        // the provider as the source sent users to their model settings.
+        log::debug!("[chat-error][classify] error_type=prompt_screened source=security");
+        classified_plain(C::PromptScreened, None, None)
+    } else if only_local_session_refused(err) {
         // #6932: `resolve_bearer` refuses the offline local session before the
         // request, so the backend `401 "Invalid token"` that
         // `is_session_expired_message` claims — and that told a locally
@@ -228,6 +249,18 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
             provider,
             fallback_available,
         )
+    } else if provider.is_none() && crate::core::observability::is_disk_full_error(err) {
+        // #8508 / TAURI-RUST-15PJ: the host disk is full, so the turn's
+        // transcript append (or another local write) failed — typically
+        // `transcript persistence failed: … (os error 112)`. Nothing the
+        // provider, the model, or a retry-now can fix: tell the user to free
+        // space. Retryable, because the same message succeeds once space is
+        // back. Gated on `provider.is_none()` so a provider envelope that
+        // merely quotes ENOSPC (a remote server's full disk) keeps its
+        // provider copy instead of blaming the user's machine. Placed high
+        // because the localized OS text can contain words the broad
+        // substring arms below would misread.
+        classified_plain(C::DiskFull, None, None)
     } else if is_codex_token_expired_text(&err.to_ascii_lowercase()) {
         // Codex OAuth refresh failed (#5869): the user must reconnect Codex in
         // Settings → Integrations, NOT sign into OpenHuman. Checked before

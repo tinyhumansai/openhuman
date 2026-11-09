@@ -90,5 +90,7 @@ fn a_malformed_grant_is_dropped() {
 
 #[test]
 fn the_schema_composes_under_its_owner() {
-    tinystoragedrivers::schema::Registry::compose([storage_schema()]).unwrap();
+    for spec in collection_specs() {
+        spec.validate().unwrap();
+    }
 }

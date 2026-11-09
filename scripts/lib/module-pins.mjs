@@ -5,6 +5,9 @@
 // See scripts/ci/check-module-pins.mjs for what the gate is for.
 
 import { posix } from "node:path";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { repositoryGitEnv } from "./git-env.mjs";
 
 /**
  * Read a Rust module and the source fragments it brings in with `include!`.
@@ -47,14 +50,16 @@ export function parseAllList(src) {
     /pub const ALL: &\[ModuleRecord\] = &\[([\s\S]*?)\];/,
   );
   if (!block) throw new Error("registry.rs: could not find `pub const ALL`");
-  return block[1]
-    .replace(/\/\/[^\n]*/g, "")
-    // `#[cfg(feature = "…")]` on an element: the record is still in `ALL` for
-    // the builds that carry its optional contract crate, so it is still pinned.
-    .replace(/#\[[^\]]*\]/g, "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  return (
+    block[1]
+      .replace(/\/\/[^\n]*/g, "")
+      // `#[cfg(feature = "…")]` on an element: the record is still in `ALL` for
+      // the builds that carry its optional contract crate, so it is still pinned.
+      .replace(/#\[[^\]]*\]/g, "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+  );
 }
 
 /** Every `const NAME: ModuleRecord = ModuleRecord { … };`, keyed by NAME. */
@@ -70,7 +75,7 @@ export function parseRecords(src) {
     };
     const assets = [];
     const assetRe =
-      /PlatformAsset \{\s*host_key: "([^"]+)",\s*archive: "([^"]+)",\s*sha256: "([^"]+)",\s*\}/g;
+      /PlatformAsset \{\s*host_key: "([^"]+)",\s*archive: "([^"]+)",\s*sha256: "([^"]+)",\s*(?:library_sha256: (?:None|Some\("[^"]+"\)),\s*)?\}/g;
     for (const a of body.matchAll(assetRe)) {
       assets.push({ hostKey: a[1], archive: a[2], sha256: a[3] });
     }
@@ -93,11 +98,17 @@ export function parseRecords(src) {
  * `actual` is `git describe --tags` output for the submodule; `exemption` is the
  * matching entry from module-pin-exemptions.json, or undefined.
  *
- * Four outcomes, and three of them are failures — including "exempt but the
- * pins now agree". A stale exemption is not harmless: it is a standing licence
- * for the next real drift on that record to pass unnoticed.
+ * A declared exemption accepts one exact drift only. A stale exemption is not
+ * harmless: it is a standing licence for the next real drift to pass unnoticed.
  */
-export function classifyPin({ id, version, submodulePath, actual, exemption }) {
+export function classifyPin({
+  id,
+  version,
+  submodulePath,
+  actual,
+  exemption,
+  sourceParityContext,
+}) {
   const wanted = `v${version}`;
   if (actual === wanted) {
     if (exemption) {
@@ -143,7 +154,27 @@ export function classifyPin({ id, version, submodulePath, actual, exemption }) {
           `    intended, update \`expect\` and the reason in module-pin-exemptions.json.`,
       };
     }
-    return { ok: true, kind: "exempt", reason: exemption.reason };
+    const hasSourceParity = Object.hasOwn(exemption, "sourceParity");
+    if (hasSourceParity) {
+      const proof = validateTestOnlySourceParity({
+        ...sourceParityContext,
+        version,
+        proof: exemption.sourceParity,
+      });
+      if (!proof.ok) {
+        return {
+          ok: false,
+          kind: "invalid-source-parity",
+          message: `"${id}" source-parity exemption is invalid: ${proof.message}`,
+        };
+      }
+    }
+    return {
+      ok: true,
+      kind: "exempt",
+      reason: exemption.reason,
+      sourceParity: hasSourceParity,
+    };
   }
   return {
     ok: false,
@@ -157,6 +188,301 @@ export function classifyPin({ id, version, submodulePath, actual, exemption }) {
       `    re-pin to a release that already exists), or — if the two are meant to differ —\n` +
       `    declare it in scripts/ci/module-pin-exemptions.json with a reason.`,
   };
+}
+
+/**
+ * Verify one reviewed, exact source-parity attestation for a test-only commit.
+ * The proof names either one test file (the original format) or an explicit
+ * set of test files. It does not infer Rust test-only semantics for arbitrary
+ * diffs. The asset digest covers the registry version plus assets sorted by
+ * host key; the source digest covers sorted `mode type oid<TAB>path<LF>` entries
+ * other than the named test file(s).
+ */
+export function validateTestOnlySourceParity({
+  repoPath,
+  version,
+  assets,
+  actualHead,
+  proof,
+  runGit = (args) =>
+    execFileSync("git", args, {
+      cwd: repoPath,
+      env: repositoryGitEnv(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim(),
+}) {
+  try {
+    if (typeof repoPath !== "string" || repoPath.length === 0) {
+      throw new Error("submodule repository path is missing");
+    }
+    const commonFields = [
+      "tag",
+      "releaseCommit",
+      "candidateCommit",
+      "assetsSha256",
+      "unchangedTreeSha256",
+    ];
+    const singleFileProof =
+      proof &&
+      Object.hasOwn(proof, "testFile") &&
+      !Object.hasOwn(proof, "testFiles");
+    const fileSetProof =
+      proof &&
+      Object.hasOwn(proof, "testFiles") &&
+      !Object.hasOwn(proof, "testFile");
+    const expectedFields = singleFileProof
+      ? [...commonFields, "testFile", "binding"]
+      : fileSetProof
+        ? [...commonFields, "testFiles", "bindings"]
+        : [];
+    if (
+      !proof ||
+      Object.keys(proof).sort().join(",") !== expectedFields.sort().join(",")
+    ) {
+      throw new Error("proof fields are missing or unknown");
+    }
+    if (!/^v\d+\.\d+\.\d+$/.test(proof.tag) || proof.tag !== `v${version}`) {
+      throw new Error("release tag does not match the registry version");
+    }
+    for (const [name, sha] of [
+      ["releaseCommit", proof.releaseCommit],
+      ["candidateCommit", proof.candidateCommit],
+    ]) {
+      if (!/^[0-9a-f]{40}$/.test(sha)) {
+        throw new Error(`${name} must be a full commit SHA`);
+      }
+    }
+    if (actualHead !== proof.candidateCommit) {
+      throw new Error("HEAD is not the exact attested candidate commit");
+    }
+    if (runGit(["rev-parse", "HEAD"]) !== proof.candidateCommit) {
+      throw new Error("checked-out HEAD differs from attested candidate");
+    }
+    if (
+      runGit([
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--ignore-submodules=none",
+      ])
+    ) {
+      throw new Error("module worktree is dirty");
+    }
+    if (
+      runGit(["rev-parse", `refs/tags/${proof.tag}^{commit}`]) !==
+      proof.releaseCommit
+    ) {
+      throw new Error(
+        "release tag does not resolve to the attested release commit",
+      );
+    }
+    runGit([
+      "merge-base",
+      "--is-ancestor",
+      proof.releaseCommit,
+      proof.candidateCommit,
+    ]);
+
+    const assetPayload = JSON.stringify({
+      version,
+      assets: [...assets]
+        .map(({ hostKey, archive, sha256 }) => ({ hostKey, archive, sha256 }))
+        .sort((a, b) => a.hostKey.localeCompare(b.hostKey)),
+    });
+    if (sha256(assetPayload) !== proof.assetsSha256) {
+      throw new Error("registry version or artifact asset map changed");
+    }
+    if (!/^[0-9a-f]{64}$/.test(proof.assetsSha256)) {
+      throw new Error("asset-map digest is malformed");
+    }
+    if (!/^[0-9a-f]{64}$/.test(proof.unchangedTreeSha256)) {
+      throw new Error("unchanged-tree digest is malformed");
+    }
+
+    const validRepoPath = (value) =>
+      typeof value === "string" &&
+      /^[A-Za-z0-9_./-]+$/.test(value) &&
+      !posix.isAbsolute(value) &&
+      !value.split("/").includes("..");
+    const files = singleFileProof ? [proof.testFile] : proof.testFiles;
+    const bindings = singleFileProof ? [proof.binding] : proof.bindings;
+    if (
+      !Array.isArray(files) ||
+      files.length === 0 ||
+      !Array.isArray(bindings) ||
+      bindings.length !== files.length
+    ) {
+      throw new Error(
+        "test-file set and module bindings must be non-empty and have equal length",
+      );
+    }
+    const filePaths = new Set();
+    const bindingsByPath = new Map();
+    for (const file of files) {
+      if (
+        !file ||
+        Object.keys(file).sort().join(",") !==
+          "candidateBlob,candidateMode,path,releaseBlob,releaseMode"
+      ) {
+        throw new Error("test-file proof fields are missing or unknown");
+      }
+      if (
+        !validRepoPath(file.path) ||
+        !file.path.endsWith(".rs") ||
+        filePaths.has(file.path)
+      ) {
+        throw new Error(
+          "test-file paths must be unique safe Rust source paths",
+        );
+      }
+      filePaths.add(file.path);
+      const newTestFile =
+        fileSetProof && file.releaseMode === null && file.releaseBlob === null;
+      if (
+        (!newTestFile && file.releaseMode !== "100644") ||
+        file.candidateMode !== "100644"
+      ) {
+        throw new Error(
+          "attested test file must remain a regular non-executable file",
+        );
+      }
+      if (
+        !/^[0-9a-f]{40}$/.test(file.candidateBlob) ||
+        (!newTestFile &&
+          (!/^[0-9a-f]{40}$/.test(file.releaseBlob) ||
+            file.releaseBlob === file.candidateBlob))
+      ) {
+        throw new Error("test-file blob pair is malformed or unchanged");
+      }
+    }
+    for (const binding of bindings) {
+      if (
+        !binding ||
+        Object.keys(binding).sort().join(",") !==
+          "moduleBlob,modulePath,testPath" ||
+        !validRepoPath(binding.modulePath) ||
+        !validRepoPath(binding.testPath) ||
+        !/^[0-9a-f]{40}$/.test(binding.moduleBlob) ||
+        !filePaths.has(binding.testPath) ||
+        posix.dirname(binding.testPath) !== posix.dirname(binding.modulePath) ||
+        bindingsByPath.has(binding.testPath)
+      ) {
+        throw new Error(
+          "test path is not a safe sibling of an exact module binding",
+        );
+      }
+      bindingsByPath.set(binding.testPath, binding);
+    }
+    if (bindingsByPath.size !== filePaths.size) {
+      throw new Error(
+        "every changed test file must have exactly one module binding",
+      );
+    }
+    const entries = (ref) =>
+      runGit(["ls-tree", "-r", "--full-tree", "-z", ref])
+        .split("\0")
+        .filter(Boolean)
+        .map((entry) => {
+          const match = entry.match(
+            /^([0-7]{6}) (blob|commit) ([0-9a-f]{40})\t([\s\S]+)$/,
+          );
+          if (!match) throw new Error(`unsupported tree entry in ${ref}`);
+          if (!/^[\x20-\x7e]+$/.test(match[4])) {
+            throw new Error(`unsupported non-printable Git path in ${ref}`);
+          }
+          return {
+            mode: match[1],
+            type: match[2],
+            oid: match[3],
+            path: match[4],
+          };
+        });
+    const releaseEntries = entries(proof.releaseCommit);
+    const candidateEntries = entries(proof.candidateCommit);
+    for (const file of files) {
+      const releaseFile = releaseEntries.find(
+        (item) => item.path === file.path,
+      );
+      const candidateFile = candidateEntries.find(
+        (item) => item.path === file.path,
+      );
+      const newTestFile =
+        fileSetProof && file.releaseMode === null && file.releaseBlob === null;
+      if (
+        (newTestFile
+          ? releaseFile !== undefined
+          : !releaseFile ||
+            releaseFile.mode !== file.releaseMode ||
+            releaseFile.type !== "blob" ||
+            releaseFile.oid !== file.releaseBlob) ||
+        !candidateFile ||
+        candidateFile.mode !== file.candidateMode ||
+        candidateFile.type !== "blob" ||
+        candidateFile.oid !== file.candidateBlob
+      ) {
+        throw new Error(
+          singleFileProof
+            ? "attested test file path, mode, or blob does not match the Git trees"
+            : `attested test file ${file.path} path, mode, or blob does not match the Git trees`,
+        );
+      }
+    }
+    const attestedPaths = new Set(files.map(({ path }) => path));
+    const treeHash = (items) =>
+      sha256(
+        items
+          .filter((item) => !attestedPaths.has(item.path))
+          .map(
+            ({ mode, type, oid, path }) => `${mode} ${type} ${oid}\t${path}\n`,
+          )
+          .sort()
+          .join(""),
+      );
+    const releaseTreeHash = treeHash(releaseEntries);
+    const candidateTreeHash = treeHash(candidateEntries);
+    if (
+      releaseTreeHash !== proof.unchangedTreeSha256 ||
+      candidateTreeHash !== proof.unchangedTreeSha256
+    ) {
+      throw new Error(
+        "other source, manifest, lock, build input, or gitlink differs from the release tree",
+      );
+    }
+
+    for (const binding of bindings) {
+      const moduleEntry = candidateEntries.find(
+        (item) => item.path === binding.modulePath,
+      );
+      if (
+        !moduleEntry ||
+        moduleEntry.type !== "blob" ||
+        moduleEntry.mode !== "100644" ||
+        moduleEntry.oid !== binding.moduleBlob
+      ) {
+        throw new Error(
+          "test module declaration source differs from the attested blob",
+        );
+      }
+      const moduleSource = runGit([
+        "show",
+        `${proof.candidateCommit}:${binding.modulePath}`,
+      ]);
+      const declaration = `#[cfg(test)]\n#[path = "${binding.testPath.split("/").at(-1)}"]\nmod tests;`;
+      if (!moduleSource.includes(declaration)) {
+        throw new Error(
+          `the exact cfg(test) sibling module binding for ${binding.testPath} is absent`,
+        );
+      }
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: error.message };
+  }
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 /**

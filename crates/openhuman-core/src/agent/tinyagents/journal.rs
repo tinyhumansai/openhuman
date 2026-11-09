@@ -108,7 +108,8 @@ async fn journal_stores(
 ) -> anyhow::Result<(Arc<dyn AppendStore>, DriverStatusStore)> {
     let workspace = resolve_workspace(ctx).await?;
     let stores = crate::storage::sessions::stores_or_ephemeral(&workspace);
-    let status = crate::storage::sessions::status_store_for(&workspace);
+    let status = crate::storage::sessions::status_store_for(&workspace)
+        .ok_or_else(|| anyhow::anyhow!("run-status storage is unavailable for this scope"))?;
     Ok((stores.journal, status))
 }
 

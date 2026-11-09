@@ -574,6 +574,8 @@ const messages: TranslationMap = {
   'desktop.pendingUnavailable':
     '대기 중인 데스크톱 승인을 불러올 수 없습니다. 새로고침 후 다시 시도하세요.',
   'desktop.unsupported': '이 실행 환경에서는 데스크톱 제어를 사용할 수 없습니다.',
+  'desktop.unsupportedWindows':
+    'Windows에서는 아직 데스크톱 제어를 사용할 수 없습니다. 브라우저 제어는 현재 Windows에서 사용할 수 있습니다.',
   'desktop.localOnly': '이 설정은 이 컴퓨터에만 적용됩니다.',
   'desktop.permissions': '시스템 권한',
   'desktop.openSettings': '설정 열기',
@@ -593,6 +595,10 @@ const messages: TranslationMap = {
     '지금은 메모리에 연결할 수 없습니다. 저장된 내용은 사라지지 않았습니다. 잠시 후 다시 시도하세요.',
   'memory.outOfCredits.title': '크레딧 소진',
   'memory.outOfCredits.action': '충전하기',
+  'memory.error.planRequired':
+    '현재 요금제에는 메모리가 포함되어 있지 않아 OpenHuman이 학습한 내용을 저장하거나 찾아볼 수 없습니다. 메모리를 켜려면 요금제를 업그레이드하거나, 설정에서 다른 메모리 옵션으로 전환하세요.',
+  'memory.planRequired.title': '메모리는 현재 요금제에 포함되어 있지 않습니다',
+  'memory.planRequired.action': '요금제 보기',
   'alerts.title': '알림',
   'alerts.empty': '아직 알림이 없습니다',
   'alerts.markAllRead': '모두 읽음으로 표시',
@@ -654,6 +660,15 @@ const messages: TranslationMap = {
   'invites.title': '초대',
   'invites.noInvites': '대기 중인 초대가 없습니다',
   'devOptions.titleDiagnostics': '개발자 및 진단',
+  'devOptions.doctor.run': '진단 실행',
+  'devOptions.doctor.runLive': '라이브 검사 실행',
+  'devOptions.doctor.liveWarning':
+    '라이브 검사는 모델 또는 임베딩 호출에 토큰을 사용할 수 있습니다. 계속할까요?',
+  'devOptions.doctor.severity.pass': '통과',
+  'devOptions.doctor.severity.info': '정보',
+  'devOptions.doctor.severity.warn': '경고',
+  'devOptions.doctor.severity.error': '오류',
+  'devOptions.doctor.severity.skipped': '건너뜀',
   'devOptions.diagnostics': '진단',
   'devOptions.toolPolicyDiagnosticsDesc': '도구 인벤토리, 정책 상태, MCP 허용 목록 및 최근 차단',
   'devOptions.toolPolicyDiagnostics.loading': '로딩 중…',
@@ -1278,6 +1293,8 @@ const messages: TranslationMap = {
   'chat.failedToLoadMessages': '메시지를 불러오지 못했습니다',
   'chat.thinkingDots': '생각 중...',
   'chat.status.thinkingElapsed': '생각 중 · {elapsed}',
+  'chat.status.compacting': '이전 대화를 요약하는 중…',
+  'chat.status.compactingElapsed': '이전 대화를 요약하는 중 · {elapsed}',
   'chat.status.waitingApproval': '승인을 기다리는 중',
   'chat.status.waitingReview': '검토를 기다리는 중',
   'chat.status.waitingAnswer': '답변을 기다리는 중',
@@ -1613,6 +1630,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': '캔버스에서 열기',
   'chat.flowProposal.dismiss': '닫기',
   'chat.flowProposal.error': '워크플로를 저장할 수 없습니다. 다시 시도하세요.',
+  'chat.flowProposal.versionConflict':
+    '제안이 만들어진 후 이 워크플로가 변경되어 덮어쓰지 않았습니다. 새 수정안을 요청하세요.',
   'chat.flowProposal.enableError':
     '워크플로는 저장되었지만 활성화할 수 없습니다. 다시 시도하거나 Workflows 페이지에서 활성화하세요.',
   'chat.flowProposal.savedConfirmation': '저장됨',
@@ -1804,11 +1823,6 @@ const messages: TranslationMap = {
   'chat.todos.ofTotal': '{total}개 중 {done}개',
   'chat.todos.receipt': '진행 상황 업데이트 · {done}/{total}',
   'chat.subagents.ranFor': '{duration} 동안 실행됨',
-  'chat.subagents.ofTotal': '{total}개 중 {complete}개',
-  'chat.subagents.runningCount': '{count}개 실행 중',
-  'chat.subagents.failedCount': '{count}개 실패',
-  'chat.subagents.incompleteCount': '{count}개 미완료',
-  'chat.subagents.settled': '하위 작업이 끝났습니다. 결과를 처리하는 중입니다.',
   'conversations.planReview.title': '계획 검토',
   'conversations.planReview.subtitle':
     '실행하려면 승인하고, 버리려면 거부하거나, 수정하려면 의견을 보내세요.',
@@ -1844,7 +1858,6 @@ const messages: TranslationMap = {
   'conversations.mcpUi.confirmAllow': '허용',
   'conversations.mcpUi.confirmDeny': '거부',
   'conversations.tools.delegatedTo': '{agent}에게 위임함',
-  'conversations.tools.parallelAgentsAggregating': '결과 집계 중',
   'conversations.tools.openInBrowser': '브라우저에서 열기',
   'conversations.tools.status.running': '실행 중',
   'conversations.tools.status.done': '완료',
@@ -1912,22 +1925,6 @@ const messages: TranslationMap = {
     '다시 시도에 실패했습니다. 최신 앱 빌드를 다운로드하고 다시 시도하세요.',
   'daemon.serviceBlockingGate.retrying': '다시 시도 중...',
   'daemon.serviceBlockingGate.title': 'OpenHuman 코어를 사용할 수 없습니다',
-  'worktree.label': '워크트리',
-  'worktree.dirty': '커밋되지 않은 변경 사항',
-  'worktree.clean': '깨끗함',
-  'worktree.removing': '제거 중…',
-  'worktree.removeFailed': '워크트리 제거 실패',
-  'worktree.diffFailed': 'diff 불러오기 실패',
-  'worktree.diffLoading': 'diff 불러오는 중…',
-  'worktree.diffEmpty': 'HEAD 대비 변경 사항이 없습니다.',
-  'worktree.dirtyConfirm':
-    '이 워크트리에는 커밋되지 않은 변경 사항이 있습니다. 제거하면 해당 작업이 삭제됩니다. 워커 브랜치는 유지됩니다.',
-  'worktree.action.open': '폴더 열기',
-  'worktree.action.diff': '차이점',
-  'worktree.action.hideDiff': 'diff 숨기기',
-  'worktree.action.remove': '제거',
-  'worktree.action.removeAnyway': '버리고 제거',
-  'worktree.action.preserve': '보존',
   'notifications.card.dismiss': '알림 닫기',
   'notifications.card.importanceTitle': '중요도: {pct}%',
   'notifications.center.empty': '아직 알림이 없습니다',
@@ -3426,6 +3423,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': '모델 불러오는 중…',
   'composer.voiceMode': '음성 모드',
   'composer.humanMode': '휴먼 모드',
+  'voiceNote.record': '음성 메모 녹음',
+  'voiceNote.stop': '녹음 중지',
+  'voiceNote.discard': '음성 메모 삭제',
+  'voiceNote.send': '음성 메모 보내기',
+  'voiceNote.recording': '녹음 중…',
+  'voiceNote.play': '음성 메모 재생',
+  'voiceNote.pause': '음성 메모 일시정지',
+  'voiceNote.seek': '음성 메모 탐색',
+  'voiceNote.transcript': '텍스트 변환본',
+  'voiceNote.noTranscript': '사용 가능한 텍스트 변환본이 없습니다',
+  'voiceNote.label': '음성 메모 {duration}',
+  'voiceNote.micDenied': '마이크 접근이 거부되었거나 사용할 수 없습니다.',
+  'voiceNote.transcribeFailed': '음성 메모를 텍스트로 변환하지 못했습니다.',
+  'voiceNote.loadFailed': '이 음성 메모를 불러오지 못했습니다.',
+  'voiceNote.sendFailed': '음성 메모를 보내지 못했습니다.',
 
   // Sync budget dialog
 
@@ -3811,6 +3823,10 @@ const messages: TranslationMap = {
     '에이전트가 한 턴에서 허용된 최대 도구 단계 수를 실행했지만 끝내지 못했습니다. 보통 도구가 계속 실패했다는 뜻입니다(웹 가져오기의 요청 한도인 경우가 많습니다). 한도가 풀리면 이 스레드에서 같은 질문을 다시 시도할 수 있습니다.',
   'chat_error.turn_timeout':
     '이 턴이 제한 시간을 넘겨 끝나지 않아 멈춰 있지 않도록 중단되었습니다. 보통 도구 호출이나 위임된 하위 에이전트가 멈췄다는 뜻입니다. 이 스레드에서 질문을 다시 시도할 수 있습니다.',
+  'chat_error.disk_full':
+    '디스크가 가득 차서 이 대화를 저장하지 못했습니다. 디스크 공간을 확보한 뒤 이 스레드에서 메시지를 다시 보내 주세요.',
+  'chat_error.prompt_screened':
+    'OpenHuman의 보안 검사가 이 메시지를 보류했기 때문에 모델로 전송되지 않았습니다. 어시스턴트를 대상으로 한 지시문(예: 웹 페이지나 이메일에서 인용한 내용)이 포함되어 있다면 이를 삭제하고 다시 시도하세요. 일반 메시지도 보류된다면 보안 모듈을 사용할 수 없는 상태일 수 있습니다. OpenHuman을 다시 시작한 후 다시 시도하세요.',
   'chat_error.empty_response':
     '모델이 빈 응답을 반환했습니다. 다시 시도해 주세요. 계속되면 다른 모델을 사용하거나 연결 → API 키 → LLM에서 설정을 확인해 주세요.',
   'chat_error.chat_template_rejected':
@@ -4290,6 +4306,10 @@ const messages: TranslationMap = {
     '마이크 접근이 거부되었습니다. 시스템 설정에서 허용한 뒤 다시 시도하세요.',
   'voice.live.error.micUnavailable': '사용 가능한 마이크가 없습니다.',
   'voice.live.error.connection': '음성 에이전트에 연결할 수 없습니다.',
+  'voice.live.error.insufficientCredits':
+    '실시간 음성에 크레딧이 더 필요합니다. 계속하려면 크레딧을 추가하세요.',
+  'voice.live.error.paidPlanRequired':
+    '실시간 음성은 유료 플랜이 필요합니다. 계속하려면 업그레이드하세요.',
   'voice.live.toolRunning': '{name} 실행 중',
   'voice.live.toolOk': '{name} 완료',
   'voice.live.toolFailed': '{name} 실패',
@@ -4541,11 +4561,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'Namespaced 프로세스 감옥',
   'settings.sandbox.backendHint.bubblewrap': '경량 사용자 네임스페이스',
   'settings.sandbox.backendHint.none': '직접 도구를 실행, unisolated',
-  'devOptions.toolPolicyDiagnostics.inventory.title': '도구 목록',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': '전체 도구',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': '사용 설정된 도구',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP stdio 도구',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC 도구',
   'devOptions.toolPolicyDiagnostics.posture.title': '정책 상태',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': '자율성 수준',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': '작업 공간에서만',
@@ -4760,8 +4775,6 @@ const messages: TranslationMap = {
   'conversations.tools.updateLearnings.done': '배운 내용 업데이트함',
   'conversations.tools.delegateTask.active': '작업 위임 중',
   'conversations.tools.delegateTask.done': '작업 위임함',
-  'conversations.tools.runAgentsInParallel.active': '에이전트 병렬 실행 중',
-  'conversations.tools.runAgentsInParallel.done': '에이전트 병렬 실행함',
   'conversations.tools.messageAgent.active': '에이전트에게 메시지 보내는 중',
   'conversations.tools.messageAgent.done': '에이전트에게 메시지 보냄',
   'conversations.tools.waitForAgent.active': '에이전트 기다리는 중',
@@ -4798,6 +4811,8 @@ const messages: TranslationMap = {
   'conversations.tools.checkGoal.done': '목표 확인함',
   'conversations.tools.completeGoal.active': '목표 완료 처리 중',
   'conversations.tools.completeGoal.done': '목표 완료함',
+  'conversations.tools.resumeGoal.active': '목표 재개 중',
+  'conversations.tools.resumeGoal.done': '목표 재개함',
   'conversations.tools.scheduleTask.active': '작업 예약 중',
   'conversations.tools.scheduleTask.done': '작업 예약함',
   'conversations.tools.checkSchedules.active': '일정 확인 중',
@@ -5030,6 +5045,53 @@ const messages: TranslationMap = {
 
   'settings.layout.contrast.subtle': '은은하게',
   'settings.layout.contrast.default': '기본값',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': '이 코어에는 정책 진단이 포함되어 있지 않습니다.',
+  'devOptions.toolPolicyDiagnostics.policy.title': '활성 보안 정책',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': '자율성',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': '작업 공간만',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': '시간당 최대 작업 수',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': '중간 위험 작업에 승인 필요',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': '고위험 명령 차단',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': '허용된 명령',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': '명시적으로 허용된 명령이 없습니다.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': '정책',
+  'settings.approvalHistory.judgeScores':
+    '의도 {intent} · 되돌릴 수 있음 {reversible} · 정보 유출 {exfiltrate}',
+  'settings.approvalHistory.judgeCached': '캐시됨',
+  'settings.approvalHistory.judgeExpires': '{time} 만료',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': '항상 허용된 도구',
+  'keyring.settings.toolTrustDescription':
+    '이 보안 범위에서 이 도구들은 승인 요청 없이 실행할 수 있습니다.',
+  'keyring.settings.toolTrustLoading': '허용된 도구를 불러오는 중…',
+  'keyring.settings.toolTrustLoadFailed': '허용된 도구를 불러오지 못했습니다.',
+  'keyring.settings.toolTrustRevokeFailed': '이 도구 권한을 취소하지 못했습니다.',
+  'keyring.settings.toolTrustEmpty': '항상 허용된 도구가 없습니다.',
+  'keyring.settings.toolTrustRetry': '다시 시도',
+  'keyring.settings.toolTrustRevoke': '취소',
+  'keyring.settings.toolTrustRevoking': '취소 중…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': '키링 액세스 요청',
+  'keyring.operation.description':
+    'TinySecurity가 키링 항목 하나에 대한 액세스를 요청합니다. 결정하기 전에 작업을 확인하세요.',
+  'keyring.operation.access': '액세스',
+  'keyring.operation.requester': '요청자',
+  'keyring.operation.origin': '출처',
+  'keyring.operation.purpose': '목적',
+  'keyring.operation.name': '키링 항목',
+  'keyring.operation.access.read': '읽기',
+  'keyring.operation.access.write': '쓰기',
+  'keyring.operation.access.delete': '삭제',
+  'keyring.operation.allow': '한 번 허용',
+  'keyring.operation.deny': '거부',
+  'keyring.operation.submitting': '전송 중…',
+  'keyring.operation.expires': '요청이 {seconds}초 후 만료됩니다.',
+  'keyring.operation.error': '결정을 보내지 못했습니다. 요청이 만료되었을 수 있습니다.',
 };
 
 export default messages;

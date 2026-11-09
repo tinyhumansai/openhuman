@@ -5,71 +5,147 @@ fn expected_cron_add() -> serde_json::Value {
     json!({
         "type": "object",
         "properties": {
-            "name": { "type": "string", "description": "Short human-readable name for the job (e.g. 'drink_water_reminder'). Always provide a name." },
+            "name": {
+                "type": "string",
+                "description": "Short job name, e.g. 'drink_water'."
+            },
             "schedule": {
-                "description": "Schedule: cron expression, one-shot at time, or fixed interval.",
                 "oneOf": [
                     {
                         "type": "object",
-                        "description": "Repeating cron schedule. 'tz' is an IANA timezone (e.g. 'America/Los_Angeles'); defaults to device-local timezone.",
+                        "description": "Runs once.",
                         "properties": {
-                            "kind": { "type": "string", "const": "cron" },
-                            "expr": { "type": "string", "description": "Cron expression (5, 6, or 7 fields). For agent jobs, consecutive runs must be at least 5 minutes apart." },
-                            "tz": { "type": "string", "description": "Optional IANA timezone name" },
+                            "kind": {
+                                "type": "string",
+                                "const": "at"
+                            },
+                            "at": {
+                                "type": "string",
+                                "description": "RFC 3339 UTC instant."
+                            }
+                        },
+                        "required": [
+                            "kind",
+                            "at"
+                        ],
+                        "additionalProperties": false
+                    },
+                    {
+                        "type": "object",
+                        "description": "Repeats on a cron expression.",
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "const": "cron"
+                            },
+                            "expr": {
+                                "type": "string"
+                            },
+                            "tz": {
+                                "type": "string",
+                                "description": "IANA zone."
+                            },
                             "active_hours": {
                                 "type": "object",
-                                "description": "Optional: only run during these local hours",
                                 "properties": {
-                                    "start": { "type": "string", "description": "Start time HH:MM (e.g. '09:00')" },
-                                    "end": { "type": "string", "description": "End time HH:MM (e.g. '17:00')" }
+                                    "start": {
+                                        "type": "string"
+                                    },
+                                    "end": {
+                                        "type": "string"
+                                    }
                                 },
-                                "required": ["start", "end"],
+                                "required": [
+                                    "start",
+                                    "end"
+                                ],
                                 "additionalProperties": false
                             }
                         },
-                        "required": ["kind", "expr"],
+                        "required": [
+                            "kind",
+                            "expr"
+                        ],
                         "additionalProperties": false
                     },
                     {
                         "type": "object",
-                        "description": "One-shot job that runs once at a specific UTC instant.",
+                        "description": "Repeats every N ms.",
                         "properties": {
-                            "kind": { "type": "string", "const": "at" },
-                            "at": { "type": "string", "description": "ISO-8601 UTC timestamp" }
+                            "kind": {
+                                "type": "string",
+                                "const": "every"
+                            },
+                            "every_ms": {
+                                "type": "integer"
+                            }
                         },
-                        "required": ["kind", "at"],
-                        "additionalProperties": false
-                    },
-                    {
-                        "type": "object",
-                        "description": "Repeating job that fires every N milliseconds.",
-                        "properties": {
-                            "kind": { "type": "string", "const": "every" },
-                            "every_ms": { "type": "integer", "description": "Interval in milliseconds (must be > 0; at least 300000 = 5 minutes for agent jobs)" }
-                        },
-                        "required": ["kind", "every_ms"],
+                        "required": [
+                            "kind",
+                            "every_ms"
+                        ],
                         "additionalProperties": false
                     }
                 ]
             },
-            "job_type": { "type": "string", "enum": ["shell", "agent"] },
-            "command": { "type": "string" },
-            "prompt": { "type": "string" },
-            "session_target": { "type": "string", "enum": ["isolated", "current", "main"], "description": "Defaults to 'current' (a fresh run that sees the recent conversation it was created in and replies there) when created inside a conversation, otherwise 'isolated'." },
-            "model": { "type": "string" },
+            "job_type": {
+                "type": "string",
+                "enum": [
+                    "agent",
+                    "shell"
+                ]
+            },
+            "prompt": {
+                "type": "string",
+                "description": "Agent job: what the run delivers."
+            },
+            "command": {
+                "type": "string",
+                "description": "Shell job."
+            },
+            "session_target": {
+                "type": "string",
+                "enum": [
+                    "isolated",
+                    "current",
+                    "main"
+                ]
+            },
+            "model": {
+                "type": "string"
+            },
             "delivery": {
                 "type": "object",
-                "description": "Delivery config. Defaults to 'origin' (reply into the conversation this job was created in) when created inside a conversation, otherwise 'proactive'. Modes: origin, proactive, announce (needs channel+to), none (silent).",
+                "description": "Omit to reply where created.",
                 "properties": {
-                    "mode": { "type": "string", "enum": ["origin", "proactive", "announce", "none"] },
-                    "channel": { "type": "string", "description": "Required for announce mode" },
-                    "to": { "type": "string", "description": "Required for announce mode" },
-                    "best_effort": { "type": "boolean", "default": true }
+                    "mode": {
+                        "type": "string",
+                        "enum": [
+                            "origin",
+                            "proactive",
+                            "announce",
+                            "none"
+                        ]
+                    },
+                    "channel": {
+                        "type": "string"
+                    },
+                    "to": {
+                        "type": "string"
+                    },
+                    "best_effort": {
+                        "type": "boolean"
+                    }
                 }
             },
-            "delete_after_run": { "type": "boolean" }
+            "delete_after_run": {
+                "type": "boolean"
+            }
         },
-        "required": ["name", "schedule"]
+        "required": [
+            "name",
+            "schedule"
+        ]
     })
 }
 

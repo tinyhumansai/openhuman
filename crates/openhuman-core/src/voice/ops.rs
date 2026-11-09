@@ -34,23 +34,27 @@ pub async fn voice_status(config: &Config) -> Result<Outcome<VoiceStatus>, Strin
     // the same check the transcribe path performs, and it makes no network call
     // — so this reports the real failure a user would hit, not a guess.
     let stt_engine = effective_stt_provider(config);
-    let stt_error = create_stt_provider(&stt_engine, "", config)
-        .and_then(|_| {
+    let stt_error = match create_stt_provider(&stt_engine, "", config).await {
+        Err(error) => Some(error.to_string()),
+        Ok(_) => {
             let slug = stt_engine
                 .split_once(':')
                 .map_or(stt_engine.as_str(), |(slug, _)| slug);
             if matches!(slug.trim(), "cloud" | "openhuman" | "backend") {
-                return Ok(());
+                None
+            } else {
+                match crate::inference::provider::factory::lookup_key_for_slug(slug.trim(), config)
+                    .await
+                {
+                    Ok(key) if !key.trim().is_empty() => None,
+                    Ok(_) => Some(format!(
+                        "voice provider '{slug}' has no API credential configured"
+                    )),
+                    Err(error) => Some(error.to_string()),
+                }
             }
-            let key =
-                crate::inference::provider::factory::lookup_key_for_slug(slug.trim(), config)?;
-            if key.trim().is_empty() {
-                anyhow::bail!("voice provider '{slug}' has no API credential configured")
-            }
-            Ok(())
-        })
-        .err()
-        .map(|e| e.to_string());
+        }
+    };
     let stt_available = stt_error.is_none();
     let tts_available = piper_bin.is_some() && tts_voice.is_some();
 

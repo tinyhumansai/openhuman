@@ -1,84 +1,197 @@
 use super::*;
+use crate::core::all::{
+    assert_schema_controller_parity, verify_parameter_schema, ControllerHandler,
+    ControllerParamContract,
+};
 use crate::core::runtime::DispatchCtx;
 
 #[test]
-fn catalog_lists_all_five_controllers() {
+fn socket_schema_contracts_are_preserved() {
     let schemas = all_controller_schemas();
-    assert_eq!(schemas.len(), 5);
-    let names: Vec<&str> = schemas.iter().map(|s| s.function).collect();
-    assert!(names.contains(&"connect"));
-    assert!(names.contains(&"disconnect"));
-    assert!(names.contains(&"state"));
-    assert!(names.contains(&"emit"));
-    assert!(names.contains(&"connect_with_session"));
+    crate::core::all::expect_schema_namespace(&schemas, "socket");
+    assert_schema_controller_parity(&schemas, &all_registered_controllers(), "connect");
+    let contracts = socket_parameter_contracts();
+    for contract in &contracts {
+        let schema = schemas
+            .iter()
+            .find(|schema| schema.method_name() == contract.method)
+            .expect("socket schema has an independent contract");
+        verify_parameter_schema(schema, contract)
+            .expect("independent socket schema contract matches");
+    }
+    for schema in schemas {
+        assert!(
+            !schema.outputs.is_empty(),
+            "{} output fields",
+            schema.function
+        );
+    }
+}
+
+pub(super) fn socket_parameter_contracts() -> Vec<ControllerParamContract> {
+    use serde_json::json;
+
+    vec![
+        ControllerParamContract {
+            method: "socket.connect",
+            required: &["url", "token"],
+            optional: &[],
+            examples: vec![
+                json!({"url":"https://example.invalid/socket", "token":"test-token"}),
+                json!({"url":"", "token":""}),
+            ],
+        },
+        ControllerParamContract {
+            method: "socket.disconnect",
+            required: &[],
+            optional: &[],
+            examples: vec![json!({})],
+        },
+        ControllerParamContract {
+            method: "socket.state",
+            required: &[],
+            optional: &[],
+            examples: vec![json!({})],
+        },
+        ControllerParamContract {
+            method: "socket.emit",
+            required: &["event"],
+            optional: &["data"],
+            examples: vec![
+                json!({"event":"message", "data":{"text":"hello"}}),
+                json!({"event":"message"}),
+            ],
+        },
+        ControllerParamContract {
+            method: "socket.connect_with_session",
+            required: &[],
+            optional: &[],
+            examples: vec![json!({})],
+        },
+    ]
 }
 
 #[test]
-fn all_schemas_use_socket_namespace() {
-    for s in all_controller_schemas() {
-        assert_eq!(s.namespace, "socket", "function {}", s.function);
-        assert!(
-            !s.description.is_empty(),
-            "function {} has empty description",
-            s.function
+fn socket_legacy_catalog_keeps_handler_identities() {
+    let expected: [(&str, ControllerHandler); 5] = [
+        ("socket.connect", handle_connect),
+        ("socket.disconnect", handle_disconnect),
+        ("socket.state", handle_state),
+        ("socket.emit", handle_emit),
+        ("socket.connect_with_session", handle_connect_with_session),
+    ];
+    let registered = all_registered_controllers();
+    assert_eq!(registered.len(), expected.len());
+    for ((method, handler), controller) in expected.iter().zip(&registered) {
+        assert_eq!(controller.schema.method_name(), *method);
+        assert!(std::ptr::fn_addr_eq(controller.handler, *handler));
+    }
+}
+
+#[test]
+fn connect_parser_keeps_reader_order_and_string_values() {
+    let error = parse_connect(Map::new()).err().expect("missing URL fails");
+    assert_eq!(error, "missing required param 'url'");
+
+    let params = serde_json::from_value(serde_json::json!({"url":" ", "extra":true}))
+        .expect("object params");
+    assert_eq!(
+        parse_connect(params).err().expect("missing token fails"),
+        "missing required param 'token'"
+    );
+
+    let params = serde_json::from_value(serde_json::json!({
+        "url":"  https://example.invalid/socket  ",
+        "token":" token ",
+        "unknown":{"ignored":true}
+    }))
+    .expect("object params");
+    let parsed = parse_connect(params).expect("string values remain permissive");
+    assert_eq!(parsed.url, "  https://example.invalid/socket  ");
+    assert_eq!(parsed.token, " token ");
+
+    for invalid in [
+        serde_json::json!({"url":null,"token":"token"}),
+        serde_json::json!({"url":42,"token":"token"}),
+    ] {
+        let params = serde_json::from_value(invalid).expect("object params");
+        assert_eq!(
+            parse_connect(params)
+                .err()
+                .expect("invalid URL is rejected before token"),
+            "missing required param 'url'"
+        );
+    }
+    for invalid_token in [
+        serde_json::Value::Null,
+        serde_json::json!(42),
+        serde_json::json!({"token":"nested"}),
+    ] {
+        let params = serde_json::json!({"url":"url", "token":invalid_token});
+        assert_eq!(
+            parse_connect(serde_json::from_value(params).expect("object params"))
+                .err()
+                .expect("non-string token is rejected"),
+            "missing required param 'token'"
         );
     }
 }
 
 #[test]
-fn connect_schema_requires_url_and_token() {
-    let s = schemas("connect");
-    let required: Vec<&str> = s
-        .inputs
-        .iter()
-        .filter(|f| f.required)
-        .map(|f| f.name)
-        .collect();
-    assert!(required.contains(&"url"));
-    assert!(required.contains(&"token"));
-}
+fn emit_parser_defaults_data_to_null_and_preserves_any_json_value() {
+    let missing = serde_json::from_value(serde_json::json!({"event":" message ", "extra":1}))
+        .expect("object params");
+    let parsed = parse_emit(missing).expect("event is a string");
+    assert_eq!(parsed.event, " message ");
+    assert_eq!(parsed.data, Value::Null);
 
-#[test]
-fn disconnect_and_state_have_no_inputs() {
-    assert!(schemas("disconnect").inputs.is_empty());
-    assert!(schemas("state").inputs.is_empty());
-    assert!(schemas("connect_with_session").inputs.is_empty());
-}
-
-#[test]
-fn emit_schema_data_is_optional() {
-    let s = schemas("emit");
-    let event = s.inputs.iter().find(|f| f.name == "event").unwrap();
-    let data = s.inputs.iter().find(|f| f.name == "data").unwrap();
-    assert!(event.required);
-    assert!(!data.required);
-}
-
-#[test]
-fn every_schema_has_at_least_one_output_field() {
-    for s in all_controller_schemas() {
-        assert!(
-            !s.outputs.is_empty(),
-            "schema `{}` must expose ≥1 output field for RPC callers",
-            s.function
+    for data in [
+        serde_json::Value::Null,
+        serde_json::json!(42),
+        serde_json::json!("payload"),
+        serde_json::json!([true, null]),
+        serde_json::json!({"nested":{"value":true}}),
+    ] {
+        let params = serde_json::json!({"event":"message", "data":data.clone()});
+        let parsed = parse_emit(serde_json::from_value(params).expect("object params"))
+            .expect("all JSON payload values remain accepted");
+        assert_eq!(parsed.data, data);
+    }
+    for params in [
+        serde_json::json!({}),
+        serde_json::json!({"event":null}),
+        serde_json::json!({"event":42}),
+    ] {
+        assert_eq!(
+            parse_emit(serde_json::from_value(params).expect("object params"))
+                .err()
+                .expect("missing or non-string event fails"),
+            "missing required param 'event'"
         );
     }
 }
 
 #[test]
-fn all_registered_controllers_have_socket_namespace() {
-    for h in all_registered_controllers() {
-        assert_eq!(h.schema.namespace, "socket");
-        assert!(!h.schema.function.is_empty());
+fn ignored_map_parser_accepts_unknown_values() {
+    let params: Map<String, Value> = serde_json::from_value(serde_json::json!({
+        "anything":[null, true, {"nested":42}],
+        "other":"ignored"
+    }))
+    .expect("object params");
+    assert_eq!(parse_ignored_params(params.clone()), Ok(()));
+    let entries = all_controller_entries();
+    for method in [
+        "socket.disconnect",
+        "socket.state",
+        "socket.connect_with_session",
+    ] {
+        entries
+            .iter()
+            .find(|entry| entry.schema.method_name() == method)
+            .expect("ignored-map method has a bound registry entry")
+            .decode_params(params.clone())
+            .expect("actual parser deliberately accepts unknown keys and values");
     }
-}
-
-#[test]
-fn connect_schema_inputs_contain_url_and_token() {
-    let s = schemas("connect");
-    let names: Vec<&str> = s.inputs.iter().map(|f| f.name).collect();
-    assert!(names.contains(&"url"));
-    assert!(names.contains(&"token"));
 }
 
 // ── handlers (without manager): require_manager errors ─────────
@@ -117,6 +230,11 @@ async fn handlers_error_without_initialized_manager() {
     assert!(err.contains("SocketManager not initialized"));
 
     let err = handle_emit(DispatchCtx::process_default(), Map::new())
+        .await
+        .unwrap_err();
+    assert!(err.contains("SocketManager not initialized"));
+
+    let err = handle_connect_with_session(DispatchCtx::process_default(), Map::new())
         .await
         .unwrap_err();
     assert!(err.contains("SocketManager not initialized"));

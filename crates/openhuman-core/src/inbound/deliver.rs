@@ -30,12 +30,19 @@
 //! borderline event and maps the action to a salience class; the decision is
 //! kept (for ten minutes) for the event's delivery so it is not triaged twice.
 //!
+//! A turn of a source configured under `[inbound.sources.*]` skips triage
+//! altogether: it runs on the source's pinned agent ([`super::pinned`]), and
+//! `ClassifySalience` answers `actionable` for its events without triaging.
+//! A turn mixing sources (a digest that collected a spilled burst) is split:
+//! each pinned source's events run on its agent, at most `max_batch` a turn,
+//! under ids derived from the turn's, and only the rest is triaged.
+//!
 //! One decision per turn: the triage timeout stays under the module's
 //! callback deadline (`[inbound] triage_timeout_ms`, at most 25 s), and a
 //! turn that was already accepted is accepted again without triage, so a
 //! redelivery that raced a slow answer never applies a second decision.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -45,6 +52,9 @@ use tinyeventqueues_bus::{
 };
 
 use super::events::{digest_envelope, envelope_of};
+use super::pinned::{Delivered, Pinned};
+use super::results::Results;
+use crate::config::schema::{InboundConfig, InboundSourceConfig};
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::core::runtime::DispatchCtx;
@@ -145,6 +155,10 @@ pub struct Deliverer {
     budget: Duration,
     classified: Mutex<Classified>,
     accepted: Mutex<Accepted>,
+    /// `[inbound]`: given, or read on first use, for its pinned sources.
+    inbound: tokio::sync::OnceCell<Arc<InboundConfig>>,
+    /// What runs pinned sources' turns: given, or built on first use.
+    pinned: tokio::sync::OnceCell<Option<Pinned>>,
 }
 
 impl std::fmt::Debug for Deliverer {
@@ -162,15 +176,18 @@ fn system_now_ms() -> i64 {
 impl Deliverer {
     /// A deliverer that triages with `runner` under `ctx`, giving one triage
     /// `timeout`, and reads each lane's attempts from the configured queues.
+    /// It has no pinned sources unless given some ([`Self::with_inbound`]).
     #[must_use]
     pub fn new(runner: Arc<dyn TriageRunner>, ctx: DispatchCtx, timeout: Duration) -> Self {
         Self::build(runner, ctx, tokio::sync::OnceCell::new_with(Some(timeout)))
+            .with_inbound(InboundConfig::default())
     }
 
     /// A deliverer whose triage timeout is `[inbound] triage_timeout_ms`, read
     /// from `ctx`'s configuration on the first callback. Loading it when the
     /// callbacks are served instead would initialise a config file on a host
-    /// that never configured one.
+    /// that never configured one. Its pinned sources (`[inbound.sources.*]`)
+    /// are read the same way.
     #[must_use]
     pub fn configured(runner: Arc<dyn TriageRunner>, ctx: DispatchCtx) -> Self {
         Self::build(runner, ctx, tokio::sync::OnceCell::new())
@@ -190,7 +207,24 @@ impl Deliverer {
             budget: DELIVERY_BUDGET,
             classified: Mutex::new(Classified::default()),
             accepted: Mutex::new(Accepted::default()),
+            inbound: tokio::sync::OnceCell::new(),
+            pinned: tokio::sync::OnceCell::new(),
         }
+    }
+
+    /// Read pinned sources from `inbound` instead of the configuration.
+    #[must_use]
+    pub fn with_inbound(mut self, inbound: InboundConfig) -> Self {
+        self.inbound = tokio::sync::OnceCell::new_with(Some(Arc::new(inbound)));
+        self
+    }
+
+    /// Run pinned sources' turns with `pinned` instead of the production
+    /// agent and workspace results store.
+    #[must_use]
+    pub fn with_pinned(mut self, pinned: Pinned) -> Self {
+        self.pinned = tokio::sync::OnceCell::new_with(Some(Some(pinned)));
+        self
     }
 
     /// Use `now_ms` for the clock (tests).
@@ -233,6 +267,135 @@ impl Deliverer {
             .await
     }
 
+    /// `[inbound]`, read from the configuration on first use when not given.
+    async fn inbound(&self) -> Arc<InboundConfig> {
+        Arc::clone(
+            self.inbound
+                .get_or_init(|| async {
+                    match self.ctx.load_config().await {
+                        Ok(config) => Arc::new(config.inbound),
+                        Err(error) => {
+                            tracing::debug!(error = %error, "[inbound] config unavailable; no pinned sources");
+                            Arc::new(InboundConfig::default())
+                        }
+                    }
+                })
+                .await,
+        )
+    }
+
+    /// The pinned source every event of `turn` comes from, with its
+    /// configuration, when there is one.
+    async fn pinned_source(
+        &self,
+        events: &[InboundEvent],
+    ) -> Option<(String, InboundSourceConfig)> {
+        let first = events.first()?;
+        if !events.iter().all(|event| event.source == first.source) {
+            return None;
+        }
+        let inbound = self.inbound().await;
+        let source = inbound.source(&first.source).ok()?.clone();
+        Some((first.source.clone(), source))
+    }
+
+    /// `turn`'s events of pinned sources, one group per source and
+    /// conversation key, as turns of at most the source's `max_batch` events,
+    /// and the turn of the other events (`None` when there are none). Each
+    /// group is oldest first (event id breaks ties), and a part's id names
+    /// its first and last event, so a redelivery derives the same ids and a
+    /// changed `max_batch` derives new ones instead of reusing a finished id
+    /// for a different set of events.
+    async fn split_pinned(
+        &self,
+        turn: &Turn,
+    ) -> (Vec<(Turn, String, InboundSourceConfig)>, Option<Turn>) {
+        let inbound = self.inbound().await;
+        let mut pinned: BTreeMap<(String, String), (InboundSourceConfig, Vec<InboundEvent>)> =
+            BTreeMap::new();
+        let mut rest = Vec::new();
+        for event in &turn.events {
+            match inbound.source(&event.source) {
+                Ok(source) => pinned
+                    .entry((event.source.clone(), event.conversation_key.clone()))
+                    .or_insert_with(|| (source.clone(), Vec::new()))
+                    .1
+                    .push(event.clone()),
+                Err(_) => rest.push(event.clone()),
+            }
+        }
+        let mut parts = Vec::new();
+        for ((name, key), (source, mut events)) in pinned {
+            events.sort_by(|a, b| {
+                (a.received_at_ms, &a.event_id).cmp(&(b.received_at_ms, &b.event_id))
+            });
+            let max = usize::try_from(source.max_batch.max(1)).unwrap_or(usize::MAX);
+            for chunk in events.chunks(max) {
+                let (first, last) = (&chunk[0].event_id, &chunk[chunk.len() - 1].event_id);
+                let mut part = turn.clone();
+                part.turn_id = format!("{}:{name}:{key}:{first}..{last}", turn.turn_id);
+                part.events = chunk.to_vec();
+                parts.push((part, name.clone(), source.clone()));
+            }
+        }
+        let rest = (!rest.is_empty()).then(|| {
+            let mut left = turn.clone();
+            left.events = rest;
+            left
+        });
+        (parts, rest)
+    }
+
+    /// What runs pinned turns: given, or the production agent over the
+    /// workspace's results store.
+    async fn pinned(&self) -> Option<Pinned> {
+        self.pinned
+            .get_or_init(|| async {
+                let config = match self.ctx.load_config().await {
+                    Ok(config) => config,
+                    Err(error) => {
+                        tracing::warn!(error = %error, "[inbound] config unavailable; pinned turns cannot run");
+                        return None;
+                    }
+                };
+                match Results::open(&config) {
+                    Ok(results) => Some(Pinned::production(results)),
+                    Err(error) => {
+                        tracing::warn!(error = %error, "[inbound] results store unavailable; pinned turns cannot run");
+                        None
+                    }
+                }
+            })
+            .await
+            .clone()
+    }
+
+    /// Deliver a turn of pinned source `name`.
+    async fn deliver_pinned(
+        &self,
+        turn: &Turn,
+        name: &str,
+        source: &InboundSourceConfig,
+        within: Duration,
+    ) -> DeliverStatus {
+        let Some(pinned) = self.pinned().await else {
+            return self.retry(turn, None, "pinned turns cannot run here");
+        };
+        match pinned.deliver(&self.ctx, turn, name, source, within).await {
+            Delivered::Done | Delivered::Running => {
+                self.accepted().remember(&turn.turn_id);
+                DeliverStatus::Accepted
+            }
+            Delivered::Failed(error) => {
+                tracing::warn!(turn = %turn.turn_id, source = %name, attempt = turn.attempt, error = %error, "[inbound] pinned agent failed");
+                if self.exhausted(turn) {
+                    pinned.fail(&turn.turn_id, &error);
+                }
+                self.retry(turn, None, "pinned agent failed")
+            }
+        }
+    }
+
     fn classified(&self) -> std::sync::MutexGuard<'_, Classified> {
         self.classified
             .lock()
@@ -256,6 +419,14 @@ impl Deliverer {
         request: ClassifySalienceRequest,
     ) -> Result<ClassifySalienceResponse, String> {
         let event = request.event;
+        if self
+            .pinned_source(std::slice::from_ref(&event))
+            .await
+            .is_some()
+        {
+            // A pinned source's events always reach its agent: no triage.
+            return Ok(ClassifySalienceResponse::new(SalienceClass::Actionable));
+        }
         let envelope = envelope_of(&event).ok_or("not an inbound trigger")?;
         let timeout = self.timeout().await;
         match tokio::time::timeout(timeout, self.runner.run(&self.ctx, &envelope)).await {
@@ -293,6 +464,47 @@ impl Deliverer {
             );
             return DeliverResponse::new(DeliverStatus::Accepted);
         }
+        if let Some((name, source)) = self.pinned_source(&turn.events).await {
+            let remaining = self.budget.saturating_sub(started.elapsed());
+            let status = self.deliver_pinned(&turn, &name, &source, remaining).await;
+            return DeliverResponse::new(status);
+        }
+        let (parts, rest) = self.split_pinned(&turn).await;
+        for (index, (part, name, source)) in parts.iter().enumerate() {
+            if index > 0 && started.elapsed() >= self.budget {
+                // Don't start another part with no budget left; the redelivery
+                // skips the finished parts and resumes here.
+                return DeliverResponse::new(self.retry(
+                    &turn,
+                    None,
+                    "delivery budget spent on pinned parts",
+                ));
+            }
+            let remaining = self.budget.saturating_sub(started.elapsed());
+            let status = self.deliver_pinned(part, name, source, remaining).await;
+            // Retried before the rest is triaged, so the rest is decided once;
+            // the parts already finished are not run again on redelivery.
+            if status != DeliverStatus::Accepted {
+                return DeliverResponse::new(status);
+            }
+        }
+        if !parts.is_empty() && rest.is_some() && started.elapsed() >= self.budget {
+            // The pinned parts used the whole budget: triage the rest on the
+            // redelivery, where the finished parts are skipped.
+            return DeliverResponse::new(self.retry(
+                &turn,
+                None,
+                "delivery budget spent on pinned parts",
+            ));
+        }
+        let turn = match rest {
+            Some(rest) => rest,
+            None if parts.is_empty() => turn,
+            None => {
+                self.accepted().remember(&turn.turn_id);
+                return DeliverResponse::new(DeliverStatus::Accepted);
+            }
+        };
         let (envelope, first) = match self.envelope(&turn) {
             Ok(found) => found,
             Err(detail) => {
@@ -308,7 +520,11 @@ impl Deliverer {
         let outcome = match cached {
             Some(run) => Ok(Ok(TriageOutcome::Decision(run))),
             None => {
-                let timeout = self.timeout().await;
+                // Within what is left of the delivery's budget.
+                let timeout = self
+                    .timeout()
+                    .await
+                    .min(self.budget.saturating_sub(started.elapsed()));
                 tokio::time::timeout(timeout, self.runner.run(&self.ctx, &envelope)).await
             }
         };
@@ -442,10 +658,15 @@ impl Deliverer {
     /// Ask the queues to deliver `turn` again; when this was its last attempt
     /// the queues dead-letter it instead, so say so.
     fn retry(&self, turn: &Turn, after_ms: Option<u64>, why: &str) -> DeliverStatus {
-        if (self.max_attempts)(turn.lane).is_some_and(|max| turn.attempt >= max) {
+        if self.exhausted(turn) {
             self.dead(turn, &format!("{why}; attempts exhausted"));
         }
         DeliverStatus::Retry { after_ms }
+    }
+
+    /// Whether `turn` is on its lane's last attempt.
+    fn exhausted(&self, turn: &Turn) -> bool {
+        (self.max_attempts)(turn.lane).is_some_and(|max| turn.attempt >= max)
     }
 
     fn dead(&self, turn: &Turn, detail: &str) {

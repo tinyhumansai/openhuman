@@ -44,25 +44,28 @@ async fn backend_dispatch_forwards_the_workflow_connection_id() {
     });
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    let mut config = Config::default();
-    config.workspace_dir = tmp.path().join("workspace");
-    config.config_path = tmp.path().join("config.toml");
+    let mut config =
+        crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     config.api_url = Some(format!("http://{addr}"));
-    crate::security::credentials::AuthService::from_config(&config)
+    crate::credentials::AuthService::from_config(&config)
         .store_provider_token(
-            crate::security::credentials::APP_SESSION_PROVIDER,
-            crate::security::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            crate::credentials::APP_SESSION_PROVIDER,
+            crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
             "test-token",
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .expect("store test session token");
 
-    let response = execute_for_connection(
+    let response = crate::integrations::composio::module_client::test_support::scoped(
         &config,
-        "GITHUB_LIST_REPOSITORY_ISSUES",
-        Some(json!({ "owner": "tinyhumansai" })),
-        Some("ca_target_account"),
+        execute_for_connection(
+            &config,
+            "GITHUB_LIST_REPOSITORY_ISSUES",
+            Some(json!({ "owner": "tinyhumansai" })),
+            Some("ca_target_account"),
+        ),
     )
     .await
     .expect("backend dispatch should succeed");

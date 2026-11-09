@@ -9,8 +9,8 @@ use tokio::sync::mpsc::Sender;
 
 use tinyinference_llm::usage::Usage;
 
-use crate::inference::provider::BilledUsage;
 use crate::progress::AgentProgress;
+use tinyinference_llm::usage::BilledUsage;
 use tinytools::humanize_tool_name;
 
 use super::bridge_types::{ProviderUsageCarry, SubagentScope, ToolFailureMap, ToolNameMap};
@@ -62,6 +62,10 @@ pub(crate) struct OpenhumanEventBridge {
     /// run-local ordered event sink, so `ModelStarted` brackets the following
     /// `UsageRecorded` and terminal model event synchronously.
     pub(super) supplemental_call_active: AtomicBool,
+    /// Set once the turn's start has been announced (`AgentProgress::TurnStarted`
+    /// on the first top-level `RunStarted`), so a retried or nested run cannot
+    /// announce the same turn twice.
+    pub(super) turn_announced: AtomicBool,
     /// `None` for a parent turn; `Some` to emit child-scoped `Subagent*` events.
     pub(super) scope: Option<SubagentScope>,
     /// The agent definition the run acts as (its memory identity's agent),
@@ -203,6 +207,7 @@ impl OpenhumanEventBridge {
             provider_id: provider_id.into(),
             max_iterations: max_iterations as u32,
             supplemental_call_active: AtomicBool::new(false),
+            turn_announced: AtomicBool::new(false),
             scope,
             definition: std::sync::OnceLock::new(),
             cursor,
@@ -310,6 +315,14 @@ impl OpenhumanEventBridge {
                 model = %self.model,
                 "[tinyagents] progress channel full and could not defer send; dropping one delta"
             ),
+        }
+    }
+
+    /// Tell the client the turn is summarizing earlier conversation. Only a
+    /// top-level turn reports it: a subagent's compaction is not the turn's.
+    pub(crate) fn announce_compaction(&self) {
+        if self.scope.is_none() {
+            self.send(AgentProgress::ContextCompacting);
         }
     }
 

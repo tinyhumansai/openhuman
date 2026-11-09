@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::*;
-use tinyagents_harness::tool::packs::USE_SKILL;
+use tinyagents_harness_tools::skills::USE_SKILL;
 use tinytools::{PermissionLevel, Tool, ToolResult, ToolTimeout};
 
 struct FakeTool {
@@ -47,7 +47,12 @@ impl Tool for FakeTool {
 }
 
 /// A registry holding several real packed tools plus the two pack tools, bound.
-fn registry_with_all(names: &[&'static str]) -> Arc<Vec<Box<dyn Tool>>> {
+fn registry_with_all(
+    names: &[&'static str],
+) -> (
+    Arc<Vec<Box<dyn Tool>>>,
+    tinyagents_harness_tools::skills::PackRegistryHandle,
+) {
     let mut tools: Vec<Box<dyn Tool>> = names
         .iter()
         .map(|name| {
@@ -59,24 +64,30 @@ fn registry_with_all(names: &[&'static str]) -> Arc<Vec<Box<dyn Tool>>> {
             }) as Box<dyn Tool>
         })
         .collect();
-    append_pack_tools(&mut tools);
+    let handle = append_pack_tools(&mut tools);
     let tools = Arc::new(tools);
-    bind_pack_registry(&tools);
-    tools
+    bind_pack_registry(&handle, &tools);
+    (tools, handle)
 }
 
 /// A registry holding one real packed tool plus the two pack tools, bound.
-fn registry_with(name: &'static str, level: PermissionLevel) -> Arc<Vec<Box<dyn Tool>>> {
+fn registry_with(
+    name: &'static str,
+    level: PermissionLevel,
+) -> (
+    Arc<Vec<Box<dyn Tool>>>,
+    tinyagents_harness_tools::skills::PackRegistryHandle,
+) {
     let mut tools: Vec<Box<dyn Tool>> = vec![Box::new(FakeTool {
         name,
         level,
         external: false,
         timeout: ToolTimeout::Inherit,
     })];
-    append_pack_tools(&mut tools);
+    let handle = append_pack_tools(&mut tools);
     let tools = Arc::new(tools);
-    bind_pack_registry(&tools);
-    tools
+    bind_pack_registry(&handle, &tools);
+    (tools, handle)
 }
 
 fn find<'a>(tools: &'a [Box<dyn Tool>], name: &str) -> &'a dyn Tool {
@@ -85,65 +96,6 @@ fn find<'a>(tools: &'a [Box<dyn Tool>], name: &str) -> &'a dyn Tool {
         .find(|t| t.name() == name)
         .map(AsRef::as_ref)
         .unwrap_or_else(|| panic!("{name} missing"))
-}
-
-/// A shared, immutable tool registry.
-type ToolRegistry = Arc<Vec<Box<dyn Tool>>>;
-
-/// A registry split the way a real agent's is: the pack tool in the durable
-/// vector, the packed tool in the separate synthesised one.
-///
-/// This is not a contrived shape. Every `delegate_*` tool is synthesised into
-/// `OpenHumanSessionHost::synthesized_tools`, a different `Arc` from the durable registry
-/// (#6145), and seven delegates were already packed.
-fn split_registries(name: &'static str, level: PermissionLevel) -> (ToolRegistry, ToolRegistry) {
-    let mut durable: Vec<Box<dyn Tool>> = Vec::new();
-    append_pack_tools(&mut durable);
-    let durable = Arc::new(durable);
-    let synthesized: Arc<Vec<Box<dyn Tool>>> = Arc::new(vec![Box::new(FakeTool {
-        name,
-        level,
-        external: false,
-        timeout: ToolTimeout::Inherit,
-    })]);
-    bind_pack_registry(&durable);
-    bind_synthesized_pack_registry(&durable, &synthesized);
-    (durable, synthesized)
-}
-
-/// A packed **delegate** must be reachable, not merely withheld.
-///
-/// It was not. `use_skill` was bound only to the durable registry, and no
-/// `delegate_*` tool is in it — so `manage_tasks`, `setup_skills`,
-/// `build_workflow`, `discover_workflows` and `make_presentation` were all
-/// dropped from the wire and then unreachable
-/// through the route that was supposed to replace them. Withholding a tool the
-/// model then cannot call is strictly worse than never packing it.
-#[tokio::test]
-async fn a_packed_delegate_in_the_synthesised_set_is_reachable() {
-    let (durable, _synthesized) = split_registries("manage_tasks", PermissionLevel::ReadOnly);
-    let use_skill = find(&durable, USE_SKILL);
-
-    // Disclosure half: the schema must render even though the tool is in the
-    // other registry.
-    let rendered = use_skill.execute(json!({"skill": "tasks"})).await.unwrap();
-    assert!(!rendered.is_error, "{}", rendered.text());
-    assert!(
-        format!("{:?}", rendered.content).contains("manage_tasks"),
-        "the pack listing omitted the synthesised delegate"
-    );
-
-    // Dispatch half.
-    let ran = use_skill
-        .execute(json!({"skill": "tasks", "tool": "manage_tasks", "args": {"marker": "x"}}))
-        .await
-        .unwrap();
-    assert!(
-        !ran.is_error,
-        "packed delegate was not dispatchable: {}",
-        ran.text()
-    );
-    assert!(format!("{:?}", ran.content).contains("marker"));
 }
 
 /// Closing a goal must stay directly callable.
@@ -219,8 +171,6 @@ fn every_pack_declares_the_tools_it_is_named_for() {
         (
             "workflows",
             &[
-                "build_workflow",
-                "discover_workflows",
                 "run_workflow",
                 "await_workflow",
                 "describe_workflow",
@@ -305,12 +255,6 @@ fn every_pack_declares_the_tools_it_is_named_for() {
         (
             "skills",
             &[
-                // Ranked lookup over installed skills. Deliberately IN this
-                // pack rather than advertised: on its own it produced ids for
-                // skills whose `describe_workflow` / run route were still
-                // withheld — 748 B on every wildcard agent for a doorway to a
-                // locked room.
-                "setup_skills",
                 "skill_search",
                 "skill_registry_browse",
                 "skill_registry_search",
@@ -323,14 +267,7 @@ fn every_pack_declares_the_tools_it_is_named_for() {
                 "read_workflow_resource",
             ],
         ),
-        (
-            "documents",
-            &[
-                "generate_document",
-                "generate_presentation",
-                "make_presentation",
-            ],
-        ),
+        ("documents", &["generate_document", "generate_presentation"]),
         (
             "system",
             &[
@@ -396,19 +333,25 @@ fn every_pack_declares_the_tools_it_is_named_for() {
                 "storage_get_link",
             ],
         ),
-        ("scheduling", &["cron"]),
+        (
+            "scheduling",
+            &[
+                "cron_add",
+                "cron_list",
+                "cron_update",
+                "cron_remove",
+                "cron_run",
+                "cron_runs",
+            ],
+        ),
         (
             "media",
             &[
-                "create_image",
-                "create_video",
-                "analyze_image",
                 "media_generate_image",
                 "media_generate_video",
                 "media_list_models",
             ],
         ),
-        ("tasks", &["manage_tasks"]),
         ("goals", &["goal_get", "goal_set"]),
         ("docs", &["gitbooks_search", "gitbooks_get_page"]),
     ];
@@ -503,19 +446,6 @@ fn every_owner_names_a_pack_tool_it_actually_declares() {
             pack.owners.is_empty() || !pack.tools.is_empty(),
             "pack `{}` has owners but no tools",
             pack.id
-        );
-    }
-}
-
-#[test]
-fn the_reactive_fleet_tools_are_never_packed() {
-    // Packing these would put a `use_skill` round-trip between an async
-    // worker returning and the parent being able to steer or collect it.
-    // See `DELIBERATELY_UNPACKED_FLEET_TOOLS` for the full reasoning.
-    for name in registry::DELIBERATELY_UNPACKED_FLEET_TOOLS {
-        assert!(
-            registry::pack_for_tool(name).is_none(),
-            "`{name}` is needed reactively mid-turn and must stay advertised"
         );
     }
 }

@@ -270,8 +270,8 @@ fn handle_run(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture 
         tracing::info!(skill_id = %payload.skill_id, "[skill_runtime][rpc] run");
         let origin = ctx
             .turn_origin_or_scoped()
-            .unwrap_or(crate::security::turn_origin::AgentTurnOrigin::Cli);
-        let started = crate::security::turn_origin::with_origin(
+            .unwrap_or(crate::core::runtime::turn_origin::AgentTurnOrigin::Cli);
+        let started = crate::core::runtime::turn_origin::with_origin(
             origin.clone(),
             spawn_workflow_run_background(&ctx, payload.skill_id, payload.inputs, Some(origin)),
         )
@@ -331,7 +331,7 @@ fn handle_read_run_log(_ctx: DispatchCtx, params: Map<String, Value>) -> Control
         })?;
         let offset = payload.offset.unwrap_or(0);
         let max_bytes = payload.max_bytes.unwrap_or(64 * 1024).min(256 * 1024) as usize;
-        let slice = run_log::read_run_log_slice(&path, offset, max_bytes)
+        let slice = run_log::read_run_log_slice(&workspace, &path, offset, max_bytes)
             .map_err(|e| format!("skill_runtime_read_run_log: read failed: {e}"))?;
         to_json(Outcome::new(slice, Vec::new()))
     })

@@ -19,6 +19,10 @@ const AGENT_ID: &str = "test-agent";
 const STORE_KEY: &str = "orchestrator";
 
 fn store(workspace: &Path) -> TranscriptStore {
+    // Sealing a generation writes under a lease condition the in-memory test
+    // backend cannot enforce, so the workspace opens its durable default.
+    #[cfg(feature = "storage-sqlite")]
+    crate::storage::local::use_persistent_default_for_test(workspace);
     TranscriptStore {
         workspace_dir: workspace.to_path_buf(),
         key: STORE_KEY.to_string(),
@@ -37,6 +41,7 @@ fn base_meta(agent_id: &str, thread_id: &str) -> TranscriptMeta {
         updated: "2026-09-24T00:00:00Z".into(),
         turn_count: 0,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,
@@ -284,6 +289,8 @@ fn truncate_transcript_for_regenerate_returns_none_when_thread_has_no_transcript
 #[test]
 fn a_profile_prefixed_key_round_trips_through_edit_and_regenerate() {
     let dir = TempDir::new().expect("tempdir");
+    #[cfg(feature = "storage-sqlite")]
+    crate::storage::local::use_persistent_default_for_test(dir.path());
     let config = crate::config::Config {
         workspace_dir: dir.path().to_path_buf(),
         ..crate::config::Config::default()
@@ -394,6 +401,8 @@ async fn edit_and_regenerate_use_the_threads_recorded_key_after_a_chat_agent_cha
     use crate::core::runtime::{ContextOverlay, CoreContext, DispatchCtx, DomainSet};
     let _ = crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins();
     let dir = TempDir::new().expect("tempdir");
+    #[cfg(feature = "storage-sqlite")]
+    crate::storage::local::use_persistent_default_for_test(dir.path());
     let ctx_with = |chat_agent: Option<&str>| {
         let mut config = crate::config::Config {
             workspace_dir: dir.path().to_path_buf(),
@@ -407,7 +416,7 @@ async fn edit_and_regenerate_use_the_threads_recorded_key_after_a_chat_agent_cha
         );
         DispatchCtx::new(CoreContext::for_test(DomainSet::full(), None).derive_with(overlay))
     };
-    let (before, after) = (ctx_with(None), ctx_with(Some("planner")));
+    let (before, after) = (ctx_with(None), ctx_with(Some("summarizer")));
     let thread_id = "thread-flipped";
 
     // The first session records its key and writes the transcript there.

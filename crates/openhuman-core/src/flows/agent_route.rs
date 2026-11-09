@@ -1,6 +1,6 @@
 //! Host-owned selection and model routing for TinyFlows agent nodes.
 
-use crate::inference::provider::{is_raw_passthrough_model, role_for_model_tier};
+use crate::inference::provider::factory::PROVIDER_OPENHUMAN;
 
 /// Which execution path an `agent_ref` routes to (see [`crate::flows::caps_host::agent::OpenHumanAgentRunner`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,10 +48,13 @@ pub(crate) fn route_for_agent_ref(agent_ref: &str) -> AgentRoute {
 /// [`crate::flows::caps_host::OpenHumanLlm::complete`] applies through the
 /// TinyFlows portability contract.
 pub(crate) fn harness_model_default_override(node_model: &str) -> String {
-    if is_raw_passthrough_model(node_model) {
+    if crate::inference::provider_model::is_raw_model(PROVIDER_OPENHUMAN, node_model) {
         return node_model.to_string();
     }
-    format!("hint:{}", role_for_model_tier(node_model))
+    format!(
+        "hint:{}",
+        crate::inference::provider_model::role_for_provider_model(PROVIDER_OPENHUMAN, node_model)
+    )
 }
 
 /// Decides how to run an `agent_ref` that has no harness definition, given

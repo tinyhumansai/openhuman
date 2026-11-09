@@ -186,7 +186,6 @@ function fakeDone(text: string) {
     thread_id: 't',
     request_id: 'r',
     full_response: text,
-    rounds_used: 1,
     total_input_tokens: 1,
     total_output_tokens: 1,
   };

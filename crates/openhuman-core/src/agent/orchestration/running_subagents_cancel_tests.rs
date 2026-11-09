@@ -1,7 +1,7 @@
 //! Cancelling and stopping registered sub-agents: by task, by thread, and all.
 
 use super::*;
-use tinyagents_orchestration::subagent::SteerError;
+use tinyagents_orchestration::steering::SteerError;
 
 /// A finished run stays registered until the terminal sweep, so a late
 /// "Cancel" still finds it. It must come back flagged, so the RPC does not

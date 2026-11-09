@@ -11,7 +11,7 @@
 //! [`ComposioActionTool::deferred`] builds the same tool as a
 //! `ToolExposure::Deferred` registration for a parent session:
 //! every action of every connected toolkit is synthesised beside the
-//! delegation tools (`tools::orchestrator_tools`), stays off the wire, and
+//! delegation tools (`integrations::composio::orchestrator_actions`), stays off the wire, and
 //! is found through the harness's `tool_search` bridge — so one clear action
 //! ("send Alex a Slack message") is a search and a call, not a sub-agent
 //! run. Those instances have no spawn-time config to anchor to and resolve
@@ -240,8 +240,8 @@ impl Tool for ComposioActionTool {
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let (config, outcome) =
-            Box::pin(self.execute_unredacted(&dispatch_ctx_for_tool(None), args, None)).await;
-        super::tools::redact_composio_outcome(&config, outcome)
+            Box::pin(self.execute_unredacted(&dispatch_ctx_for_tool(None), args, None, None)).await;
+        super::tools::redact_composio_outcome(&config, outcome).await
     }
     async fn execute_with_context(
         &self,
@@ -249,13 +249,18 @@ impl Tool for ComposioActionTool {
         _options: ToolCallOptions,
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
-        let (config, outcome) = Box::pin(self.execute_unredacted(
-            &dispatch_ctx_for_tool(context),
-            args,
-            sandbox_mode_for_tool(context),
-        ))
+        let (config, outcome) = Box::pin(
+            self.execute_unredacted(
+                &dispatch_ctx_for_tool(context),
+                args,
+                sandbox_mode_for_tool(context),
+                crate::agent::tinyagents::host::run_context::approval_for_tool(context)
+                    .chat
+                    .as_ref(),
+            ),
+        )
         .await;
-        super::tools::redact_composio_outcome(&config, outcome)
+        super::tools::redact_composio_outcome(&config, outcome).await
     }
 }
 
@@ -269,6 +274,7 @@ impl ComposioActionTool {
         ctx: &DispatchCtx,
         args: Value,
         sandbox_mode: Option<SandboxMode>,
+        chat: Option<&crate::security::approval::ApprovalChatContext>,
     ) -> (Box<Config>, anyhow::Result<ToolResult>) {
         // Boxed from the moment it exists, not just at the return: this
         // local is held across every await point below, and `Config` is a
@@ -397,14 +403,15 @@ impl ComposioActionTool {
         // direct-mode toggle still takes effect immediately (#1710): the route
         // is reconciled from `live_config` on the way through, rather than
         // baked into a client this tool captured at construction.
-        let res = super::module_client::call::<_, super::types::ComposioExecuteResponse>(
+        // Through the shared dispatch, so the local-only egress policy
+        // applies to per-action tools as it does to `composio_execute`, and
+        // the transfer is disclosed in the turn's chat.
+        let res = super::execute_dispatch::execute_composio_action(
             &live_config,
-            tinyconnectors_bus::names::methods::EXECUTE,
-            super::types::ComposioExecuteRequest {
-                tool: self.action_name.clone(),
-                arguments: args,
-                connection_id: effective_connection_id.map(str::to_string),
-            },
+            chat,
+            &self.action_name,
+            args,
+            effective_connection_id,
         )
         .await;
         let elapsed_ms = started.elapsed().as_millis() as u64;

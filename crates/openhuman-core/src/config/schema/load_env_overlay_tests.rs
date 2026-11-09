@@ -1,6 +1,51 @@
 use super::*;
 
 #[test]
+fn default_model_provenance_records_environment_precedence_without_values() {
+    let mut cfg = config_from_toml_str(r#"default_model = "file-model""#).unwrap();
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_DEFAULT_MODEL", "env-model"));
+
+    let entry = cfg.load_provenance().field("default_model");
+    assert_eq!(entry.source, super::ProvenanceSource::Env);
+    assert_eq!(entry.env_var.as_deref(), Some("OPENHUMAN_DEFAULT_MODEL"));
+    assert!(entry.file_also_set);
+    assert_eq!(cfg.default_model.as_deref(), Some("env-model"));
+    assert!(!format!("{:?}", cfg.load_provenance()).contains("env-model"));
+}
+
+#[test]
+fn blank_explicit_model_env_falls_back_to_legacy_alias_and_records_its_name() {
+    for explicit_model in ["", "  \t"] {
+        let mut cfg = Config::default();
+        cfg.apply_env_overlay_with(
+            &HashMapEnv::new()
+                .with("OPENHUMAN_DEFAULT_MODEL", explicit_model)
+                .with("OPENHUMAN_MODEL", "legacy-model"),
+        );
+
+        assert_eq!(cfg.default_model.as_deref(), Some("legacy-model"));
+        let provenance = cfg.load_provenance().field("default_model");
+        assert_eq!(provenance.source, super::ProvenanceSource::Env);
+        assert_eq!(provenance.env_var.as_deref(), Some("OPENHUMAN_MODEL"));
+    }
+
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_DEFAULT_MODEL", "canonical-model")
+            .with("OPENHUMAN_MODEL", "legacy-model"),
+    );
+    assert_eq!(cfg.default_model.as_deref(), Some("canonical-model"));
+    assert_eq!(
+        cfg.load_provenance()
+            .field("default_model")
+            .env_var
+            .as_deref(),
+        Some("OPENHUMAN_DEFAULT_MODEL")
+    );
+}
+
+#[test]
 fn env_overlay_model_only_honours_namespaced_var() {
     // Both set → OPENHUMAN_MODEL wins; bare MODEL is ignored even when
     // OPENHUMAN_MODEL is absent.
@@ -436,6 +481,39 @@ fn env_overlay_jev_route_and_base_url_override_tool_search_when_non_blank() {
     );
 }
 
+#[test]
+fn env_overlay_sets_the_tool_search_discovery_options() {
+    let mut cfg = Config::default();
+    let today = cfg.agent.tool_search.clone();
+    assert!(today.promote_found_tools && today.repair_tool_call_wrapper);
+    assert!(!today.compact_search_results && !today.collapse_search_results);
+    assert_eq!(today.max_limit, 20);
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_TOOL_SEARCH_PROMOTE_FOUND_TOOLS", "off")
+            .with("OPENHUMAN_TOOL_SEARCH_COMPACT_SEARCH_RESULTS", " TRUE ")
+            .with("OPENHUMAN_TOOL_SEARCH_COLLAPSE_SEARCH_RESULTS", "1")
+            .with("OPENHUMAN_TOOL_SEARCH_REPAIR_TOOL_CALL_WRAPPER", "no")
+            .with("OPENHUMAN_TOOL_SEARCH_MAX_LIMIT", "5"),
+    );
+    let set = &cfg.agent.tool_search;
+    assert!(!set.promote_found_tools && !set.repair_tool_call_wrapper);
+    assert!(set.compact_search_results && set.collapse_search_results);
+    assert_eq!(set.max_limit, 5);
+
+    // Blank or unusable values leave the configured choice alone.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_TOOL_SEARCH_PROMOTE_FOUND_TOOLS", "  ")
+            .with("OPENHUMAN_TOOL_SEARCH_COMPACT_SEARCH_RESULTS", "maybe")
+            .with("OPENHUMAN_TOOL_SEARCH_MAX_LIMIT", "0"),
+    );
+    assert!(!cfg.agent.tool_search.promote_found_tools);
+    assert!(cfg.agent.tool_search.compact_search_results);
+    assert_eq!(cfg.agent.tool_search.max_limit, 5);
+}
+
 /// Local model tier presets were removed: OpenHuman no longer picks models by
 /// RAM tier. A stale `OPENHUMAN_LOCAL_AI_TIER` in the environment must be
 /// ignored rather than rewriting the user's configured local models.
@@ -552,4 +630,97 @@ fn legacy_disable_channel_listeners_env_folds_into_channels_component() {
         .with("OPENHUMAN_COMPONENT_CHANNELS", "1");
     cfg.apply_env_overlay_with(&env);
     assert!(cfg.components.channels, "explicit component env wins");
+}
+
+#[test]
+fn env_overlay_inbound_debounce_applies_and_ignores_garbage() {
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_INBOUND_DEBOUNCE_ENABLED", "false")
+            .with("OPENHUMAN_INBOUND_DEBOUNCE_MS", "800")
+            .with("OPENHUMAN_INBOUND_DEBOUNCE_MEDIA_MS", " 3000 ")
+            .with("OPENHUMAN_INBOUND_DEBOUNCE_MAX_WAIT_MS", "9000"),
+    );
+    assert!(!cfg.inbound_debounce.enabled);
+    assert_eq!(cfg.inbound_debounce.debounce_ms, 800);
+    assert_eq!(cfg.inbound_debounce.media_debounce_ms, 3000);
+    assert_eq!(cfg.inbound_debounce.max_wait_ms, 9000);
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_INBOUND_DEBOUNCE_ENABLED", "maybe")
+            .with("OPENHUMAN_INBOUND_DEBOUNCE_MS", "-1")
+            .with("OPENHUMAN_INBOUND_DEBOUNCE_MEDIA_MS", "")
+            .with("OPENHUMAN_INBOUND_DEBOUNCE_MAX_WAIT_MS", "soon"),
+    );
+    assert!(!cfg.inbound_debounce.enabled);
+    assert_eq!(cfg.inbound_debounce.debounce_ms, 800);
+    assert_eq!(cfg.inbound_debounce.media_debounce_ms, 3000);
+    assert_eq!(cfg.inbound_debounce.max_wait_ms, 9000);
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_INBOUND_DEBOUNCE_ENABLED", "on"));
+    assert!(cfg.inbound_debounce.enabled);
+}
+
+#[test]
+fn search_compact_results_and_contents_cap_default_to_today_and_read_from_the_table() {
+    let defaults = Config::default().search;
+    assert!(!defaults.compact_results);
+    assert_eq!(defaults.contents_max_chars, None);
+
+    let cfg: Config =
+        toml::from_str("[search]\ncompact_results = true\ncontents_max_chars = 1200\n").unwrap();
+    assert!(cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, Some(1_200));
+}
+
+#[test]
+fn search_compact_results_and_contents_cap_env_set_clear_and_ignore_garbage() {
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARCH_COMPACT_RESULTS", "yes")
+            .with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", " 1200 "),
+    );
+    assert!(cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, Some(1_200));
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARCH_COMPACT_RESULTS", "sometimes")
+            .with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", "lots"),
+    );
+    assert!(cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, Some(1_200));
+
+    // `0` removes the cap and `off` restores the default rendering.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARCH_COMPACT_RESULTS", "off")
+            .with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", "0"),
+    );
+    assert!(!cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, None);
+}
+
+#[test]
+fn search_contents_cap_env_treats_every_zero_spelling_as_unset() {
+    for zero in ["0", "00", " 000 "] {
+        let mut cfg = Config::default();
+        cfg.search.contents_max_chars = Some(1_200);
+        cfg.apply_env_overlay_with(
+            &HashMapEnv::new().with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", zero),
+        );
+        assert_eq!(
+            cfg.search.contents_max_chars, None,
+            "{zero:?} must clear the cap, not become a one-character cap"
+        );
+    }
+    // A leading zero on a positive value is still that value.
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", "01"),
+    );
+    assert_eq!(cfg.search.contents_max_chars, Some(1));
 }

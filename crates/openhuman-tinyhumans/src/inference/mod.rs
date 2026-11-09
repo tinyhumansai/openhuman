@@ -6,32 +6,36 @@
 //!
 //! | Registry | Registered value |
 //! | --- | --- |
-//! | chat models | [`managed_model::OpenHumanBackendModel`] built per request, plus its readiness probe |
-//! | embeddings | [`managed_embedding::ManagedEmbeddingModel`] |
+//! | chat models | TinyInference's [`tinyinference_llm::providers::tinyhumans::TinyHumansModel`] with host credentials, plus its readiness probe |
+//! | embeddings | TinyInference's `CloudEmbeddingModel` with OpenHuman's credential and egress policy |
 //! | catalogs | the managed `/openai/v1/models?catalog=openrouter` listing and its limits request |
 //!
 //! `register` is the one place it does so; `crate::register::register_all`
 //! calls it from `install()`.
 
-mod managed_calls;
+mod backend_error_code;
 mod managed_catalog;
 mod managed_embedding;
 mod managed_model;
-mod managed_reasoning;
 mod managed_session;
-mod managed_usage;
+mod tiers;
+#[cfg(test)]
+pub(crate) use tiers::MODEL_MANAGED_DEFAULT;
 
 use std::sync::Arc;
 
-use openhuman_embed::__host::config::{Config, MODEL_MANAGED_DEFAULT};
+use openhuman_embed::__host::config::Config;
 use openhuman_embed::__host::inference_registry::{
-    register_catalog, register_chat_model, register_embedding, BoxFuture, ChatModelEntry,
-    ChatModelFactory, ChatModelRequest, ReadinessProbe, PROVIDER_OPENHUMAN,
+    register_backend_error_classifier, register_catalog, register_chat_model,
+    register_config_normalizer, register_embedding, register_inspection_catalog,
+    register_inspection_chat_model, register_inspection_embedding, ChatModelEntry,
+    ChatModelFactory, ChatModelRequest, EmbeddingRequest, InspectionChatModelBuild,
+    ProviderContext, ProviderModelMetadata, ReadinessProbe, PROVIDER_OPENHUMAN,
 };
 use tinyinference_llm::model::ChatModel;
 
-pub use managed_embedding::ManagedEmbeddingModel;
-pub use managed_model::{ManagedOptions, OpenHumanBackendModel};
+pub use backend_error_code::HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE;
+pub use managed_model::ManagedOptions;
 
 use crate::install::InstallOptions;
 
@@ -48,21 +52,22 @@ fn managed_options(config: &Config) -> ManagedOptions {
 /// Builds the managed chat model for one registry request. The core has already
 /// resolved the concrete model id (`model_override`) and disclosed the egress.
 pub(crate) fn build_chat_model(
-    request: &ChatModelRequest<'_>,
+    request: &ChatModelRequest<'_, ProviderContext>,
 ) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
     let pinned = request
         .model_override
         .map(str::trim)
         .filter(|model| !model.is_empty())
-        .unwrap_or(MODEL_MANAGED_DEFAULT)
-        .to_string();
+        .map(str::to_string)
+        .or_else(tiers::default_model)
+        .ok_or_else(|| anyhow::anyhow!("TinyHumans managed inference has no configured model"))?;
     let default_model = request
         .default_model
         .map(str::trim)
         .filter(|model| !model.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| pinned.clone());
-    let options = managed_options(request.config);
+    let options = managed_options(&request.context.config);
     log::debug!(
         "[tinyhumans][inference] building managed chat model role={} model={} native_tools={} threaded={}",
         request.role,
@@ -70,22 +75,78 @@ pub(crate) fn build_chat_model(
         request.native_tool_calling,
         request.thread_id.is_some()
     );
-    let model =
-        OpenHumanBackendModel::new(request.config.api_url.as_deref(), &options, default_model)
-            .with_native_tool_calling(request.native_tool_calling)
-            .with_thread_id(request.thread_id);
+    let model = managed_model::build_chat_model(
+        request.context.config.api_url.as_deref(),
+        &options,
+        &default_model,
+        request.native_tool_calling,
+        request.thread_id,
+        true,
+    )?;
     Ok((Arc::new(model), pinned))
 }
 
-fn readiness_probe() -> ReadinessProbe {
+async fn build_chat_model_for_inspection(
+    request: &ChatModelRequest<'_, ProviderContext>,
+) -> anyhow::Result<InspectionChatModelBuild> {
+    let config = &request.context.config;
+    let pinned = request
+        .model_override
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
+        .or_else(tiers::default_model)
+        .ok_or_else(|| anyhow::anyhow!("TinyHumans managed inference has no configured model"))?;
+    let default_model = request
+        .default_model
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| pinned.clone());
+    let bearer = managed_session::managed_bearer_for_inspection(config).await?;
+    let model = managed_model::build_chat_model_for_inspection(
+        config.api_url.as_deref(),
+        &default_model,
+        bearer.clone(),
+        request.native_tool_calling,
+        request.thread_id,
+    )?;
+    let endpoint = format!(
+        "{}/openai/v1",
+        crate::backend::url::effective_api_url(&config.api_url).trim_end_matches('/')
+    );
+    Ok(InspectionChatModelBuild {
+        model: Arc::new(model),
+        model_id: default_model,
+        endpoint,
+        credential: bearer,
+    })
+}
+
+fn readiness_probe() -> ReadinessProbe<ProviderContext> {
     Arc::new(
-        |role: String, model: String, config: Config| -> BoxFuture<Result<(), String>> {
+        |request: tinyinference_llm::providers::overrides::ReadinessRequest<ProviderContext>| -> tinyinference_llm::providers::overrides::BoxFuture<Result<(), String>> {
             Box::pin(async move {
+                let role = request.role;
+                let model = request.model;
+                let config = request.context.config;
                 log::debug!("[tinyhumans][inference] readiness probe role={role} model={model}");
                 let options = managed_options(&config);
-                OpenHumanBackendModel::new(config.api_url.as_deref(), &options, model)
-                    .probe_readiness()
-                    .await
+                let managed = match managed_model::build_chat_model(
+                    config.api_url.as_deref(),
+                    &options,
+                    &model,
+                    true,
+                    None,
+                    false,
+                ) {
+                    Ok(managed) => managed,
+                    Err(error) => {
+                        log::debug!("[tinyhumans][inference] readiness model construction failed, failing open: {error}");
+                        return Ok(());
+                    }
+                };
+                managed.probe_readiness().await
             })
         },
     )
@@ -93,18 +154,54 @@ fn readiness_probe() -> ReadinessProbe {
 
 /// Registers this area's hooks with the core. Idempotent.
 pub(crate) fn register(_options: &InstallOptions) {
-    let build: ChatModelFactory = Arc::new(build_chat_model);
+    let build: ChatModelFactory<ProviderContext> = Arc::new(|request| {
+        build_chat_model(request)
+            .map_err(|error| tinyinference_llm::Error::Model(error.to_string()))
+    });
     register_chat_model(
         PROVIDER_OPENHUMAN,
         ChatModelEntry {
             build,
             probe: Some(readiness_probe()),
+            models: Some(ProviderModelMetadata {
+                default_model: Arc::new(tiers::default_model),
+                role_for_model: Arc::new(tiers::role_for_model),
+                is_alias: Arc::new(tiers::is_alias),
+                is_raw_model: Arc::new(tiers::is_raw_model),
+                supports_vision: Arc::new(tiers::supports_vision),
+                resolve_model: Arc::new(|role, context, model| {
+                    tiers::resolve_model(role, &context.config, model)
+                }),
+                context_window: Arc::new(tiers::context_window),
+                default_pricing: Arc::new(tiers::default_pricing),
+                without_reasoning: Arc::new(tinyinference_llm::model::without_reasoning),
+            }),
         },
     );
-    register_embedding(PROVIDER_OPENHUMAN, |request| {
-        Ok(Box::new(ManagedEmbeddingModel::from_request(request)))
+    register_embedding(
+        PROVIDER_OPENHUMAN,
+        Arc::new(|request: EmbeddingRequest<ProviderContext>| {
+            Box::pin(async move {
+                Ok(Box::new(managed_embedding::from_request(request))
+                    as Box<dyn tinyinference_embeddings::EmbeddingModel>)
+            })
+        }),
+    );
+    register_inspection_chat_model(
+        PROVIDER_OPENHUMAN,
+        Arc::new(|request| Box::pin(build_chat_model_for_inspection(request))),
+    );
+    register_inspection_embedding(PROVIDER_OPENHUMAN, |request| {
+        Box::pin(async move {
+            managed_embedding::from_request_for_inspection(&request)
+                .await
+                .map(|model| Box::new(model) as Box<dyn tinyinference_embeddings::EmbeddingModel>)
+        })
     });
     register_catalog(PROVIDER_OPENHUMAN, managed_catalog::entry());
+    register_inspection_catalog(PROVIDER_OPENHUMAN, managed_catalog::inspection_entry());
+    register_config_normalizer(PROVIDER_OPENHUMAN, Arc::new(tiers::normalize_config));
+    register_backend_error_classifier(Arc::new(backend_error_code::classify));
     log::debug!(
         "[tinyhumans] inference: registered the managed chat model, embeddings and catalog"
     );

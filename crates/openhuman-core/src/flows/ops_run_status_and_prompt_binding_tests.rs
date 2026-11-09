@@ -133,6 +133,7 @@ fn agent_prompt_binding_unaffected() {
 /// tools in place so the turn still functions (never fail-closes).
 #[tokio::test]
 async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
+    crate::agent::session_host::test_support::install_model_fixture();
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 
@@ -179,6 +180,7 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
         &config,
         "workflow_builder",
     )
+    .await
     .expect("build workflow_builder agent");
     agent.set_agent_definition_name("workflow_builder".to_string());
 
@@ -268,6 +270,7 @@ fn flows_build_hide_lists_have_the_expected_contents() {
 /// run — a product decision, deliberately not taken here.
 #[tokio::test]
 async fn flows_build_copilot_toolset_unhides_the_live_run_tools() {
+    crate::agent::session_host::test_support::install_model_fixture();
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 
@@ -282,6 +285,7 @@ async fn flows_build_copilot_toolset_unhides_the_live_run_tools() {
         &config,
         "workflow_builder",
     )
+    .await
     .expect("build workflow_builder agent");
     agent.set_agent_definition_name("workflow_builder".to_string());
 
@@ -312,7 +316,7 @@ async fn flows_build_copilot_toolset_unhides_the_live_run_tools() {
         .with_writer(capture.clone())
         .with_ansi(false)
         .finish();
-    let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+    tracing::subscriber::set_global_default(subscriber).expect("install test tracing subscriber");
 
     restrict_builder_toolset_for_copilot(&mut agent);
 
@@ -374,6 +378,7 @@ async fn flows_build_copilot_toolset_unhides_the_live_run_tools() {
 /// override needed (that function was deleted as part of #4868).
 #[tokio::test]
 async fn flows_build_applies_the_builder_definitions_effective_iteration_cap() {
+    crate::agent::session_host::test_support::install_model_fixture();
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 
@@ -407,6 +412,7 @@ async fn flows_build_applies_the_builder_definitions_effective_iteration_cap() {
         &config,
         "workflow_builder",
     )
+    .await
     .expect("build workflow_builder agent");
     assert_eq!(agent.agent_config().max_tool_iterations, expected);
     assert_ne!(

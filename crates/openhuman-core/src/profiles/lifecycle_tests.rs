@@ -10,7 +10,7 @@ use crate::core::runtime::{DomainSet, SaasConfig};
 use crate::profiles::credentials::UserCredentialKind;
 use crate::profiles::OpenError;
 use crate::storage::lease::{LeaseRecord, LeaseStore};
-use crate::storage::{MemoryStorage, StorageBackend};
+use crate::storage::StorageBackend;
 
 fn saas(root: &std::path::Path, node: &str) -> SaasConfig {
     let mut saas = SaasConfig::new(root);
@@ -87,6 +87,10 @@ impl LeaseStore for PausingLeases {
 
     async fn holder(&self, key: &str) -> Result<Option<LeaseRecord>, LeaseError> {
         self.inner.holder(key).await
+    }
+
+    async fn holder_readonly(&self, key: &str) -> Result<Option<LeaseRecord>, LeaseError> {
+        self.inner.holder_readonly(key).await
     }
 }
 
@@ -209,7 +213,8 @@ async fn a_failed_archive_gives_the_lease_back() {
 #[tokio::test]
 async fn provisioning_waits_out_another_nodes_lease() {
     let tmp = tempfile::tempdir().unwrap();
-    let backend: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let backend_fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let backend: Arc<dyn StorageBackend> = Arc::clone(&backend_fixture.backend);
     let (a, b) = (
         clustered(tmp.path(), "node-a", &backend),
         clustered(tmp.path(), "node-b", &backend),

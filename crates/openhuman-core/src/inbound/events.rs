@@ -14,6 +14,10 @@
 //! - kind `Trigger` (never ambient chatter), and the envelope itself in `raw`,
 //!   from which `Deliver` rebuilds it ([`envelope_of`]).
 //!
+//! An event pushed from an external source (`inbound.offer`) is
+//! [`external`]: keyed by the caller's `key`, so a source's events debounce
+//! into batches its pinned agent reads back with [`external_of`].
+//!
 //! A digest turn (the queues folded an overflow into one) becomes a single
 //! external envelope listing its events ([`digest_envelope`]), so a flood
 //! costs one triage, not one per event.
@@ -192,6 +196,83 @@ pub fn webhook(
         raw,
         envelope,
     )
+}
+
+/// Raw kind of an event pushed from an external source (`inbound.offer`).
+const EXTERNAL: &str = "external";
+
+/// An external event as `raw` stores it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct ExternalRaw {
+    kind: String,
+    text: String,
+    payload: Value,
+    received_at_ms: u64,
+}
+
+/// One external event as its pinned agent reads it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExternalItem {
+    /// The source's own event id.
+    pub id: String,
+    /// The event's text.
+    pub text: String,
+    /// The source's payload, as pushed.
+    pub payload: Value,
+    /// When the source received it, Unix epoch milliseconds.
+    pub received_at_ms: u64,
+}
+
+/// The inbound event of an event pushed from external source `source`
+/// (`inbound.offer`). Its `conversation_key` is `key` and its sender the
+/// source itself, so the queues debounce a source's events per key into one
+/// batch; `event_id` is the source's own id, so a redelivery is rejected.
+///
+/// # Errors
+///
+/// [`Unqueueable::Oversize`] for one too large to queue.
+pub fn external(
+    source: &str,
+    key: &str,
+    event_id: &str,
+    text: &str,
+    payload: Value,
+    received_at_ms: u64,
+) -> Result<InboundEvent, Unqueueable> {
+    let raw = serde_json::to_value(ExternalRaw {
+        kind: EXTERNAL.to_owned(),
+        text: text.to_owned(),
+        payload,
+        received_at_ms,
+    })
+    .map_err(|_| Unqueueable::Source)?;
+    let bytes = raw.to_string().len();
+    if bytes > MAX_RAW_BYTES {
+        return Err(Unqueueable::Oversize(bytes));
+    }
+    Ok(InboundEvent::new(
+        source,
+        event_id,
+        key,
+        Sender::new(source),
+        EventKind::Trigger,
+        received_at_ms,
+    )
+    .text(text.to_owned())
+    .raw(raw))
+}
+
+/// The external item an inbound event was offered as, or `None` for an event
+/// that was not pushed from an external source.
+#[must_use]
+pub fn external_of(event: &InboundEvent) -> Option<ExternalItem> {
+    let raw: ExternalRaw = serde_json::from_value(event.raw.clone()?).ok()?;
+    (raw.kind == EXTERNAL).then(|| ExternalItem {
+        id: event.event_id.clone(),
+        text: raw.text,
+        payload: raw.payload,
+        received_at_ms: raw.received_at_ms,
+    })
 }
 
 /// The envelope an inbound event was queued from, or `None` for an event

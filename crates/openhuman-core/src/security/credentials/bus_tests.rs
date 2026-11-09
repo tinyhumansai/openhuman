@@ -44,6 +44,7 @@ async fn session_expired_in_saas_returns_before_any_teardown() {
             &DomainEvent::SessionExpired {
                 source: "test".into(),
                 reason: "401".into(),
+                credential_fingerprint: None,
             },
         ),
     )

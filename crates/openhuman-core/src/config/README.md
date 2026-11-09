@@ -108,7 +108,8 @@ process-global user's settings.
 Overrides are applied after parsing and never written back to disk.
 
 1. `Config::apply_env_overrides` ([`schema/load/env_overlay.rs`](./schema/load/env_overlay.rs) plus one submodule per section) reads
-   `OPENHUMAN_*` variables such as `OPENHUMAN_MODEL` and `OPENHUMAN_TOOL_DISPATCHER`. Only namespaced
+   `OPENHUMAN_*` variables such as `OPENHUMAN_DEFAULT_MODEL` (with `OPENHUMAN_MODEL` kept as an alias)
+   and `OPENHUMAN_TOOL_DISPATCHER`. Only namespaced
    names are honored. Tests call the pure `apply_env_overlay_with` with a map-backed `EnvLookup`
    ([`schema/load/env.rs`](./schema/load/env.rs)) so they do not touch the process environment.
 2. The same call publishes process-wide state: the proxy settings go to `set_runtime_proxy_config`
@@ -181,7 +182,7 @@ config.update_model_settings (JSON-RPC / CLI)
 | `user_openhuman_dir`, `pre_login_user_dir`, `write_active_user_id`, `clear_active_user` | [`schema/load_user_state.rs`](./schema/load_user_state.rs) | Per-user directory layout and the `active_user.toml` marker. |
 | `build_runtime_proxy_client`, `apply_runtime_proxy_to_builder` | [`schema/proxy.rs`](./schema/proxy.rs) | `reqwest` clients that honor the configured proxy for a named service key. |
 | `migrations::run_pending`, `CURRENT_SCHEMA_VERSION` | [`migrations/mod.rs`](./migrations/mod.rs) | The startup migration runner. |
-| `DEFAULT_MODEL`, `MODEL_MANAGED_DEFAULT`, `LEGACY_TIER_MODELS`, `WORKLOAD_ROLES` | [`schema/types/model_ids.rs`](./schema/types/model_ids.rs) | Model id constants shared by inference and the settings UI. |
+| `WORKLOAD_ROLES` | [`schema/types/model_ids.rs`](./schema/types/model_ids.rs) | Provider-neutral workload roles shared by inference and settings. Hosted model ids and aliases are registered by the host. |
 | `DaemonConfig` | `daemon.rs` | Supervisor-level config bundle for embedders. |
 
 ## RPC surface

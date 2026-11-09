@@ -25,7 +25,7 @@ struct ToolFamily {
 const TOOL_FAMILIES: &[ToolFamily] = &[
     ToolFamily {
         id: "shell",
-        rust_names: &["shell"],
+        rust_names: &["shell", "shell_process"],
         default_enabled: true,
     },
     // detect_tools / install_tool are filterable but not surfaced in the

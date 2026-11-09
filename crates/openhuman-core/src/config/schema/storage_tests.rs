@@ -51,3 +51,35 @@ fn journal_retention_defaults_to_thirty_days_and_reads_from_toml() {
     let set: StorageConfig = toml::from_str("journal_retention_days = 7").unwrap();
     assert_eq!(set.journal_retention_days, 7);
 }
+
+#[test]
+fn redact_hides_userinfo_when_the_password_has_a_query_char() {
+    assert_eq!(
+        redact_url("mongodb://app:p/ss@db.internal/oh"),
+        "mongodb://***@db.internal/oh"
+    );
+    // A `?` or `#` before the `@` is ambiguous (password or query): hide all.
+    for url in [
+        "mongodb://app:p?ss@db.internal/oh",
+        "mongodb://app:p#ss@db.internal/oh",
+    ] {
+        assert_eq!(redact_url(url), "mongodb://***", "{url}");
+    }
+}
+
+#[test]
+fn redact_hides_a_query_value_that_holds_an_at() {
+    assert_eq!(
+        redact_url("mongodb://db/oh?password=@hunter2"),
+        "mongodb://***"
+    );
+    assert_eq!(
+        redact_url("mongodb://db/x?token=prefix@SECRET"),
+        "mongodb://***"
+    );
+}
+
+#[test]
+fn redact_hides_userinfo_of_a_scheme_relative_url() {
+    assert_eq!(redact_url("//app:hunter2@db.internal"), "//***@db.internal");
+}

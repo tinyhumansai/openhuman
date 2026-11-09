@@ -36,19 +36,44 @@ fn normalize_backend_api_base_url_keeps_only_the_origin() {
 }
 
 #[test]
-fn host_is_local_classifies_loopback_private_and_localhost() {
-    let local = [
-        "http://127.0.0.1:1",
-        "http://[::1]:1",
-        "http://0.0.0.0",
-        "http://10.0.0.2",
-        "http://localhost",
-        "http://app.localhost",
-    ];
-    for raw in local {
-        assert!(host_is_local(&::url::Url::parse(raw).unwrap()), "{raw}");
+fn loopback_host_matches_only_this_machine() {
+    for host in [
+        "localhost",
+        "LOCALHOST.",
+        "api.localhost",
+        "127.0.0.1",
+        "127.8.9.10",
+        "0.0.0.0",
+        "::1",
+        "[::1]",
+        "::",
+        "::ffff:127.0.0.1",
+    ] {
+        assert!(loopback_host(host), "{host} is on this machine");
     }
-    for raw in ["https://h.example", "http://8.8.8.8"] {
-        assert!(!host_is_local(&::url::Url::parse(raw).unwrap()), "{raw}");
+    for host in [
+        "192.168.1.10",
+        "10.0.0.1",
+        "fd00::1",
+        "example.com",
+        "localhost.example.com",
+        "",
+    ] {
+        assert!(!loopback_host(host), "{host} is not on this machine");
     }
+}
+
+#[cfg(not(feature = "security-module"))]
+#[test]
+fn a_build_without_the_module_classifies_provider_hosts_by_loopback() {
+    assert!(provider_host_is_local("localhost"));
+    assert!(!provider_host_is_local("192.168.1.10"));
+}
+
+#[cfg(feature = "security-module")]
+#[test]
+fn security_configured_off_classifies_provider_hosts_by_loopback() {
+    let _off = crate::security::switch::off_for_this_thread();
+    assert!(provider_host_is_local("127.0.0.1"));
+    assert!(!provider_host_is_local("api.example.com"));
 }

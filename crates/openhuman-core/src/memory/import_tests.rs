@@ -126,6 +126,9 @@ async fn a_paused_scheduler_leaves_an_interrupted_import_for_later() {
     );
 }
 
+// Saves layout-migration state, which needs a backend that can claim imports
+// (see `memory/layout_migration/ops.rs`).
+#[cfg(feature = "storage-sqlite")]
 #[tokio::test]
 async fn a_live_import_blocks_migration_and_does_not_make_a_stale_migration_look_live() {
     use crate::memory::layout_migration::{self, state, test_host::FakeHost, Phase, Trigger};
@@ -325,6 +328,7 @@ CREATE TABLE user_profile (facet_id TEXT PRIMARY KEY, facet_type TEXT NOT NULL, 
   class TEXT, cue_families_json TEXT, UNIQUE(facet_type, key));
 "#;
 
+#[cfg(feature = "legacy-import")]
 fn legacy_document(config: &Config, id: &str, title: &str, body: &str) {
     let db = config.workspace_dir.join("memory/memory.db");
     std::fs::create_dir_all(db.parent().unwrap()).unwrap();
@@ -372,6 +376,7 @@ async fn assert_reference_contains(
     );
 }
 
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
 async fn a_real_legacy_document_imports_through_the_host_adapter() {
     let tmp = tempfile::tempdir().unwrap();
@@ -402,6 +407,7 @@ async fn a_real_legacy_document_imports_through_the_host_adapter() {
     assert_reference_contains(&engine, "real legacy body").await;
 }
 
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
 async fn an_interrupted_import_resumes_through_the_host_adapter() {
     let tmp = tempfile::tempdir().unwrap();
@@ -441,6 +447,7 @@ async fn an_interrupted_import_resumes_through_the_host_adapter() {
     assert_reference_contains(&engine, "resumed legacy body").await;
 }
 
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
 async fn retry_failed_reimports_a_real_legacy_row_through_the_host_adapter() {
     use tinymemory_integrations::import::FailedItem;
@@ -479,6 +486,7 @@ async fn retry_failed_reimports_a_real_legacy_row_through_the_host_adapter() {
     assert_reference_contains(&engine, "retried legacy body").await;
 }
 
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
 async fn an_interrupted_retry_resumes_its_real_legacy_row() {
     use tinymemory_integrations::import::FailedItem;
@@ -524,6 +532,7 @@ async fn an_interrupted_retry_resumes_its_real_legacy_row() {
     assert_reference_contains(&engine, "resumed retry body").await;
 }
 
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
 async fn peer_slot_contention_preserves_interrupted_import_for_later_resume() {
     #[derive(Clone, Copy)]

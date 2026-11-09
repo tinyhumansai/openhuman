@@ -85,7 +85,7 @@ impl EventHandler<DomainEvent> for ComposioTriggerSubscriber {
         // own tenant; in SaaS it has none and is dropped.
         let ctx = DispatchCtx::host_default();
         if let Ok(config) = ctx.load_config().await {
-            if config.composio.mode == crate::config::schema::COMPOSIO_MODE_DIRECT {
+            if is_direct_mode(&config) {
                 tracing::info!(
                     toolkit = %toolkit,
                     trigger = %trigger,
@@ -118,52 +118,31 @@ impl EventHandler<DomainEvent> for ComposioTriggerSubscriber {
             }
         }
 
-        if triage_disabled() {
+        // The env var is a global kill-switch that works even when the config
+        // file is corrupt, so it is checked before (and instead of) a config
+        // read; an unreadable config otherwise fails open to triage.
+        let env_disabled = triage_disabled();
+        let config = if env_disabled {
+            None
+        } else {
+            Some(ctx.load_config().await)
+        };
+        let readable = config.as_ref().and_then(|config| config.as_ref().ok());
+        if let Some(reason) = triage_skip_reason(readable, toolkit, env_disabled) {
             tracing::debug!(
                 toolkit = %toolkit,
                 trigger = %trigger,
-                "[composio][triage] skipped: {TRIAGE_DISABLED_ENV} is set"
+                "[composio][triage] skipped: {reason}"
             );
             return;
         }
-
-        // Config-level triage gates — checked after env var so the env var
-        // remains a global emergency kill-switch that works even when the
-        // config file is corrupt. Fail-open on load error: if we can't read
-        // the config we let triage run rather than silently drop events.
-        match ctx.load_config().await {
-            Ok(config) => {
-                if config.composio.triage_disabled {
-                    tracing::debug!(
-                        toolkit = %toolkit,
-                        trigger = %trigger,
-                        "[composio][triage] skipped: composio.triage_disabled=true in config"
-                    );
-                    return;
-                }
-                let toolkit_lower = toolkit.to_ascii_lowercase();
-                if config
-                    .composio
-                    .triage_disabled_toolkits
-                    .iter()
-                    .any(|t| t.to_ascii_lowercase() == toolkit_lower)
-                {
-                    tracing::debug!(
-                        toolkit = %toolkit,
-                        trigger = %trigger,
-                        "[composio][triage] skipped: toolkit in composio.triage_disabled_toolkits"
-                    );
-                    return;
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    toolkit = %toolkit,
-                    trigger = %trigger,
-                    error = %e,
-                    "[composio][triage] config load failed — falling through to triage (fail-open)"
-                );
-            }
+        if let Some(Err(e)) = &config {
+            tracing::warn!(
+                toolkit = %toolkit,
+                trigger = %trigger,
+                error = %e,
+                "[composio][triage] config load failed — falling through to triage (fail-open)"
+            );
         }
 
         // Build the envelope outside the spawned task so any panic in
@@ -321,6 +300,33 @@ pub(super) fn triage_directly(
             }
         }
     })
+}
+
+/// Backend-tenant triggers are ghosts once the user has switched to direct mode.
+pub(super) fn is_direct_mode(config: &crate::config::Config) -> bool {
+    config.composio.mode == crate::config::schema::COMPOSIO_MODE_DIRECT
+}
+
+/// Why a received trigger skips triage, if it does. The env kill-switch wins,
+/// then the config's global switch and per-toolkit list (case-insensitive).
+/// `None` config means it could not be read, which fails open to triage.
+pub(super) fn triage_skip_reason(
+    config: Option<&crate::config::Config>,
+    toolkit: &str,
+    env_disabled: bool,
+) -> Option<&'static str> {
+    if env_disabled {
+        return Some("OPENHUMAN_TRIGGER_TRIAGE_DISABLED is set");
+    }
+    let composio = &config?.composio;
+    if composio.triage_disabled {
+        return Some("composio.triage_disabled=true in config");
+    }
+    composio
+        .triage_disabled_toolkits
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case(toolkit))
+        .then_some("toolkit in composio.triage_disabled_toolkits")
 }
 
 /// Returns `true` when `OPENHUMAN_TRIGGER_TRIAGE_DISABLED` is set to a

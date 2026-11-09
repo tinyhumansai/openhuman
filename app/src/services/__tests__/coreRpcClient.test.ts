@@ -521,7 +521,7 @@ describe('coreRpcClient', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  test('caches a missing token result after the first Tauri lookup failure', async () => {
+  test('looks the token up again after a failed Tauri lookup', async () => {
     vi.resetModules();
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -540,7 +540,7 @@ describe('coreRpcClient', () => {
     const tokenCalls = vi
       .mocked(invoke)
       .mock.calls.filter(([cmd]) => cmd === 'core_rpc_endpoint').length;
-    expect(tokenCalls).toBe(1);
+    expect(tokenCalls).toBe(2);
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -782,6 +782,16 @@ describe('coreRpcClient', () => {
 describe('classifyRpcError', () => {
   test.each([
     ['GET /teams failed (401 Unauthorized): {"success":false}', undefined, 'auth_expired'],
+    [
+      'GET /teams failed (500 Internal Server Error): {"status":401,"error":"Unauthorized"}',
+      undefined,
+      'provider_auth',
+    ],
+    [
+      'GET /teams failed (500 Internal Server Error): {"error":"upstream failed (401 Unauthorized)"}',
+      undefined,
+      'provider_auth',
+    ],
     ['Session expired. Please log in again.', undefined, 'auth_expired'],
     ['some prefix Session expired suffix', undefined, 'auth_expired'],
     [
@@ -858,6 +868,24 @@ describe('classifyRpcError', () => {
       classifyRpcError('SESSION_EXPIRED: backend rejected session token on GET /teams/me/usage')
     ).toBe('auth_expired');
     expect(classifyRpcError('GET /teams/me/usage failed (401 Unauthorized)')).toBe('auth_expired');
+  });
+
+  // #8081: TinyMemory words a hosted 403 (memory not in the plan) as "the
+  // session expired or the API key was rejected (HTTP 403 …)". Matching it as
+  // auth_expired signed a valid user out on opening a Memory tab.
+  test('a memory plan refusal or 403 is never auth_expired', () => {
+    for (const message of [
+      "unauthorized: [MEMORY_PLAN_REQUIRED] memory API memory/scopes on api.tinyhumans.ai: the session expired or the API key was rejected (HTTP 403 Forbidden); re-authenticate — memory is not included in this account's plan",
+      "plan required: [MEMORY_PLAN_REQUIRED] memory API memory/scopes on api.tinyhumans.ai: memory is not included in this account's plan (HTTP 403 Forbidden)",
+      'unauthorized: [FORBIDDEN] memory API memory/scopes on api.tinyhumans.ai: the session expired or the API key was rejected (HTTP 403 Forbidden); re-authenticate',
+    ]) {
+      expect(classifyRpcError(message)).not.toBe('auth_expired');
+    }
+    expect(
+      classifyRpcError(
+        'unauthorized: [UNAUTHORIZED] memory API memory/scopes on api.tinyhumans.ai: the session expired or the API key was rejected (HTTP 401 Unauthorized); re-authenticate'
+      )
+    ).toBe('auth_expired');
   });
 
   test('http status 429 wins over message text', () => {

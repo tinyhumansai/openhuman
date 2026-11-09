@@ -47,26 +47,6 @@ impl TeamModelConfig {
     }
 }
 
-/// Configuration for a delegate sub-agent used by the `delegate` tool.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DelegateAgentConfig {
-    /// Model name (inference uses the OpenHuman backend from main config).
-    pub model: String,
-    /// Optional system prompt for the sub-agent
-    #[serde(default)]
-    pub system_prompt: Option<String>,
-    /// Temperature override
-    #[serde(default)]
-    pub temperature: Option<f64>,
-    /// Max recursion depth for nested delegation
-    #[serde(default = "default_max_depth")]
-    pub max_depth: u32,
-}
-
-fn default_max_depth() -> u32 {
-    3
-}
-
 /// A per-agent contract requiring a structured JSON block in every turn's final
 /// reply (issue #4117).
 ///
@@ -347,6 +327,39 @@ pub struct ToolSearchConfig {
     /// Three: enough for the model to choose, few enough that the schemas
     /// returned do not undo the saving deferral made.
     pub top_k: usize,
+    /// Most matches a single search may return, however many the model asks
+    /// for. `top_k` is clamped to it. Defaults to 20, the harness's own cap.
+    pub max_limit: usize,
+    /// Whether a successful search adds the matched tools to the request's
+    /// `tools` list for later calls (`true`, today's behaviour) or leaves the
+    /// list as it was, so the provider's cached prefix survives a search and
+    /// the model calls a found tool by name from the schema in the result.
+    ///
+    /// This and the three options below shape a thread's prompt, so a session
+    /// pins their values on its thread when it creates it and a resumed
+    /// thread keeps them whatever this file says later; see
+    /// `agent::tinyagents::discovery::DiscoveryPin`.
+    pub promote_found_tools: bool,
+    /// Render a search result's JSON on one line instead of pretty-printed.
+    /// Same content, fewer bytes. Defaults to `false`.
+    pub compact_search_results: bool,
+    /// Once the run that wrote a search result ends, rewrite it to the query
+    /// plus the schemas of the matched tools the run called. Defaults to
+    /// `false`.
+    pub collapse_search_results: bool,
+    /// Retarget a call a model buries inside a pseudo `tool_call` / `call_tool`
+    /// wrapper at the real tool it names. Defaults to `true`.
+    pub repair_tool_call_wrapper: bool,
+    /// Apply the four options above to a thread that already exists, not only
+    /// to the thread this session creates. The session then runs the turn with
+    /// them and records them on the thread, where every later turn reads them
+    /// back; a thread that already runs with exactly these options records
+    /// nothing. An embedding host sets it per turn with
+    /// `Turn::tool_discovery_force`, which is why it is neither read from the
+    /// config file nor written to it.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub force_pin: bool,
 }
 
 impl Default for ToolSearchConfig {
@@ -356,6 +369,12 @@ impl Default for ToolSearchConfig {
             jev_route: "auto".into(),
             jev_base_url: None,
             top_k: 3,
+            max_limit: 20,
+            promote_found_tools: true,
+            compact_search_results: false,
+            collapse_search_results: false,
+            repair_tool_call_wrapper: true,
+            force_pin: false,
         }
     }
 }
@@ -386,7 +405,7 @@ fn default_tool_result_budget_bytes() -> usize {
 }
 
 fn default_agent_timeout_secs() -> u64 {
-    tinytools_std::timeout::DEFAULT_TIMEOUT_SECS
+    tinyagents_harness_tools::exec::timeout::DEFAULT_TIMEOUT_SECS
 }
 
 fn default_agent_max_tool_iterations() -> usize {

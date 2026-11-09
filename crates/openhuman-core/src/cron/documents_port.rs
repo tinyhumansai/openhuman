@@ -27,13 +27,15 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use tinybus::Result as BusResult;
 use tinyflows_bus::schedule::CallbackAddress;
-use tinystoragedrivers::{
-    Capability, CollectionSpec, DocumentStore, Filter, Precondition, Query, Scope, StorageBackend,
-    StorageError, WriteOp,
+use tinystoragedrivers::StorageBackend;
+use tinystoragedrivers_api::DocumentStore;
+use tinystoragedrivers_types::{
+    Capability, CollectionSpec, Filter, Precondition, Query, StorageError, WriteOp,
 };
 
 use crate::config::Config;
 use crate::modules::tinyflows as module;
+use crate::storage::Scope;
 
 /// Schedule-owned collections, including the v1 sources read and retired by
 /// the module's v1-to-v2 migration.
@@ -85,7 +87,10 @@ impl DocScope {
         Ok(Self {
             workspace_dir: config.workspace_dir.clone(),
             scope: opened.scope,
-            backend: None,
+            // The schedule call crosses the synchronous storage bridge before
+            // TinyFlows calls this host document port. Keep the backend we
+            // already opened so the callback does not re-enter that bridge.
+            backend: Some(opened.backend),
         })
     }
 

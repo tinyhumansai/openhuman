@@ -16,8 +16,52 @@ use {
 pub(crate) type StubCompactor =
     Arc<dyn Fn(CompactRequest) -> BoxFuture<'static, CompactResponse> + Send + Sync>;
 
+#[derive(Clone)]
+pub(crate) struct RpcClientFixture {
+    pub(crate) proxy: tinybus::Proxy,
+    pub(crate) configs: Arc<Mutex<Vec<ObservedConfig>>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ObservedConfig {
+    pub(crate) workspace_dir: std::path::PathBuf,
+    pub(crate) config_path: std::path::PathBuf,
+    pub(crate) min_bytes_to_compress: usize,
+}
+
 tokio::task_local! {
     pub(crate) static STUB: StubCompactor;
+    static RPC_CLIENT: RpcClientFixture;
+}
+
+/// Inject a TinyBus proxy for actual tokenjuice RPC operations and retain the
+/// configuration each operation uses to construct its module client.
+pub(crate) async fn with_rpc_client<F: std::future::Future>(
+    fixture: RpcClientFixture,
+    fut: F,
+) -> F::Output {
+    RPC_CLIENT.scope(fixture, fut).await
+}
+
+#[cfg(feature = "modules")]
+pub(crate) fn rpc_client(config: &crate::config::Config) -> Option<tinybus::module::ModuleClient> {
+    RPC_CLIENT
+        .try_with(|fixture| {
+            fixture.configs.lock().unwrap().push(ObservedConfig {
+                workspace_dir: config.workspace_dir.clone(),
+                config_path: config.config_path.clone(),
+                min_bytes_to_compress: config.tokenjuice.min_bytes_to_compress,
+            });
+            crate::modules::ops::fixture_client(fixture.proxy.clone())
+        })
+        .ok()
+}
+
+/// Without `modules` there is no fixture client to build, so the caller
+/// falls through to its own client.
+#[cfg(not(feature = "modules"))]
+pub(crate) fn rpc_client(_config: &crate::config::Config) -> Option<tinybus::module::ModuleClient> {
+    None
 }
 
 /// Run `fut` with `stub` answering every compaction it makes.

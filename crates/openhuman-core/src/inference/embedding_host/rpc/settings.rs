@@ -4,19 +4,18 @@
 use crate::config::Config;
 use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
-use crate::security::credentials::AuthService;
+use crate::credentials::AuthService;
+use tinyinference_providers::route::{custom_provider_string, split_custom_provider};
 
 use super::{resolve_api_key, LOG_PREFIX};
 use tinyinference_embeddings::catalog;
-use tinyinference_embeddings::probe::{
-    classify_embed_probe, final_probe_dims, probe_custom_embeddings, EmbedProbe,
-    EmbeddingProbeRejection,
-};
-use tinyinference_embeddings::served_models::{
-    check_requested_model_served, fetch_served_model_ids, ModelNotServed,
+use tinyinference_embeddings::verify::{
+    effective_embedder_slug, verify_custom_endpoint, VerifyRejection,
 };
 
-fn probe_rejection_outcome(reject: EmbeddingProbeRejection) -> Outcome<serde_json::Value> {
+fn probe_rejection_outcome(
+    reject: tinyinference_embeddings::probe::EmbeddingProbeRejection,
+) -> Outcome<serde_json::Value> {
     let mut body = serde_json::json!({ "error": reject.error, "message": reject.message });
     if let Some(detail) = reject.detail {
         body["detail"] = serde_json::Value::String(detail);
@@ -24,7 +23,9 @@ fn probe_rejection_outcome(reject: EmbeddingProbeRejection) -> Outcome<serde_jso
     Outcome::new(body, vec![reject.summary.to_string()])
 }
 
-fn model_rejection_outcome(reject: ModelNotServed) -> Outcome<serde_json::Value> {
+fn model_rejection_outcome(
+    reject: tinyinference_embeddings::served_models::ModelNotServed,
+) -> Outcome<serde_json::Value> {
     let mut body = serde_json::json!({
         "error": reject.error,
         "message": reject.message,
@@ -37,55 +38,10 @@ fn model_rejection_outcome(reject: ModelNotServed) -> Outcome<serde_json::Value>
     Outcome::new(body, vec![reject.summary.to_string()])
 }
 
-/// Slug naming the embedder ingestion will actually use, resolved host-side
-/// from the `Config` fields the resolution ladder reads.
-///
-/// Resolution order:
-/// 1. Deliberate opt-out — `embeddings_provider` trimmed equals `"none"` → `"none"`.
-/// 2. Local Ollama via unified workload setting — `workload_local_model("embeddings")`
-///    is `Some` → `"ollama"`.
-/// 3. User OpenAI-compatible endpoint — `memory.embedding_provider` is
-///    `"openai"`, `"custom"`, or starts with `"custom:"` → `"custom"`.
-/// 4. Managed cloud session — `auth-profiles.json` exists next to the config
-///    file → `"cloud"`.
-/// 5. Nothing usable → `"unconfigured"`.
-fn effective_embedder_slug_from_config(config: &Config) -> &'static str {
-    // 1. Deliberate opt-out.
-    if config
-        .embeddings_provider
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|s| s == "none")
-    {
-        return "none";
-    }
-    // 2. Local Ollama via unified workload setting.
-    if config.workload_local_model("embeddings").is_some() {
-        return "ollama";
-    }
-    // 3. User OpenAI-compatible endpoint.
-    let picker = config.memory.embedding_provider.trim();
-    if picker == "openai" || picker == "custom" || picker.starts_with("custom:") {
-        return "custom";
-    }
-    // 4. Managed cloud session.
-    let session_exists = config
-        .config_path
-        .parent()
-        .map(|dir| dir.join("auth-profiles.json").exists())
-        .unwrap_or(false);
-    if session_exists {
-        return "cloud";
-    }
-    "unconfigured"
-}
-
 fn active_custom_profile(config: &Config) -> Option<crate::config::schema::CustomEmbeddingsConfig> {
-    let endpoint = config
-        .memory
-        .embedding_provider
-        .strip_prefix("custom:")?
-        .trim();
+    let (_, endpoint) = split_custom_provider(&config.memory.embedding_provider);
+    let endpoint = endpoint?;
+    let endpoint = endpoint.trim();
     if endpoint.is_empty() {
         return None;
     }
@@ -123,32 +79,32 @@ pub async fn get_settings(config: &Config) -> Result<Outcome<serde_json::Value>,
         });
 
     let auth = AuthService::from_config(config);
-    let providers: Vec<serde_json::Value> = catalog::all_providers()
-        .iter()
-        .map(|entry| {
-            let has_key = if entry.requires_api_key {
-                let cred_provider = format!("embeddings:{}", entry.slug);
-                auth.get_provider_bearer_token(&cred_provider, None)
-                    .ok()
-                    .flatten()
-                    .is_some()
-            } else {
-                false
-            };
-            serde_json::json!({
-                "slug": entry.slug,
-                "label": entry.label,
-                "description": entry.description,
-                "requires_api_key": entry.requires_api_key,
-                "requires_endpoint": entry.requires_endpoint,
-                "has_api_key": has_key,
-                "models": entry.models,
-            })
-        })
-        .collect();
+    let mut providers = Vec::new();
+    for entry in catalog::all_providers() {
+        let has_key = if entry.requires_api_key {
+            let cred_provider = format!("embeddings:{}", entry.slug);
+            auth.get_provider_bearer_token(&cred_provider, None)
+                .await
+                .ok()
+                .flatten()
+                .is_some()
+        } else {
+            false
+        };
+        providers.push(serde_json::json!({
+            "slug": entry.slug,
+            "label": entry.label,
+            "description": entry.description,
+            "requires_api_key": entry.requires_api_key,
+            "requires_endpoint": entry.requires_endpoint,
+            "has_api_key": has_key,
+            "models": entry.models,
+        }));
+    }
 
     let vector_search_enabled = {
-        let slug = if provider.starts_with("custom:") {
+        let (_, endpoint) = split_custom_provider(provider);
+        let slug = if endpoint.is_some() {
             "custom"
         } else {
             provider.as_str()
@@ -162,7 +118,23 @@ pub async fn get_settings(config: &Config) -> Result<Outcome<serde_json::Value>,
     // routes to local Ollama without rewriting it. Additive field — callers that only need the picker
     // value are unaffected; callers asking "does this bill the managed budget?"
     // must read this one (#5402).
-    let effective_provider = effective_embedder_slug_from_config(config);
+    let local_model = config.workload_local_model("embeddings");
+    let session_exists = auth
+        .get_provider_bearer_token(crate::credentials::APP_SESSION_PROVIDER, None)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|token| !token.trim().is_empty());
+    let effective_provider = effective_embedder_slug(
+        config
+            .embeddings_provider
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|provider| provider == "none"),
+        local_model.as_deref(),
+        Some(config.memory.embedding_provider.as_str()),
+        session_exists,
+    );
 
     let payload = serde_json::json!({
         "provider": provider,
@@ -222,153 +194,63 @@ pub async fn update_settings(
     let new_model = model
         .clone()
         .unwrap_or_else(|| config.memory.embedding_model.clone());
-    // `new_dims`/`new_sig` are recomputed after the Custom
-    // verification probe auto-detects the endpoint's real vector length
-    // (issue #4056), so they must be mutable.
-    let mut new_dims = dimensions.unwrap_or(config.memory.embedding_dimensions);
-    let mut new_sig = format_embedding_signature(&new_provider, &new_model, new_dims);
-
-    let mut sig_changed = new_sig != old_sig;
-
-    // Setup-time verification gate (TAURI-RUST-5JR / 4P4): a Custom
-    // (OpenAI-compatible) embeddings endpoint — e.g. LM Studio — must prove it
-    // can actually embed *before* we accept it. We run one live test embed and
-    // only persist the config if it succeeds; any failure (no `/embeddings`
-    // route, no model loaded, timeout, 5xx, empty/zero-dim vector) rejects the
-    // save so a config that can't embed is never stored (and we never wipe
-    // memory for one). Verifying at setup is the fix — we deliberately do NOT
-    // try to classify-and-suppress the resulting embed flood in code; any
-    // residual flood (e.g. the user unloads the model *after* a good save) is
-    // handled on the Sentry side.
-    //
-    // Only custom endpoints are probed: named catalog providers are
-    // embedding-capable by construction, and probing `managed`/`cloud`
-    // pre-login would false-fail. Resolve the provider string exactly as it
-    // will be stored so the probe targets the real endpoint.
+    // Resolve the provider string exactly as it will be persisted so the
+    // signature reported to callers describes the saved configuration.
     let effective_provider = match &custom_endpoint {
-        Some(ep) if new_provider == "custom" || new_provider.starts_with("custom:") => {
-            format!("custom:{ep}")
+        Some(ep)
+            if new_provider == "custom" || split_custom_provider(&new_provider).1.is_some() =>
+        {
+            custom_provider_string("custom", Some(ep))
         }
         _ => new_provider.clone(),
     };
-    if effective_provider.starts_with("custom:") {
-        // Probe dimension-agnostically for non-`text-embedding-3-*` models so the
-        // user's guessed `dimensions` can't fail an otherwise-valid endpoint; the
-        // real length is detected from the returned vector below (issue #4056).
-        let endpoint = effective_provider
-            .strip_prefix("custom:")
-            .expect("custom provider was checked above");
-        let api_key = resolve_api_key(&config, "custom");
-        let probe = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            probe_custom_embeddings(endpoint, &api_key, &new_model, new_dims),
-        )
-        .await;
-        {
-            // Time-box the probe so a black-hole host can't hang the RPC.
-            tracing::debug!(
-                provider = effective_provider.as_str(),
-                "{LOG_PREFIX} update_settings verifying embeddings endpoint with a test embed"
-            );
-            // Normalize the timeout/result into one shape, then apply the
-            // pure verification policy (`classify_embed_probe`, unit-tested).
-            let outcome = match probe {
-                Ok(Ok(vectors)) => EmbedProbe::Returned(vectors),
-                Ok(Err(e)) => EmbedProbe::Failed(e.to_string()),
-                Err(_elapsed) => EmbedProbe::TimedOut,
-            };
-            // Peek the actual vector length before the policy consumes the
-            // outcome — on a pass this is the endpoint's real dimension.
-            let probe_actual_dims = match &outcome {
-                EmbedProbe::Returned(vectors) => vectors.first().map(|v| v.len()).unwrap_or(0),
-                _ => 0,
-            };
-            if let Some(reject) = classify_embed_probe(outcome) {
-                // Log the classified error code (never the raw detail — it can
-                // carry endpoint response bodies) so support can distinguish
-                // auth vs wrong-model vs unreachable failures (issue #5017).
-                let reject_code = reject.error;
+    // Custom verification can auto-detect the endpoint's vector width.
+    let mut new_dims = dimensions.unwrap_or(config.memory.embedding_dimensions);
+    let mut new_sig = format_embedding_signature(&effective_provider, &new_model, new_dims);
+
+    let mut sig_changed = new_sig != old_sig;
+
+    // Only custom endpoints are probed: named catalog providers are
+    // embedding-capable by construction, and probing managed/cloud before
+    // login would false-fail. TinyInference owns endpoint verification and
+    // its structured rejection policy.
+    if let (_, Some(endpoint)) = split_custom_provider(&effective_provider) {
+        let api_key = resolve_api_key(&config, "custom").await;
+        tracing::debug!(
+            provider = effective_provider.as_str(),
+            "{LOG_PREFIX} update_settings verifying embeddings endpoint with a test embed"
+        );
+        match verify_custom_endpoint(&endpoint, &api_key, &new_model, new_dims).await {
+            Ok(verified) => {
+                if verified.dimensions != new_dims {
+                    tracing::info!(
+                        provider = effective_provider.as_str(),
+                        model = new_model.as_str(),
+                        requested = new_dims,
+                        detected = verified.dimensions,
+                        "{LOG_PREFIX} update_settings auto-detected custom embedding dimension from probe"
+                    );
+                }
+                new_dims = verified.dimensions;
+                new_sig = verified.signature;
+                sig_changed = new_sig != old_sig;
+                tracing::debug!(
+                    provider = effective_provider.as_str(),
+                    new_dims,
+                    "{LOG_PREFIX} update_settings test embed passed — accepting config"
+                );
+            }
+            Err(rejection) => {
                 tracing::warn!(
                     provider = effective_provider.as_str(),
-                    reject_code,
+                    reject_code = rejection.error(),
                     "{LOG_PREFIX} update_settings rejected — embeddings endpoint failed verification"
                 );
-                // Right-feedback (issue #3761): the probe failed. If the
-                // endpoint lists its served models and the requested id
-                // isn't among them, the cause is almost certainly a name
-                // mismatch (e.g. the user entered `bge-m3` but LM Studio
-                // serves `text-embedding-bge-m3`). Replace the generic
-                // failure with an actionable message naming the available
-                // models and the suggested match. Best-effort and only on
-                // the failure path, so a passing config is never blocked by
-                // an endpoint that doesn't expose `/models`. Derive the
-                // endpoint from the payload OR the already-stored
-                // `custom:<url>` provider, so a model-only update to an
-                // existing custom endpoint still gets the guidance.
-                let listed_endpoint = custom_endpoint
-                    .as_deref()
-                    .or_else(|| effective_provider.strip_prefix("custom:"));
-                if let Some(ep) = listed_endpoint {
-                    let api_key = resolve_api_key(&config, "custom");
-                    tracing::debug!(
-                        provider = effective_provider.as_str(),
-                        requested = new_model.as_str(),
-                        "{LOG_PREFIX} update_settings: probing endpoint /models for served-id guidance"
-                    );
-                    match fetch_served_model_ids(ep, &api_key).await {
-                        Ok(served) => match check_requested_model_served(&new_model, &served) {
-                            Some(better) => {
-                                tracing::warn!(
-                                    provider = effective_provider.as_str(),
-                                    requested = new_model.as_str(),
-                                    served = served.len(),
-                                    "{LOG_PREFIX} update_settings: model not in served list — returning name-mismatch guidance"
-                                );
-                                return Ok(model_rejection_outcome(better));
-                            }
-                            None => {
-                                tracing::debug!(
-                                    provider = effective_provider.as_str(),
-                                    served = served.len(),
-                                    "{LOG_PREFIX} update_settings: requested model is served (or list empty) — keeping generic verification error"
-                                );
-                            }
-                        },
-                        Err(e) => {
-                            tracing::debug!(
-                                provider = effective_provider.as_str(),
-                                error = %e,
-                                "{LOG_PREFIX} update_settings: /models lookup failed — keeping generic verification error"
-                            );
-                        }
-                    }
-                }
-                return Ok(probe_rejection_outcome(reject));
+                return Ok(match rejection {
+                    VerifyRejection::Probe(reject) => probe_rejection_outcome(reject),
+                    VerifyRejection::ModelNotServed(reject) => model_rejection_outcome(*reject),
+                });
             }
-            // Passed. Adopt the endpoint's real vector length for every model
-            // we probed dimension-agnostically — the user can't be expected to
-            // know it, and storing the actual size is what keeps the live embed
-            // path's length guard from rejecting future embeds (issue #4056).
-            // Models with configurable output widths were probed with the
-            // requested size and rejected if the server ignored it.
-            let detected_dims = final_probe_dims(&new_model, new_dims, probe_actual_dims);
-            if detected_dims != new_dims {
-                tracing::info!(
-                    provider = effective_provider.as_str(),
-                    model = new_model.as_str(),
-                    requested = new_dims,
-                    detected = detected_dims,
-                    "{LOG_PREFIX} update_settings auto-detected custom embedding dimension from probe"
-                );
-                new_dims = detected_dims;
-                new_sig = format_embedding_signature(&new_provider, &new_model, new_dims);
-                sig_changed = new_sig != old_sig;
-            }
-            tracing::debug!(
-                provider = effective_provider.as_str(),
-                new_dims,
-                "{LOG_PREFIX} update_settings test embed passed — accepting config"
-            );
         }
     }
 
@@ -395,8 +277,8 @@ pub async fn update_settings(
     }
     // Store custom endpoint in a convention field if provided
     if let Some(ep) = &custom_endpoint {
-        if new_provider == "custom" || new_provider.starts_with("custom:") {
-            config.memory.embedding_provider = format!("custom:{ep}");
+        if new_provider == "custom" || split_custom_provider(&new_provider).1.is_some() {
+            config.memory.embedding_provider = custom_provider_string("custom", Some(ep));
             config.custom_embeddings = Some(crate::config::schema::CustomEmbeddingsConfig {
                 endpoint: ep.clone(),
                 model: new_model.clone(),
@@ -433,3 +315,7 @@ pub async fn update_settings(
         )],
     ))
 }
+
+#[cfg(test)]
+#[path = "settings_tests.rs"]
+mod tests;

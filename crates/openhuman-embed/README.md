@@ -30,6 +30,18 @@ tools that spawn independent tasks or processes must provide their own cleanup;
 MCP server lifecycles remain owned by the agent. Keep polling `send()` while
 awaiting cancellation, for example in a spawned task.
 
+## Observing provider dispatches
+
+Attach `Completer::physical_observer` to receive one content-free terminal event
+for each admitted provider `ChatModel` invocation. Structured JSON repairs
+produce separate events, while request and response content remains private.
+Transport-level compatibility retries performed inside one provider invocation
+remain within that event, and its latency includes those retries. With a model
+budget, the explicit and turn-scoped observers run inside admission and after
+gateway charge normalization, so they see the same authoritative amount the
+ledger settles. A budget refusal before provider invocation creates no event.
+The existing `CompletionObserver` remains a once-per-logical-call callback.
+
 ## Steering one turn
 
 Acquire `Turn::steering_handle()` before sending a turn to add messages to it

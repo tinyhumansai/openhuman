@@ -221,10 +221,10 @@ fn production_read_tools() -> Vec<Box<dyn tinytools::Tool>> {
             None,
             None,
         )),
-        Box::new(tinytools_std::filesystem::FileReadTool::new(
+        Box::new(tinyagents_harness_tools::fs::filesystem::FileReadTool::new(
             security.clone(),
         )),
-        Box::new(tinytools_std::filesystem::ListFilesTool::new(security)),
+        Box::new(tinyagents_harness_tools::fs::filesystem::ListFilesTool::new(security)),
     ];
     #[cfg(feature = "modules")]
     let tools = {

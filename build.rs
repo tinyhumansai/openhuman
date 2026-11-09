@@ -19,12 +19,12 @@
 //!
 //! # Second job: make an unmet `required-features` skip audible
 //!
-//! Four `tests/*.rs` targets carry `required-features` (see `[[test]]` in
+//! Several `tests/*.rs` targets carry `required-features` (see `[[test]]` in
 //! `Cargo.toml`), and every one of those features is default-OFF for
 //! contributors. Cargo treats the two ways of selecting a target differently,
 //! and only one of them is safe:
 //!
-//! - **Naming it** — `cargo test --test json_rpc_e2e` — is a hard error when
+//! - **Naming it** — `cargo test --test json_rpc_threads_e2e` — is a hard error when
 //!   the features are unmet (`target ... requires the features: voice`,
 //!   exit 101). CI names its targets one at a time, so CI cannot lose one this
 //!   way.
@@ -32,7 +32,7 @@
 //!   target out **silently and exits 0**. That is what a contributor runs, and
 //!   it reports a green suite having compiled and run none of them.
 //!
-//! `json_rpc_e2e` alone is >12k lines of RPC contract coverage, and
+//! The JSON-RPC coverage is split across ten namespace targets, and
 //! `raw_coverage_all` aggregates ~76 suites. A green run that skipped both
 //! reads exactly like a green run that did not, which is how untested code
 //! comes to look covered.
@@ -197,7 +197,7 @@ fn warn_about_silently_skipped_test_targets(manifest_dir: &Path) {
          configuration and still exits 0: {detail}. Run them with `--features {features_flag}`, \
          or use the product set: cargo test --features \"$(bash \
          scripts/ci/product-features.sh)\". Naming a target explicitly (cargo test --test \
-         json_rpc_e2e) errors instead of skipping — only the globbed form is silent."
+         json_rpc_threads_e2e) errors instead of skipping — only the globbed form is silent."
     );
 }
 

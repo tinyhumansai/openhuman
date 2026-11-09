@@ -19,6 +19,7 @@ fn a_camel_case_session_becomes_a_snake_case_body_with_millisecond_times() {
             "workerThreadId": null, "agentId": "researcher", "displayName": null,
             "model": null, "sandboxMode": "workspace", "actionRoot": null,
             "taskKey": "task", "taskTitle": "Task", "currentTaskId": null,
+            "parentEpoch": 7,
             "status": "idle", "reusable": true, "latestHistory": [{"role": "user"}],
             "latestError": null,
             "createdAt": "1970-01-01T00:00:01Z", "created_at": "1970-01-01T00:00:01Z",
@@ -33,7 +34,8 @@ fn a_camel_case_session_becomes_a_snake_case_body_with_millisecond_times() {
         json!({
             "subagent_session_id": "s1", "parent_session": "p", "parent_thread_id": "t",
             "agent_id": "researcher", "sandbox_mode": "workspace",
-            "task_key": "task", "task_title": "Task", "status": "idle", "reusable": true,
+            "task_key": "task", "task_title": "Task", "parent_epoch": 7,
+            "status": "idle", "reusable": true,
             "latest_history": [{"role": "user"}],
             "created_ms": 1000, "updated_ms": 2000, "last_used_ms": 3000,
         })
@@ -42,5 +44,7 @@ fn a_camel_case_session_becomes_a_snake_case_body_with_millisecond_times() {
 
 #[test]
 fn the_schema_composes_under_its_owner() {
-    tinystoragedrivers::schema::Registry::compose([storage_schema()]).unwrap();
+    for spec in collection_specs() {
+        spec.validate().unwrap();
+    }
 }

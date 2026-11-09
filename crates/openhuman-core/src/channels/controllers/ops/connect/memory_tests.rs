@@ -48,6 +48,8 @@ async fn store_channel_thread(
     channel: &str,
     message_id: &str,
 ) -> String {
+    #[cfg(feature = "storage-sqlite")]
+    crate::storage::local::use_persistent_default_for_test(workspace);
     let params = crate::channels::providers::relay::RelayInboundParams::new(
         channel,
         format!("chat-{message_id}"),
@@ -306,6 +308,8 @@ async fn memory_off_queues_channel_threads_from_the_canonical_thread_store() {
     let mut config = Config::default();
     config.workspace_dir = tmp.path().to_path_buf();
     config.memory.engine.clear();
+    #[cfg(feature = "storage-sqlite")]
+    crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
     use_linked_channel_module(&mut config).await;
     let thread_id = store_channel_thread(
         DispatchCtx::ambient(),
@@ -355,6 +359,7 @@ async fn reserved_channel_thread_id_survives_metadata_edit_without_prefix_collis
             message_id.into(),
             ConversationMessagePatch {
                 extra_metadata: Some(json!({"scope": "web"})),
+                merge_extra_metadata: None,
             },
         )
         .await

@@ -5,9 +5,9 @@
 
 use std::sync::Arc;
 
+use crate::security::policy::CommandClass;
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tinybox_bus::CommandClass;
 use tinytools::ToolResult;
 
 use crate::{config::Config, security::SecurityPolicy};
@@ -49,7 +49,8 @@ pub(crate) async fn invoke(
         policy.clone(),
         tool_name,
         &args,
-    )?;
+    )
+    .await?;
     let audit_id = hooks.authorize(&policy, class, tool_name, &args).await?;
     tracing::debug!(target: "flows", %tool_name, ?class, "[flows] dispatching NATIVE OpenHuman tool");
     let result = crate::tools::native_ops::execute_tool_with_security(

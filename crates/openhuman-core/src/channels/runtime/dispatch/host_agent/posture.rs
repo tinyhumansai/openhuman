@@ -13,7 +13,7 @@ use tinytools::{PermissionLevel, Tool};
 
 use crate::agent::HostTools;
 use crate::config::Config;
-use crate::security::turn_origin::AgentTurnOrigin;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 
 /// The most a host agent may do on a turn from `origin`; `None` leaves the
 /// agent's own limits alone.
@@ -55,12 +55,15 @@ fn permission_token(level: PermissionLevel) -> &'static str {
 /// `host` with every tool it builds refusing calls above `ceiling`.
 pub(crate) fn guard_host_tools(host: HostTools, ceiling: PermissionLevel) -> HostTools {
     std::sync::Arc::new(move |turn| {
-        let mut belt = host(turn);
-        belt.tools = std::mem::take(&mut belt.tools)
-            .into_iter()
-            .map(|tool| Box::new(CeilingGuard::new(tool, ceiling)) as Box<dyn Tool>)
-            .collect();
-        belt
+        let host = host.clone();
+        Box::pin(async move {
+            let mut belt = host(turn).await;
+            belt.tools = std::mem::take(&mut belt.tools)
+                .into_iter()
+                .map(|tool| Box::new(CeilingGuard::new(tool, ceiling)) as Box<dyn Tool>)
+                .collect();
+            belt
+        })
     })
 }
 

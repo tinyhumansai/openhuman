@@ -9,6 +9,10 @@ fn tool(config: Arc<Config>, name: &str) -> BusCopilotTool {
     BusCopilotTool::from_name(config, name)
 }
 
+pub(crate) fn propose_workflow_tool(config: Arc<Config>) -> BusCopilotTool {
+    tool(config, "propose_workflow")
+}
+
 pub(crate) fn edit_workflow_tool(config: Arc<Config>) -> BusCopilotTool {
     tool(config, "edit_workflow")
 }

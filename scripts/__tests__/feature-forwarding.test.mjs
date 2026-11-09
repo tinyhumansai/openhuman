@@ -11,6 +11,7 @@ import {
   CHAIN_LOCAL_GATES,
   checkLinkedModulesIsolation,
   checkProductForwarding,
+  checkTestOnlyGatesIsolation,
   diffChainForwarding,
   diffForwarding,
   formatChainReport,
@@ -855,6 +856,11 @@ test('every chain allow-list entry carries a reason', () => {
   }
 });
 
+test('session testkit stays local to the embed facade', () => {
+  assert.match(CHAIN_LOCAL_GATES['openhuman-embed'].testkit, /test-only/i);
+  assert.match(CHAIN_GATES_NOT_FORWARDED['openhuman-tinyhumans'].testkit, /test scaffolding/i);
+});
+
 test('the checker reports the chain and fails when a layer drops a gate', () => {
   // End-to-end through the CLI: a core gate that embed never took must exit 1
   // with the crate and gate named.
@@ -962,4 +968,43 @@ test('deliberate violations of linked-modules isolation are each reported', () =
     checkLinkedModulesIsolation({ ...clean, shellToml: '# never linked-modules here\n[dependencies]\n' }),
     []
   );
+});
+
+// ── test-only gate isolation ───────────────────────────────────────────────
+
+test('the real manifests keep the test-only gates out of every shipped build', () => {
+  const read = rel => readFileSync(join(REPO_ROOT, rel), 'utf8');
+  const table = rel => parseFeatureTable(read(rel));
+  assert.deepEqual(
+    checkTestOnlyGatesIsolation({
+      productFeatures: parseProductFeatures(read('scripts/ci/product-features.txt')),
+      featureTables: {
+        openhuman: table('crates/openhuman-core/Cargo.toml'),
+        'openhuman-embed': table('crates/openhuman-embed/Cargo.toml'),
+        'openhuman-tinyhumans': table('crates/openhuman-tinyhumans/Cargo.toml'),
+        'openhuman-rpc': table('crates/openhuman-rpc/Cargo.toml'),
+        'openhuman-cli': table('crates/openhuman-cli/Cargo.toml'),
+        'openhuman-tui': table('crates/openhuman-tui/Cargo.toml'),
+        'openhuman-app': table('crates/openhuman-app/Cargo.toml'),
+      },
+    }),
+    []
+  );
+});
+
+test('a test-only gate in the product set or reached from a default is reported', () => {
+  const clean = {
+    productFeatures: ['voice'],
+    featureTables: { core: new Map([['default', ['voice']], ['voice', []], ['e2e-test-support', []]]) },
+  };
+  assert.deepEqual(checkTestOnlyGatesIsolation(clean), []);
+  assert.deepEqual(
+    checkTestOnlyGatesIsolation({ ...clean, productFeatures: ['voice', 'test-keyring-consent'] }),
+    ['test-keyring-consent is listed in the product feature set']
+  );
+  // Reached through another gate, not named in `default` itself.
+  const transitive = new Map([['default', ['voice']], ['voice', ['e2e-test-support']], ['e2e-test-support', []]]);
+  assert.deepEqual(checkTestOnlyGatesIsolation({ ...clean, featureTables: { core: transitive } }), [
+    "core's default features enable e2e-test-support",
+  ]);
 });
