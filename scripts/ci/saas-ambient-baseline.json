@@ -1030,13 +1030,6 @@
   },
   {
     "rule": "bare-spawn",
-    "path": "crates/openhuman-core/src/web_chat/ops/system_turn.rs",
-    "line": 84,
-    "text": "let progress_drain = tokio::spawn(async move { while progress_rx.recv().await.is_some() {} });",
-    "occurrence": 1
-  },
-  {
-    "rule": "bare-spawn",
     "path": "crates/openhuman-core/src/web_chat/presentation.rs",
     "line": 122,
     "text": "let persisted = tokio::task::spawn_blocking(move || {",
