@@ -183,3 +183,66 @@ fn from_config_drops_non_absolute_trusted_roots() {
         policy.trusted_roots
     );
 }
+
+/// A workspace-relative pointer to an offloaded tool result must resolve
+/// under the workspace when it does not exist under the action dir (#8643):
+/// the preview hands the model the absolute artifact path, the model
+/// shortens it to `artifacts/tool-results/...`, and resolving that only
+/// against the action dir fails even though the file exists — a second
+/// failed read then trips the repeated-failure circuit breaker and stops
+/// the turn.
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn a_relative_tool_result_path_resolves_under_the_workspace() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // Canonicalize first: on macOS the tempdir path runs through a symlinked
+    // `/var`, and the resolved path is canonical, so build from the canonical
+    // root for the equality assertion below to hold on every platform.
+    let root = tmp.path().canonicalize().expect("canonical tempdir");
+    let workspace = root.join("workspace");
+    let action = root.join("project");
+    let artifacts = super::tool_result_artifacts_dir(&workspace).join("s1/shell");
+    fs::create_dir_all(&artifacts).unwrap();
+    fs::create_dir_all(&action).unwrap();
+    fs::write(artifacts.join("call.txt"), "output").unwrap();
+
+    let cfg = crate::config::AutonomyConfig {
+        enabled: true,
+        workspace_only: true,
+        ..crate::config::AutonomyConfig::default()
+    };
+    let policy = SecurityPolicy::from_config(&cfg, &workspace, &action);
+
+    let resolved = policy
+        .validate_path("artifacts/tool-results/s1/shell/call.txt")
+        .await
+        .expect("a workspace-relative tool-result path must resolve");
+    assert_eq!(resolved, artifacts.join("call.txt"));
+}
+
+/// The workspace fallback must not open the internal artifact store: a
+/// relative pointer at an artifact record stays refused, as its absolute
+/// form already is.
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn a_relative_internal_artifact_path_stays_refused() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let workspace = tmp.path().join("workspace");
+    let action = tmp.path().join("project");
+    let record = workspace.join("artifacts/abc");
+    fs::create_dir_all(&record).unwrap();
+    fs::create_dir_all(&action).unwrap();
+    fs::write(record.join("meta.json"), "{}").unwrap();
+
+    let cfg = crate::config::AutonomyConfig {
+        enabled: true,
+        workspace_only: true,
+        ..crate::config::AutonomyConfig::default()
+    };
+    let policy = SecurityPolicy::from_config(&cfg, &workspace, &action);
+
+    assert!(policy
+        .validate_path("artifacts/abc/meta.json")
+        .await
+        .is_err());
+}
