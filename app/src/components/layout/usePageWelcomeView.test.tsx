@@ -5,9 +5,10 @@ import { describe, expect, it } from 'vitest';
 import { SidebarSlotOutlet, SidebarSlotProvider } from './shell/SidebarSlot';
 import { usePageWelcomeView } from './usePageWelcomeView';
 
-function WorkflowViews() {
+function WorkflowViews({ landOnWelcome = false }: { landOnWelcome?: boolean }) {
   const location = useLocation();
   const { view, nav } = usePageWelcomeView({
+    landOnWelcome,
     ariaLabel: 'Workflows',
     welcomeLabel: 'Introduction',
     mainLabel: 'My workflows',
@@ -25,11 +26,11 @@ function WorkflowViews() {
   );
 }
 
-function renderAt(entry: string) {
+function renderAt(entry: string, landOnWelcome = false) {
   render(
     <MemoryRouter initialEntries={[entry]}>
       <SidebarSlotProvider>
-        <WorkflowViews />
+        <WorkflowViews landOnWelcome={landOnWelcome} />
       </SidebarSlotProvider>
     </MemoryRouter>
   );
@@ -52,5 +53,25 @@ describe('usePageWelcomeView when the working view is default', () => {
     renderAt('/flows?view=welcome');
     expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('welcome');
     expect(screen.getByTestId('two-pane-nav-welcome')).toHaveAttribute('aria-current', 'page');
+  });
+});
+
+describe('usePageWelcomeView when landing on welcome (first visit)', () => {
+  it('lands on welcome without a URL parameter', () => {
+    renderAt('/flows', true);
+    expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('welcome');
+    expect(screen.getByTestId('two-pane-nav-welcome')).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('moves to the working view and does not snap back to welcome', () => {
+    renderAt('/flows', true);
+    fireEvent.click(screen.getByTestId('two-pane-nav-main'));
+    expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('main');
+    expect(screen.getByTestId('workflow-view-url')).toBeEmptyDOMElement();
+  });
+
+  it('lets an explicit ?view= win over the welcome landing', () => {
+    renderAt('/flows?view=main', true);
+    expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('main');
   });
 });

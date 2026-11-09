@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { toast, Toaster } from '../components/ui/Toast';
 import { FLOW_TEMPLATES } from '../lib/flows/templates';
 import type { Flow } from '../services/api/flowsApi';
-import { renderWithProviders } from '../test/test-utils';
+import { createTestStore, renderWithProviders } from '../test/test-utils';
 import FlowsPage from './FlowsPage';
 
 const listFlows = vi.hoisted(() => vi.fn());
@@ -268,6 +268,47 @@ describe('FlowsPage', () => {
 
     expect(screen.getByTestId('new-workflow-modal')).toBeInTheDocument();
     expect(screen.getByTestId('new-workflow-scratch')).toBeInTheDocument();
+  });
+
+  it('lands on the welcome view the first time and marks it seen', async () => {
+    listFlows.mockResolvedValue([]);
+    const store = createTestStore();
+    renderWithProviders(<FlowsPage />, { store });
+
+    expect(await screen.findByTestId('flows-welcome')).toBeInTheDocument();
+    expect(store.getState().layout.welcomeSeen).toEqual({ flows: true });
+  });
+
+  it('opens the list on a later visit in the same session', async () => {
+    listFlows.mockResolvedValue([]);
+    const store = createTestStore();
+    const first = renderWithProviders(<FlowsPage />, { store });
+    await screen.findByTestId('flows-welcome');
+    first.unmount();
+
+    renderWithProviders(<FlowsPage />, { store });
+    expect(await screen.findByTestId('flows-page')).toBeInTheDocument();
+    expect(screen.queryByTestId('flows-welcome')).not.toBeInTheDocument();
+  });
+
+  it('opens the list after a reload when the welcome was already seen', async () => {
+    listFlows.mockResolvedValue([]);
+    renderWithProviders(<FlowsPage />, {
+      preloadedState: { layout: { panels: {}, welcomeSeen: { flows: true } } },
+    });
+
+    expect(await screen.findByTestId('flows-page')).toBeInTheDocument();
+    expect(screen.queryByTestId('flows-welcome')).not.toBeInTheDocument();
+  });
+
+  it('still shows the welcome view for an explicit ?view=welcome once seen', async () => {
+    listFlows.mockResolvedValue([]);
+    renderWithProviders(<FlowsPage />, {
+      preloadedState: { layout: { panels: {}, welcomeSeen: { flows: true } } },
+      initialEntries: ['/?view=welcome'],
+    });
+
+    expect(await screen.findByTestId('flows-welcome')).toBeInTheDocument();
   });
 
   it('opens the chooser from the empty-state "New workflow" action', async () => {

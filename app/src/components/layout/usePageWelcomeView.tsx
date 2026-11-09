@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useMemo } from 'react';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { SidebarContent } from './shell/SidebarSlot';
@@ -38,6 +38,12 @@ interface PageWelcomeExtraItem {
 
 interface UsePageWelcomeViewOptions {
   defaultView?: 'welcome' | 'main';
+  /**
+   * Land on Welcome (instead of `defaultView`) when the URL has no `?view=`.
+   * Read once on mount and cleared by the first `setView`, so a first-visit
+   * landing doesn't snap back to Welcome when the user moves on.
+   */
+  landOnWelcome?: boolean;
   /** Accessible label for the sidebar nav. */
   ariaLabel: string;
   /** Label for the Welcome entry. */
@@ -76,7 +82,9 @@ export function usePageWelcomeView(opts: UsePageWelcomeViewOptions): PageWelcome
     header,
     extraItems,
     defaultView = 'welcome',
+    landOnWelcome = false,
   } = opts;
+  const [landingWelcome, setLandingWelcome] = useState(landOnWelcome);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -86,10 +94,15 @@ export function usePageWelcomeView(opts: UsePageWelcomeViewOptions): PageWelcome
   );
 
   const raw = new URLSearchParams(location.search).get('view') ?? '';
-  const view: PageWelcomeViewId = validViews.has(raw) ? raw : defaultView;
+  const view: PageWelcomeViewId = validViews.has(raw)
+    ? raw
+    : landingWelcome
+      ? 'welcome'
+      : defaultView;
 
   const setView = useCallback(
     (v: PageWelcomeViewId) => {
+      setLandingWelcome(false);
       const params = new URLSearchParams(location.search);
       if (v === defaultView) params.delete('view');
       else params.set('view', v);

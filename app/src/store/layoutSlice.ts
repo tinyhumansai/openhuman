@@ -17,9 +17,11 @@ export interface PanelLayout {
 
 interface LayoutState {
   panels: Record<string, PanelLayout>;
+  /** Pages (by id, e.g. `flows`) whose Welcome landing this user has already seen. */
+  welcomeSeen: Record<string, true>;
 }
 
-const initialState: LayoutState = { panels: {} };
+const initialState: LayoutState = { panels: {}, welcomeSeen: {} };
 
 /**
  * Default geometry applied the first time a panel id is seen. Component-level
@@ -66,14 +68,28 @@ const layoutSlice = createSlice({
     setSidebarWidth: (state, action: PayloadAction<{ id: string; width: number }>) => {
       panelFor(state, action.payload.id).sidebarWidth = action.payload.width;
     },
+    markWelcomeSeen: (state, action: PayloadAction<{ id: string }>) => {
+      state.welcomeSeen[action.payload.id] = true;
+    },
   },
   extraReducers: builder => {
     builder.addCase(resetUserScopedState, () => initialState);
   },
 });
 
-export const { ensurePanelLayout, setSidebarVisible, toggleSidebar, setSidebarWidth } =
-  layoutSlice.actions;
+export const {
+  ensurePanelLayout,
+  setSidebarVisible,
+  toggleSidebar,
+  setSidebarWidth,
+  markWelcomeSeen,
+} = layoutSlice.actions;
+
+/** Whether this user has already seen the Welcome landing of page `id`. */
+export const selectWelcomeSeen =
+  (id: string) =>
+  (state: { layout?: LayoutState }): boolean =>
+    state.layout?.welcomeSeen?.[id] === true;
 
 /**
  * Select a panel's geometry, falling back to `DEFAULT_PANEL_LAYOUT` (or the
