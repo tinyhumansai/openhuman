@@ -39,10 +39,10 @@ interface PageWelcomeExtraItem {
 interface UsePageWelcomeViewOptions {
   defaultView?: 'welcome' | 'main';
   /**
-   * Land on Welcome (instead of `defaultView`) when the URL has no `?view=`.
-   * Read once on mount and cleared by the first `setView` or explicit
-   * `?view=`, so a first-visit landing doesn't snap back to Welcome when the
-   * user moves on (including via links that bypass `setView`).
+   * Land on Welcome (instead of `defaultView`) when the page mounts on a URL
+   * with no `?view=`. The landing is tied to that one history entry: any
+   * navigation (setView, a link, re-clicking the page in the shell) shows
+   * `defaultView`, and only going back to that entry shows Welcome again.
    */
   landOnWelcome?: boolean;
   /** Accessible label for the sidebar nav. */
@@ -85,7 +85,6 @@ export function usePageWelcomeView(opts: UsePageWelcomeViewOptions): PageWelcome
     defaultView = 'welcome',
     landOnWelcome = false,
   } = opts;
-  const [landingWelcome, setLandingWelcome] = useState(landOnWelcome);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -95,19 +94,17 @@ export function usePageWelcomeView(opts: UsePageWelcomeViewOptions): PageWelcome
   );
 
   const raw = new URLSearchParams(location.search).get('view');
-  // Any `?view=`, valid or not, ends the first-visit landing (adjusting state
-  // during render, React's documented pattern for state derived from props).
-  if (landingWelcome && raw !== null) setLandingWelcome(false);
+  // The history entry the page mounted on, if it lands on Welcome there.
+  const [landingKey] = useState(() => (landOnWelcome && raw === null ? location.key : null));
   const view: PageWelcomeViewId =
     raw !== null && validViews.has(raw)
       ? raw
-      : landingWelcome && raw === null
+      : location.key === landingKey
         ? 'welcome'
         : defaultView;
 
   const setView = useCallback(
     (v: PageWelcomeViewId) => {
-      setLandingWelcome(false);
       const params = new URLSearchParams(location.search);
       if (v === defaultView) params.delete('view');
       else params.set('view', v);

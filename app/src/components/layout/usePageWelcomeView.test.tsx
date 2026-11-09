@@ -24,6 +24,7 @@ function WorkflowViews({ landOnWelcome = false }: { landOnWelcome?: boolean }) {
       {/* Navigation that bypasses setView, like a shell link. */}
       <button data-testid="link-main" onClick={() => navigate('/flows?view=main')} />
       <button data-testid="link-flows" onClick={() => navigate('/flows')} />
+      <button data-testid="history-back" onClick={() => navigate(-1)} />
       {nav}
       <SidebarSlotOutlet />
     </>
@@ -79,6 +80,24 @@ describe('usePageWelcomeView when landing on welcome (first visit)', () => {
     fireEvent.click(screen.getByTestId('link-main'));
     fireEvent.click(screen.getByTestId('link-flows'));
     expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('main');
+  });
+
+  it('shows the working view when the bare page is opened again from welcome', () => {
+    renderAt('/flows', true);
+    expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('welcome');
+    fireEvent.click(screen.getByTestId('link-flows'));
+    expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('main');
+  });
+
+  it('shows welcome again only when going back to the entry it landed on', () => {
+    renderAt('/flows', true);
+    fireEvent.click(screen.getByTestId('link-main'));
+    fireEvent.click(screen.getByTestId('link-flows'));
+    expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('main');
+    fireEvent.click(screen.getByTestId('history-back'));
+    expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('main');
+    fireEvent.click(screen.getByTestId('history-back'));
+    expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('welcome');
   });
 
   it('falls back to the working view for an invalid ?view= and stays there', () => {
