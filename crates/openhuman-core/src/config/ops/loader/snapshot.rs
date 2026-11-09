@@ -45,7 +45,8 @@ pub async fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, 
 }
 
 /// Credentials the config holds outside the sealed list: MCP server auth,
-/// environment and endpoint, and proxy URLs, which may carry userinfo.
+/// environment, arguments and endpoint, MCP client capabilities, and proxy
+/// URLs, which may carry userinfo.
 fn mask_unsealed_credentials(config: &mut Config) {
     use crate::config::schema::storage::redact_url;
     use crate::config::McpAuthConfig;
@@ -54,6 +55,9 @@ fn mask_unsealed_credentials(config: &mut Config) {
         // Any variable can hold a key (`AWS_SECRET_ACCESS_KEY`), so every
         // value goes; the names stay.
         server.env.values_mut().for_each(String::clear);
+        // An argument can be a key on its own (`--token`, `<key>`), with no
+        // name to match, so every argument goes; the count stays.
+        server.args.iter_mut().for_each(String::clear);
         server.endpoint = redact_url(&server.endpoint);
         match server.auth {
             McpAuthConfig::None => {}
@@ -70,6 +74,9 @@ fn mask_unsealed_credentials(config: &mut Config) {
             _ => server.auth = McpAuthConfig::None,
         }
     }
+    // Client-declared metadata with free-form keys (an `Authorization` entry
+    // has no credential-shaped name), and nothing displays it.
+    blank_strings(&mut config.mcp_client.client_identity.capabilities);
     let proxy = &mut config.proxy;
     for url in [
         &mut proxy.http_proxy,
@@ -84,14 +91,17 @@ fn mask_unsealed_credentials(config: &mut Config) {
 }
 
 /// Blanks every string under a key that names a credential (`password`,
-/// `*_secret`, `*_token`, `*_key` credentials), at any depth, including
-/// strings inside a list or object held under such a key.
+/// `*_secret`, `*_token`, `*_key` credentials), and redacts the userinfo and
+/// query of every string under a key that names a URL (`url`, `*_url`, `*endpoint`,
+/// `*_dsn`), at any depth, including inside a list or object under the key.
 fn mask_secret_named_strings(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             for (key, child) in map.iter_mut() {
                 if names_a_secret(key) {
                     blank_strings(child);
+                } else if names_a_url(key) {
+                    redact_url_strings(child);
                 } else {
                     mask_secret_named_strings(child);
                 }
@@ -111,6 +121,26 @@ fn blank_strings(value: &mut serde_json::Value) {
     }
 }
 
+fn redact_url_strings(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(text) => {
+            *text = crate::config::schema::storage::redact_url(text);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(redact_url_strings),
+        serde_json::Value::Object(map) => map.values_mut().for_each(redact_url_strings),
+        _ => {}
+    }
+}
+
+fn names_a_url(key: &str) -> bool {
+    // `url` alone or as a suffix, so a key such as `curl` is not a URL.
+    let key = key.to_ascii_lowercase();
+    key == "url"
+        || ["_url", "endpoint", "_dsn"]
+            .iter()
+            .any(|suffix| key.ends_with(suffix))
+}
+
 fn names_a_secret(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
     [
@@ -120,6 +150,7 @@ fn names_a_secret(key: &str) -> bool {
         "api_key",
         "app_key",
         "encrypt_key",
+        "pair_code",
     ]
     .iter()
     .any(|suffix| key.ends_with(suffix))

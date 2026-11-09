@@ -25,10 +25,12 @@ fn config_with_every_secret() -> Config {
     channels.slack = Some(channel(
         json!({ "bot_token": "", "app_token": null, "channel_id": null }),
     ));
-    channels.mattermost = Some(channel(
-        json!({ "url": "https://chat.example", "bot_token": "", "channel_id": null }),
-    ));
-    channels.whatsapp = Some(channel(json!({})));
+    channels.mattermost = Some(channel(json!({
+        "url": format!("https://u:{SENTINEL}@chat.example"),
+        "bot_token": "",
+        "channel_id": null,
+    })));
+    channels.whatsapp = Some(channel(json!({ "pair_code": SENTINEL })));
     channels.linq = Some(channel(
         json!({ "api_token": "", "from_phone": "+15550100", "webhook_secret": SENTINEL }),
     ));
@@ -58,17 +60,29 @@ fn config_with_every_secret() -> Config {
             "name": format!("mcp-{at}"),
             "endpoint": format!("https://u:{SENTINEL}@mcp.example/rpc?key={SENTINEL}"),
             "env": { "AWS_SECRET_ACCESS_KEY": SENTINEL },
+            "args": ["--api-key", SENTINEL, format!("--token={SENTINEL}")],
             "auth": auth,
         }))
     })
     .collect();
     config.mcp_client.registry_auth.smithery_api_key = Some(SENTINEL.into());
     config.mcp_client.registry_auth.mcp_official_token = Some(SENTINEL.into());
-    config.mcp_client.client_identity.capabilities = json!({ "x": { "token": [SENTINEL] } });
+    config.mcp_client.client_identity.capabilities = json!({
+        "x": { "token": [SENTINEL] },
+        "auth": { "Authorization": format!("Bearer {SENTINEL}") },
+    });
     let proxy_url = format!("http://proxy-user:{SENTINEL}@proxy.example:8080");
     config.proxy.http_proxy = Some(proxy_url.clone());
     config.proxy.https_proxy = Some(proxy_url.clone());
     config.proxy.all_proxy = Some(proxy_url);
+    let userinfo_url = format!("https://user:{SENTINEL}@host.example/v1");
+    config.api_url = Some(userinfo_url.clone());
+    config.inference_url = Some(userinfo_url.clone());
+    config.local_ai.base_url = Some(userinfo_url.clone());
+    config.search.brave.base_url = Some(userinfo_url.clone());
+    config.inbound.queue_url = Some(format!("amqp://app:{SENTINEL}@broker.example/vhost"));
+    config.storage.url = Some(format!("mongodb://app:{SENTINEL}@db.example/openhuman"));
+    config.observability.sentry_dsn = Some(format!("https://{SENTINEL}@o1.ingest.example/1"));
 
     let mut filled = 0;
     for (_, slot) in secret_slots(&mut config) {
@@ -103,10 +117,20 @@ async fn snapshot_carries_no_credential() {
     assert_eq!(server["auth"]["kind"], "basic");
     assert_eq!(server["auth"]["username"], "mcp-user");
     assert_eq!(server["env"]["AWS_SECRET_ACCESS_KEY"], "");
+    assert_eq!(server["args"], json!(["", "", ""]));
     assert_eq!(server["endpoint"], "https://***@mcp.example/rpc?***");
     assert_eq!(
         snapshot["config"]["proxy"]["http_proxy"],
         "http://***@proxy.example:8080"
+    );
+    assert_eq!(snapshot["config"]["api_url"], "https://***@host.example/v1");
+    assert_eq!(
+        snapshot["config"]["storage"]["url"],
+        "mongodb://***@db.example/openhuman"
+    );
+    assert_eq!(
+        snapshot["config"]["inbound"]["queue_url"],
+        "amqp://***@broker.example/vhost"
     );
 }
 
