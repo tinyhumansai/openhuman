@@ -40,8 +40,9 @@ interface UsePageWelcomeViewOptions {
   defaultView?: 'welcome' | 'main';
   /**
    * Land on Welcome (instead of `defaultView`) when the URL has no `?view=`.
-   * Read once on mount and cleared by the first `setView`, so a first-visit
-   * landing doesn't snap back to Welcome when the user moves on.
+   * Read once on mount and cleared by the first `setView` or explicit
+   * `?view=`, so a first-visit landing doesn't snap back to Welcome when the
+   * user moves on (including via links that bypass `setView`).
    */
   landOnWelcome?: boolean;
   /** Accessible label for the sidebar nav. */
@@ -94,6 +95,9 @@ export function usePageWelcomeView(opts: UsePageWelcomeViewOptions): PageWelcome
   );
 
   const raw = new URLSearchParams(location.search).get('view') ?? '';
+  // Any explicit `?view=` ends the first-visit landing (adjusting state during
+  // render, React's documented pattern for state derived from props).
+  if (landingWelcome && validViews.has(raw)) setLandingWelcome(false);
   const view: PageWelcomeViewId = validViews.has(raw)
     ? raw
     : landingWelcome

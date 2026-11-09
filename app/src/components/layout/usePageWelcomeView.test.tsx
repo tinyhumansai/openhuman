@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
 import { SidebarSlotOutlet, SidebarSlotProvider } from './shell/SidebarSlot';
@@ -7,6 +7,7 @@ import { usePageWelcomeView } from './usePageWelcomeView';
 
 function WorkflowViews({ landOnWelcome = false }: { landOnWelcome?: boolean }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const { view, nav } = usePageWelcomeView({
     landOnWelcome,
     ariaLabel: 'Workflows',
@@ -20,6 +21,9 @@ function WorkflowViews({ landOnWelcome = false }: { landOnWelcome?: boolean }) {
     <>
       <output data-testid="active-workflow-view">{view}</output>
       <output data-testid="workflow-view-url">{location.search}</output>
+      {/* Navigation that bypasses setView, like a shell link. */}
+      <button data-testid="link-main" onClick={() => navigate('/flows?view=main')} />
+      <button data-testid="link-flows" onClick={() => navigate('/flows')} />
       {nav}
       <SidebarSlotOutlet />
     </>
@@ -68,6 +72,13 @@ describe('usePageWelcomeView when landing on welcome (first visit)', () => {
     fireEvent.click(screen.getByTestId('two-pane-nav-main'));
     expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('main');
     expect(screen.getByTestId('workflow-view-url')).toBeEmptyDOMElement();
+  });
+
+  it('does not reopen welcome after a link leaves it and returns to the bare page', () => {
+    renderAt('/flows', true);
+    fireEvent.click(screen.getByTestId('link-main'));
+    fireEvent.click(screen.getByTestId('link-flows'));
+    expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('main');
   });
 
   it('lets an explicit ?view= win over the welcome landing', () => {
