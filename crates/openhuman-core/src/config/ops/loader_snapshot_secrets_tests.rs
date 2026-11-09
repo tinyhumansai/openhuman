@@ -82,6 +82,10 @@ fn config_with_every_secret() -> Config {
     config.search.brave.base_url = Some(userinfo_url.clone());
     config.inbound.queue_url = Some(format!("amqp://app:{SENTINEL}@broker.example/vhost"));
     config.storage.url = Some(format!("mongodb://app:{SENTINEL}@db.example/openhuman"));
+    config
+        .runtime
+        .reasoning_effort_by_model
+        .insert("acme/model-token".into(), "high".into());
     config.observability.sentry_dsn = Some(format!("https://{SENTINEL}@o1.ingest.example/1"));
 
     let mut filled = 0;
@@ -111,6 +115,11 @@ async fn snapshot_carries_no_credential() {
     assert_eq!(telegram["allowed_users"], json!([]));
     let lark = &snapshot["config"]["channels_config"]["lark"];
     assert_eq!(lark["app_id"], "lark-app");
+    // A model id is data, not a field name, even when it ends in `token`.
+    assert_eq!(
+        snapshot["config"]["runtime"]["reasoning_effort_by_model"]["acme/model-token"],
+        "high"
+    );
     // MCP servers keep their names, auth kinds and variable names.
     let server = &snapshot["config"]["mcp_client"]["servers"][1];
     assert_eq!(server["name"], "mcp-1");
@@ -161,4 +170,58 @@ async fn config_snapshot_tool_returns_no_credential() {
     assert!(!result.is_error);
     assert!(result.output().contains("channels_config"));
     assert!(!result.output().contains(SENTINEL));
+}
+
+#[test]
+fn a_url_keyed_object_still_loses_its_credential_fields() {
+    let mut value = json!({
+        "agent": {
+            "endpoint": {
+                "token": SENTINEL,
+                "host": format!("https://u:{SENTINEL}@host.example"),
+            },
+        },
+    });
+
+    super::snapshot::mask_secret_named_strings_outside_data_keyed_maps(&mut value);
+
+    let endpoint = &value["agent"]["endpoint"];
+    assert_eq!(endpoint["token"], "");
+    assert_eq!(endpoint["host"], "https://***@host.example");
+}
+
+#[test]
+fn a_data_keyed_map_keeps_its_keys_but_its_values_are_still_masked() {
+    let mut value = json!({
+        "memory": {
+            "engines": {
+                "vector-token": { "endpoint": format!("https://u:{SENTINEL}@memory.example") },
+            },
+        },
+    });
+
+    super::snapshot::mask_secret_named_strings_outside_data_keyed_maps(&mut value);
+
+    assert_eq!(
+        value["memory"]["engines"]["vector-token"]["endpoint"],
+        "https://***@memory.example"
+    );
+}
+
+#[test]
+fn agent_metadata_is_blanked_whatever_its_keys() {
+    let mut value = json!({
+        "agent_registry": {
+            "entries": [{
+                "id": "helper",
+                "metadata": { "Authorization": format!("Bearer {SENTINEL}") },
+            }],
+        },
+    });
+
+    super::snapshot::mask_secret_named_strings_outside_data_keyed_maps(&mut value);
+
+    let entry = &value["agent_registry"]["entries"][0];
+    assert_eq!(entry["id"], "helper");
+    assert_eq!(entry["metadata"]["Authorization"], "");
 }

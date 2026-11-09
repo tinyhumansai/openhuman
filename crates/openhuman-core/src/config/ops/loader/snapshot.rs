@@ -21,7 +21,7 @@ pub async fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, 
     mask_unsealed_credentials(&mut masked);
     let mut value = serde_json::to_value(&masked).map_err(|e| e.to_string())?;
     // Channel secrets that are not sealed on disk are not in that list.
-    mask_secret_named_strings(&mut value);
+    mask_secret_named_strings_outside_data_keyed_maps(&mut value);
     // A broker URL may carry credentials too; show it redacted.
     if let Some(url) = config.inbound.queue_url.as_deref() {
         value["inbound"]["queue_url"] =
@@ -90,6 +90,54 @@ fn mask_unsealed_credentials(config: &mut Config) {
     }
 }
 
+/// Maps keyed by data (model ids, channel names) rather than field names,
+/// whose values hold no credential. MCP `env` is not here: its values are
+/// cleared by type.
+const DATA_KEYED_MAPS: &[&str] = &[
+    "/agent/channel_agents",
+    "/agent/channel_permissions",
+    "/channel_voice/channels",
+    "/channel_voice/threads",
+    "/cloud_provider_ca_certs",
+    "/cost/prices",
+    "/inbound/sources",
+    "/inbound_debounce/by_channel",
+    "/memory/agents",
+    "/memory/engines",
+    "/reliability/model_fallbacks",
+    "/runtime/reasoning_effort_by_model",
+    "/search/providers",
+    "/search/roles",
+    "/teams",
+];
+
+/// [`mask_secret_named_strings`] over the whole config, except that the keys of
+/// a [`DATA_KEYED_MAPS`] map are not read as field names (a model id ending in
+/// `token` is not a credential); their values are still walked.
+pub(super) fn mask_secret_named_strings_outside_data_keyed_maps(config: &mut serde_json::Value) {
+    // Free-form agent metadata: like MCP capabilities, its keys say nothing,
+    // so every string in it goes.
+    if let Some(serde_json::Value::Array(entries)) = config.pointer_mut("/agent_registry/entries") {
+        entries
+            .iter_mut()
+            .filter_map(|entry| entry.get_mut("metadata"))
+            .for_each(blank_strings);
+    }
+    let held: Vec<_> = DATA_KEYED_MAPS
+        .iter()
+        .filter_map(|at| Some((*at, config.pointer_mut(at)?.take())))
+        .collect();
+    mask_secret_named_strings(config);
+    for (at, mut map) in held {
+        if let serde_json::Value::Object(entries) = &mut map {
+            entries.values_mut().for_each(mask_secret_named_strings);
+        }
+        if let Some(slot) = config.pointer_mut(at) {
+            *slot = map;
+        }
+    }
+}
+
 /// Blanks every string under a key that names a credential (`password`,
 /// `*_secret`, `*_token`, `*_key` credentials), and redacts the userinfo and
 /// query of every string under a key that names a URL (`url`, `*_url`, `*endpoint`,
@@ -127,7 +175,16 @@ fn redact_url_strings(value: &mut serde_json::Value) {
             *text = crate::config::schema::storage::redact_url(text);
         }
         serde_json::Value::Array(items) => items.iter_mut().for_each(redact_url_strings),
-        serde_json::Value::Object(map) => map.values_mut().for_each(redact_url_strings),
+        // An object under a URL key can still hold a credential-named field.
+        serde_json::Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                if names_a_secret(key) {
+                    blank_strings(child);
+                } else {
+                    redact_url_strings(child);
+                }
+            }
+        }
         _ => {}
     }
 }
