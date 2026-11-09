@@ -227,11 +227,10 @@ pub(super) fn handle_update_local_ai_settings(
             usage_embeddings: update.usage_embeddings,
             api_key: update.api_key,
         };
-        // Saved through the connect checkpoint table so this save drops a
-        // pending checkpoint, like `inference.update_local_settings` (#8172).
-        to_json(
-            crate::inference::local_checkpoint::apply(|| ctx.load_config(), patch, false).await?,
-        )
+        // Same save as `inference.update_local_settings`: it drops a pending
+        // connect checkpoint (#8172) and resets the local probe, so the next
+        // status poll checks the new endpoint instead of the old verdict.
+        to_json(crate::inference::ops::inference_update_local_settings(&ctx, patch, false).await?)
     })
 }
 

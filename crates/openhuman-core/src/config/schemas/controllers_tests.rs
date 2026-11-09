@@ -78,3 +78,32 @@ async fn config_local_ai_save_drops_a_pending_connect_checkpoint() {
     assert_eq!(rollback.value["restored"], Value::Bool(false));
     assert_eq!(local_ai().await, after_save);
 }
+
+// A `config.update_local_ai_settings` save resets the local probe like
+// `inference.update_local_settings`, so a status poll after an endpoint change
+// does not report the old endpoint's verdict.
+#[tokio::test]
+async fn config_local_ai_save_resets_the_local_probe() {
+    let _env_lock = crate::config::TEST_ENV_LOCK.lock().await;
+    let _inference = crate::inference::host_runtime::inference_test_guard_async().await;
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard =
+        crate::config::test_env::EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path());
+    let ctx = DispatchCtx::ambient();
+    let service = crate::inference::host_runtime::global(&ctx.load_config().await.expect("config"));
+    let previous = service.replace_status_state("disabled");
+
+    let params = Map::from_iter([
+        ("provider".to_string(), Value::from("lm_studio")),
+        (
+            "base_url".to_string(),
+            Value::from("http://127.0.0.1:1234/v1"),
+        ),
+    ]);
+    let saved = inference::handle_update_local_ai_settings(ctx.clone(), params).await;
+    let state = service.status().state;
+    service.replace_status_state(previous);
+
+    saved.expect("config save");
+    assert_eq!(state, "idle");
+}
