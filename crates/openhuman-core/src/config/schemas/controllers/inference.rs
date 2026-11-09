@@ -227,7 +227,11 @@ pub(super) fn handle_update_local_ai_settings(
             usage_embeddings: update.usage_embeddings,
             api_key: update.api_key,
         };
-        to_json(config_rpc::load_and_apply_local_ai_settings(&ctx, patch).await?)
+        // Saved through the connect checkpoint table so this save drops a
+        // pending checkpoint, like `inference.update_local_settings` (#8172).
+        to_json(
+            crate::inference::local_checkpoint::apply(|| ctx.load_config(), patch, false).await?,
+        )
     })
 }
 

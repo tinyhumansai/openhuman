@@ -6,8 +6,9 @@
 //! section here, in the core, and returns an opaque id. Rolling back that id
 //! restores the prior section only while it is still this config's latest
 //! checkpoint and `local_ai` still holds exactly what the attempt wrote: any
-//! later save through `update_local_settings` drops the checkpoint, so an
-//! older attempt never undoes a newer save.
+//! later save through `update_local_settings` or
+//! `config.update_local_ai_settings` drops the checkpoint, so an older
+//! attempt never undoes a newer save.
 //!
 //! Every load-modify-save here runs under one lock, with the config loaded
 //! after the lock is taken, so two attempts cannot record each other's stale

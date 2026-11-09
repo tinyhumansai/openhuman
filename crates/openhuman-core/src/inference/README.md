@@ -124,9 +124,9 @@ installed (`PIPER_BIN` or `PATH`).
 The settings screen saves `local_ai` before it checks that the runtime answers, so it calls
 `update_local_settings` with `checkpoint: true`: the core keeps the previous section (key included)
 in `local_checkpoint.rs` and returns a `checkpoint_id`. When the check fails, `rollback_local_settings`
-restores it, unless `local_ai` was saved again since: every `update_local_settings` call runs
-under the same lock and a plain save drops the pending checkpoint, so an older attempt never undoes
-a newer save. The screen never reads the stored key.
+restores it, unless `local_ai` was saved again since: every `update_local_settings` and
+`config.update_local_ai_settings` call runs under the same lock and a plain save drops the pending
+checkpoint, so an older attempt never undoes a newer save. The screen never reads the stored key.
 
 `agent_chat_for` in [`agent_runs/agent_chat/session_turn.rs`](../agent_runs/agent_chat/session_turn.rs) is the native agent-turn entry used by
 `openhuman-rpc` and `openhuman-embed`. It runs the turn under the agent's own `CoreContext`,
