@@ -155,6 +155,33 @@ async fn a_read_only_tool_is_allowed_in_every_tier() {
     }
 }
 
+#[tokio::test]
+async fn disabled_autonomy_allows_registered_actions_without_tinysecurity() {
+    let policy = Arc::new(SecurityPolicy {
+        enabled: false,
+        ..SecurityPolicy::default()
+    });
+    let decision = OpenHumanSecurityGate::new(policy, registry())
+        .authorize_tool(&req("write_file", json!({ "path": "notes.md" })))
+        .await
+        .expect("disabled autonomy should not require TinySecurity");
+
+    assert_eq!(decision, GateDecision::Allow);
+}
+
+#[tokio::test]
+async fn disabled_autonomy_still_denies_an_unregistered_tool() {
+    let policy = Arc::new(SecurityPolicy {
+        enabled: false,
+        ..SecurityPolicy::default()
+    });
+    let decision = OpenHumanSecurityGate::new(policy, registry())
+        .authorize_tool(&req("definitely_not_a_tool", json!({})))
+        .await
+        .unwrap();
+    assert!(!decision.is_allowed());
+}
+
 async fn cron_decision(gate: OpenHumanSecurityGate, tool_name: &str) -> GateDecision {
     let core =
         crate::core::runtime::CoreContext::for_test(crate::core::runtime::DomainSet::full(), None);
@@ -224,6 +251,9 @@ async fn cron_headless_settlement_does_not_allow_effectful_spawn_aliases() {
     );
 }
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn read_only_autonomy_denies_an_acting_tool() {
     let decision = gate(AutonomyLevel::ReadOnly)
@@ -304,3 +334,103 @@ async fn shell_authorization_ignores_stale_facts_and_uses_request_command() {
 
 #[path = "security_gate_screen_and_policy_tests.rs"]
 mod screen_and_policy;
+
+// -- security disabled (`crate::security::switch`) -----------------
+
+/// What an enabled-autonomy gate decides for an acting tool and a shell command.
+async fn acting_decisions() -> (GateDecision, GateDecision) {
+    let policy = Arc::new(SecurityPolicy {
+        enabled: true,
+        autonomy: AutonomyLevel::Supervised,
+        ..SecurityPolicy::default()
+    });
+    let gate = OpenHumanSecurityGate::new(policy, registry());
+    let write = gate
+        .authorize_tool(&req("write_file", json!({ "path": "notes.md" })))
+        .await
+        .unwrap();
+    let shell = gate
+        .authorize_tool(&req(SHELL_TOOL, json!({ "command": "rm -rf build" })))
+        .await
+        .unwrap();
+    (write, shell)
+}
+
+#[cfg(not(feature = "security-module"))]
+#[tokio::test]
+async fn a_build_without_the_module_authorizes_tools_without_classifying_them() {
+    let (write, shell) = acting_decisions().await;
+    assert_eq!(write, GateDecision::Allow);
+    assert_eq!(shell, GateDecision::Allow);
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn security_configured_off_authorizes_tools_without_classifying_them() {
+    let _off = crate::security::switch::off_for_this_thread();
+    let (write, shell) = acting_decisions().await;
+    assert_eq!(write, GateDecision::Allow);
+    assert_eq!(shell, GateDecision::Allow);
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn an_enforcing_gate_denies_a_tool_the_module_cannot_classify() {
+    use crate::core::runtime::{CoreContext, DomainSet};
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(temp.path());
+    config.modules.enabled = false;
+    let context = CoreContext::for_test_with_config(DomainSet::full(), config);
+    let (write, _) = CoreContext::scope(context, acting_decisions()).await;
+    assert!(!write.is_allowed());
+    assert!(
+        write
+            .denial_reason()
+            .expect("a Deny carries a reason")
+            .contains(tinytools::status::POLICY_BLOCKED_MARKER),
+        "{write:?}"
+    );
+}
+
+/// Local-only privacy mode still refuses a shell command that may reach the
+/// network when security is disabled; a local command still runs.
+async fn local_only_shell_decisions() -> (GateDecision, GateDecision) {
+    let _mode =
+        crate::security::live_policy::test_privacy_scope(crate::config::PrivacyMode::LocalOnly);
+    let gate = gate(AutonomyLevel::Full);
+    let network = gate
+        .authorize_tool(&req(
+            SHELL_TOOL,
+            json!({ "command": "curl https://example.com" }),
+        ))
+        .await
+        .unwrap();
+    let local = gate
+        .authorize_tool(&req(SHELL_TOOL, json!({ "command": "ls -la" })))
+        .await
+        .unwrap();
+    (network, local)
+}
+
+#[cfg(not(feature = "security-module"))]
+#[tokio::test]
+async fn a_build_without_the_module_keeps_local_only_for_the_shell_tool() {
+    let (network, local) = local_only_shell_decisions().await;
+    assert!(!network.is_allowed());
+    assert!(network
+        .denial_reason()
+        .is_some_and(|reason| reason.contains("Local-only privacy mode")));
+    assert_eq!(local, GateDecision::Allow);
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn security_configured_off_keeps_local_only_for_the_shell_tool() {
+    let _off = crate::security::switch::off_for_this_thread();
+    let (network, local) = local_only_shell_decisions().await;
+    assert!(!network.is_allowed());
+    assert!(network
+        .denial_reason()
+        .is_some_and(|reason| reason.contains("Local-only privacy mode")));
+    assert_eq!(local, GateDecision::Allow);
+}

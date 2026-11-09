@@ -29,15 +29,19 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use super::types::{ModuleRecord, ModuleSource, ModuleState, ModuleStatus};
+use super::types::{ModuleRecord, ModuleSource, ModuleState};
 use super::{linked, registry, report, runtime, source};
 use crate::config::Config;
 use tinybus::module::{
-    AccessFuture, Availability, FailureReporter, LinkedRegistry, LoadError, ModuleAccess,
-    ModuleClient, ModuleSource as ResolverSource, ProxyFailure, ReleaseRecord, Resolver,
-    ResolverInputs, SearchPathConfig,
+    AccessFuture, FailureReporter, LinkedRegistry, LoadError, ModuleAccess, ModuleClient,
+    ModuleSource as ResolverSource, ProxyFailure, ReleaseRecord, Resolver, ResolverInputs,
+    SearchPathConfig,
 };
 use tinybus::Proxy;
+
+pub(super) mod callback_load;
+mod list;
+pub use list::list;
 
 /// Environment variable naming a directory of bundled release archives, for
 /// headless hosts (the Docker image, the CLI tarball, bench bundles).
@@ -152,10 +156,13 @@ pub fn resolver(config: &Config) -> Resolver {
                 }
             }
             ModuleSource::Release if requires_verified_local_callbacks(record.id) => {
-                // These modules require a per-module storage callback, which
-                // TinyBus can bind only on its verified local-file path.
-                // Route a staged release through that rung; the callback-aware
-                // client below supplies the unique destination at load time.
+                // A staged artifact (`OPENHUMAN_MODULE_SOURCE_DIR` or
+                // `OPENHUMAN_MODULE_PATH`) wins over the release, as a local
+                // file: the search-path rung would admit it without the
+                // callbacks these modules need. With none staged the source
+                // stays the pinned release, which the callback loads in
+                // `callback_load` take from the installer bundle or the
+                // digest-verified release cache.
                 if let Some(path) = source::local_artifact(record.id) {
                     sources.insert(
                         record.id.to_string(),
@@ -248,41 +255,18 @@ type StorageCallbackLoads = tokio::sync::Mutex<
 static STORAGE_CALLBACK_LOADS: std::sync::LazyLock<StorageCallbackLoads> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
+/// Load a storage-backed module with its storage callback, on the module
+/// runtime so a caller that stops waiting cannot strand the binding.
 async fn ensure_loaded_with_storage_callback(
     resolver: &Resolver,
     config: &Config,
     id: &str,
 ) -> Result<(), String> {
-    let mut loads = STORAGE_CALLBACK_LOADS.lock().await;
-    if let Some((binding, _served)) = loads.get(id) {
-        if matches!(state_of(id), ModuleState::Ready) {
-            // Already serving with this binding: a binding is spent once the
-            // module takes it, so re-presenting it would be refused. The module
-            // is process-wide, so every later workspace's client finds it
-            // already serving.
-            return Ok(());
-        }
-        let mut module_config = module_config(config, id).await;
-        module_config["storage_callback"] = serde_json::json!(binding.unique_name().as_str());
-        return resolver
-            .ensure_loaded_with_host_callbacks(id, std::sync::Arc::clone(binding), module_config)
-            .await;
-    }
-
-    let runtime = resolver
-        .runtime()
-        .await
-        .map_err(|error| error.to_string())?;
-    let (binding, served) = super::storage_host::prepare_module_callbacks(runtime)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut module_config = module_config(config, id).await;
-    module_config["storage_callback"] = serde_json::json!(binding.unique_name().as_str());
-    resolver
-        .ensure_loaded_with_host_callbacks(id, std::sync::Arc::clone(&binding), module_config)
-        .await?;
-    loads.insert(id.to_owned(), (binding, served));
-    Ok(())
+    let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
+    callback_load::detached(resolver, async move {
+        callback_load::load_with_storage_callback(&task_resolver, &config, &id).await
+    })
+    .await
 }
 
 #[cfg(feature = "security-module")]
@@ -323,6 +307,12 @@ pub(crate) async fn security_secret_registration_id() -> Option<String> {
     super::security::host_callbacks::secret_registration_id().await
 }
 
+/// The secret key path the admitted TinySecurity serves, if it is admitted.
+#[cfg(feature = "security-module")]
+pub(crate) async fn security_admitted_key_path() -> Option<PathBuf> {
+    super::security::host_callbacks::admitted_key_path().await
+}
+
 #[cfg(feature = "security-module")]
 pub(crate) async fn security_callback_identity() -> Option<String> {
     super::security::host_callbacks::identity().await
@@ -339,7 +329,15 @@ async fn ensure_loaded_with_security_callback(
     config: &Config,
     id: &str,
 ) -> Result<(), String> {
-    super::security::host_callbacks::ensure_loaded(resolver, config, id).await
+    let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
+    // Captured before the load is scheduled: if the caller's runtime is
+    // released while the detached load runs, the load must not record that
+    // runtime's scope as the module's owner.
+    let epoch = super::security::host_callbacks::scope_epoch();
+    callback_load::detached(resolver, async move {
+        super::security::host_callbacks::ensure_loaded(&task_resolver, &config, &id, epoch).await
+    })
+    .await
 }
 
 #[cfg(feature = "security-module")]
@@ -348,27 +346,11 @@ async fn ensure_loaded_with_computer_callback(
     config: &Config,
     id: &str,
 ) -> Result<(), String> {
-    let mut loads = COMPUTER_CALLBACK_LOADS.lock().await;
-    if let Some(binding) = loads.get(id) {
-        let module_config = module_config_with_consequence_callback(config, id, binding).await;
-        return resolver
-            .ensure_loaded_with_host_callbacks(id, std::sync::Arc::clone(binding), module_config)
-            .await;
-    }
-
-    let runtime = resolver
-        .runtime()
-        .await
-        .map_err(|error| error.to_string())?;
-    let binding = super::browser_egress_host::prepare_consequence_callback(runtime)
-        .await
-        .map_err(|error| error.to_string())?;
-    let module_config = module_config_with_consequence_callback(config, id, &binding).await;
-    resolver
-        .ensure_loaded_with_host_callbacks(id, std::sync::Arc::clone(&binding), module_config)
-        .await?;
-    loads.insert(id.to_owned(), binding);
-    Ok(())
+    let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
+    callback_load::detached(resolver, async move {
+        callback_load::load_with_computer_callback(&task_resolver, &config, &id).await
+    })
+    .await
 }
 
 #[cfg(feature = "security-module")]
@@ -377,9 +359,24 @@ async fn module_config_with_consequence_callback(
     id: &str,
     binding: &tinybus::module::HostCallbackBinding,
 ) -> serde_json::Value {
+    computer_callback_config(config, id, binding.unique_name().as_str()).await
+}
+
+/// TinyComputer's config at its callback-bound load: exactly what
+/// `desktop::proxy` pushes before each call, since TinyBus refuses a
+/// callback-bound module any config that differs from the one it loaded with.
+#[cfg(feature = "security-module")]
+pub(super) async fn computer_callback_config(
+    config: &Config,
+    id: &str,
+    callback_destination: &str,
+) -> serde_json::Value {
     let mut module_config = module_config(config, id).await;
-    module_config["consequence_host"] =
-        serde_json::json!({ "destination": binding.unique_name().as_str() });
+    super::desktop::inject_security_browser_config(
+        &mut module_config,
+        super::browser_egress_host::browser_dial_alias(),
+        callback_destination,
+    );
     module_config
 }
 
@@ -669,7 +666,8 @@ async fn runtime_module_config(config: &Config, id: &str) -> serde_json::Value {
         let trusted_host = super::runtime::existing_runtime()
             .and_then(|runtime| runtime.connection().unique_name())
             .map(|name| name.to_string());
-        let config = super::security::module_config_for_host(config, trusted_host)
+        let judge = super::security::judge::resolve(config);
+        let config = super::security::module_config_for_host(config, trusted_host, judge)
             .expect("module runtime must expose its host identity before loading modules");
         return serde_json::to_value(config).expect("TinySecurity module config is serializable");
     }
@@ -694,57 +692,6 @@ pub fn install_dir(config: &Config) -> Option<PathBuf> {
     Some(config.workspace_dir.join("modules"))
 }
 
-/// Status of every module this build knows about.
-#[must_use]
-pub fn list(config: &Config) -> Vec<ModuleStatus> {
-    registry::ALL
-        .iter()
-        .map(|record| status_of(config, record))
-        .collect()
-}
-
-/// Status of one module.
-fn status_of(config: &Config, record: &ModuleRecord) -> ModuleStatus {
-    // Configuration is authoritative for the current core instance. A module
-    // may remain loaded in this process after a prior request, but callers
-    // whose configuration disables modules must still be told it is unusable.
-    let (state, detail) = match disabled_component(config, record.id) {
-        Some(component) => (
-            ModuleState::Disabled,
-            Some(format!(
-                "COMPONENT_DISABLED:{component} (set [components] {component} = true to enable)"
-            )),
-        ),
-        None => {
-            let (availability, detail) = resolver(config).status_of(&record.release());
-            (
-                match availability {
-                    Availability::Available => ModuleState::Available,
-                    Availability::Loading => ModuleState::Loading,
-                    Availability::Ready => ModuleState::Ready,
-                    Availability::Failed => ModuleState::Failed,
-                    Availability::Unsupported => ModuleState::Unsupported,
-                    Availability::Disabled => ModuleState::Disabled,
-                },
-                detail,
-            )
-        }
-    };
-    let plan = source::plan(config, record.id);
-    let source =
-        (!matches!(state, ModuleState::Unsupported | ModuleState::Disabled)).then_some(plan.served);
-    let detail = detail.or_else(|| plan.fallback.map(str::to_string));
-    ModuleStatus {
-        id: record.id.to_string(),
-        description: record.description.to_string(),
-        version: record.version.to_string(),
-        bus_name: record.bus_name.to_string(),
-        state,
-        source,
-        detail,
-    }
-}
-
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
@@ -760,3 +707,7 @@ mod client_tests;
 #[cfg(test)]
 #[path = "ops_resolver_tests.rs"]
 mod resolver_tests;
+
+#[cfg(test)]
+#[path = "ops_callback_release_tests.rs"]
+mod callback_release_tests;

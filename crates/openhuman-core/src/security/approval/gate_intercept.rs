@@ -472,6 +472,10 @@ impl ApprovalGate {
         &self,
         args: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
+        // Security disabled: the arguments are stored as given, unredacted.
+        if crate::security::switch::disabled_for(Some(&self.config)).is_some() {
+            return Ok(args);
+        }
         let encoded = serde_json::to_string(&args)
             .map_err(|_| "approval arguments are not serializable".to_owned())?;
         if encoded.len() > 64 * 1024 {

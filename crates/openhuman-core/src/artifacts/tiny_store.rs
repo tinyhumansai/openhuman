@@ -42,11 +42,17 @@ use crate::tools::per_call::{context as per_call_context, PerCallTool};
 const VERSIONED_SUBDIR: &str = "versioned";
 
 /// The legacy kind and file extension the UI gets for an artifact's newest
-/// version: text kinds by kind, file kinds by the file's extension.
+/// version: markdown and html by kind, text by the safe extension its title
+/// names (else `txt`), file kinds by the file's extension.
 fn legacy_shape(record: &ArtifactRecord) -> Option<(LegacyArtifactKind, String)> {
     let latest = record.latest()?;
     let shape = match record.kind {
-        ArtifactKind::Text => (LegacyArtifactKind::Document, "txt".to_string()),
+        ArtifactKind::Text => (
+            LegacyArtifactKind::Document,
+            text_extension_of_title(&record.title)
+                .unwrap_or("txt")
+                .to_string(),
+        ),
         ArtifactKind::Markdown => (LegacyArtifactKind::Document, "md".to_string()),
         ArtifactKind::Html => (LegacyArtifactKind::Document, "html".to_string()),
         ArtifactKind::Image | ArtifactKind::File => {
@@ -70,6 +76,27 @@ fn legacy_shape(record: &ArtifactRecord) -> Option<(LegacyArtifactKind, String)>
         }
     };
     Some(shape)
+}
+
+/// Plain-text formats a `text` artifact's title may name. Every one is inert
+/// when opened (no script or markup a viewer would run), so a model-written
+/// title can pick among them without widening what is served as active
+/// content. `html`, `svg`, `xml`, scripts and executables are deliberately not
+/// here: a title naming one stays `txt`.
+const TEXT_TITLE_EXTENSIONS: &[&str] = &[
+    "txt", "csv", "tsv", "ics", "vcf", "json", "jsonl", "ndjson", "log", "yaml", "yml", "toml",
+    "ini", "srt", "vtt",
+];
+
+/// The extension a `text` artifact's title asks for, when it is one of
+/// [`TEXT_TITLE_EXTENSIONS`] (matched case-insensitively and returned in its
+/// canonical lowercase form, never the title's own text).
+pub(crate) fn text_extension_of_title(title: &str) -> Option<&'static str> {
+    let (_, ext) = title.trim().rsplit_once('.')?;
+    TEXT_TITLE_EXTENSIONS
+        .iter()
+        .copied()
+        .find(|known| known.eq_ignore_ascii_case(ext))
 }
 
 pub(crate) fn legacy_kind_for_extension(ext: &str) -> LegacyArtifactKind {
@@ -171,8 +198,7 @@ async fn import_legacy_file(
     legacy: &FileRef,
     key: &str,
 ) -> anyhow::Result<FileRef> {
-    let source = roots.resolve(&legacy.key).await?;
-    let bytes = tokio::fs::read(&source.path).await?;
+    let (source, bytes) = roots.read(&legacy.key).await?;
     let media_type = legacy
         .media_type
         .as_deref()
@@ -306,11 +332,10 @@ impl LegacyUiBridge {
             if let Some(file) = latest.file.as_ref() {
                 self.write_file_version(file, &dest).await?
             } else {
-                let source = self.source_roots.resolve(&latest.body).await?;
+                let (source, bytes) = self.source_roots.read(&latest.body).await?;
                 if same_file(&source.path, &dest) {
                     tokio::fs::metadata(&dest).await?.len()
                 } else {
-                    let bytes = tokio::fs::read(&source.path).await?;
                     self.write_visible_file(&dest, &bytes, source.media_type.as_deref())
                         .await?
                 }
@@ -460,11 +485,16 @@ fn contains(folder: &Path, inside: &Path) -> bool {
     canon(inside).starts_with(canon(folder))
 }
 
-/// [`file_roots`] as the crate's folders. Protected-path policy is checked in
-/// the async artifact resolver through TinySecurity; this synchronous adapter
-/// carries only the trusted-root list.
+/// [`file_roots`] as the crate's folders, guarded by TinySecurity's
+/// protected-path policy. The crate runs the guard on the canonical path and
+/// keeps that file open while it reads, so a protected file's bytes are never
+/// read and a swapped path cannot be read in its place.
 pub fn guarded_roots(roots: Vec<PathBuf>) -> tiny_artifacts::FileRoots {
-    tiny_artifacts::FileRoots::new(roots)
+    tiny_artifacts::FileRoots::new(roots).with_async_guard(|path| async move {
+        super::files::check_protected_artifact_path(&path)
+            .await
+            .err()
+    })
 }
 
 /// The artifact service for one workspace: OpenHuman's store and UI bridge,
@@ -610,12 +640,21 @@ pub fn registered_tools(
     let mut tools: Vec<Box<dyn tinytools::Tool>> = Vec::new();
     {
         let (service, author) = (service.clone(), author.clone());
+        let staging = super::box_source::staging_dir(workspace_dir);
         tools.push(Box::new(PerCallTool::new(
             per_call_context,
             move |context| {
-                tiny_artifacts::CreateArtifactTool::new(
+                let create = tiny_artifacts::CreateArtifactTool::new(
                     service(context.chat.as_ref()),
                     author.clone(),
+                );
+                let tenant = context.dispatch.tenant();
+                super::box_source::BoxSourced::new(
+                    create,
+                    super::box_source::KindSource::Args,
+                    Arc::new(super::box_source::SandboxBoxFiles::new(context.dispatch)),
+                    tenant,
+                    staging.clone(),
                 )
             },
         )));
@@ -625,12 +664,20 @@ pub fn registered_tools(
     ))));
     {
         let (service, author) = (service.clone(), author.clone());
+        let staging = super::box_source::staging_dir(workspace_dir);
         tools.push(Box::new(PerCallTool::new(
             per_call_context,
             move |context| {
-                tiny_artifacts::UpdateArtifactTool::new(
-                    service(context.chat.as_ref()),
-                    author.clone(),
+                let artifacts = service(context.chat.as_ref());
+                let update =
+                    tiny_artifacts::UpdateArtifactTool::new(Arc::clone(&artifacts), author.clone());
+                let tenant = context.dispatch.tenant();
+                super::box_source::BoxSourced::new(
+                    update,
+                    super::box_source::KindSource::Record(artifacts),
+                    Arc::new(super::box_source::SandboxBoxFiles::new(context.dispatch)),
+                    tenant,
+                    staging.clone(),
                 )
             },
         )));

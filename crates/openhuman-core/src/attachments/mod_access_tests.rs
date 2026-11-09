@@ -20,7 +20,7 @@ async fn direct_turn_stores_original_only_in_the_explicit_workspace() {
     let config = Config {
         action_dir: temp.path().join("configured-acting"),
         workspace_dir: temp.path().join("internal"),
-        ..Config::default()
+        ..crate::credentials::test_support::plaintext_fixture_config(temp.path())
     };
     let workspace = tinytools::WorkspaceDescriptor::new(temp.path().join("agent-acting"));
     let staged = stage_turn(UPLOAD, Some(&config), Some(&workspace), None, None)
@@ -52,7 +52,7 @@ async fn direct_upload_requires_runtime_authority_and_external_input_cannot_crea
     let config = Config {
         action_dir: temp.path().join("acting"),
         workspace_dir: temp.path().join("internal"),
-        ..Config::default()
+        ..crate::credentials::test_support::plaintext_fixture_config(temp.path())
     };
     let workspace = tinytools::WorkspaceDescriptor::new(temp.path().join("agent-acting"));
     assert!(stage_turn(
@@ -147,7 +147,7 @@ async fn thread_folder_upload_is_staged_where_the_turn_reads_it() {
     let config = Config {
         action_dir: temp.path().join("global-acting"),
         workspace_dir: temp.path().join("internal"),
-        ..Config::default()
+        ..crate::credentials::test_support::plaintext_fixture_config(temp.path())
     };
     thread_in(&config, "bound", Some(&folder)).await;
     thread_in(&config, "unbound", None).await;
@@ -218,4 +218,20 @@ async fn thread_folder_upload_is_staged_where_the_turn_reads_it() {
         .unwrap();
     assert_eq!(tokio::fs::read(path).await.unwrap(), b"a");
     assert!(!config.action_dir.join("uploads").exists());
+}
+
+async fn stage_turn(
+    message: &str,
+    config: Option<&Config>,
+    workspace: Option<&tinytools::WorkspaceDescriptor>,
+    thread: Option<&str>,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
+) -> anyhow::Result<String> {
+    let operation = super::stage_turn(message, config, workspace, thread, origin);
+    match config {
+        Some(config) => {
+            crate::core::runtime::CoreContext::scope_test_config(config, operation).await
+        }
+        None => operation.await,
+    }
 }

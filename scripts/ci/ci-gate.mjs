@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 // CI Gate — one commit status ("CI Gate") on a PR head commit that passes as
-// soon as ANY of the PR CI flows passes, and then cancels the GitHub-hosted
-// runs still working on that commit.
+// soon as ANY of the PR CI flows passes, and then cancels the other runs still
+// working on that commit.
 //
 // Run by .github/workflows/ci-gate.yml on every `workflow_run` (requested and
 // completed) of the flows below. That workflow runs from the default branch
 // and never checks out PR code; this script only reads run and job state
 // through the API and writes a commit status.
 //
-//   success  a flow's decisive job passed (EX63 lanes, hosted lanes gate, or
-//            CI Lite's PR CI Gate); the other GitHub-hosted runs are cancelled
+//   success  a flow's decisive job passed (hosted lanes gate, or CI Lite's PR
+//            CI Gate); the other runs are cancelled
 //   pending  nothing has passed yet and at least one flow is still running
 //   failure  every flow finished and none passed
 //
@@ -23,18 +23,11 @@ export const CONTEXT = "CI Gate";
 // Order is preference: when several passed, the first names the status.
 export const SOURCES = [
   {
-    workflow: "ci-fast.yml",
-    name: "CI Fast",
-    job: "Lanes / CI Fast (EX63)",
-    hosted: false,
-  },
-  {
     workflow: "ci-fast-hosted.yml",
     name: "CI Fast (hosted)",
     job: "Lanes / CI Fast (hosted) Gate",
-    hosted: true,
   },
-  { workflow: "ci-lite.yml", name: "CI Lite", job: "PR CI Gate", hosted: true },
+  { workflow: "ci-lite.yml", name: "CI Lite", job: "PR CI Gate" },
 ];
 
 const PR_EVENTS = new Set(["pull_request", "pull_request_target"]);
@@ -65,9 +58,7 @@ export function decide(entries) {
   const winner = entries.find((e) => e.job?.conclusion === "success");
   if (winner) {
     const cancel = entries
-      .filter(
-        (e) => e !== winner && e.source.hosted && e.run.status !== "completed",
-      )
+      .filter((e) => e !== winner && e.run.status !== "completed")
       .map((e) => ({ id: e.run.id, name: e.source.name }));
     return {
       state: "success",

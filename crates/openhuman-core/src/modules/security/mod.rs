@@ -12,6 +12,7 @@ pub(crate) mod command;
 mod device_pairing_store;
 pub(crate) mod gap;
 pub(super) mod host_callbacks;
+pub(super) mod judge;
 mod policy;
 pub(crate) mod policy_translation;
 pub(crate) mod sandbox;
@@ -27,6 +28,7 @@ mod tests;
 pub(crate) use client::SecurityProxy;
 pub use client::{Client, SecurityError};
 pub use policy::policy_config;
+pub(crate) use policy::validate as validate_policy;
 pub(super) use policy::{module_config, module_config_for_host, module_config_for_secret_scope};
 pub(crate) use secret_cipher::Output as SecretCipherOutput;
 
@@ -589,6 +591,16 @@ pub(crate) async fn validate_host_path(
     _parent: bool,
 ) -> Result<tinysecurity_bus::PathValidationResult, String> {
     Err("TinySecurity is not built into this host".into())
+}
+
+/// See [`crate::security::release_secret_scope`].
+pub(crate) fn release_secret_scope() {
+    host_callbacks::release_scopes();
+}
+
+/// See [`crate::security::declare_transient_secret_scope`].
+pub(crate) fn declare_transient_secret_scope(config_dir: &std::path::Path) {
+    host_callbacks::declare_transient_scope(config_dir);
 }
 
 /// Replace the running module configuration through the loader control plane.

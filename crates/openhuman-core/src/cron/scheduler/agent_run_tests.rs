@@ -41,10 +41,10 @@ mod corrective_turn {
             definition.system_prompt =
                 tinyagents_definition::PromptSource::Inline("CRON_NO_REPLY_AGENT".into());
             definition.tools = tinyagents_definition::ToolScope::Named(Vec::new());
-            let context = CoreContext::for_test_with_host_kind(
+            let context = CoreContext::for_test_with_host_kind_and_config(
                 crate::core::types::HostKind::Library,
                 DomainSet::full(),
-                Some(self.0.workspace_dir.clone()),
+                self.0.clone(),
             );
             Some(HostAgent {
                 definition,
@@ -96,6 +96,8 @@ mod corrective_turn {
         config.agent.session_dual_write = false;
         config.agent.session_shadow_reads = false;
         config.default_model = Some("fixture".into());
+        config.secrets.encrypt = false;
+        config.modules.source = crate::config::schema::ModuleSourceMode::Source;
         config
     }
 
@@ -150,6 +152,10 @@ mod corrective_turn {
         crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
             .unwrap();
         let config = config(&tmp);
+        #[cfg(feature = "security-module")]
+        crate::modules::security::ensure_loaded(&config)
+            .await
+            .expect("the local TinySecurity module should load for scheduler agent tests");
         let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         crate::agent::session_host::test_support::install_scripted_model(Arc::new(ScriptedModel {
             replies: std::sync::Mutex::new([first, then].into()),

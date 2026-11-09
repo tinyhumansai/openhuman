@@ -470,6 +470,8 @@ export const CHAIN_GATES_NOT_FORWARDED = {
       'Test scaffolding for the session testkit is only used by embed-local tests and is not a TinyHumans or host runtime capability.',
   },
   'openhuman-embed': {
+    'test-keyring-consent':
+      'Answers keyring prompts in the in-process integration tests only; the CLI enables it on its core dev-dependency, and no host or product build may (see checkTestOnlyGatesIsolation).',
     'rss-bench':
       'Library-side hook for the embedded-RSS benchmark (#5046). Its binaries live in tinyhumansai/openhuman-benchmarks (`profile/`, #6944), which enables the core gate directly; no host in this repository turns it on.',
   },
@@ -535,6 +537,35 @@ export function checkLinkedModulesIsolation({ productFeatures, shellToml, cliFea
   const defaults = cliFeatures.get('default') ?? [];
   if (defaults.includes(LINKED_MODULES_FEATURE)) {
     violations.push(`the CLI's default features enable ${LINKED_MODULES_FEATURE}`);
+  }
+  return violations;
+}
+
+/**
+ * Gates for test builds only: `e2e-test-support` (the E2E apps' test RPCs and
+ * keyring prompt answers) and `test-keyring-consent` (keyring prompt answers
+ * for the in-process integration tests, enabled on the CLI's dev-dependency).
+ */
+export const TEST_ONLY_GATES = ['e2e-test-support', 'test-keyring-consent'];
+
+/**
+ * The test-only gates must never ship. Returns human-readable violations: a
+ * test-only gate in the product feature set, or reached from any crate's
+ * `default` features (transitively, so a default that turns on another gate
+ * that turns one on is caught too). `featureTables` maps a crate name to its
+ * parsed `[features]` table.
+ */
+export function checkTestOnlyGatesIsolation({ productFeatures, featureTables }) {
+  const violations = [];
+  for (const gate of TEST_ONLY_GATES) {
+    if (productFeatures.includes(gate)) {
+      violations.push(`${gate} is listed in the product feature set`);
+    }
+    for (const [crate, table] of Object.entries(featureTables)) {
+      if (resolveEnabledFeatures(table, ['default']).has(gate)) {
+        violations.push(`${crate}'s default features enable ${gate}`);
+      }
+    }
   }
   return violations;
 }

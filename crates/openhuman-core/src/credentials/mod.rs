@@ -41,3 +41,6 @@ pub use schemas::{
     all_controller_schemas as all_credentials_controller_schemas,
     all_registered_controllers as all_credentials_registered_controllers,
 };
+
+#[cfg(test)]
+pub(crate) mod test_support;

@@ -14,6 +14,33 @@ pub struct RunLedgerGetWireResponse {
     pub run: Option<tinyagents_session::run_ledger::types::AgentRun>,
 }
 
+// Schema-only mirror of `tinyagents_harness::middleware::RunMode`. The pinned
+// tinyagents (c3d7d32) derives `JsonSchema` on it without `rename_all`, so its
+// schema names the variants `Build`/`Plan`, while the wire carries the
+// `run_mode::mode_label` labels `build`/`plan`. Remove this once the pin
+// includes tinyagents bafab14, which adds `#[serde(rename_all = "snake_case")]`.
+/// A per-run mode gating side-effecting tools, toggled by the host without
+/// restarting the run.
+///
+/// `Build` (the default) leaves tool exposure and execution unrestricted.
+/// `Plan` hides every side-effecting tool from the model
+/// ([`PlanModeMiddleware`]'s `before_model`, the same auditable
+/// `AgentEvent::ToolsFiltered` mechanism [`ContextualToolSelectionMiddleware`]
+/// uses) and denies it at execution (`before_tool`, the same
+/// [`ToolPolicy`]/[`ToolSideEffects`] classification
+/// [`ToolPolicyMiddleware::deny_side_effects`] enforces) — except for tools on
+/// the middleware's allowlist, which stay available in either mode so a host
+/// can keep read-only tools and a handful of plan-mode-specific tools (e.g.
+/// `plan_exit`, `request_plan_review`, `todo`) reachable while planning.
+#[derive(JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunMode {
+    /// Every registered tool may be exposed and executed. The default.
+    Build,
+    /// Only allowlisted and side-effect-free tools may be exposed or executed.
+    Plan,
+}
+
 /// Root schema whose properties provide the UI-facing thread record aliases.
 #[derive(JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -45,7 +72,7 @@ pub struct ThreadWireTypes {
     pub artifact_failed_payload: crate::artifacts::types::ArtifactFailedPayload,
     pub thread_goal: tinyagents_harness_tools::goals::ThreadGoal,
     pub thread_todo_item: tinyagents_harness_tools::todos::TodoItem,
-    pub run_mode: tinyagents_harness::middleware::library::RunMode,
+    pub run_mode: RunMode,
 }
 
 /// Serialize the authoritative core/session record schemas for TypeScript codegen.

@@ -170,6 +170,16 @@
     "verification": "core/slots_tests.rs: entries_keep_registration_order_and_re_registering_keeps_position"
   },
   {
+    "file": "crates/openhuman-core/src/cron/channel_bridge.rs",
+    "scope": "",
+    "name": "BRIDGE",
+    "type": "HookSlot<Bridge>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: the running channel runtime's send adapters (core::slots::HookSlot), registered on channel start and removed on shutdown. It holds module object clients, never tenant data; under cfg(test) the table is per-thread.",
+    "verification": "cron/scheduler/origin_delivery_channel_tests.rs: channel_origin_fails_when_the_channel_runtime_is_not_running"
+  },
+  {
     "file": "crates/openhuman-core/src/hooks/host.rs",
     "scope": "",
     "name": "ENGINE",
@@ -593,10 +603,10 @@
     "file": "crates/openhuman-core/src/core/observability_reporting.rs",
     "scope": "",
     "name": "LAST_FS_LIMIT_REPORT",
-    "type": "std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(String,String),std::time::Instant>>, >",
+    "type": "std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(String,String,String),std::time::Instant>>, >",
     "count": 1,
     "category": "A",
-    "reason": "A process-wide rate limiter keyed by the content-free domain and operation names prevents repeated filesystem-limit reports from flooding observability. Entries older than the five-minute cooldown are pruned on every access, and the map stores no tenant or user data.",
+    "reason": "A process-wide rate limiter keyed by the content-free error kind, domain and operation names prevents repeated filesystem-limit reports from flooding observability. Entries older than the five-minute cooldown are pruned on every access, and the map stores no tenant or user data.",
     "verification": "core/observability_reporting.rs: was_recently_reported"
   },
   {
@@ -668,5 +678,95 @@
     "category": "A",
     "reason": "One-shot guard that subscribes the proactive web subscriber to the process-wide bus once; it stores no tenant identifiers, and per-event tenant scope arrives on each event.",
     "verification": "web_chat/event_bus_tests.rs: egress_surface_bridges_pending_with_chat_context"
+  },
+  {
+    "file": "crates/openhuman-core/src/security/credentials/profiles.rs",
+    "scope": "",
+    "name": "REGISTRY",
+    "type": "OnceLock<Mutex<HashMap<PathBuf,Arc<InProcessAuthLock>>>>",
+    "count": 1,
+    "category": "A",
+    "reason": "The process-local registry shares only lock objects keyed by canonical profile-store path; it serializes same-process access without storing profile contents or tenant identifiers.",
+    "verification": "security/credentials/profiles_store_lock_tests.rs: acquire_lock_serializes_same_process_acquirers"
+  },
+  {
+    "file": "crates/openhuman-core/src/credentials/profiles/keychain.rs",
+    "scope": "",
+    "name": "READ_CACHE",
+    "type": "OnceLock<Mutex<ReadCache>>",
+    "count": 1,
+    "category": "B",
+    "reason": "Profile secrets this process already read or wrote through the keyring, kept so polling the auth state does not ask the user again. Every key is the user-namespaced keyring entry name, the same identity the keyring itself uses, so two users never share an entry; writes and deletes drop the entry and bump its generation so an overtaken read is not cached, failed or refused reads never fill one, and nothing is persisted.",
+    "verification": "credentials/profiles/keychain_tests.rs: another_profile_store_does_not_see_the_cached_secret; stores_for_the_same_keyring_entry_share_its_invalidation; a_read_overtaken_by_a_write_does_not_cache_what_it_read"
+  },
+  {
+    "file": "crates/openhuman-core/src/credentials/profiles/keychain.rs",
+    "scope": "",
+    "name": "KEYRING_HELD_BACK",
+    "type": "()",
+    "count": 1,
+    "category": "A",
+    "reason": "A task-local marker with no data: present only while a future given to without_keyring runs on that task, so a profile read during TinySecurity's own load or before the listener is up never asks the keyring. Nothing is shared between tasks, users or workspaces.",
+    "verification": "credentials/profiles/keychain_tests.rs: nothing_reaches_the_keyring_while_it_is_held_back"
+  },
+  {
+    "file": "crates/openhuman-core/src/sandbox/openshell/mod.rs",
+    "scope": "",
+    "name": "REGISTRY",
+    "type": "std::sync::OnceLock<std::sync::Arc<BoxRegistry<BusBoxDriver>>>",
+    "count": 1,
+    "category": "B",
+    "reason": "The process's OpenShell box registry holds one box per tenant, keyed on the whole authenticated Tenant (profile and agent), never the profile alone; a call with no tenant is refused before the registry is touched, so no two tenants can share a box.",
+    "verification": "sandbox/openshell/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/openshell/mod_tests.rs: an_unscoped_command_creates_no_box"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/runtime/context_test_support.rs",
+    "scope": "",
+    "name": "NATIVE_FIXTURE_RUNTIME",
+    "type": "std::sync::LazyLock<tokio::runtime::Runtime>",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only (cfg(test) module): a retained two-worker runtime that admits the real native security module for fixture contexts, so synchronous host adapters can finish while a current-thread test waits. It holds no tenant data; each admission runs under the fixture's own CoreContext.",
+    "verification": "agent/harness/artifact_offload/artifact_offload_tests.rs: an_action_dir_inside_workspace_dir_is_never_materialized"
+  },
+  {
+    "file": "crates/openhuman-core/src/security/switch.rs",
+    "scope": "",
+    "name": "CONFIGURED_OFF",
+    "type": "AtomicBool",
+    "count": 1,
+    "category": "A",
+    "reason": "Process configuration: the booted config's `[security] mode = \"off\"`, written once when the core boots and read by TinySecurity-delegated checks that hold no config. OpenHuman runs one Runtime per process, so the booted mode is the process's; it carries no tenant data.",
+    "verification": "security/switch_tests.rs: booting_with_security_off_disables_the_checks_process_wide"
+  },
+  {
+    "file": "crates/openhuman-core/src/security/switch.rs",
+    "scope": "",
+    "name": "TEST_CONFIGURED_OFF",
+    "type": "AtomicBool",
+    "count": 1,
+    "category": "A",
+    "reason": "cfg(test) only: a per-thread stand-in for CONFIGURED_OFF so a test that turns security off cannot reach a test on another thread. Holds one flag, no tenant data, and is not compiled into any shipped build.",
+    "verification": "security/switch_tests.rs: the_test_guard_does_not_reach_another_thread"
+  },
+  {
+    "file": "crates/openhuman-core/src/agent/session_host/runtime_session/memory_block_ready.rs",
+    "scope": "",
+    "name": "READY",
+    "type": "LazyLock<ReadyBlocks>",
+    "count": 1,
+    "category": "B",
+    "reason": "Rendered memory blocks wait here for the next generation start. Every key combines the session's workspace directory, its resolved memory identity (profile and agent) and the token budget, so a block is only ever taken by the identity it was read for; the store holds at most READY_CAPACITY entries, each dropped after READY_MAX_AGE. A write to or erasure of memory, or a change of its engine or credentials, drops the blocks of the workspace (all of them for an engine or credential change) and voids the renders then in flight, so a block read before cannot be stored or taken afterwards.",
+    "verification": "agent/session_host/runtime_session/memory_block_ready_tests.rs: an_invalidation_of_one_workspace_keeps_the_blocks_of_others"
+  },
+  {
+    "file": "crates/openhuman-core/src/agent/session_host/runtime_session/memory_block_ready.rs",
+    "scope": "",
+    "name": "BACKGROUND_RENDERS",
+    "type": "RenderSlots",
+    "count": 1,
+    "category": "A",
+    "reason": "A counter of memory-block renders left running in the background past their deadline, capped at MAX_BACKGROUND_RENDERS so a slow memory engine cannot pile up tasks and requests. It holds a number only and carries no tenant data.",
+    "verification": "agent/session_host/runtime_session/memory_block_ready_tests.rs: background_renders_are_admitted_up_to_the_limit_and_freed_when_done"
   }
 ]

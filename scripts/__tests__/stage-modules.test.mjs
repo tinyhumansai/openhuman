@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
-import { gzipSync } from "node:zlib";
+import { crc32, gzipSync } from "node:zlib";
 import { test } from "node:test";
 
 import { readRegistrySource } from "../ci/self-hosted/test-module-assets.mjs";
@@ -24,13 +24,33 @@ import {
   bundledAssets,
   defaultHostKey,
   download,
+  findWindowsVcRuntimeDir,
   hostKeyForTarget,
   extractWindowsZip,
+  isWindowsHostKey,
   keepsArchive,
   normalizeStagedPermissions,
+  peMachine,
   replaceArchiveWithMarker,
   stageModules,
+  stageWindowsAppLocalRuntime,
 } from "../release/stage-modules.mjs";
+
+/**
+ * Minimal PE/COFF bytes carrying a specific Machine field. Enough for
+ * `peMachine` and `assertRuntimeMatchesHost` to parse; not a loadable image.
+ */
+function minimalPeBytes(machine) {
+  const buf = Buffer.alloc(0x100);
+  buf.write("MZ", 0, "ascii");
+  buf.writeUInt32LE(0x40, 0x3c); // e_lfanew -> PE sig at 0x40
+  buf.write("PE\0\0", 0x40, "latin1");
+  buf.writeUInt16LE(machine, 0x44); // COFF Machine
+  return buf;
+}
+
+const PE_X64 = minimalPeBytes(0x8664);
+const PE_ARM64 = minimalPeBytes(0xaa64);
 
 const HOST_KEYS = [
   "macos-15-arm64",
@@ -292,4 +312,294 @@ test("normalising staged permissions never follows a symlink out of the tree", {
 
   assert.equal(lstatSync(outside).mode & 0o7777, 0o600);
   assert.equal(lstatSync(staged).mode & 0o7777, 0o755);
+});
+
+// Windows app-local VC runtime staging — issue #8499 / Sentry TAURI-RUST-14J5.
+//
+// `isWindowsHostKey`, `findWindowsVcRuntimeDir`, and `stageWindowsAppLocalRuntime`
+// close the "fresh Windows 10/11 without VC redist installed" load failure for
+// every tiny* native module by shipping vcruntime140.dll beside the module
+// library. The tinybus loader uses LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
+// LOAD_LIBRARY_SEARCH_SYSTEM32, which never searches PATH or sibling cache
+// dirs, so an app-local copy is the only reliable resolution path.
+test("isWindowsHostKey picks exactly the windows-* host keys", () => {
+  assert.equal(isWindowsHostKey("windows-2022-x86_64"), true);
+  assert.equal(isWindowsHostKey("windows-11-arm64"), true);
+  assert.equal(isWindowsHostKey("windows-2025-x86_64"), true);
+  assert.equal(isWindowsHostKey("ubuntu-22.04-x86_64"), false);
+  assert.equal(isWindowsHostKey("macos-15-arm64"), false);
+  assert.equal(isWindowsHostKey("fedora-43-x86_64"), false);
+});
+
+test("findWindowsVcRuntimeDir reads OPENHUMAN_VC_REDIST_DIR when it has the DLL", () => {
+  const dir = mkdtempSync(join(tmpdir(), "openhuman-vcrt-override-"));
+  writeFileSync(join(dir, "vcruntime140.dll"), "stub vc runtime bytes");
+  const previous = process.env.OPENHUMAN_VC_REDIST_DIR;
+  process.env.OPENHUMAN_VC_REDIST_DIR = dir;
+  try {
+    assert.equal(findWindowsVcRuntimeDir("windows-2022-x86_64"), dir);
+    assert.equal(findWindowsVcRuntimeDir("windows-11-arm64"), dir);
+  } finally {
+    if (previous === undefined) delete process.env.OPENHUMAN_VC_REDIST_DIR;
+    else process.env.OPENHUMAN_VC_REDIST_DIR = previous;
+  }
+});
+
+test("findWindowsVcRuntimeDir refuses an OPENHUMAN_VC_REDIST_DIR without vcruntime140.dll", () => {
+  const dir = mkdtempSync(join(tmpdir(), "openhuman-vcrt-empty-"));
+  const previous = process.env.OPENHUMAN_VC_REDIST_DIR;
+  process.env.OPENHUMAN_VC_REDIST_DIR = dir;
+  try {
+    assert.throws(
+      () => findWindowsVcRuntimeDir("windows-2022-x86_64"),
+      /does not contain vcruntime140\.dll/,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.OPENHUMAN_VC_REDIST_DIR;
+    else process.env.OPENHUMAN_VC_REDIST_DIR = previous;
+  }
+});
+
+test("findWindowsVcRuntimeDir refuses a non-Windows host_key as a programming error", () => {
+  assert.throws(
+    () => findWindowsVcRuntimeDir("ubuntu-22.04-x86_64"),
+    /non-Windows host_key/,
+  );
+});
+
+test("findWindowsVcRuntimeDir fails actionably when no source is available on a non-Windows build host", {
+  skip: process.platform === "win32",
+}, () => {
+  const previous = process.env.OPENHUMAN_VC_REDIST_DIR;
+  const previousTools = process.env.VCToolsRedistDir;
+  delete process.env.OPENHUMAN_VC_REDIST_DIR;
+  delete process.env.VCToolsRedistDir;
+  try {
+    assert.throws(
+      () => findWindowsVcRuntimeDir("windows-2022-x86_64"),
+      /OPENHUMAN_VC_REDIST_DIR/,
+    );
+  } finally {
+    if (previous !== undefined) process.env.OPENHUMAN_VC_REDIST_DIR = previous;
+    if (previousTools !== undefined) process.env.VCToolsRedistDir = previousTools;
+  }
+});
+
+test("stageWindowsAppLocalRuntime is a no-op on non-Windows host keys", () => {
+  const target = mkdtempSync(join(tmpdir(), "openhuman-vcrt-noop-"));
+  const copied = stageWindowsAppLocalRuntime(target, "ubuntu-22.04-x86_64");
+  assert.deepEqual(copied, []);
+  assert.deepEqual(readdirSync(target), []);
+});
+
+/** Common env setup: use a controlled VC runtime source and skip the
+ * platform-dependent Authenticode check so stub PE bytes are admitted.
+ * Handles both sync and async `run` callbacks (restores env on both paths). */
+function withVcRuntimeSource(source, run) {
+  const previousDir = process.env.OPENHUMAN_VC_REDIST_DIR;
+  const previousSkip = process.env.OPENHUMAN_SKIP_AUTHENTICODE_CHECK;
+  process.env.OPENHUMAN_VC_REDIST_DIR = source;
+  process.env.OPENHUMAN_SKIP_AUTHENTICODE_CHECK = "1";
+  const restore = () => {
+    if (previousDir === undefined) delete process.env.OPENHUMAN_VC_REDIST_DIR;
+    else process.env.OPENHUMAN_VC_REDIST_DIR = previousDir;
+    if (previousSkip === undefined) delete process.env.OPENHUMAN_SKIP_AUTHENTICODE_CHECK;
+    else process.env.OPENHUMAN_SKIP_AUTHENTICODE_CHECK = previousSkip;
+  };
+  try {
+    const result = run();
+    if (result && typeof result.then === "function") {
+      return result.finally(restore);
+    }
+    restore();
+    return result;
+  } catch (err) {
+    restore();
+    throw err;
+  }
+}
+
+test("peMachine reads x64 and arm64 PE machine fields", () => {
+  const dir = mkdtempSync(join(tmpdir(), "openhuman-pe-"));
+  const x64 = join(dir, "x64.dll");
+  const arm64 = join(dir, "arm64.dll");
+  writeFileSync(x64, PE_X64);
+  writeFileSync(arm64, PE_ARM64);
+  assert.equal(peMachine(x64), 0x8664);
+  assert.equal(peMachine(arm64), 0xaa64);
+});
+
+test("peMachine refuses a file without an MZ signature", () => {
+  const dir = mkdtempSync(join(tmpdir(), "openhuman-pe-bad-"));
+  const notPe = join(dir, "not-a-pe.dll");
+  // Must be >= 0x40 bytes so the signature check (not the size check) fails.
+  writeFileSync(notPe, Buffer.alloc(0x100, "a"));
+  assert.throws(() => peMachine(notPe), /missing MZ signature/);
+});
+
+test("stageWindowsAppLocalRuntime copies the Windows runtime next to the module library", () => {
+  const source = mkdtempSync(join(tmpdir(), "openhuman-vcrt-src-"));
+  writeFileSync(join(source, "vcruntime140.dll"), PE_X64);
+  const target = mkdtempSync(join(tmpdir(), "openhuman-vcrt-target-"));
+  writeFileSync(join(target, "tinyconnectors.dll"), "stub module bytes");
+
+  withVcRuntimeSource(source, () => {
+    const copied = stageWindowsAppLocalRuntime(target, "windows-2022-x86_64");
+    assert.deepEqual(copied, [join(target, "vcruntime140.dll")]);
+    assert.equal(peMachine(join(target, "vcruntime140.dll")), 0x8664);
+    assert.equal(
+      readFileSync(join(target, "tinyconnectors.dll"), "utf8"),
+      "stub module bytes",
+    );
+  });
+});
+
+test("stageWindowsAppLocalRuntime refuses an x64 VC runtime for an ARM64 host_key", () => {
+  const source = mkdtempSync(join(tmpdir(), "openhuman-vcrt-mismatch-"));
+  writeFileSync(join(source, "vcruntime140.dll"), PE_X64);
+  const target = mkdtempSync(join(tmpdir(), "openhuman-vcrt-mismatch-target-"));
+
+  withVcRuntimeSource(source, () => {
+    assert.throws(
+      () => stageWindowsAppLocalRuntime(target, "windows-11-arm64"),
+      /PE machine 0x8664 does not match windows-11-arm64/,
+    );
+    assert.equal(
+      existsSync(join(target, "vcruntime140.dll")),
+      false,
+      "a mismatched runtime must not be left behind in the target dir",
+    );
+  });
+});
+
+test("stageWindowsAppLocalRuntime refuses a non-PE source file", () => {
+  const source = mkdtempSync(join(tmpdir(), "openhuman-vcrt-non-pe-"));
+  // >= 0x40 bytes so the signature check runs (not the size check).
+  writeFileSync(join(source, "vcruntime140.dll"), Buffer.alloc(0x100, "a"));
+  const target = mkdtempSync(join(tmpdir(), "openhuman-vcrt-non-pe-target-"));
+
+  withVcRuntimeSource(source, () => {
+    assert.throws(
+      () => stageWindowsAppLocalRuntime(target, "windows-2022-x86_64"),
+      /missing MZ signature/,
+    );
+  });
+});
+
+/**
+ * Build a minimal valid ZIP containing one entry at `entryPath` with the
+ * given uncompressed bytes. Hand-rolled so these tests do not depend on a
+ * `zip` binary being on the runner. The CRC-32 of `payload` is written into
+ * both header slots — `unzip` on Linux/macOS verifies it and rejects a zero
+ * CRC, while Windows `System.IO.Compression.ZipFile` tolerates it (which is
+ * why an earlier revision passed on win32 and failed on every other CI leg).
+ */
+function makeSingleEntryZip(entryPath, payload) {
+  const name = Buffer.from(entryPath);
+  const payloadCrc = crc32(payload);
+  const localHeader = Buffer.alloc(30);
+  localHeader.writeUInt32LE(0x04034b50, 0);
+  localHeader.writeUInt16LE(20, 4);
+  localHeader.writeUInt16LE(0, 6);
+  localHeader.writeUInt16LE(0, 8);
+  localHeader.writeUInt32LE(payloadCrc, 14);
+  localHeader.writeUInt32LE(payload.length, 18);
+  localHeader.writeUInt32LE(payload.length, 22);
+  localHeader.writeUInt16LE(name.length, 26);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt32LE(payloadCrc, 16);
+  central.writeUInt32LE(payload.length, 20);
+  central.writeUInt32LE(payload.length, 24);
+  central.writeUInt16LE(name.length, 28);
+  const localSize = localHeader.length + name.length + payload.length;
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(central.length + name.length, 12);
+  end.writeUInt32LE(localSize, 16);
+  return Buffer.concat([localHeader, name, payload, central, name, end]);
+}
+
+// stageModules asserts exactly one native library per archive. The staged VC
+// runtime files are also `.dll`s; they must not count toward that invariant or
+// every Windows module would fail the check.
+test("stageModules on windows-2022-x86_64 ships vcruntime140.dll beside the module", async () => {
+  const hostKey = "windows-2022-x86_64";
+  const root = mkdtempSync(join(tmpdir(), "openhuman-stage-windows-"));
+  const library = "demo.dll";
+  const archiveName = `demo-1.0.0-${hostKey}.zip`;
+  const built = join(root, archiveName);
+  const archiveBytes = makeSingleEntryZip(library, Buffer.from("library bytes"));
+  writeFileSync(built, archiveBytes);
+  const sha256 = createHash("sha256").update(archiveBytes).digest("hex");
+  const output = join(root, "out");
+
+  const redist = mkdtempSync(join(tmpdir(), "openhuman-vcrt-source-"));
+  writeFileSync(join(redist, "vcruntime140.dll"), PE_X64);
+
+  await withVcRuntimeSource(redist, async () => {
+    await withServer((req, res) => res.end(archiveBytes), async (url) => {
+      await stageModules({
+        hostKey,
+        output,
+        assets: [{ id: "demo", version: "1.0.0", hostKey, archive: archiveName, url, sha256 }],
+      });
+    });
+  });
+
+  const dir = join(output, "demo", "1.0.0", hostKey);
+  // Module library, archive, and VC runtime all land in the host_key dir.
+  assert.ok(existsSync(join(dir, library)), "the module library was staged");
+  assert.ok(existsSync(join(dir, archiveName)), "the archive is kept on Windows");
+  assert.equal(
+    peMachine(join(dir, "vcruntime140.dll")),
+    0x8664,
+    "vcruntime140.dll is staged beside the module and admits as x64",
+  );
+});
+
+// If an archive puts its library in a subdirectory, the VC runtime must land
+// in that same subdirectory — the tinybus loader uses DLL_LOAD_DIR, which
+// resolves dependencies only in the module's own directory, never an ancestor.
+// Regression for review feedback on PR #8513 (CodeRabbit, 2026-10-30).
+test("stageModules on windows-2022-x86_64 places vcruntime140.dll beside a library in a subdirectory", async () => {
+  const hostKey = "windows-2022-x86_64";
+  const root = mkdtempSync(join(tmpdir(), "openhuman-stage-windows-sub-"));
+  const library = "nested/demo.dll";
+  const archiveName = `demo-1.0.0-${hostKey}.zip`;
+  const built = join(root, archiveName);
+  const archiveBytes = makeSingleEntryZip(library, Buffer.from("library bytes"));
+  writeFileSync(built, archiveBytes);
+  const sha256 = createHash("sha256").update(archiveBytes).digest("hex");
+  const output = join(root, "out");
+
+  const redist = mkdtempSync(join(tmpdir(), "openhuman-vcrt-source-sub-"));
+  writeFileSync(join(redist, "vcruntime140.dll"), PE_X64);
+
+  await withVcRuntimeSource(redist, async () => {
+    await withServer((req, res) => res.end(archiveBytes), async (url) => {
+      await stageModules({
+        hostKey,
+        output,
+        assets: [{ id: "demo", version: "1.0.0", hostKey, archive: archiveName, url, sha256 }],
+      });
+    });
+  });
+
+  const dir = join(output, "demo", "1.0.0", hostKey);
+  const nested = join(dir, "nested");
+  assert.ok(existsSync(join(nested, "demo.dll")), "the subdir-nested library was staged");
+  assert.ok(
+    existsSync(join(nested, "vcruntime140.dll")),
+    "vcruntime140.dll is staged in the subdir with the module, not at the host_key root",
+  );
+  assert.equal(
+    existsSync(join(dir, "vcruntime140.dll")),
+    false,
+    "no stray runtime at the host_key root (where the loader would not find it)",
+  );
 });

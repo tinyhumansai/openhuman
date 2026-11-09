@@ -560,10 +560,14 @@ fn one_runtime_hosts_independently_configured_agents() {
             // unbound agent keeps the runtime's defaults.
             let bound = runtime
                 .agent(
-                    AgentSpec::new("employee")
-                        .memory(MemoryBinding::new("employee-7").root("team:acme")),
+                    AgentSpec::new("employee").memory(
+                        MemoryBinding::new("employee-7")
+                            .root("team:acme")
+                            .memory_block_deadline(std::time::Duration::from_millis(300)),
+                    ),
                 )
                 .expect("a bound agent instantiates");
+            assert_eq!(bound.config().memory.memory_block_deadline_ms, Some(300));
             assert_eq!(
                 bound.config().memory.agent_id.as_deref(),
                 Some("employee-7")

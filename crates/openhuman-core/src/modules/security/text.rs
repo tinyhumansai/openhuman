@@ -1,20 +1,26 @@
 //! TinySecurity redaction operations and the single sync adapter for host seams.
 
-use std::sync::OnceLock;
+use std::sync::RwLock;
 use std::time::Duration;
 
 pub(crate) use tinysecurity_bus::RedactMode;
 
 use crate::config::Config;
 
-static CONFIG: OnceLock<Config> = OnceLock::new();
+/// The config the synchronous adapters reach the module with: the latest one
+/// admitted. Replaced on every arm, so after a later runtime takes the module
+/// over (see `host_callbacks`) these adapters present its scope, not that of
+/// the released runtime that armed them first.
+static CONFIG: RwLock<Option<Config>> = RwLock::new(None);
 const SYNC_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) fn arm(config: &Config) {
     if !super::sync_seam::arm_current() {
         return;
     }
-    let _ = CONFIG.set(config.clone());
+    *CONFIG
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(config.clone());
     crate::core::log_redaction::install_module_scrubber(scrub_log);
 }
 
@@ -55,10 +61,7 @@ pub(crate) fn redact_blocking(
     text: &str,
     timeout: Duration,
 ) -> Result<String, String> {
-    let config = CONFIG
-        .get()
-        .cloned()
-        .ok_or_else(|| "TinySecurity text adapter is not armed".to_owned())?;
+    let config = armed_config()?;
     let text = text.to_owned();
     super::sync_seam::run(timeout, async move { redact(&config, mode, &text).await })
 }
@@ -70,10 +73,7 @@ pub(crate) fn privacy_check_blocking(
     request: tinysecurity_bus::PrivacyCheckRequest2,
     timeout: Duration,
 ) -> Result<tinysecurity_bus::Decision, String> {
-    let config = CONFIG
-        .get()
-        .cloned()
-        .ok_or_else(|| "TinySecurity text adapter is not armed".to_owned())?;
+    let config = armed_config()?;
     super::sync_seam::run(timeout, async move {
         super::gap::privacy_check_with_config(&config, request).await
     })
@@ -83,13 +83,18 @@ pub(crate) fn classify_provider_host_blocking(
     host: String,
     timeout: Duration,
 ) -> Result<bool, String> {
-    let config = CONFIG
-        .get()
-        .cloned()
-        .ok_or_else(|| "TinySecurity text adapter is not armed".to_owned())?;
+    let config = armed_config()?;
     super::sync_seam::run(timeout, async move {
         super::gap::classify_provider_host_with_config(&config, host).await
     })
+}
+
+fn armed_config() -> Result<Config, String> {
+    CONFIG
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .ok_or_else(|| "TinySecurity text adapter is not armed".to_owned())
 }
 
 fn scrub_log(text: &str) -> Option<String> {

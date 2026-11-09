@@ -46,63 +46,130 @@ pub(crate) fn operator_user_activation_allowed() -> bool {
 #[path = "user_scope_tests.rs"]
 mod tests;
 
+/// What [`activate_user_scope`] changed, so a sign-in that fails before its
+/// credential is committed can put it back.
+pub(crate) struct UserScopeActivation {
+    pub(crate) logs: Vec<String>,
+    /// `None` when this host may not touch the operator's active user.
+    root_dir: Option<std::path::PathBuf>,
+    previous_active: Option<String>,
+    /// The user directory, when this activation created it.
+    created_dir: Option<std::path::PathBuf>,
+}
+
 /// Activate `~/.openhuman/users/<user_id>/` as the current user directory.
 ///
-/// On the very first activation (no previous `active_user.toml`) the
-/// anonymous pre-login conversation store is purged so a fresh account never
-/// inherits demo or scratch threads from the pre-login bucket (#1157).
-/// Returns human-readable log lines for the RPC outcome.
-pub(crate) fn activate_user_scope(ctx: &DispatchCtx, user_id: &str) -> Result<Vec<String>, String> {
-    let mut logs = Vec::new();
+/// Nothing here is irreversible: the pre-login purge waits for
+/// [`complete_user_scope_activation`], after the credential is committed, and
+/// [`roll_back_user_scope_activation`] restores the previous active user.
+pub(crate) fn activate_user_scope(
+    _ctx: &DispatchCtx,
+    user_id: &str,
+) -> Result<UserScopeActivation, String> {
+    let mut activation = UserScopeActivation {
+        logs: Vec::new(),
+        root_dir: None,
+        previous_active: None,
+        created_dir: None,
+    };
     if !operator_user_activation_allowed() {
         log::debug!("{LOG_PREFIX} embedder host; skipping global user activation for {user_id}");
-        return Ok(logs);
+        return Ok(activation);
     }
     let root_dir = default_root_openhuman_dir().map_err(|error| error.to_string())?;
     // Snapshot before overwriting `active_user.toml` so first activation can be
     // told apart from an in-place account switch.
-    let previous_active = read_active_user_id(&root_dir);
+    activation.previous_active = read_active_user_id(&root_dir);
     let user_dir = user_openhuman_dir(&root_dir, user_id);
+    if !user_dir.exists() {
+        activation.created_dir = Some(user_dir.clone());
+    }
     std::fs::create_dir_all(&user_dir).map_err(|error| error.to_string())?;
-    write_active_user_id(&root_dir, user_id).map_err(|error| error.to_string())?;
-    logs.push(format!("user directory activated for {user_id}"));
+    activation.root_dir = Some(root_dir.clone());
+    if let Err(error) = write_active_user_id(&root_dir, user_id) {
+        let _ = roll_back_user_scope_activation(activation);
+        return Err(error.to_string());
+    }
+    activation
+        .logs
+        .push(format!("user directory activated for {user_id}"));
     tracing::info!(user_id = %user_id, user_dir = %user_dir.display(), "{LOG_PREFIX} user-scoped directory activated");
+    Ok(activation)
+}
 
-    if previous_active.is_none() {
-        // Shares `threads::store`' process-wide mutex with
-        // `list_threads` / `purge_threads` on any workspace, so purge and
-        // concurrent thread RPC in this process cannot interleave.
-        // The pre-login profile's workspace follows its layout (`workspace`
-        // for v1, `files` for v2). Detection only: this must not create the
-        // profile directory as a side effect.
-        let pre_dir = pre_login_user_dir(&root_dir);
-        let pre_ws = crate::config::schema::ProfileLayout::with_version(
-            pre_dir.clone(),
-            crate::config::schema::profile_layout::LayoutVersion::detect(&pre_dir),
-        )
-        .workspace_dir;
-        let pre_ws_log = pre_ws.display().to_string();
-        match conversations::purge_threads(ctx, pre_ws) {
-            Ok(stats) => {
-                tracing::info!(
-                    pre_login_workspace = %pre_ws_log,
-                    threads = stats.thread_count,
-                    messages = stats.message_count,
-                    "{LOG_PREFIX} purged pre-login conversation threads after first activation"
-                );
-                logs.push(format!(
-                    "purged pre-login conversation history (threads={}, messages={})",
-                    stats.thread_count, stats.message_count
-                ));
-            }
-            Err(e) => tracing::debug!(
-                error = %e,
+/// Finish an activation whose credential is committed. On the very first
+/// activation (no previous `active_user.toml`) the anonymous pre-login
+/// conversation store is purged so a fresh account never inherits demo or
+/// scratch threads from the pre-login bucket (#1157).
+pub(crate) fn complete_user_scope_activation(
+    ctx: &DispatchCtx,
+    activation: &UserScopeActivation,
+) -> Vec<String> {
+    let mut logs = Vec::new();
+    let Some(root_dir) = activation.root_dir.as_deref() else {
+        return logs;
+    };
+    if activation.previous_active.is_some() {
+        return logs;
+    }
+    // Shares `threads::store`' process-wide mutex with
+    // `list_threads` / `purge_threads` on any workspace, so purge and
+    // concurrent thread RPC in this process cannot interleave.
+    // The pre-login profile's workspace follows its layout (`workspace`
+    // for v1, `files` for v2). Detection only: this must not create the
+    // profile directory as a side effect.
+    let pre_dir = pre_login_user_dir(root_dir);
+    let pre_ws = crate::config::schema::ProfileLayout::with_version(
+        pre_dir.clone(),
+        crate::config::schema::profile_layout::LayoutVersion::detect(&pre_dir),
+    )
+    .workspace_dir;
+    let pre_ws_log = pre_ws.display().to_string();
+    match conversations::purge_threads(ctx, pre_ws) {
+        Ok(stats) => {
+            tracing::info!(
                 pre_login_workspace = %pre_ws_log,
-                "{LOG_PREFIX} pre-login conversation purge skipped (non-fatal)"
-            ),
+                threads = stats.thread_count,
+                messages = stats.message_count,
+                "{LOG_PREFIX} purged pre-login conversation threads after first activation"
+            );
+            logs.push(format!(
+                "purged pre-login conversation history (threads={}, messages={})",
+                stats.thread_count, stats.message_count
+            ));
+        }
+        Err(e) => tracing::debug!(
+            error = %e,
+            pre_login_workspace = %pre_ws_log,
+            "{LOG_PREFIX} pre-login conversation purge skipped (non-fatal)"
+        ),
+    }
+    logs
+}
+
+/// Undo an activation whose sign-in failed: the previous user is active again
+/// (or none, as before), and a user directory this activation created is
+/// removed with whatever the failed sign-in wrote into it.
+pub(crate) fn roll_back_user_scope_activation(
+    activation: UserScopeActivation,
+) -> Result<(), String> {
+    let Some(root_dir) = activation.root_dir else {
+        return Ok(());
+    };
+    match &activation.previous_active {
+        Some(previous) => write_active_user_id(&root_dir, previous),
+        None => crate::config::clear_active_user(&root_dir),
+    }
+    .map_err(|error| error.to_string())?;
+    if let Some(created) = activation.created_dir {
+        match std::fs::remove_dir_all(&created) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
         }
     }
-    Ok(logs)
+    tracing::info!("{LOG_PREFIX} user-scoped directory activation rolled back");
+    Ok(())
 }
 
 /// Clear `active_user.toml` so subsequent config loads fall back to the
@@ -147,7 +214,12 @@ pub(crate) fn rebind_after_credential_change(
             rebound.from, rebound.to
         ));
     }
-    crate::cron::seed::prune_retired_jobs(config).map_err(|error| error.to_string())?;
+    // Housekeeping, as at boot: a TinyFlows that cannot load must not undo a
+    // sign-in whose credential is already stored.
+    if let Err(error) = crate::cron::seed::prune_retired_jobs(config) {
+        log::warn!("[cron] failed to prune retired jobs after a credential change: {error}");
+        logs.push(format!("retired cron jobs not pruned: {error}"));
+    }
     crate::core::runtime::context::CoreContext::rebind_default_workspace_with_config(
         &config.workspace_dir,
         Some(&config.config_path),

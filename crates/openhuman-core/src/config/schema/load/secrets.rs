@@ -19,6 +19,7 @@ async fn decrypt_optional_secret(
 ) -> Result<bool> {
     if let Some(raw) = value.clone() {
         if crate::security::secret_storage::SecretStore::is_encrypted(&raw) {
+            log::debug!("[security][config] opening sealed secret '{field_name}'");
             match store.decrypt_and_migrate_via_security(&raw).await {
                 Ok((plaintext, migrated)) => {
                     if migrated.is_some() {
@@ -231,19 +232,6 @@ async fn for_each_secret(
         migrated |= string_secret(
             &mut m.bot_token,
             "mattermost.bot_token",
-            store,
-            encrypt,
-            strict,
-        )
-        .await?;
-    }
-    if let Some(ref mut w) = ch.webhook {
-        process_secret!(&mut w.secret, "webhook.secret");
-    }
-    if let Some(ref mut mx) = ch.matrix {
-        migrated |= string_secret(
-            &mut mx.access_token,
-            "matrix.access_token",
             store,
             encrypt,
             strict,

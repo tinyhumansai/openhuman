@@ -66,7 +66,9 @@ pub async fn record(
             &loaded
         }
     };
-    if !config.audit.enabled {
+    // With security disabled there is no TinySecurity audit trail to write to,
+    // so recording is a no-op rather than a failure.
+    if !config.audit.enabled || crate::security::switch::disabled_for(Some(config)).is_some() {
         return Ok(());
     }
     #[cfg(feature = "security-module")]

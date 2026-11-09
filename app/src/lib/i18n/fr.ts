@@ -3970,6 +3970,10 @@ const messages: TranslationMap = {
     "L'agent a exécuté le nombre maximal d'étapes d'outils pour un tour sans terminer. Cela signifie généralement qu'un outil a continué d'échouer (souvent à cause d'une limite de débit sur une récupération web). Vous pouvez reposer la même question dans ce fil une fois la limite levée.",
   'chat_error.turn_timeout':
     "Ce tour a dépassé son budget de temps sans se terminer et a été arrêté pour ne pas se bloquer. Cela signifie généralement qu'un appel d'outil ou un sous-agent délégué est resté bloqué. Vous pouvez reposer votre question dans ce fil.",
+  'chat_error.disk_full':
+    "Votre disque est plein, cette conversation n'a donc pas pu être enregistrée. Libérez de l'espace disque, puis renvoyez votre message dans ce fil.",
+  'chat_error.prompt_screened':
+    "Le filtre de sécurité d'OpenHuman a retenu ce message, il n'a donc pas été envoyé au modèle. S'il cite des instructions destinées à un assistant (par exemple tirées d'une page web ou d'un e-mail), retirez-les et réessayez. Si des messages ordinaires sont retenus, le module de sécurité est peut-être indisponible : redémarrez OpenHuman et réessayez.",
   'chat_error.empty_response':
     'Le modèle a renvoyé une réponse vide. Veuillez réessayer. Si cela persiste, essayez un autre modèle ou vérifiez sa configuration dans Connexions → Clés API → LLM.',
   'chat_error.chat_template_rejected':
@@ -4469,6 +4473,10 @@ const messages: TranslationMap = {
     "L'accès au micro a été refusé. Autorisez-le dans les réglages système puis réessayez.",
   'voice.live.error.micUnavailable': 'Aucun micro disponible.',
   'voice.live.error.connection': "Impossible de se connecter à l'agent vocal.",
+  'voice.live.error.insufficientCredits':
+    'La voix en direct nécessite plus de crédits. Ajoutez des crédits pour continuer.',
+  'voice.live.error.paidPlanRequired':
+    'La voix en direct nécessite un forfait payant. Passez à un forfait supérieur pour continuer.',
   'voice.live.toolRunning': '{name} en cours',
   'voice.live.toolOk': '{name} terminé',
   'voice.live.toolFailed': 'Échec de {name}',
@@ -4727,11 +4735,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': "Jalon de processus d'espacement des noms",
   'settings.sandbox.backendHint.bubblewrap': "Espaces de noms d'utilisateur légers",
   'settings.sandbox.backendHint.none': 'Exécuter les outils directement, unisolés',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Inventaire des outils',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Nombre total d’outils',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Outils activés',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'Outils MCP stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'Outils JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'État de la politique',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Niveau d’autonomie',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Espace de travail uniquement',

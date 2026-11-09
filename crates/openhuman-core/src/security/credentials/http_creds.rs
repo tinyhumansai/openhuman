@@ -224,7 +224,10 @@ pub struct HttpCredentialsStore {
 impl HttpCredentialsStore {
     pub fn from_config(config: &Config) -> Self {
         let state_dir = super::state_dir_from_config(config);
-        Self::new(&state_dir, config.secrets.encrypt)
+        Self {
+            path: store_file(&state_dir),
+            secret_store: SecretStore::new_with_config(&state_dir, config.secrets.encrypt, config),
+        }
     }
 
     pub fn new(state_dir: &Path, encrypt_secrets: bool) -> Self {
@@ -259,7 +262,7 @@ impl HttpCredentialsStore {
 
     /// Resolve a credential name to its secret-bearing record, decrypting the
     /// secret. Returns `Ok(None)` when no such credential exists.
-    pub fn get(&self, name: &str) -> Result<Option<HttpCredential>> {
+    pub async fn get(&self, name: &str) -> Result<Option<HttpCredential>> {
         let key = Self::normalize_name(name);
         let persisted = self.read_persisted()?;
         let Some(rec) = persisted.credentials.get(&key) else {
@@ -272,7 +275,8 @@ impl HttpCredentialsStore {
         })?;
         let secret = self
             .secret_store
-            .decrypt(&rec.secret)
+            .decrypt_via_security(&rec.secret)
+            .await
             .with_context(|| format!("failed to decrypt http_cred '{key}' secret"))?;
 
         log::debug!(
@@ -292,14 +296,15 @@ impl HttpCredentialsStore {
     }
 
     /// Insert or replace a credential, encrypting its secret at rest.
-    pub fn upsert(&self, cred: &HttpCredential) -> Result<()> {
+    pub async fn upsert(&self, cred: &HttpCredential) -> Result<()> {
         let key = Self::normalize_name(&cred.name);
         anyhow::ensure!(!key.is_empty(), "http_cred name cannot be empty");
 
         let mut persisted = self.read_persisted()?;
         let encrypted = self
             .secret_store
-            .encrypt(&cred.secret)
+            .encrypt_via_security(&cred.secret)
+            .await
             .context("failed to encrypt http_cred secret")?;
 
         let created_at = persisted

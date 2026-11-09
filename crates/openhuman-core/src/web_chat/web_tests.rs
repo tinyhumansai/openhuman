@@ -193,6 +193,8 @@ mod cancel_scoping_tests;
 mod error_code_classification_tests;
 #[path = "web_tests_error_copy_fixture_tests.rs"]
 mod error_copy_fixture_tests;
+#[path = "web_tests_prompt_screen_classification_tests.rs"]
+mod prompt_screen_classification_tests;
 #[path = "web_tests_queue_acceptance_tests.rs"]
 mod queue_acceptance_tests;
 #[path = "web_tests_rate_limit_classification_tests.rs"]
@@ -201,9 +203,19 @@ mod rate_limit_classification_tests;
 mod session_and_concurrency_tests;
 #[path = "web_tests_start_chat_ingress_tests.rs"]
 mod start_chat_ingress_tests;
+#[path = "web_tests_timeout_classification_tests.rs"]
+mod timeout_classification_tests;
 #[path = "web_tests_turn_lifecycle_tests.rs"]
 mod turn_lifecycle_tests;
 
 #[cfg(feature = "voice")]
 #[path = "web_tests_ptt_source_tests.rs"]
 mod ptt_source_tests;
+
+/// Keep admission, queue operations, cancellation and spawned turns under the
+/// same isolated host configuration for the entire lifecycle assertion.
+async fn with_web_test_context<F: std::future::Future>(operation: F) -> F::Output {
+    let workspace = tempfile::tempdir().expect("isolated web host configuration");
+    let config = crate::credentials::test_support::plaintext_fixture_config(workspace.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&config, operation).await
+}

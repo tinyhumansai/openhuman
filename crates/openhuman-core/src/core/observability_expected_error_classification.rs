@@ -1,4 +1,3 @@
-
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     let lower = message.to_ascii_lowercase();
     // Explicit host ownership/reportability metadata precedes text heuristics.
@@ -61,6 +60,15 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // ordering here is for clarity rather than precedence.
     if is_wallet_not_configured_message(&lower) {
         return Some(ExpectedErrorKind::WalletNotConfigured);
+    }
+    // TAURI-RUST-1635 and BYOK ElevenLabs payment failures: the user's own key
+    // is a key ID or their own subscription is unpaid (user config, not a code
+    // defect). Hosted failures (15BM / 15CT) are never claimed here.
+    // Checked early: the wrapped body carries `401` / `400` tokens that the
+    // broader matchers below would otherwise claim with a less specific kind.
+    // See `observability_voice_provider_errors.rs`.
+    if is_voice_provider_user_state_message(message) {
+        return Some(ExpectedErrorKind::ProviderUserState);
     }
     // TAURI-RUST-117K et al. — see `ExpectedErrorKind::ModuleUnavailable`.
     if is_module_unavailable_message(message) {
@@ -233,7 +241,12 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_local_ai_capability_unavailable_message(&lower) {
         return Some(ExpectedErrorKind::LocalAiCapabilityUnavailable);
     }
-    if tinyinference_providers::is_budget_exhausted_message(message) {
+    // TAURI-RUST-13BR / -11G3 — the backend refused a gated hosted feature
+    // (live voice) because the balance is below its reserve or the plan is
+    // free. Billing user state, same bucket as an exhausted budget.
+    if tinyinference_providers::is_budget_exhausted_message(message)
+        || is_hosted_billing_refusal_message(message)
+    {
         return Some(ExpectedErrorKind::BudgetExhausted);
     }
     if is_backend_unavailable_message(message) {
@@ -350,10 +363,20 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 /// read path no longer emits this error at all (it degrades to a lock-free
 /// read — see `AuthProfilesStore::load`).
 fn is_disk_full_message(lower: &str) -> bool {
+    // A remote response that quotes a disk-full phrase or errno is the
+    // server's disk, not ours: operator-actionable, so it must keep reporting.
+    // Checked before every arm so the `before_send` filter and the report
+    // cooldown (both via `is_disk_full_error`) never swallow it.
+    if is_remote_response_envelope(lower) {
+        return false;
+    }
     if lower.contains("no space left on device")
         || lower.contains("not enough space on the disk")
         || lower.contains("storagefull")
     {
+        return true;
+    }
+    if is_disk_full_os_code(lower, cfg!(windows)) {
         return true;
     }
     // Two SQLITE_FULL renderings — see the fifth-shape section above. The
@@ -372,6 +395,67 @@ fn is_disk_full_message(lower: &str) -> bool {
     let extended_local = lower.contains("database or disk is full")
         && lower.contains("insertion failed because database is full");
     (bare_suffix || extended_local) && !lower.contains("backend returned ")
+}
+
+/// Locale-independent disk-full detection on the `std::io::Error` Display
+/// suffix `(os error N)`.
+///
+/// The English-text anchors in [`is_disk_full_message`] miss every
+/// non-English OS: Windows renders `ERROR_DISK_FULL` through `FormatMessageW`
+/// in the user's UI language, e.g. German `"Auf dem Datenträger ist nicht
+/// genügend Speicherplatz vorhanden. (os error 112)"`. That is how Sentry
+/// TAURI-RUST-15PJ (`transcript persistence failed: … (os error 112)`, 2,278
+/// events / 1 user on 0.64.15, GitHub #8508) escaped the `DiskFull` demotion.
+/// Same remedy as the `(os error 665)` precedent
+/// ([`is_windows_file_system_limitation_message`], TAURI-RUST-QT0): anchor on
+/// the numeric suffix, which is identical in every locale.
+///
+/// Errno numbers are platform-specific, so the anchor is gated on the
+/// platform that produced the error (this process — `windows` is
+/// `cfg!(windows)` in production; a parameter so both arms are unit-testable):
+///
+/// - **Windows**: `112` (`ERROR_DISK_FULL`) and `39` (`ERROR_HANDLE_DISK_FULL`).
+///   NOT on unix, where 112 is `EHOSTDOWN` (Linux) and 39 is `ENOTEMPTY`
+///   (Linux) — both genuine, unrelated failures.
+/// - **Unix** (Linux / macOS / BSD): `28` (`ENOSPC`). NOT on Windows, where 28
+///   is `ERROR_OUT_OF_PAPER`.
+///
+/// The closing parenthesis is part of the anchor so `(os error 1120)` /
+/// `(os error 280)` never match. A remote backend body that quotes an errno is
+/// rejected via the `"backend returned "` envelope guard, mirroring the other
+/// local-only disk-full arms.
+fn is_disk_full_os_code(lower: &str, windows: bool) -> bool {
+    if is_remote_response_envelope(lower) {
+        return false;
+    }
+    if windows {
+        lower.contains("(os error 112)") || lower.contains("(os error 39)")
+    } else {
+        lower.contains("(os error 28)")
+    }
+}
+
+/// Whether `lower` (already lowercased) is framed as a remote service's
+/// response rather than a local error: the non-2xx backend envelope
+/// `"Backend returned <status> … : <detail>"` (`integrations::client::post`,
+/// `composio::client`) or the provider / embeddings envelope `"<Provider>
+/// [streaming] API error (<status>): <body>"` (`http_error::api_error`,
+/// `OpenAiEmbedding::embed`). A disk-full phrase or `(os error N)` inside
+/// either belongs to the server.
+fn is_remote_response_envelope(lower: &str) -> bool {
+    lower.contains("backend returned ") || lower.contains("api error (")
+}
+
+/// Whether `message` is a local host disk-full failure (ENOSPC /
+/// `ERROR_DISK_FULL` / `ERROR_HANDLE_DISK_FULL` / `ErrorKind::StorageFull` /
+/// `SQLITE_FULL`), in any OS locale.
+///
+/// Same predicate the [`expected_error_kind`] `DiskFull` arm uses, exposed
+/// directly so callers (the chat-error classifier, the `before_send` filter)
+/// can ask the single question without depending on the classifier's arm
+/// order.
+pub fn is_disk_full_error(message: &str) -> bool {
+    is_disk_full_message(&message.to_ascii_lowercase())
 }
 
 /// Detect Windows `ERROR_FILE_SYSTEM_LIMITATION` (os error 665) —

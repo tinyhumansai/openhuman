@@ -140,12 +140,23 @@ pub fn install_host_engine(engine: Arc<dyn MemoryEngine>) {
     let id = engine.descriptor().id.to_string();
     tracing::info!(engine = %id, "[memory:engine] host engine installed");
     ENGINE_BINDER.install_host_engine(engine, crate::memory::host_policy::host_policy());
+    // What was read from the engine before is not what this one holds.
+    super::lifecycle::prefetch::invalidate_all();
+}
+
+/// Whether the process-wide host engine is serving every workspace: one is
+/// installed and this process admits it (never in SaaS).
+pub(crate) fn host_engine_is_shared() -> bool {
+    ENGINE_BINDER.host_engine().is_some()
+        && admits_host_engine_with(crate::core::runtime::is_saas())
 }
 
 /// Removes a host-installed engine; the configured engine applies again.
 /// Returns whether one was installed.
 pub fn clear_host_engine() -> bool {
-    ENGINE_BINDER.clear_host_engine()
+    let cleared = ENGINE_BINDER.clear_host_engine();
+    super::lifecycle::prefetch::invalidate_all();
+    cleared
 }
 
 /// Resolves the configured engine.
@@ -577,15 +588,19 @@ pub async fn store_cortexdb_key(config: &Config, key: &str) -> Result<()> {
         .await
         .map_err(|error| Error::Engine(format!("storing the API key failed: {error}")))?;
     tracing::debug!("[memory:engine] cortexdb key stored");
+    // Memory read under the old key is not the new key's account's.
+    super::lifecycle::prefetch::invalidate_all();
     Ok(())
 }
 
 /// Removes the stored CortexDB API key.
 pub async fn clear_cortexdb_key(config: &Config) -> Result<bool> {
-    AuthService::from_config(config)
+    let removed = AuthService::from_config(config)
         .remove_profile(MEMORY_CORTEXDB_KEY_NAME, DEFAULT_AUTH_PROFILE_NAME)
         .await
-        .map_err(|error| Error::Engine(format!("removing the API key failed: {error}")))
+        .map_err(|error| Error::Engine(format!("removing the API key failed: {error}")))?;
+    super::lifecycle::prefetch::invalidate_all();
+    Ok(removed)
 }
 
 /// Whether the engine `id` has a credential available.

@@ -122,8 +122,14 @@ fn event_with_exception_value(value: &str) -> sentry::protocol::Event<'static> {
 mod crash_filter_integrations;
 #[path = "observability_crash_filter_messages_tests.rs"]
 mod crash_filter_messages;
+#[path = "observability_error_classification_billing_refusal_tests.rs"]
+mod error_classification_billing_refusal;
+#[path = "observability_error_classification_composio_backoff_tests.rs"]
+mod error_classification_composio_backoff;
 #[path = "observability_error_classification_core_tests.rs"]
 mod error_classification_core;
+#[path = "observability_error_classification_disk_full_tests.rs"]
+mod error_classification_disk_full;
 #[path = "observability_error_classification_network_tests.rs"]
 mod error_classification_network;
 #[path = "observability_error_classification_provider_tests.rs"]
@@ -132,6 +138,8 @@ mod error_classification_provider;
 mod error_classification_session;
 #[path = "observability_error_classification_user_state_tests.rs"]
 mod error_classification_user_state;
+#[path = "observability_error_classification_voice_provider_tests.rs"]
+mod error_classification_voice_provider;
 
 /// Log output of `f` under a plain fmt subscriber.
 fn captured_logs(f: impl FnOnce()) -> String {

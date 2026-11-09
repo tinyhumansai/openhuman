@@ -22,6 +22,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { repositoryGitEnv } from "../lib/git-env.mjs";
+
 import { parseRecords } from "../lib/module-pins.mjs";
 import {
   aheadIds,
@@ -38,6 +40,7 @@ function git(args, cwd) {
   try {
     return execFileSync("git", args, {
       cwd,
+      env: repositoryGitEnv(),
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();

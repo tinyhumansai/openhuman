@@ -104,7 +104,7 @@ impl Drop for NativeSecurityAudit {
     fn drop(&mut self) {
         if !self.recorded {
             self.record(
-                crate::security::approval::ExecutionOutcome::Failure,
+                crate::security::approval::ExecutionOutcome::Aborted,
                 Some("tool execution ended before reporting a result".to_string()),
             );
         }

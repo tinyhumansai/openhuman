@@ -1,5 +1,9 @@
 use super::*;
 
+/// Why a call is refused when the session's tools hold settings no longer in
+/// force. A new conversation builds its tools from the current settings.
+const STALE_SESSION_SETTINGS: &str = "[policy-blocked] The autonomy settings changed during this conversation. Start a new conversation to use the new settings.";
+
 impl OpenHumanSecurityGate {
     pub(super) async fn authorize_tool_with_facts(
         &self,
@@ -196,6 +200,19 @@ impl OpenHumanSecurityGate {
             });
         }
 
+        // Disabled autonomy turns off action classification, approval and
+        // budget policy. The channel boundary, known-tool requirement,
+        // scheduled-turn restriction and, for shell, TinySecurity's protected
+        // path floor above remain in force. Disabled security
+        // (`crate::security::switch`) skips the same stages: there is no
+        // module to classify the action or keep the budget.
+        if policy.unchecked() {
+            if !self.share_answers(&policy) {
+                return Ok(GateDecision::deny(STALE_SESSION_SETTINGS));
+            }
+            return Ok(self.settled(channel_approved));
+        }
+
         let required = tool.permission_level_with_args(&call.arguments);
         let external_effect = tool.external_effect_with_args(&call.arguments);
         let class = match crate::security::policy::host_action_class(required, external_effect)
@@ -257,6 +274,9 @@ impl OpenHumanSecurityGate {
         };
         if let Err(reason) = budget {
             return Ok(GateDecision::deny(reason));
+        }
+        if !self.share_answers(&policy) {
+            return Ok(GateDecision::deny(STALE_SESSION_SETTINGS));
         }
         channel_approved = approved;
 

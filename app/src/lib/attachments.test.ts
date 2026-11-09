@@ -15,6 +15,7 @@ import {
   imageMarkerCost,
   isAllowedMimeType,
   isVideoMimeType,
+  parseAttachmentReferences,
   parseMessageImages,
   validateAndReadFile,
   videoFrameExtractor,
@@ -509,6 +510,67 @@ describe('attachmentsToParts', () => {
 });
 
 describe('parseMessageImages', () => {
+  const reference = `[ATTACHMENT:${encodeURIComponent(
+    JSON.stringify({
+      path: 'uploads/source.py',
+      name: 'source.py',
+      mime: 'text/plain',
+      size_bytes: 10,
+    })
+  )}]`;
+  const markers = [
+    '',
+    '[IMAGE:data:image/png;base64,abc]',
+    '[FILE:data:text/plain;base64,abc]',
+    reference,
+  ];
+
+  it.each(markers)('preserves code indentation and Markdown spacing with marker %s', marker => {
+    const content = [
+      'Review this  example:',
+      '```python',
+      'if ready:',
+      '    for item in items:',
+      '        print(item)',
+      '```',
+      'first line  ',
+      'second line',
+    ].join('\n');
+
+    expect(parseMessageImages(`${content}${marker ? ` ${marker}` : ''}`).text).toBe(content);
+  });
+
+  it.each(markers.slice(1))('only removes redundant separators beside marker %s', marker => {
+    expect(parseMessageImages(`before ${marker} after`).text).toBe('before after');
+    expect(parseMessageImages(`before${marker} after`).text).toBe('before after');
+    expect(parseMessageImages(`before ${marker}after`).text).toBe('before after');
+    expect(parseMessageImages(`before${marker}after`).text).toBe('beforeafter');
+  });
+
+  it.each(markers.slice(1).flatMap(first => markers.slice(1).map(second => [first, second])))(
+    'handles adjacent markers %s and %s as one separator boundary',
+    (first, second) => {
+      const adjacent = `${first}${second}`;
+      expect(parseMessageImages(`before ${adjacent} after`).text).toBe('before after');
+      expect(parseMessageImages(`before${adjacent} after`).text).toBe('before after');
+      expect(parseMessageImages(`before ${adjacent}after`).text).toBe('before after');
+      expect(parseMessageImages(`before${adjacent}after`).text).toBe('beforeafter');
+      expect(parseMessageImages(`before  ${adjacent}  after`).text).toBe('before   after');
+      expect(parseMessageImages(`before\n${adjacent}\n    after`).text).toBe('before\n\n    after');
+      expect(parseMessageImages(`before ${first} ${second} after`).text).toBe('before after');
+      expect(parseMessageImages(`before ${adjacent} middle ${adjacent} after`).text).toBe(
+        'before middle after'
+      );
+    }
+  );
+
+  it('keeps image order when stripping an adjacent marker run', () => {
+    expect(parseMessageImages('before [IMAGE:a][IMAGE:b][IMAGE:c] after')).toEqual({
+      text: 'before after',
+      dataUris: ['a', 'b', 'c'],
+    });
+  });
+
   it('returns empty dataUris and original text when no markers', () => {
     const result = parseMessageImages('hello world');
     expect(result.text).toBe('hello world');
@@ -568,6 +630,30 @@ describe('parseMessageImages', () => {
     );
     expect(result.text).toBe('first paragraph\n\n\n\nsecond paragraph');
     expect(result.text).toContain('\n\n');
+  });
+});
+
+describe('parseAttachmentReferences', () => {
+  it.each([
+    '[ATTACHMENT:%invalid]',
+    '[ATTACHMENT:null]',
+    '[ATTACHMENT:%7B%7D]',
+    `[ATTACHMENT:${encodeURIComponent(
+      JSON.stringify({ path: '../escape', name: 'file', mime: 'text/plain', size_bytes: 1 })
+    )}]`,
+  ])('preserves whitespace around invalid references: %s', marker => {
+    const content = `before  ${marker}  after\n    indented`;
+    expect(parseAttachmentReferences(content)).toEqual({ text: content, attachments: [] });
+  });
+
+  it('preserves invalid references between adjacent valid references', () => {
+    const reference = { path: 'uploads/a.txt', name: 'a.txt', mime: 'text/plain', size_bytes: 1 };
+    const valid = `[ATTACHMENT:${encodeURIComponent(JSON.stringify(reference))}]`;
+    const invalid = '[ATTACHMENT:%invalid]';
+    expect(parseAttachmentReferences(`before  ${valid}${invalid}${valid}  after`)).toEqual({
+      text: `before  ${invalid}  after`,
+      attachments: [reference, reference],
+    });
   });
 });
 

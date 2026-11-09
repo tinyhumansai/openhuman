@@ -61,3 +61,26 @@ fn sandbox_status_variants() {
     assert_ne!(SandboxStatus::Ready, SandboxStatus::Busy);
     assert_ne!(SandboxStatus::Busy, SandboxStatus::Error);
 }
+
+#[test]
+fn the_openshell_kind_is_named_openshell_on_the_wire() {
+    assert_eq!(
+        serde_json::to_value(SandboxBackendKind::OpenShell).unwrap(),
+        serde_json::json!("openshell")
+    );
+    let back: SandboxBackendKind = serde_json::from_value(serde_json::json!("openshell")).unwrap();
+    assert_eq!(back, SandboxBackendKind::OpenShell);
+}
+
+#[test]
+fn only_the_openshell_backend_keeps_a_box_between_commands() {
+    assert!(SandboxBackendKind::OpenShell.keeps_boxes());
+    for backend in [
+        SandboxBackendKind::None,
+        SandboxBackendKind::Local,
+        SandboxBackendKind::Docker,
+        SandboxBackendKind::Agent37,
+    ] {
+        assert!(!backend.keeps_boxes(), "{backend:?}");
+    }
+}

@@ -2,9 +2,8 @@
 
 use crate::config::Config;
 
-/// Wire contract served by the checksum-pinned v0.18.0 module. The fork bus
-/// contains newer host APIs, but this adapter invokes only this exact subset.
-pub const MODULE_CONTRACT_VERSION: (u32, u32) = (1, 33);
+/// The host requires the audited native permission vocabulary from its contract.
+pub const MODULE_CONTRACT_VERSION: (u32, u32) = tinysecurity_bus::CONTRACT_VERSION;
 
 /// Check the exact published artifact contract this adapter was built for.
 #[must_use]
@@ -27,11 +26,30 @@ pub fn policy_config(config: &Config) -> tinysecurity_bus::PolicyConfig {
             Vec::new()
         },
         forbidden_paths: if config.autonomy.enabled {
-            config.autonomy.forbidden_paths.clone()
+            forbidden_paths(&config.autonomy.forbidden_paths, cfg!(windows))
         } else {
             Vec::new()
         },
     }
+}
+
+/// The forbidden paths as the module receives them, `~` expanded. On Windows
+/// a path rooted without a drive (`/etc`, `\usr`, the Unix roots in the
+/// shipped defaults) is not absolute and names no system folder; the module
+/// already ignores such entries there, and `validate` would otherwise refuse
+/// the whole policy for them, so they are left out. Relative entries are
+/// kept, so `validate` still refuses them.
+fn forbidden_paths(paths: &[String], windows: bool) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|path| !(windows && is_drive_less_root(path)))
+        .map(|path| crate::config::expand_tilde(path))
+        .collect()
+}
+
+/// `/x` or `\x`, but not a UNC path (`\\server`, `//server`).
+fn is_drive_less_root(path: &str) -> bool {
+    path.starts_with(['/', '\\']) && !path.starts_with("\\\\") && !path.starts_with("//")
 }
 
 /// Reject enabled host policy that the published module contract cannot
@@ -51,8 +69,7 @@ pub fn validate(config: &Config) -> Result<(), &'static str> {
     {
         return Err("enabled policy allows only argument-free command names");
     }
-    if config
-        .autonomy
+    if policy_config(config)
         .forbidden_paths
         .iter()
         .any(|path| !std::path::Path::new(path).is_absolute())
@@ -78,13 +95,21 @@ pub fn module_config(config: &Config) -> tinysecurity_bus::ModuleConfig {
             keyring: Some(tinysecurity_bus::KeyringConfig2 {
                 service: "openhuman".into(),
                 backend: tinysecurity_bus::KeyringBackend2::Os,
-                consent_timeout_ms: 120_000,
+                consent_timeout_ms: KEYRING_CONSENT_TIMEOUT_MS,
             }),
             pairing: None,
         }),
         ..tinysecurity_bus::ModuleConfig::default()
     }
 }
+
+/// TinySecurity's deadline for the host's answer to one keyring prompt. It
+/// outlasts the host's own wait, so an unanswered prompt comes back as
+/// pending from the host rather than racing the module's timer.
+pub(crate) const KEYRING_CONSENT_TIMEOUT_MS: u32 =
+    crate::security::keyring_consent::operation_approval::MAX_CONSENT_WAIT_MS + 5_000;
+// TinySecurity accepts up to 300 s.
+const _: () = assert!(KEYRING_CONSENT_TIMEOUT_MS <= 300_000);
 
 const AUDIT_CALLBACK_TIMEOUT_MS: u32 = 20_000;
 
@@ -136,11 +161,13 @@ fn audit_init_config(config: &Config) -> tinysecurity_bus::AuditConfig2 {
 pub fn module_config_for_host(
     config: &Config,
     trusted_host: Option<String>,
+    judge: Option<tinysecurity_bus::JudgeConfig>,
 ) -> Result<tinysecurity_bus::ModuleConfig, &'static str> {
     let trusted_host = trusted_host.ok_or("module host identity unavailable")?;
     Ok(tinysecurity_bus::ModuleConfig {
         contract_version: MODULE_CONTRACT_VERSION,
         trusted_host: Some(trusted_host),
+        judge,
         ..module_config(config)
     })
 }
@@ -150,6 +177,7 @@ pub fn module_config_for_host(
 pub(crate) fn module_config_for_secret_scope(
     config: &Config,
     trusted_host: Option<String>,
+    judge: Option<tinysecurity_bus::JudgeConfig>,
     scope: &crate::security::approval::native::SecretScope,
     registration_id: String,
     consumer_id: String,
@@ -162,7 +190,7 @@ pub(crate) fn module_config_for_secret_scope(
         SecretCipherConfig2, SecretConfig2, SecretLimits2, SecretRegistration2,
     };
 
-    let mut result = module_config_for_host(config, trusted_host)?;
+    let mut result = module_config_for_host(config, trusted_host, judge)?;
     let approval = result.approvals.get_or_insert_with(approval_init_config);
     approval.scopes.push(ApprovalScope2 {
         scope_id: scope.scope_id().to_owned(),

@@ -288,7 +288,7 @@ download, its `dlopen`, or its resident memory.
 | [`registry.rs`](registry.rs) | The compiled-in `ALL` table and `find(id)`. Records live in [`registry/`](registry/README.md), one `records_*.rs` file per module family. |
 | [`types.rs`](types.rs) | `ModuleRecord`, `PlatformAsset`, `LoadPolicy`, `ModuleSource`, `ModuleState`, `ModuleStatus`. |
 | [`host.rs`](host.rs) | The module bus: the dedicated runtime, `ModuleRuntime`, `runtime()`, `is_started()`. |
-| [`ops.rs`](ops.rs) | Resolution (`ensure_loaded*`, `resolve`, `load_cached`, `load_local`), per-module configuration, overrides, the bundled and install directories, and status reporting (`list`, `state_of`). |
+| [`ops.rs`](ops.rs) | Resolution (`ensure_loaded*`, `resolve`, `load_cached`, `load_local`), per-module configuration, overrides, the bundled and install directories, and status reporting (`list`, `state_of`). Modules that take host callbacks (TinySecurity, TinyMCP, TinyEventQueues, TinyChannels, TinyComputer) load on the module runtime through [`ops/callback_load.rs`](ops/callback_load.rs): `load` for the storage and computer first loads, `confirm` for every later load; TinySecurity's first load prepares its own per-candidate state in [`security/host_callbacks.rs`](security/host_callbacks.rs) over the same `Resolver::ensure_loaded_with_host_callback_factory`. Each takes a local-file override or staged artifact first, else the pinned release from the bundle, then the digest-verified release cache, then a download into it. |
 | [`boot.rs`](boot.rs) | Startup loading: search-path artifacts, then eager records. |
 | [`schemas.rs`](schemas.rs) | The `modules` RPC namespace and its handlers. |
 

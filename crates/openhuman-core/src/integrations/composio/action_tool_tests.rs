@@ -8,8 +8,7 @@ use crate::core::runtime::DispatchCtx;
 /// the helper in `tools_tests.rs`.
 fn fake_config() -> Arc<Config> {
     let tmp = tempfile::tempdir().expect("tempdir for fake_config");
-    let mut config = Config::default();
-    config.config_path = tmp.path().join("config.toml");
+    let config = crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     // Leak the tempdir so the path remains valid for the test's
     // lifetime — `Config::config_path` is just used as a lookup key
     // here, not actually written to.
@@ -190,9 +189,8 @@ async fn sandbox_unset_leaves_per_action_execute_to_downstream() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
 
-        let mut config = Config::default();
-        config.config_path = tmp.path().join("config.toml");
-        config.workspace_dir = tmp.path().join("workspace");
+        let config =
+            crate::integrations::composio::module_client::test_support::config_in(tmp.path());
         config.save().await.expect("save fake config to disk");
 
         let t = ComposioActionTool::new(
@@ -245,9 +243,8 @@ async fn contract_gate_surfaces_full_contract_then_proceeds_on_retry() {
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
-        let mut config = Config::default();
-        config.config_path = tmp.path().join("config.toml");
-        config.workspace_dir = tmp.path().join("workspace");
+        let config =
+            crate::integrations::composio::module_client::test_support::config_in(tmp.path());
         config.save().await.expect("save fake config to disk");
 
         let t = ComposioActionTool::new(
@@ -302,9 +299,7 @@ async fn contract_gate_surfaces_full_contract_then_proceeds_on_retry() {
 #[tokio::test]
 async fn factory_routes_through_backend_when_mode_is_backend() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let mut config = Config::default(); // composio.mode defaults to "backend"
-    config.config_path = tmp.path().join("config.toml");
-    config.workspace_dir = tmp.path().join("workspace");
+    let config = crate::integrations::composio::module_client::test_support::config_in(tmp.path());
 
     // `ComposioRoute` isn't `Debug`, so match rather than
     // `expect_err` (which would need to format the unexpected `Ok`).
@@ -325,9 +320,8 @@ async fn factory_routes_through_backend_when_mode_is_backend() {
 #[tokio::test]
 async fn factory_routes_through_direct_when_mode_is_direct() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let mut config = Config::default();
-    config.config_path = tmp.path().join("config.toml");
-    config.workspace_dir = tmp.path().join("workspace");
+    let mut config =
+        crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".to_string());
 
@@ -379,9 +373,9 @@ async fn mode_toggle_between_calls_is_observed() {
         // ── Backend half ────────────────────────────────────────────
         let tmp_backend = tempfile::tempdir().expect("tempdir backend");
         let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp_backend.path());
-        let mut backend_config = Config::default();
-        backend_config.config_path = tmp_backend.path().join("config.toml");
-        backend_config.workspace_dir = tmp_backend.path().join("workspace");
+        let backend_config = crate::integrations::composio::module_client::test_support::config_in(
+            tmp_backend.path(),
+        );
         backend_config
             .save()
             .await
@@ -409,9 +403,10 @@ async fn mode_toggle_between_calls_is_observed() {
         // ── Direct half ─────────────────────────────────────────────
         let tmp_direct = tempfile::tempdir().expect("tempdir direct");
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp_direct.path());
-        let mut direct_config = Config::default();
-        direct_config.config_path = tmp_direct.path().join("config.toml");
-        direct_config.workspace_dir = tmp_direct.path().join("workspace");
+        let mut direct_config =
+            crate::integrations::composio::module_client::test_support::config_in(
+                tmp_direct.path(),
+            );
         direct_config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
         direct_config.composio.api_key = Some("test-direct-key".to_string());
         direct_config
@@ -479,9 +474,8 @@ async fn deferred_instance_returns_live_config_for_redaction() {
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
-        let mut config = Config::default();
-        config.config_path = tmp.path().join("config.toml");
-        config.workspace_dir = tmp.path().join("workspace");
+        let mut config =
+            crate::integrations::composio::module_client::test_support::config_in(tmp.path());
         config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
         config.composio.api_key = Some("test-direct-key-for-deferred-redaction".to_string());
         config.save().await.expect("save config to disk");
@@ -500,6 +494,7 @@ async fn deferred_instance_returns_live_config_for_redaction() {
         let (live_config, outcome) = Box::pin(t.execute_unredacted(
             &DispatchCtx::process_default(),
             serde_json::json!({}),
+            None,
             None,
         ))
         .await;
@@ -533,9 +528,8 @@ async fn configured_instance_resolves_live_config_not_the_stale_snapshot() {
 
         // The on-disk config is the source of truth `live_composio_config`
         // reloads from; it holds the CURRENT (rotated) key.
-        let mut on_disk = Config::default();
-        on_disk.config_path = tmp.path().join("config.toml");
-        on_disk.workspace_dir = tmp.path().join("workspace");
+        let mut on_disk =
+            crate::integrations::composio::module_client::test_support::config_in(tmp.path());
         on_disk.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
         on_disk.composio.api_key = Some("rotated-key-after-registration".to_string());
         on_disk.save().await.expect("save config to disk");
@@ -564,5 +558,84 @@ async fn configured_instance_resolves_live_config_not_the_stale_snapshot() {
          spawn-time snapshot — execute_unredacted feeds this exact value to both dispatch \
          and, after this fix, redaction"
         );
+    });
+}
+
+/// A per-action call in a web-chat turn discloses its transfer in that chat:
+/// the tool hands the turn's chat context to the shared dispatch, as
+/// `composio_execute` does, so `ExternalTransferPending` carries the thread
+/// (`web_chat/egress_surface.rs` drops an unrouted one).
+#[tokio::test]
+async fn per_action_transfer_is_routed_to_the_turns_chat() {
+    run_with_big_stack(|| async {
+        use crate::config::TEST_ENV_LOCK;
+        use crate::core::events::DomainEvent;
+        use crate::security::approval::{ApprovalChatContext, ApprovalTurnContext};
+        let _serialised = super::super::module_client::module_guard().await;
+        let _env_guard = TEST_ENV_LOCK.lock().await;
+        crate::core::bus::init().await.expect("bus init");
+        let mut rx = crate::core::bus::BUS.get().unwrap().receiver();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
+        let mut config =
+            crate::integrations::composio::module_client::test_support::config_in(tmp.path());
+        config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
+        config.composio.api_key = Some("test-direct-key".to_string());
+        config.save().await.expect("save config to disk");
+
+        let slug = "GMAIL_TSE2E_ROUTED_FETCH";
+        let tool = ComposioActionTool::new(
+            Arc::new(config),
+            slug.to_string(),
+            "read-shaped slug".to_string(),
+            None,
+        );
+        let context = crate::agent::tinyagents::host::run_context::tool_context_with_approval(
+            ApprovalTurnContext::chat(ApprovalChatContext {
+                thread_id: "t-tse2e-008".into(),
+                client_id: "c-tse2e-008".into(),
+                request_id: None,
+            }),
+        );
+        // What `execute_with_context` runs, minus the result redaction, which
+        // in a one-process run may be served another test's workspace and
+        // would hide why no transfer was disclosed. The module call itself
+        // may fail with no provider; the disclosure is published before it.
+        let approval =
+            crate::agent::tinyagents::host::run_context::approval_for_tool(Some(&context));
+        let (_, outcome) = Box::pin(tool.execute_unredacted(
+            &DispatchCtx::process_default(),
+            serde_json::json!({}),
+            None,
+            approval.chat.as_ref(),
+        ))
+        .await;
+
+        // In a one-process run the security module may serve another test's
+        // workspace and cannot confirm the egress, so the action is refused
+        // before anything is sent and there is no transfer to disclose.
+        if let Ok(result) = &outcome {
+            if result.is_error && error_text(result).contains("could not confirm") {
+                eprintln!("[test] egress unconfirmed in this process, nothing sent: skipping");
+                return;
+            }
+        }
+        let routed = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                match rx.recv().await {
+                    Some(DomainEvent::ExternalTransferPending {
+                        descriptor,
+                        thread_id,
+                        ..
+                    }) if descriptor.service == slug => return thread_id,
+                    Some(_) => continue,
+                    None => panic!("the bus closed before the transfer was disclosed"),
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the per-action call disclosed no transfer: {outcome:?}"));
+        assert_eq!(routed.as_deref(), Some("t-tse2e-008"));
     });
 }

@@ -4151,6 +4151,10 @@ const en: TranslationMap = {
     'The agent ran the maximum number of tool steps for one turn without finishing. This usually means a tool kept failing (often a rate limit on a web fetch). You can retry the same question in this thread once the underlying limit clears.',
   'chat_error.turn_timeout':
     "This turn ran past its time budget without finishing and was stopped so it wouldn't hang. This usually means a tool call or a delegated sub-agent stalled. You can retry your question in this thread.",
+  'chat_error.disk_full':
+    "Your disk is full, so this conversation couldn't be saved. Free up some disk space, then send your message again in this thread.",
+  'chat_error.prompt_screened':
+    "OpenHuman's security screen held this message, so it wasn't sent to the model. If it quotes instructions meant for an assistant (from a web page or an email, for example), remove them and try again. If ordinary messages are being held, the security module may be unavailable: restart OpenHuman and try again.",
   'chat_error.empty_response':
     'The model returned an empty response. Please retry. If it keeps happening, try a different model or check its setup in Connections → API keys → LLM.',
   'chat_error.chat_template_rejected':
@@ -4632,6 +4636,8 @@ const en: TranslationMap = {
     'Microphone access was denied. Allow it in your system settings and try again.',
   'voice.live.error.micUnavailable': 'No microphone is available.',
   'voice.live.error.connection': "Couldn't connect to the voice agent.",
+  'voice.live.error.insufficientCredits': 'Live voice needs more credits. Add credits to continue.',
+  'voice.live.error.paidPlanRequired': 'Live voice requires a paid plan. Upgrade to continue.',
   'voice.live.toolRunning': 'Running {name}',
   'voice.live.toolOk': '{name} finished',
   'voice.live.toolFailed': '{name} failed',
@@ -4917,11 +4923,6 @@ const en: TranslationMap = {
   'userErrors.scope.cron': 'Scheduled job',
   'userErrors.scope.workspace': 'Workspace',
   'userErrors.scope.memory': 'Memory',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Tool inventory',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Total tools',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Enabled tools',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP stdio tools',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC tools',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Policy posture',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Autonomy level',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Workspace only',

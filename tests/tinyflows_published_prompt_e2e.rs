@@ -1,4 +1,4 @@
-//! Normal-host prompt composition against the checksum-verified TinyFlows v0.9.4 module.
+//! Normal-host prompt composition against the checksum-verified TinyFlows v0.9.5 module.
 
 #[path = "support/env_guard.rs"]
 mod env_guard;
@@ -99,7 +99,7 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
     let _source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE");
     let _source_dir_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_DIR");
     let _tinyflows_source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_TINYFLOWS");
-    let (library, _) = published_tinyflows::staged_v0_9_4_module();
+    let (library, _) = published_tinyflows::staged_v0_9_5_module();
     let module_search_path = library
         .parent()
         .expect("staged module artifact has a search directory");
@@ -187,11 +187,9 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
                 .expect("load the same scoped Config used by the prompt dump");
         // The in-process host session resolves its credential from this config's
         // own state directory, not the one the child processes used.
-        openhuman_core::security::credentials::api_key::store_api_key(
-            &config,
-            "th_test_local_only",
-        )
-        .expect("store a local test credential for the in-process host session");
+        openhuman_core::credentials::api_key::store_api_key(&config, "th_test_local_only")
+            .await
+            .expect("store a local test credential for the in-process host session");
         let ctx = openhuman_core::core::runtime::DispatchCtx::host_default();
         tinyhumans_boot::boot();
         prewarm_flow_authoring_in_parent(&ctx, &config).await;
@@ -347,7 +345,7 @@ async fn published_module_public_import_uses_authoring_bus_in_a_cold_process() {
     let _source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE");
     let _source_dir_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_DIR");
     let _tinyflows_source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_TINYFLOWS");
-    let (library, digest) = published_tinyflows::staged_v0_9_4_module();
+    let (library, digest) = published_tinyflows::staged_v0_9_5_module();
     let workspace = temp.path().join("workspace");
     std::fs::create_dir_all(&workspace).expect("workspace directory");
     let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);

@@ -13,13 +13,12 @@ async fn host_for(agent_id: &str) -> (crate::agent::OpenHumanSessionHost, tempfi
     let _ = crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins();
     crate::agent::session_host::test_support::install_model_fixture();
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = crate::config::Config {
-        workspace_dir: tmp.path().join("workspace"),
-        action_dir: tmp.path().join("workspace"),
-        config_path: tmp.path().join("config.toml"),
-        default_model: Some("test/session-fixture".to_string()),
-        ..crate::config::Config::default()
-    };
+    let mut config = crate::config::Config::default();
+    config.workspace_dir = tmp.path().join("workspace");
+    config.action_dir = tmp.path().join("workspace");
+    config.config_path = tmp.path().join("config.toml");
+    config.default_model = Some("test/session-fixture".to_string());
+    config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
     // Building the orchestrator's model passes the backend-session gate; a
     // standing API key in this session's own state dir satisfies it, and the

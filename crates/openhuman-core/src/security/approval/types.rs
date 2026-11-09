@@ -254,8 +254,8 @@ pub enum ExecutionOutcome {
     Success,
     /// Tool ran and returned an error [`ToolResult`] (or panicked).
     Failure,
-    /// Tool did not run because the runtime aborted (timeout,
-    /// cancellation, supervisor shutdown).
+    /// Execution ended without reporting a result (timeout, cancellation,
+    /// supervisor shutdown); the tool may already have had side effects.
     Aborted,
 }
 

@@ -3915,6 +3915,10 @@ const messages: TranslationMap = {
     'Агент выполнил максимальное число шагов с инструментами за один ход и не завершил его. Обычно это значит, что инструмент постоянно завершался ошибкой (часто из-за лимита запросов при загрузке веб-страницы). Вы можете повторить тот же вопрос в этой теме, когда лимит снимется.',
   'chat_error.turn_timeout':
     'Этот ход превысил отведённое время и был остановлен, чтобы не зависнуть. Обычно это значит, что вызов инструмента или делегированный субагент завис. Вы можете повторить вопрос в этой теме.',
+  'chat_error.disk_full':
+    'Ваш диск заполнен, поэтому этот разговор не удалось сохранить. Освободите место на диске, а затем отправьте сообщение ещё раз в этой теме.',
+  'chat_error.prompt_screened':
+    'Проверка безопасности OpenHuman задержала это сообщение, поэтому оно не было отправлено модели. Если в нём цитируются инструкции для ассистента (например, с веб-страницы или из письма), удалите их и повторите попытку. Если задерживаются и обычные сообщения, модуль безопасности может быть недоступен: перезапустите OpenHuman и повторите попытку.',
   'chat_error.empty_response':
     'Модель вернула пустой ответ. Повторите попытку. Если это повторяется, попробуйте другую модель или проверьте её настройку в разделе Подключения → API-ключи → LLM.',
   'chat_error.chat_template_rejected':
@@ -4401,6 +4405,10 @@ const messages: TranslationMap = {
     'Доступ к микрофону запрещён. Разрешите его в настройках системы и попробуйте снова.',
   'voice.live.error.micUnavailable': 'Микрофон недоступен.',
   'voice.live.error.connection': 'Не удалось подключиться к голосовому агенту.',
+  'voice.live.error.insufficientCredits':
+    'Для голоса в реальном времени нужно больше кредитов. Пополните баланс, чтобы продолжить.',
+  'voice.live.error.paidPlanRequired':
+    'Для голоса в реальном времени нужен платный тариф. Перейдите на него, чтобы продолжить.',
   'voice.live.toolRunning': 'Выполняется {name}',
   'voice.live.toolOk': '{name} завершено',
   'voice.live.toolFailed': 'Ошибка: {name}',
@@ -4659,11 +4667,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'Обсуждение Namespaced Process Prison',
   'settings.sandbox.backendHint.bubblewrap': 'Легкие пространства имен пользователей',
   'settings.sandbox.backendHint.none': 'Запуск инструментов напрямую, без изоляции',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Список инструментов',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Всего инструментов',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Включённые инструменты',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'Инструменты MCP stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'Инструменты JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Состояние политики',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Уровень автономности',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Только рабочая область',

@@ -11,6 +11,11 @@ impl SecurityPolicy {
 
     /// Synchronous lexical preflight only. TinySecurity performs authorization,
     /// protected-floor and reservation decisions in the async validators.
+    ///
+    /// This is input validation, not policy: an empty path, a NUL byte or a
+    /// parent traversal (`..`, including its percent-encoded forms) is a
+    /// malformed tool argument, refused whether security is enforced or
+    /// disabled. With security disabled it is the only check a path gets.
     pub fn is_path_string_allowed(&self, path: &str) -> bool {
         !path.is_empty()
             && !path.contains('\0')
@@ -22,8 +27,12 @@ impl SecurityPolicy {
     }
 
     /// Ask TinySecurity whether a path intersects its unconditional protected
-    /// floor. An unavailable module refuses access.
+    /// floor. An unavailable module refuses access. With security disabled
+    /// there is no floor and nothing is forbidden.
     pub async fn is_always_forbidden_async(path: &Path) -> bool {
+        if crate::security::switch::disabled().is_some() {
+            return false;
+        }
         #[cfg(feature = "security-module")]
         {
             match crate::modules::security::gap::protected_paths(&[path.to_path_buf()]).await {

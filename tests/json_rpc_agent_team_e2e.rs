@@ -17,7 +17,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
     let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
 
     write_min_config(&openhuman_home, "http://127.0.0.1:9");
-    store_local_profile_api_key(&openhuman_home, "http://127.0.0.1:9");
+    store_local_profile_api_key(&openhuman_home, "http://127.0.0.1:9").await;
 
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");
@@ -1200,7 +1200,7 @@ async fn json_rpc_agent_context_breakdown_default_agent_returns_sections() {
     let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
     let api_origin = format!("http://{api_addr}");
     write_min_config(openhuman_home.as_path(), &api_origin);
-    store_local_profile_api_key(openhuman_home.as_path(), &api_origin);
+    store_local_profile_api_key(openhuman_home.as_path(), &api_origin).await;
 
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");

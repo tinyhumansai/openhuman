@@ -1,6 +1,6 @@
 //! Compacting a thread's stored conversation with no model turn.
 
-use crate::agent::session_host::{CompactOptions, CompactOutcome};
+use crate::agent::session_host::{CompactOptions, CompactOutcome, MemoryBlockPrewarm};
 use crate::config::Config;
 
 use super::session_turn::{apply_turn_overrides, build_turn_agent, AgentChatTarget};
@@ -42,9 +42,50 @@ pub fn compact_thread_for<'a>(
         // caller's ambient one.
         let ctx = crate::core::runtime::DispatchCtx::from_weak(None);
         let mut session = build_turn_agent(&ctx, config, &target, Some(thread_id), None, None)
+            .await
             .map_err(anyhow::Error::msg)?;
         session.set_thread_id(Some(thread_id));
         tracing::debug!(thread_id, ?options, "[compact_thread] session bound");
         session.compact_bound_history(options).await
     })
 }
+
+/// Render `thread_id`'s memory block now, on `target`'s session built as a
+/// turn's is, for that thread's next generation start to take.
+///
+/// `model_override`, `temperature` and `route` are applied to `config` as
+/// [`compact_thread_for`] applies them: an embedder on a hosted route has no
+/// managed provider, so a session built without its route cannot be built. See
+/// [`OpenHumanSessionHost::prewarm_memory_block`]
+/// (crate::agent::OpenHumanSessionHost::prewarm_memory_block).
+///
+/// # Errors
+///
+/// When `thread_id` is blank or the session cannot be built.
+#[inline(never)]
+pub fn prewarm_memory_block_for<'a>(
+    config: &'a mut Config,
+    target: AgentChatTarget<'a>,
+    thread_id: &'a str,
+    model_override: Option<String>,
+    temperature: Option<f64>,
+    route: Option<crate::config::schema::EphemeralRoute>,
+) -> futures::future::BoxFuture<'a, anyhow::Result<MemoryBlockPrewarm>> {
+    Box::pin(async move {
+        apply_turn_overrides(config, model_override, temperature, route);
+        let thread_id = thread_id.trim();
+        if thread_id.is_empty() {
+            anyhow::bail!("prewarm_memory_block needs a thread id");
+        }
+        let ctx = crate::core::runtime::DispatchCtx::from_weak(None);
+        let mut session = build_turn_agent(&ctx, config, &target, Some(thread_id), None, None)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        session.set_thread_id(Some(thread_id));
+        Ok(session.prewarm_memory_block().await)
+    })
+}
+
+#[cfg(test)]
+#[path = "compact_tests.rs"]
+mod tests;

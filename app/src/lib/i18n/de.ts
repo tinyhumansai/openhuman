@@ -3992,6 +3992,10 @@ const messages: TranslationMap = {
     'Der Agent hat die maximale Anzahl an Werkzeugschritten für einen Durchlauf ausgeführt, ohne fertig zu werden. Das bedeutet meist, dass ein Werkzeug immer wieder fehlgeschlagen ist (oft wegen eines Ratenlimits bei einem Webabruf). Du kannst dieselbe Frage in diesem Thread erneut stellen, sobald das Limit aufgehoben ist.',
   'chat_error.turn_timeout':
     'Dieser Durchlauf hat sein Zeitbudget überschritten, ohne fertig zu werden, und wurde gestoppt, damit er nicht hängt. Das bedeutet meist, dass ein Werkzeugaufruf oder ein delegierter Subagent steckengeblieben ist. Du kannst deine Frage in diesem Thread erneut stellen.',
+  'chat_error.disk_full':
+    'Dein Datenträger ist voll, deshalb konnte diese Unterhaltung nicht gespeichert werden. Gib etwas Speicherplatz frei und sende deine Nachricht dann in diesem Thread erneut.',
+  'chat_error.prompt_screened':
+    'Die Sicherheitsprüfung von OpenHuman hat diese Nachricht zurückgehalten, daher wurde sie nicht an das Modell gesendet. Wenn sie Anweisungen an einen Assistenten zitiert (zum Beispiel aus einer Webseite oder E-Mail), entferne sie und versuche es erneut. Wenn auch normale Nachrichten zurückgehalten werden, ist das Sicherheitsmodul möglicherweise nicht verfügbar: Starte OpenHuman neu und versuche es erneut.',
   'chat_error.empty_response':
     'Das Modell hat eine leere Antwort geliefert. Bitte versuche es erneut. Wenn das weiter passiert, probiere ein anderes Modell aus oder prüfe die Einrichtung unter Verbindungen → API-Schlüssel → LLM.',
   'chat_error.chat_template_rejected':
@@ -4494,6 +4498,10 @@ const messages: TranslationMap = {
     'Der Mikrofonzugriff wurde verweigert. Erlaube ihn in den Systemeinstellungen und versuche es erneut.',
   'voice.live.error.micUnavailable': 'Kein Mikrofon verfügbar.',
   'voice.live.error.connection': 'Verbindung zum Sprachagenten fehlgeschlagen.',
+  'voice.live.error.insufficientCredits':
+    'Für Live-Sprache brauchst du mehr Guthaben. Lade Guthaben auf, um fortzufahren.',
+  'voice.live.error.paidPlanRequired':
+    'Live-Sprache erfordert einen kostenpflichtigen Tarif. Führe ein Upgrade durch, um fortzufahren.',
   'voice.live.toolRunning': '{name} läuft',
   'voice.live.toolOk': '{name} abgeschlossen',
   'voice.live.toolFailed': '{name} fehlgeschlagen',
@@ -4783,11 +4791,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'Namespaced Prozess Gefängnis',
   'settings.sandbox.backendHint.bubblewrap': 'Leichtgewichtige Benutzernamensräume',
   'settings.sandbox.backendHint.none': 'Werkzeuge direkt ausführen, unisoliert',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Werkzeugbestand',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Werkzeuge insgesamt',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Aktivierte Werkzeuge',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP-stdio-Werkzeuge',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC-Werkzeuge',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Richtlinieneinstellungen',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Autonomiestufe',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Nur im Arbeitsbereich',

@@ -3791,6 +3791,10 @@ const messages: TranslationMap = {
     'نفّذ الوكيل الحد الأقصى من خطوات الأدوات في دورة واحدة دون أن ينتهي. يعني هذا عادةً أن إحدى الأدوات استمرت في الفشل (غالبًا بسبب حد للمعدل عند جلب صفحة ويب). يمكنك إعادة المحاولة بالسؤال نفسه في هذا الموضوع بعد زوال الحد.',
   'chat_error.turn_timeout':
     'تجاوزت هذه الدورة ميزانيتها الزمنية دون أن تنتهي وتم إيقافها حتى لا تتعطل. يعني هذا عادةً أن استدعاء أداة أو وكيلًا فرعيًا مفوَّضًا توقف عن الاستجابة. يمكنك إعادة المحاولة بسؤالك في هذا الموضوع.',
+  'chat_error.disk_full':
+    'القرص لديك ممتلئ، لذا تعذّر حفظ هذه المحادثة. حرّر بعض المساحة على القرص، ثم أعد إرسال رسالتك في هذا الموضوع.',
+  'chat_error.prompt_screened':
+    'احتجز فحص الأمان في OpenHuman هذه الرسالة، لذلك لم تُرسل إلى النموذج. إذا كانت تقتبس تعليمات موجهة إلى مساعد (من صفحة ويب أو بريد إلكتروني مثلًا)، فاحذفها وحاول مرة أخرى. وإذا كانت الرسائل العادية تُحتجز أيضًا، فقد تكون وحدة الأمان غير متاحة: أعد تشغيل OpenHuman وحاول مرة أخرى.',
   'chat_error.empty_response':
     'أعاد النموذج ردًا فارغًا. يُرجى إعادة المحاولة. إذا استمر ذلك، فجرّب نموذجًا آخر أو راجع إعداده في الاتصالات ← مفاتيح API ← LLM.',
   'chat_error.chat_template_rejected':
@@ -4266,6 +4270,9 @@ const messages: TranslationMap = {
     'تم رفض الوصول إلى الميكروفون. اسمح به من إعدادات النظام ثم حاول مرة أخرى.',
   'voice.live.error.micUnavailable': 'لا يتوفر ميكروفون.',
   'voice.live.error.connection': 'تعذّر الاتصال بالوكيل الصوتي.',
+  'voice.live.error.insufficientCredits':
+    'يحتاج الصوت المباشر إلى رصيد إضافي. أضف رصيدًا للمتابعة.',
+  'voice.live.error.paidPlanRequired': 'يتطلب الصوت المباشر خطة مدفوعة. قم بالترقية للمتابعة.',
   'voice.live.toolRunning': 'جارٍ تشغيل {name}',
   'voice.live.toolOk': 'اكتمل {name}',
   'voice.live.toolFailed': 'فشل {name}',
@@ -4508,11 +4515,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'سجن العمليات المسروقة',
   'settings.sandbox.backendHint.bubblewrap': 'أماكن أسماء مستخدمي الوزن الخفيف',
   'settings.sandbox.backendHint.none': 'تشغيل الأدوات مباشرة، موحدة',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'جرد الأدوات',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'إجمالي الأدوات',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'الأدوات المفعّلة',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'أدوات MCP عبر stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'أدوات JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'حالة السياسة',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'مستوى الاستقلالية',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'مساحة العمل فقط',

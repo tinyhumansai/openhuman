@@ -35,6 +35,7 @@ use tinysecurity_bus::{
     SubjectScope, Verdict,
 };
 
+pub(crate) use executors::{AGENT37_EXECUTOR, OPENSHELL_EXECUTOR};
 pub(crate) use facts::SpawnSource;
 pub(crate) use operation::SpawnOperation;
 
@@ -163,12 +164,14 @@ fn limits(policy: &SandboxPolicy) -> ResourceLimits2 {
     };
     ResourceLimits2 {
         cpu_time_ms: None,
-        // Fractional CPUs become thousandths of a core, rounded up so a bound is
-        // never silently loosened; absent bounds stay absent.
+        // Fractional CPUs become thousandths of a core, rounded down: a CPU bound
+        // is a ceiling, so rounding up would let the container use more than the
+        // operator allowed. Below one millicore this is 0, which the plan refuses
+        // (`ZeroLimit`) rather than widening. Absent bounds stay absent.
         cpu_millicores: overrides
             .cpu_limit
             .filter(|cpus| cpus.is_finite() && *cpus > 0.0)
-            .map(|cpus| (cpus * 1000.0).ceil().min(f64::from(u32::MAX)) as u32),
+            .map(|cpus| (cpus * 1000.0).floor().min(f64::from(u32::MAX)) as u32),
         memory_bytes: overrides
             .memory_limit_mb
             .filter(|mb| *mb > 0)
@@ -200,7 +203,10 @@ fn options(policy: &SandboxPolicy, host_run: bool) -> SandboxPlanOptions2 {
         preferred_backend: match policy.backend {
             SandboxBackendKind::None => None,
             SandboxBackendKind::Local => Some(SandboxBackend::Jail),
-            SandboxBackendKind::Docker => Some(SandboxBackend::Docker),
+            // OpenShell and agent37 are container executors declared for it.
+            SandboxBackendKind::Docker
+            | SandboxBackendKind::OpenShell
+            | SandboxBackendKind::Agent37 => Some(SandboxBackend::Docker),
         },
         require_preferred_backend: policy.backend != SandboxBackendKind::None,
         no_workspace: !policy.mount_workspace,
@@ -228,6 +234,9 @@ async fn probe(
             .map_err(|error| format!("docker status: {error}"))
     };
     let (jail, docker) = match policy.backend {
+        // A box is created on first use; there is nothing to probe.
+        SandboxBackendKind::OpenShell => return Ok(vec![executors::openshell()]),
+        SandboxBackendKind::Agent37 => return Ok(vec![executors::agent37()]),
         SandboxBackendKind::Local => (Some(jail().await), None),
         SandboxBackendKind::Docker => (None, Some(docker().await)),
         SandboxBackendKind::None => {
@@ -463,6 +472,8 @@ impl PlannedSpawn {
             super::plan::PlannedExecutor::NativeJail => SandboxBackendKind::Local,
             super::plan::PlannedExecutor::Docker => SandboxBackendKind::Docker,
             super::plan::PlannedExecutor::Host => SandboxBackendKind::None,
+            super::plan::PlannedExecutor::OpenShell => SandboxBackendKind::OpenShell,
+            super::plan::PlannedExecutor::Agent37 => SandboxBackendKind::Agent37,
         };
         let workspace = policy.workspace_root.to_str();
         let paths = |list: &[String]| -> Vec<std::path::PathBuf> {

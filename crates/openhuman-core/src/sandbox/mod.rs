@@ -9,9 +9,11 @@
 //! workspace mounts, network policy, environment passthrough, and
 //! explicit elevated escape paths.
 
+pub mod agent37;
 pub mod docker;
 pub(crate) mod local_grants;
 pub(crate) mod native_jail;
+pub mod openshell;
 pub(crate) mod operator;
 pub mod ops;
 #[cfg(feature = "security-module")]
@@ -26,6 +28,10 @@ pub(crate) mod shell_progress;
 pub(crate) mod spawn_plan;
 pub mod types;
 
+pub use openshell::{
+    read_file as read_box_file, write_file as write_box_file, BoxError,
+    MAX_FILE_BYTES as MAX_BOX_FILE_BYTES,
+};
 pub use ops::{create_sandbox_backend, execute_in_sandbox};
 pub use schemas::{
     all_controller_schemas as all_sandbox_controller_schemas,

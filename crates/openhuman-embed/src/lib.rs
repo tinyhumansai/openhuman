@@ -76,8 +76,10 @@ pub use openhuman_core::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAut
 pub fn current_turn_origin() -> Option<AgentTurnOrigin> {
     openhuman_core::core::runtime::CoreContext::current_turn_origin()
 }
+pub use openhuman_core::agent::tinyagents::discovery::DiscoveryOptions as ToolDiscoveryOptions;
 pub use openhuman_core::config::ComposioHostCredential;
 pub use openhuman_core::config::Config as RuntimeConfig;
+pub use openhuman_core::config::{ContextOverrides, ReasoningReplay};
 pub use openhuman_core::config::{SearchHostCredential, UnknownKeyedSearchProvider};
 /// The exact ambient tenant, inherited across profile turns and their scoped tasks.
 pub use openhuman_core::core::runtime::{current_tenant, NoTenant, Tenant};
@@ -151,6 +153,7 @@ pub mod profiles;
 /// Explicit ordered fallback and truncation policies.
 pub mod routing;
 mod runtime;
+pub mod sandbox;
 pub mod secret_storage;
 mod security;
 mod turn;
@@ -177,8 +180,8 @@ pub use openhuman_core::voice::VOICE_COMPILED_IN;
 pub use agent::ToolAttachmentError;
 pub use agent::{
     Agent, AgentDefinitionSpec, AgentError, AgentLayout, AgentSpec, ApprovalDecision, Approvals,
-    ApprovalsError, CompactOptions, CompactOutcome, DefinitionBase, MemoryBinding, MemoryBlockSpec,
-    PendingApproval, SandboxModeSpec, ToolScopeSpec,
+    ApprovalsError, CompactOptions, CompactOutcome, DefinitionBase, MemoryBinding,
+    MemoryBlockPrewarm, MemoryBlockSpec, PendingApproval, SandboxModeSpec, ToolScopeSpec,
 };
 pub use auth::{Auth, AuthState, Session};
 #[cfg(feature = "channels")]

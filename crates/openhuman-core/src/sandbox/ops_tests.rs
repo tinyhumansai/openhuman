@@ -399,3 +399,90 @@ fn config_disables_sandbox_for_legacy_flag_or_component() {
     config.components.sandbox = false;
     assert!(config_disables_sandbox(&config));
 }
+
+#[tokio::test]
+async fn the_openshell_handle_is_ready_without_pretending_to_be_a_container() {
+    let policy = SandboxPolicy {
+        backend: SandboxBackendKind::OpenShell,
+        ..unsandboxed_policy(Path::new("/tmp/action"), Path::new("/tmp/state"))
+    };
+
+    let handle = create_sandbox_backend_with_config(&policy, &crate::config::Config::default())
+        .await
+        .unwrap();
+
+    assert_eq!(handle.kind, SandboxBackendKind::OpenShell);
+    assert_eq!(handle.status, SandboxStatus::Ready);
+    assert_eq!(handle.backend_id, None);
+    assert_eq!(handle.isolation, None);
+}
+
+#[test]
+fn security_disabled_keeps_the_configured_backend_unless_the_operator_turns_it_off() {
+    use super::exec::unchecked_backend;
+    for backend in [
+        SandboxBackendKind::Local,
+        SandboxBackendKind::None,
+        SandboxBackendKind::Docker,
+        SandboxBackendKind::OpenShell,
+    ] {
+        assert_eq!(unchecked_backend(backend, false), backend);
+        assert_eq!(
+            unchecked_backend(backend, true),
+            SandboxBackendKind::None,
+            "the operator's sandbox-off switch still runs on the host"
+        );
+    }
+}
+
+#[cfg(feature = "modules")]
+#[test]
+fn security_disabled_jails_with_the_policys_own_grants() {
+    let mut policy = crate::sandbox::policy::route_for_mode(
+        SandboxMode::Sandboxed,
+        Path::new("/tmp/action"),
+        Path::new("/tmp/state"),
+        &SandboxConfig::default(),
+        &RuntimeConfig::default(),
+        false,
+    );
+    policy.read_only_mounts = vec!["/opt/tools".into()];
+    policy.read_write_mounts = vec!["/srv/out".into()];
+    policy.allow_network = false;
+    let jail = crate::sandbox::native_jail::host_jail(&policy);
+    assert_eq!(jail.read_only, vec!["/opt/tools".to_string()]);
+    assert_eq!(jail.read_write, vec!["/srv/out".to_string()]);
+    assert!(!jail.allow_net);
+    assert!(jail.deny_read.is_empty());
+    assert!(!jail.require_process_isolation);
+}
+
+fn config_with_backend(backend: crate::config::SandboxBackend) -> crate::config::Config {
+    let mut config = crate::config::Config::default();
+    config.sandbox.backend = backend;
+    config
+}
+
+#[test]
+fn a_config_naming_the_openshell_backend_keeps_boxes() {
+    use crate::config::SandboxBackend;
+    assert!(config_keeps_boxes(&config_with_backend(
+        SandboxBackend::OpenShell
+    )));
+    for backend in [
+        SandboxBackend::Auto,
+        SandboxBackend::None,
+        SandboxBackend::Docker,
+        SandboxBackend::Landlock,
+        SandboxBackend::Agent37,
+    ] {
+        assert!(!config_keeps_boxes(&config_with_backend(backend)));
+    }
+}
+
+#[test]
+fn a_config_that_turns_the_sandbox_off_keeps_no_boxes() {
+    let mut config = config_with_backend(crate::config::SandboxBackend::OpenShell);
+    config.sandbox.enabled = Some(false);
+    assert!(!config_keeps_boxes(&config));
+}

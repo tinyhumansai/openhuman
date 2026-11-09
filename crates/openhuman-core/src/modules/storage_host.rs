@@ -740,7 +740,7 @@ mod endpoint;
 
 #[cfg(test)]
 #[path = "storage_host_tests.rs"]
-mod tests;
+pub(in crate::modules) mod tests;
 
 #[cfg(test)]
 #[path = "storage_host_ctx_tests.rs"]

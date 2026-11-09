@@ -95,11 +95,17 @@ pub type SharedCommandGateway = Arc<dyn CommandGateway>;
 
 impl SecurityPolicy {
     /// Ask TinySecurity to classify a command without applying admission or
-    /// spending budget.
+    /// spending budget. With security disabled nothing is asked: the class is
+    /// the model's declared one, or [`CommandClass::Write`] when none is given.
     pub async fn classify_native_command(
         &self,
         query: CommandQuery<'_>,
     ) -> Result<CommandClass, Refusal> {
+        if crate::security::switch::disabled().is_some() {
+            return self
+                .unchecked_command_verdict(&query)
+                .map(|verdict| verdict.class);
+        }
         #[cfg(feature = "security-module")]
         {
             use crate::modules::security::command::{command_decision, CommandOp};
@@ -122,7 +128,15 @@ impl SecurityPolicy {
     }
 
     /// Ask whether `query.command` may run, and whether a human must approve it.
+    /// Asked even when autonomy is disabled: a disabled scope allows every
+    /// command except those naming TinySecurity's protected paths. With security
+    /// disabled (`crate::security::switch`) nothing is asked and every command
+    /// is allowed without approval, except one that may reach the network under
+    /// local-only privacy mode (`local_only_commands`).
     pub async fn check_command(&self, query: CommandQuery<'_>) -> Result<CommandVerdict, Refusal> {
+        if crate::security::switch::disabled().is_some() {
+            return self.unchecked_command_verdict(&query);
+        }
         match &self.command_gateway {
             Some(gateway) => gateway.decide(self, &query).await,
             None => self.native_command_verdict(&query).await,
@@ -132,6 +146,10 @@ impl SecurityPolicy {
     /// The tier's gate for an acting call of `class`: the module's answer to a
     /// command of that class. `Err` is a refusal.
     pub async fn command_class_gate(&self, class: CommandClass) -> Result<GateDecision, Refusal> {
+        if self.unchecked() {
+            self.record_class_gate(class, GateDecision::Allow);
+            return Ok(GateDecision::Allow);
+        }
         let result = match &self.command_gateway {
             Some(gateway) => gateway
                 .decide(self, &class_query(class))
@@ -140,12 +158,16 @@ impl SecurityPolicy {
             None => self.native_class_gate(class).await,
         };
         if let Ok(gate) = result {
-            if let Ok(mut snapshot) = self.class_gate_snapshot.lock() {
-                snapshot.retain(|(cached, _)| *cached != class);
-                snapshot.push((class, gate));
-            }
+            self.record_class_gate(class, gate);
         }
         result
+    }
+
+    fn record_class_gate(&self, class: CommandClass, gate: GateDecision) {
+        if let Ok(mut snapshot) = self.class_gate_snapshot.lock() {
+            snapshot.retain(|(cached, _)| *cached != class);
+            snapshot.push((class, gate));
+        }
     }
 
     /// [`Self::command_class_gate`] for the synchronous tool traits
@@ -155,6 +177,9 @@ impl SecurityPolicy {
         &self,
         class: CommandClass,
     ) -> Result<GateDecision, Refusal> {
+        if self.unchecked() {
+            return Ok(GateDecision::Allow);
+        }
         if let Some(gateway) = self.command_gateway.clone() {
             let policy = self.clone();
             return block_on_gateway(async move {
@@ -228,6 +253,11 @@ pub(crate) fn refusal_message(denial: Refusal) -> String {
         Refusal::Unavailable => format!(
             "{POLICY_BLOCKED_MARKER} TinySecurity command authorization unavailable; command denied"
         ),
+        Refusal::LocalOnly => format!(
+            "{POLICY_BLOCKED_MARKER} Local-only privacy mode is active: this command may reach \
+             the network. Do not retry it; use a local alternative, or disable local-only mode \
+             in Settings to allow it."
+        ),
     }
 }
 
@@ -244,6 +274,9 @@ pub enum Refusal {
     Category,
     /// The module could not answer: missing, untrusted, faulted or too slow.
     Unavailable,
+    /// Local-only privacy mode is active and the command may reach the network
+    /// (security disabled, so the host decided; see `local_only_commands`).
+    LocalOnly,
 }
 
 impl std::fmt::Display for Refusal {
@@ -253,6 +286,10 @@ impl std::fmt::Display for Refusal {
 }
 
 impl std::error::Error for Refusal {}
+
+#[cfg(test)]
+#[path = "native_commands_tests.rs"]
+mod tests;
 
 impl SecurityPolicy {
     /// The settings the module enforces for this policy. Derived entirely from

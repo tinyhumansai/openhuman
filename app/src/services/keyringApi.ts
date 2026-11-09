@@ -35,3 +35,17 @@ export const respondToKeyringOperation = async (
     params: { request_id: requestId, approved },
   });
 };
+
+/**
+ * Keyring operations waiting for approval. The renderer polls this when it has
+ * no socket yet (before sign-in), so the approval prompt still reaches it.
+ */
+export const listPendingKeyringOperations = async (): Promise<unknown[]> => {
+  // The controller answers with the bare array; accept a `{ result }` envelope too.
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.keyring_consent_list_pending_operations',
+  });
+  if (Array.isArray(response)) return response;
+  const wrapped = (response as { result?: unknown } | null)?.result;
+  return Array.isArray(wrapped) ? wrapped : [];
+};

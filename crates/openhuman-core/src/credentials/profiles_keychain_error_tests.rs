@@ -115,3 +115,102 @@ async fn denied_keyring_delete_restores_profile_document() {
         .profiles
         .contains_key("openai:default"));
 }
+
+#[tokio::test]
+async fn a_document_only_store_cannot_remove_a_keyring_owned_record() {
+    let workspace = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(workspace.path(), false);
+    let mut persisted = PersistedAuthProfiles::default();
+    persisted.profiles.insert(
+        "openai:default".into(),
+        PersistedAuthProfile {
+            provider: "openai".into(),
+            profile_name: "default".into(),
+            kind: "token".into(),
+            secret_location: Some(super::super::persistence::SecretLocation::Keyring),
+            ..Default::default()
+        },
+    );
+    store.write_persisted_locked(&persisted).unwrap();
+    assert!(store.remove_profile("openai:default").await.is_err());
+    assert!(store
+        .read_persisted_locked()
+        .unwrap()
+        .profiles
+        .contains_key("openai:default"));
+}
+
+#[tokio::test]
+async fn an_unavailable_keyring_record_survives_an_unrelated_document_write() {
+    let workspace = TempDir::new().unwrap();
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(workspace.path());
+    config.modules.enabled = false;
+    let store = AuthProfilesStore::new_with_config(workspace.path(), false, &config);
+    let mut persisted = PersistedAuthProfiles::default();
+    persisted.profiles.insert(
+        "openai:default".into(),
+        PersistedAuthProfile {
+            provider: "openai".into(),
+            profile_name: "default".into(),
+            kind: "token".into(),
+            secret_location: Some(super::super::persistence::SecretLocation::Keyring),
+            ..Default::default()
+        },
+    );
+    store.write_persisted_locked(&persisted).unwrap();
+    let before = serde_json::to_value(&persisted.profiles["openai:default"]).unwrap();
+    store
+        .upsert_profile(
+            AuthProfile::new_token("other", "default", "new-synthetic-token".into()),
+            true,
+        )
+        .await
+        .unwrap();
+    let current = store.read_persisted_locked().unwrap();
+    assert_eq!(
+        serde_json::to_value(&current.profiles["openai:default"]).unwrap(),
+        before
+    );
+    assert!(current.profiles.contains_key("other:default"));
+}
+
+#[tokio::test]
+async fn denied_keyring_removal_rollback_preserves_other_profile_updates() {
+    let workspace = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(workspace.path(), false);
+    let mut before = PersistedAuthProfiles::default();
+    before.profiles.insert(
+        "openai:default".into(),
+        PersistedAuthProfile {
+            provider: "openai".into(),
+            profile_name: "default".into(),
+            kind: "token".into(),
+            ..Default::default()
+        },
+    );
+    let mut current = PersistedAuthProfiles::default();
+    current.profiles.insert(
+        "other:default".into(),
+        PersistedAuthProfile {
+            provider: "other".into(),
+            profile_name: "default".into(),
+            kind: "token".into(),
+            token: Some("concurrently-updated-value".into()),
+            ..Default::default()
+        },
+    );
+    store.write_persisted_locked(&current).unwrap();
+    assert!(store
+        .rollback_profile_removal(
+            "openai:default",
+            &before,
+            anyhow::Error::new(super::super::keychain::KeyringConsentError::Denied)
+        )
+        .is_err());
+    let restored = store.read_persisted_locked().unwrap();
+    assert!(restored.profiles.contains_key("openai:default"));
+    assert_eq!(
+        serde_json::to_value(&restored.profiles["other:default"]).unwrap(),
+        serde_json::to_value(&current.profiles["other:default"]).unwrap()
+    );
+}

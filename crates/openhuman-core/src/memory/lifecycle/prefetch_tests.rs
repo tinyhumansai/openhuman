@@ -264,6 +264,9 @@ async fn expiration_failure_and_oversized_packs_are_not_reused() {
 
 #[tokio::test]
 async fn credential_invalidation_removes_ready_and_rejects_late_inflight_results() {
+    let _stable = crate::memory::engine::CACHE_STABLE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _guard = TEST_LOCK.lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);

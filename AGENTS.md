@@ -269,6 +269,17 @@ With the policy **disabled** (the default):
   `~/.aws`) and system roots stay unreachable. So do `..` traversal and null
   bytes in a path. Keep that floor.
 
+The floor is TinySecurity's. With **security disabled**
+(`security/switch.rs`: a build without `security-module`, or `[security] mode
+= "off"`) there is no path policy at all: paths resolve on the host with no
+floor, so file tools reach `~/.ssh` like any other path. Refusing `..` and null
+bytes stays, as input validation of a malformed argument, not as policy. Tool
+calls are not classified. `[privacy] mode = "local_only"` is its own network
+setting and stays enforced: egress descriptors are refused, and shell commands
+that may reach the network are refused by the host's conservative classifier
+(`security/policy/local_only_commands.rs`). Approvals a channel or flow demands
+still apply.
+
 With `[autonomy] enabled = true`:
 
 - `action_dir` is the agent's permitted read and write root — and is granted as

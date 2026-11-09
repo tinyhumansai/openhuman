@@ -37,10 +37,16 @@ fn bounds_come_from_the_docker_overrides_and_never_loosen() {
     assert_eq!(bounded.cpu_millicores, Some(1500));
     assert_eq!(bounded.memory_bytes, Some(512 * 1024 * 1024));
     assert_eq!(bounded.cpu_time_ms, None);
-    // A fraction rounds up to the next millicore rather than down to a looser bound.
+    // A fraction rounds down: a CPU bound is a ceiling, so rounding up would
+    // widen it (0.1004 cores must not run as 0.101).
+    assert_eq!(
+        limits(&with_overrides(Some(0.1004), None)).cpu_millicores,
+        Some(100)
+    );
+    // Below one millicore the bound is 0, which the plan refuses, not widens.
     assert_eq!(
         limits(&with_overrides(Some(0.0004), None)).cpu_millicores,
-        Some(1)
+        Some(0)
     );
     // Absent, zero and non-finite bounds are not bounds.
     for cpu in [
@@ -168,4 +174,23 @@ fn plan_request_carries_openhuman_owned_credential_paths_to_tinysecurity() {
         .iter()
         .any(|path| path.ends_with("auth-profiles/secrets.enc")));
     assert!(denied.iter().any(|path| path.ends_with("secrets.enc")));
+}
+
+#[test]
+fn an_openshell_spawn_requires_the_container_backend_and_asks_for_no_bounds() {
+    let openshell = options(&policy(SandboxBackendKind::OpenShell), false);
+    assert_eq!(openshell.preferred_backend, Some(SandboxBackend::Docker));
+    assert!(openshell.require_preferred_backend);
+    let mut bounded = with_overrides(Some(2.0), Some(256));
+    bounded.backend = SandboxBackendKind::OpenShell;
+    assert_eq!(limits(&bounded), ResourceLimits2::default());
+}
+
+#[tokio::test]
+async fn an_openshell_spawn_declares_only_the_openshell_executor() {
+    let declared = probe(&Config::default(), &policy(SandboxBackendKind::OpenShell))
+        .await
+        .unwrap();
+    assert_eq!(declared.len(), 1);
+    assert_eq!(declared[0].executor_id, OPENSHELL_EXECUTOR);
 }

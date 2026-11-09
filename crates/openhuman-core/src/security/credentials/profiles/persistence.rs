@@ -24,7 +24,7 @@ use super::{
 pub(crate) const STORAGE_SECRET_NAME: &str = "file:auth-profiles.json";
 
 impl AuthProfilesStore {
-    pub(super) fn save_locked(&self, data: &AuthProfilesData) -> Result<()> {
+    pub(super) async fn save_locked(&self, data: &AuthProfilesData) -> Result<()> {
         let mut persisted = PersistedAuthProfiles {
             schema_version: CURRENT_SCHEMA_VERSION,
             updated_at: data.updated_at.to_rfc3339(),
@@ -48,7 +48,7 @@ impl AuthProfilesStore {
                             "[auth] save: keychain store failed for profile_id={id}: {e}; \
                              falling back to encrypted JSON"
                         );
-                        self.encrypt_for_json(profile)?
+                        self.encrypt_for_json(profile).await?
                     } else {
                         log::debug!("[auth] save: secrets stored in keychain profile_id={id}");
                         let (expires_at, token_type, scope) = match &profile.token_set {
@@ -64,7 +64,7 @@ impl AuthProfilesStore {
                     }
                 } else {
                     // Headless / no keychain — encrypt and store in JSON.
-                    self.encrypt_for_json(profile)?
+                    self.encrypt_for_json(profile).await?
                 };
 
             persisted.profiles.insert(
@@ -105,20 +105,24 @@ impl AuthProfilesStore {
     }
 
     /// Encrypt a profile's secret fields for JSON storage (keychain-unavailable path).
-    pub(super) fn encrypt_for_json(&self, profile: &AuthProfile) -> Result<EncryptedProfileFields> {
+    pub(super) async fn encrypt_for_json(
+        &self,
+        profile: &AuthProfile,
+    ) -> Result<EncryptedProfileFields> {
         let (access_token, refresh_token, id_token, expires_at, token_type, scope) =
             match (&profile.kind, &profile.token_set) {
                 (AuthProfileKind::OAuth, Some(token_set)) => (
-                    self.encrypt_optional(Some(&token_set.access_token))?,
-                    self.encrypt_optional(token_set.refresh_token.as_deref())?,
-                    self.encrypt_optional(token_set.id_token.as_deref())?,
+                    self.encrypt_optional(Some(&token_set.access_token)).await?,
+                    self.encrypt_optional(token_set.refresh_token.as_deref())
+                        .await?,
+                    self.encrypt_optional(token_set.id_token.as_deref()).await?,
                     token_set.expires_at.as_ref().map(DateTime::to_rfc3339),
                     token_set.token_type.clone(),
                     token_set.scope.clone(),
                 ),
                 _ => (None, None, None, None, None, None),
             };
-        let token = self.encrypt_optional(profile.token.as_deref())?;
+        let token = self.encrypt_optional(profile.token.as_deref()).await?;
         Ok((
             access_token,
             refresh_token,
@@ -377,20 +381,27 @@ impl AuthProfilesStore {
         self.force_lock_unwritable.store(true, Ordering::SeqCst);
     }
 
-    pub(super) fn encrypt_optional(&self, value: Option<&str>) -> Result<Option<String>> {
+    pub(super) async fn encrypt_optional(&self, value: Option<&str>) -> Result<Option<String>> {
         match value {
-            Some(value) if !value.is_empty() => self.secret_store.encrypt(value).map(Some),
+            Some(value) if !value.is_empty() => self
+                .secret_store
+                .encrypt_via_security(value)
+                .await
+                .map(Some),
             Some(_) | None => Ok(None),
         }
     }
 
-    pub(super) fn decrypt_optional(
+    pub(super) async fn decrypt_optional(
         &self,
         value: Option<&str>,
     ) -> Result<(Option<String>, Option<String>)> {
         match value {
             Some(value) if !value.is_empty() => {
-                let (plaintext, migrated) = self.secret_store.decrypt_and_migrate(value)?;
+                let (plaintext, migrated) = self
+                    .secret_store
+                    .decrypt_and_migrate_via_security(value)
+                    .await?;
                 Ok((Some(plaintext), migrated))
             }
             Some(_) | None => Ok((None, None)),

@@ -39,10 +39,8 @@ pub(super) async fn run_agent_job_for_run(
     // A host-registered agent (`agent::host_agents`) carries its own
     // definition, model and route; the registry overrides below are for
     // registry agents only.
-    let is_host_agent = job
-        .agent_id
-        .as_deref()
-        .is_some_and(|id| crate::agent::host_agents::resolve(id).is_some());
+    let opened = host_agent_for_job(job).await;
+    let is_host_agent = opened.is_some();
     if is_host_agent {
         tracing::debug!(
             job_id = %job.id,
@@ -132,7 +130,7 @@ pub(super) async fn run_agent_job_for_run(
                 tracing::warn!(
                     job_id = %job.id,
                     agent_id = %agent_id,
-                    "[cron] agent_id not found in registry — falling back to canonical orchestrator"
+                    "[cron] agent_id not found in registry — the run fails rather than using another agent"
                 );
             }
         } else {
@@ -150,8 +148,12 @@ pub(super) async fn run_agent_job_for_run(
                 target = ?job.session_target,
                 "[cron] building isolated agent for scheduled job"
             );
-            match build_agent_for_cron_job(ctx, &effective, job).await {
-                Ok(BuiltCronAgent { mut agent, context }) => {
+            match build_cron_agent(ctx, &effective, job, opened).await {
+                Ok(BuiltCronAgent {
+                    mut agent,
+                    context,
+                    _lease,
+                }) => {
                     // Tag events so downstream subscribers can correlate
                     // cron-triggered turns. `cron` is the channel so the
                     // event bus can filter from other flows (`cli`, `web`…).
@@ -344,20 +346,40 @@ pub(super) struct BuiltCronAgent {
     /// The host agent's context the turn must run in, when `job.agent_id`
     /// named a host-registered agent (`agent::host_agents`).
     pub(crate) context: Option<std::sync::Arc<crate::core::runtime::CoreContext>>,
+    /// Keeps an agent the host opened for this run alive until the run ends.
+    /// Declared last so it drops after the session built from the agent.
+    pub(crate) _lease: Option<Box<dyn std::any::Any + Send + Sync>>,
 }
 
-/// Build the session a cron agent job runs: the host-registered agent named
-/// by `job.agent_id` when there is one, else the registry definition.
+/// Build the session a cron agent job runs: the host agent named by
+/// `job.agent_id` (live, or opened by the host on demand) when there is one,
+/// else the registry definition. An id that resolves nowhere is an error, never
+/// the canonical orchestrator.
 pub(super) async fn build_agent_for_cron_job(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     job: &CronJob,
 ) -> anyhow::Result<BuiltCronAgent> {
-    let host_agent = job
-        .agent_id
-        .as_deref()
-        .and_then(crate::agent::host_agents::resolve);
-    build_cron_agent(ctx, config, job, host_agent).await
+    let opened = host_agent_for_job(job).await;
+    build_cron_agent(ctx, config, job, opened).await
+}
+
+/// The host agent `job.agent_id` names: a live one, else one the host opens on
+/// demand. An id the agent registry defines is never offered to the host's
+/// opener, so it cannot be shadowed by an agent opened under a built-in name.
+async fn host_agent_for_job(job: &CronJob) -> Option<crate::agent::host_agents::OpenedHostAgent> {
+    use crate::agent::host_agents;
+    use crate::agent_registry::host_definition::AgentDefinitionRegistry;
+    let id = job.agent_id.as_deref()?;
+    // With no registry installed yet the built-ins still define their ids.
+    let in_registry = match AgentDefinitionRegistry::current() {
+        Some(registry) => registry.get(id).is_some(),
+        None => AgentDefinitionRegistry::builtins_only().get(id).is_some(),
+    };
+    if in_registry {
+        return host_agents::resolve_leased(id);
+    }
+    host_agents::resolve_or_open(id).await
 }
 
 #[cfg(test)]
@@ -371,9 +393,10 @@ async fn build_cron_agent(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     job: &CronJob,
-    host_agent: Option<crate::agent::host_agents::HostAgent>,
+    opened: Option<crate::agent::host_agents::OpenedHostAgent>,
 ) -> anyhow::Result<BuiltCronAgent> {
-    if let Some(host) = host_agent {
+    if let Some(opened) = opened {
+        let (host, lease) = opened.into_parts();
         // The host agent's own config (provider model and route applied),
         // with the job's model override on top, as for a registry agent. The
         // caller's config is not used: it is the process default's.
@@ -390,34 +413,28 @@ async fn build_cron_agent(
         return Ok(BuiltCronAgent {
             agent,
             context: Some(host.context),
+            _lease: lease,
         });
     }
     let agent_id = job.agent_id.as_deref().unwrap_or("orchestrator");
-    match OpenHumanSessionHost::from_config_for_agent(ctx, config, agent_id).await {
-        Ok(agent) => {
-            tracing::debug!(
-                job_id = %job.id,
-                agent_id = %agent_id,
-                "[cron] built scheduled job agent from definition"
-            );
-            Ok(BuiltCronAgent {
-                agent,
-                context: None,
-            })
-        }
-        Err(e) => {
+    let agent = OpenHumanSessionHost::from_config_for_agent(ctx, config, agent_id)
+        .await
+        .inspect_err(|e| {
             tracing::warn!(
                 job_id = %job.id,
                 agent_id = %agent_id,
                 error = %e,
-                "[cron] failed to build agent from definition; falling back to canonical orchestrator"
+                "[cron] no agent to run the job as; failing it rather than using another agent"
             );
-            OpenHumanSessionHost::from_config_for_agent(ctx, config, "orchestrator")
-                .await
-                .map(|agent| BuiltCronAgent {
-                    agent,
-                    context: None,
-                })
-        }
-    }
+        })?;
+    tracing::debug!(
+        job_id = %job.id,
+        agent_id = %agent_id,
+        "[cron] built scheduled job agent from definition"
+    );
+    Ok(BuiltCronAgent {
+        agent,
+        context: None,
+        _lease: None,
+    })
 }

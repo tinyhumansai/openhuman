@@ -301,7 +301,9 @@ async fn ensure_with_registration(
         match scopes.by_subject.get(&key) {
             Some(found) => Arc::clone(found),
             None => {
-                let rows = Rows::current(config).map_err(|error| error.to_string())?;
+                let rows = Rows::current(config)
+                    .await
+                    .map_err(|error| error.to_string())?;
                 let stream_id = rows.stream_for(&key).await?;
                 let entry = Arc::new(ScopeEntry::new(subject, stream_id, rows));
                 scopes.by_subject.insert(key, Arc::clone(&entry));
@@ -328,7 +330,9 @@ pub(super) async fn audit_entry(
         match scopes.by_subject.get(&key) {
             Some(found) => Arc::clone(found),
             None => {
-                let rows = Rows::current(config).map_err(|error| error.to_string())?;
+                let rows = Rows::current(config)
+                    .await
+                    .map_err(|error| error.to_string())?;
                 let stream_id = rows.stream_for(&key).await?;
                 let entry = Arc::new(ScopeEntry::new(subject, stream_id, rows));
                 scopes.by_subject.insert(key, Arc::clone(&entry));

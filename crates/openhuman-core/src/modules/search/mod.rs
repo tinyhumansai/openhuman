@@ -91,6 +91,7 @@ fn provider_config(config: &Config, provider: &ResolvedProvider) -> ProviderConf
         ProviderRoute::Direct => direct_settings(config, provider.id),
     };
     settings.enabled = provider.usable;
+    settings.contents_max_chars = config.search.contents_max_chars;
     settings
 }
 

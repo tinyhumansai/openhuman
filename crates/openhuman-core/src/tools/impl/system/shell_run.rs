@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use tinytools::{ToolResult, ToolRunContext};
 
 use super::shell_support::{exec_result, yield_after, yielded_output, YIELD_AFTER_ARG};
-use crate::sandbox::shell_exec::{ComeBack, ShellRunOutcome};
+use crate::sandbox::shell_exec::ShellRunOutcome;
 use crate::sandbox::shell_processes::{Ended, Slot};
 
 /// Records the call's audit entry: whether the command passed the in-tool
@@ -76,16 +76,19 @@ fn slot(request: YieldRequest, context: Option<&dyn ToolRunContext>) -> Option<S
 }
 
 /// The yield point for this call with a slot reserved for it, and the
-/// command's deadline. A call that cannot yield (the turn has no place left,
-/// or the command is a deliberate wait) keeps the model's come-back time as
-/// its deadline, as `timeout_secs` was, so it still comes back by then.
+/// command's deadline. A call that cannot yield (the backend runs one-shot,
+/// the turn has no place left, or the command is a deliberate wait) keeps the
+/// model's come-back time as its deadline, as `timeout_secs` was, so it still
+/// comes back by then. A backend that cannot leave a command running
+/// (`can_yield` is false) never reserves a slot: it could not use one.
 fn come_back(
     request: YieldRequest,
     context: Option<&dyn ToolRunContext>,
     command: &str,
     deadline: Duration,
+    can_yield: bool,
 ) -> (Option<Slot>, Option<Duration>, Duration) {
-    let slot = slot(request, context);
+    let slot = can_yield.then(|| slot(request, context)).flatten();
     let after = slot
         .as_ref()
         .and_then(|_| yield_after(request.requested, deadline, command));
@@ -152,7 +155,7 @@ pub(super) async fn run_native(
     context: Option<&dyn ToolRunContext>,
     audit: &AuditOnce,
 ) -> ToolResult {
-    let (slot, after, deadline) = come_back(request, context, &run.command, run.timeout);
+    let (slot, after, deadline) = come_back(request, context, &run.command, run.timeout, true);
     run.yield_after = after;
     run.timeout = deadline;
     let (command, timeout) = (run.command.clone(), run.timeout);
@@ -213,7 +216,23 @@ pub(super) async fn run_in_policy(
     let effective = explicit_timeout.unwrap_or_else(|| {
         Duration::from_secs(tinyagents_harness_tools::exec::timeout::SANDBOX_UNBOUNDED_CAP_SECS)
     });
-    let (slot, yield_after, effective) = come_back(request, context, command, effective);
+    // Resolve the backend before reserving a slot. A one-shot backend (Docker,
+    // the box) cannot leave a command running, so it must not take one of the
+    // turn's four process slots (#8317). The same resolution then runs the
+    // command, so the reservation decision and the execution cannot disagree.
+    let resolved =
+        match crate::sandbox::ops::resolve_sandbox(ctx, &policy, command, action_dir, &extra_env)
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                let result = finish(Err(error), None, command, Instant::now(), effective, audit);
+                return (true, result);
+            }
+        };
+
+    let (slot, yield_after, effective) =
+        come_back(request, context, command, effective, resolved.can_yield());
     let deadline_instead = request
         .deadline_instead(requested_timeout)
         .map(Duration::from_secs);
@@ -222,27 +241,25 @@ pub(super) async fn run_in_policy(
         requested_timeout_secs = ?requested_timeout,
         unbounded = explicit_timeout.is_none(),
         yield_after_secs = ?yield_after.map(|after| after.as_secs()),
+        backend = ?resolved.backend(),
         "[shell] starting sandboxed command"
     );
 
     let started = Instant::now();
-    let outcome = crate::sandbox::ops::execute_in_sandbox_yielding(
+    let outcome = crate::sandbox::ops::execute_resolved(
         ctx,
-        &policy,
+        resolved,
         command,
         action_dir,
         extra_env,
         effective,
-        ComeBack {
-            yield_after,
-            deadline_instead,
-        },
+        yield_after,
         meter,
     )
     .await;
     // A command left running keeps its full deadline. One that finished was
-    // bounded by the model's time on Docker; a native run holding a slot
-    // yields before its deadline, so a timeout there is that same bound.
+    // bounded by the model's time on a one-shot backend; a native run holding
+    // a slot yields before its deadline, so a timeout there is that same bound.
     let timeout = match &outcome {
         Ok(ShellRunOutcome::Running(_)) => effective,
         _ => deadline_instead.map_or(effective, |deadline| effective.min(deadline)),

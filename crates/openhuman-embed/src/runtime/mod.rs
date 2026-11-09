@@ -111,6 +111,20 @@ use crate::{Core, CoreError};
 /// Guards the process-scoped core state described in the module docs.
 pub(crate) static RUNTIME_LIVE: AtomicBool = AtomicBool::new(false);
 
+/// Give up the process slot once this runtime's core is gone.
+///
+/// Also releases the secret scope the TinySecurity module was admitted with.
+/// The module stays loaded for the process and keeps that scope, but the scope
+/// belonged to the released runtime's config; the next runtime, built in its
+/// own scratch directory, takes the module over instead of being refused
+/// every security call. Unconditional: the core decides whether TinySecurity
+/// is built in (its default features include it even when this crate's own
+/// `security-module` feature is off).
+pub(crate) fn release_process_slot() {
+    openhuman_core::security::release_secret_scope();
+    RUNTIME_LIVE.store(false, std::sync::atomic::Ordering::Release);
+}
+
 /// Error from building a [`Runtime`].
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
@@ -263,7 +277,7 @@ impl Drop for CoreGuard {
             }
         }
         drop(self.workspace._temp.take());
-        RUNTIME_LIVE.store(false, std::sync::atomic::Ordering::Release);
+        release_process_slot();
         log::debug!("[embed][runtime] released");
     }
 }
@@ -624,6 +638,7 @@ impl Runtime {
         domains: DomainSet,
         tool_groups: ToolGroups,
         max_agents: usize,
+        agent_opener: Option<host_agents::AgentOpener>,
         defaults: AgentDefaults,
         effective_host_kind: openhuman_core::core::types::HostKind,
         selection: Option<ModuleSelection>,
@@ -631,8 +646,9 @@ impl Runtime {
         storage_backend: Option<Arc<dyn openhuman_core::storage::StorageBackend>>,
     ) -> Self {
         let agents: Arc<host_agents::AgentMap> = Arc::new(Mutex::new(Default::default()));
-        let resolver: Arc<dyn openhuman_core::agent::host_agents::HostAgentResolver> =
-            Arc::new(host_agents::RuntimeAgents(Arc::clone(&agents)));
+        let resolver: Arc<dyn openhuman_core::agent::host_agents::HostAgentResolver> = Arc::new(
+            host_agents::RuntimeAgents::new(Arc::clone(&agents), agent_opener),
+        );
         openhuman_core::agent::host_agents::install(Arc::clone(&resolver));
         Self {
             id: uuid::Uuid::new_v4().to_string(),

@@ -8,7 +8,15 @@ use tokio::time::Duration;
 
 pub(super) const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 
+/// Prefix the retry loop (`executor.rs#classify_failure`) reads as final.
+pub(super) const POLICY_REFUSAL_PREFIX: &str = "blocked by security policy:";
+
 /// Check and reserve a scheduled shell command through TinySecurity.
+///
+/// A refusal that waiting cannot change (the policy said no) carries
+/// [`POLICY_REFUSAL_PREFIX`], so the job fails without spending its retries.
+/// An unavailable module or an exhausted action budget may recover, so those
+/// stay retryable.
 pub(crate) async fn authorize_shell_command(
     _config: &Config,
     security: &SecurityPolicy,
@@ -22,9 +30,9 @@ pub(crate) async fn authorize_shell_command(
             stage: crate::security::policy::CommandStage::Execute,
         })
         .await
-        .map_err(|reason| reason.to_string())?;
+        .map_err(refusal_output)?;
     if verdict.gate == crate::security::policy::GateDecision::Block {
-        return Err("blocked by security policy: command rejected".to_owned());
+        return Err(format!("{POLICY_REFUSAL_PREFIX} command rejected"));
     }
     Ok(())
 }
@@ -43,6 +51,15 @@ pub(super) async fn run_job_command(
         Duration::from_secs(SHELL_JOB_TIMEOUT_SECS),
     )
     .await
+}
+
+/// The job output for a refused command: final unless it may recover.
+fn refusal_output(reason: crate::security::policy::Refusal) -> String {
+    use crate::security::policy::Refusal;
+    match reason {
+        Refusal::Unavailable | Refusal::RateLimit => reason.to_string(),
+        _ => format!("{POLICY_REFUSAL_PREFIX} {reason}"),
+    }
 }
 
 pub(super) async fn run_job_command_with_timeout(
@@ -95,3 +112,7 @@ pub(super) async fn run_job_command_with_timeout(
     );
     (output.success(), combined)
 }
+
+#[cfg(test)]
+#[path = "shell_job_tests.rs"]
+mod tests;

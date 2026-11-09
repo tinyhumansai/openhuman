@@ -3823,6 +3823,10 @@ const messages: TranslationMap = {
     '에이전트가 한 턴에서 허용된 최대 도구 단계 수를 실행했지만 끝내지 못했습니다. 보통 도구가 계속 실패했다는 뜻입니다(웹 가져오기의 요청 한도인 경우가 많습니다). 한도가 풀리면 이 스레드에서 같은 질문을 다시 시도할 수 있습니다.',
   'chat_error.turn_timeout':
     '이 턴이 제한 시간을 넘겨 끝나지 않아 멈춰 있지 않도록 중단되었습니다. 보통 도구 호출이나 위임된 하위 에이전트가 멈췄다는 뜻입니다. 이 스레드에서 질문을 다시 시도할 수 있습니다.',
+  'chat_error.disk_full':
+    '디스크가 가득 차서 이 대화를 저장하지 못했습니다. 디스크 공간을 확보한 뒤 이 스레드에서 메시지를 다시 보내 주세요.',
+  'chat_error.prompt_screened':
+    'OpenHuman의 보안 검사가 이 메시지를 보류했기 때문에 모델로 전송되지 않았습니다. 어시스턴트를 대상으로 한 지시문(예: 웹 페이지나 이메일에서 인용한 내용)이 포함되어 있다면 이를 삭제하고 다시 시도하세요. 일반 메시지도 보류된다면 보안 모듈을 사용할 수 없는 상태일 수 있습니다. OpenHuman을 다시 시작한 후 다시 시도하세요.',
   'chat_error.empty_response':
     '모델이 빈 응답을 반환했습니다. 다시 시도해 주세요. 계속되면 다른 모델을 사용하거나 연결 → API 키 → LLM에서 설정을 확인해 주세요.',
   'chat_error.chat_template_rejected':
@@ -4302,6 +4306,10 @@ const messages: TranslationMap = {
     '마이크 접근이 거부되었습니다. 시스템 설정에서 허용한 뒤 다시 시도하세요.',
   'voice.live.error.micUnavailable': '사용 가능한 마이크가 없습니다.',
   'voice.live.error.connection': '음성 에이전트에 연결할 수 없습니다.',
+  'voice.live.error.insufficientCredits':
+    '실시간 음성에 크레딧이 더 필요합니다. 계속하려면 크레딧을 추가하세요.',
+  'voice.live.error.paidPlanRequired':
+    '실시간 음성은 유료 플랜이 필요합니다. 계속하려면 업그레이드하세요.',
   'voice.live.toolRunning': '{name} 실행 중',
   'voice.live.toolOk': '{name} 완료',
   'voice.live.toolFailed': '{name} 실패',
@@ -4553,11 +4561,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'Namespaced 프로세스 감옥',
   'settings.sandbox.backendHint.bubblewrap': '경량 사용자 네임스페이스',
   'settings.sandbox.backendHint.none': '직접 도구를 실행, unisolated',
-  'devOptions.toolPolicyDiagnostics.inventory.title': '도구 목록',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': '전체 도구',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': '사용 설정된 도구',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP stdio 도구',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC 도구',
   'devOptions.toolPolicyDiagnostics.posture.title': '정책 상태',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': '자율성 수준',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': '작업 공간에서만',

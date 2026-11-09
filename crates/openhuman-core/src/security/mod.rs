@@ -21,6 +21,7 @@ pub mod policy;
 pub mod prompt_injection;
 pub mod scrub;
 pub mod secret_storage;
+pub mod switch;
 
 #[allow(unused_imports)]
 pub use self::secret_storage::SecretStore;
@@ -50,3 +51,38 @@ pub use schemas::{
     all_controller_schemas as all_security_controller_schemas,
     all_registered_controllers as all_security_registered_controllers,
 };
+
+/// Declare that the secret state of the config directory `config_dir` does not
+/// outlive the runtime using it (an embedder's scratch directory).
+///
+/// TinySecurity keeps the secret scope it was admitted with (approval subject,
+/// audit stream and master-key registration, all derived from the admitting
+/// config) for as long as the module is loaded, which is the life of the
+/// process. After [`release_secret_scope`], a later config may take that scope
+/// over only if it is the admitting config itself or declared here: a durable
+/// config would otherwise keep secrets encrypted under another scope's master
+/// key. Declarations last until the next release. A no-op in a build without
+/// the `security-module` feature.
+pub fn declare_transient_secret_scope(config_dir: &std::path::Path) {
+    #[cfg(feature = "security-module")]
+    crate::modules::security::declare_transient_secret_scope(config_dir);
+    #[cfg(not(feature = "security-module"))]
+    let _ = config_dir;
+}
+
+/// Release the secret scope using the admitted TinySecurity module, for a host
+/// whose core is gone.
+///
+/// While the core that admitted TinySecurity is live, a config that derives a
+/// different secret scope is refused the module, so one live scope is never
+/// handed another's master key. A host that releases its core and builds a
+/// new one in the same process (an embedder's `Runtime`, each in its own
+/// scratch directory) calls this once the old core is dropped, so the next
+/// core can take the admitted module over (see
+/// [`declare_transient_secret_scope`]) instead of being refused every security
+/// call. A load still in flight for the released core does not reclaim it. A
+/// no-op in a build without the `security-module` feature.
+pub fn release_secret_scope() {
+    #[cfg(feature = "security-module")]
+    crate::modules::security::release_secret_scope();
+}

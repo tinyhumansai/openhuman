@@ -2,6 +2,7 @@
 
 use serde_json::json;
 
+use crate::config::schema::MEMORY_CORTEXDB_KEY_NAME;
 use crate::config::Config;
 use crate::core::Outcome;
 use crate::credentials::session_state::{
@@ -53,6 +54,7 @@ pub async fn store_provider_credentials(
     // notify again). Credentials are keyed `provider:<slug>`; the auth-error
     // registry is keyed by the bare provider slug used by the chat factory.
     clear_provider_auth_error(&provider);
+    drop_memory_read_with(&provider);
     Ok(Outcome::single_log(
         summarize_auth_profile(&stored),
         "provider credentials stored",
@@ -65,6 +67,17 @@ pub async fn store_provider_credentials(
 fn clear_provider_auth_error(provider: &str) {
     let slug = provider.strip_prefix("provider:").unwrap_or(provider);
     crate::inference::auth_error_registry::clear(slug);
+}
+
+/// A change to the memory engine's API key leaves what memory was read with
+/// the old one behind, so it is dropped.
+fn drop_memory_read_with(provider: &str) {
+    if provider
+        .trim()
+        .eq_ignore_ascii_case(MEMORY_CORTEXDB_KEY_NAME)
+    {
+        crate::memory::lifecycle::prefetch::invalidate_all();
+    }
 }
 
 pub async fn remove_provider_credentials(
@@ -81,6 +94,7 @@ pub async fn remove_provider_credentials(
     // Removing the key clears any recorded BYO auth error for this provider —
     // there is no longer a key to be "rejected", so the stale notice must go.
     clear_provider_auth_error(provider);
+    drop_memory_read_with(provider);
     Ok(Outcome::single_log(
         json!({
             "removed": removed,

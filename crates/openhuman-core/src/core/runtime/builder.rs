@@ -417,19 +417,29 @@ impl CoreBuilder {
         }
 
         // Reap agent runs orphaned by a previous process (crash / restart /
-        // deploy). Here, and not with the other boot-once jobs, because those
-        // run from `serve()`: an embedder that only calls `build()` and then
-        // `invoke()` never reaches them, and `openhuman.agent_runs_active` is
-        // dispatchable the moment this returns. The core is a single in-process
-        // runtime, so a run left Pending/Running/Interrupted in the durable
-        // status store has no executor to advance it and would be listed as
-        // active forever. Best-effort — a store that cannot be read logs and
-        // reaps nothing rather than failing the build.
-        if self.boot_mode == CoreBootMode::Normal {
-            if let Some(cfg) = config.as_ref() {
-                crate::agent::tinyagents::reaper::reap_orphaned_runs(&cfg.workspace_dir).await;
+        // deploy). Started here, and not with the other boot-once jobs,
+        // because those run from `serve()`: an embedder that only calls
+        // `build()` and then `invoke()` never reaches them. The core is a
+        // single in-process runtime, so a run left Pending/Running/Interrupted
+        // in the durable status store has no executor to advance it and would
+        // be listed as active forever.
+        //
+        // Spawned, not awaited: with a storage backend the sweep visits every
+        // recorded agent in turn, which on a host with hundreds of agents took
+        // minutes and held the whole boot. The tradeoff is that
+        // `openhuman.agent_runs_active` may still list a previous process's
+        // orphans for the few moments the sweep takes;
+        // [`CoreRuntime::wait_for_startup_sweep`] is there for a caller that
+        // needs the reconciled listing. Best-effort: a store that cannot be
+        // read logs and reaps nothing.
+        let startup_sweep = if self.boot_mode == CoreBootMode::Normal {
+            match config.as_ref() {
+                Some(cfg) => start_startup_sweep(&cfg.workspace_dir).await,
+                None => None,
             }
-        }
+        } else {
+            None
+        };
 
         Ok(CoreRuntime {
             ctx,
@@ -449,8 +459,22 @@ impl CoreBuilder {
             host: self.host,
             port: self.port,
             service_tasks: crate::core::runtime::services::ServiceTasks::default(),
+            startup_sweep: tokio::sync::Mutex::new(startup_sweep),
         })
     }
+}
+
+/// Spawn the orphaned-run sweep for `workspace` on the current tokio runtime.
+/// Without a tokio runtime there is nothing to spawn on, so the sweep runs
+/// inline as it always did.
+async fn start_startup_sweep(
+    workspace: &std::path::Path,
+) -> Option<tokio::task::JoinHandle<usize>> {
+    let handle = crate::agent::tinyagents::reaper::spawn_startup_sweep(workspace.to_path_buf());
+    if handle.is_none() {
+        crate::agent::tinyagents::reaper::reap_orphaned_runs(workspace).await;
+    }
+    handle
 }
 
 /// A built, initialized core. Dispatch RPC in-process with [`CoreRuntime::invoke`],
@@ -470,6 +494,9 @@ pub struct CoreRuntime {
     /// started; aborted by [`stop_services`](Self::stop_services) and when
     /// the runtime drops.
     service_tasks: crate::core::runtime::services::ServiceTasks,
+    /// The background orphaned-run sweep started by `build()` (or by the
+    /// secret preflight); see [`wait_for_startup_sweep`](Self::wait_for_startup_sweep).
+    startup_sweep: tokio::sync::Mutex<Option<tokio::task::JoinHandle<usize>>>,
 }
 
 impl CoreRuntime {
@@ -514,6 +541,7 @@ impl CoreRuntime {
             .expect("core config lock poisoned")
             .clone()
             .ok_or_else(|| anyhow::anyhow!("secret preflight has no loaded config"))?;
+        log::debug!("[core-runtime] secret preflight: decrypting config secrets");
         let migrated = config.decrypt_secrets_after_preflight().await?;
         if migrated {
             if let Err(error) = config.save().await {
@@ -523,17 +551,40 @@ impl CoreRuntime {
             }
         }
         self.ctx.replace_latest_embedder_config(config.clone());
+        log::debug!("[core-runtime] secret preflight: loading startup credentials");
         crate::core::runtime::subscribers::finish_secret_preflight_credentials(
             &crate::core::runtime::DispatchCtx::new(Arc::clone(&self.ctx)),
             &config,
         )
         .await;
+        log::debug!("[core-runtime] secret preflight: running legacy migrations");
         crate::core::runtime::services::run_legacy_migrations(&config).await;
-        crate::agent::tinyagents::reaper::reap_orphaned_runs(&config.workspace_dir).await;
+        log::debug!("[core-runtime] secret preflight: starting the startup sweep");
+        let sweep = start_startup_sweep(&config.workspace_dir).await;
+        *self.startup_sweep.lock().await = sweep;
         *self.config.write().expect("core config lock poisoned") = Some(config);
         self.secret_preflight_complete
             .store(true, std::sync::atomic::Ordering::Release);
+        log::debug!("[core-runtime] secret preflight: complete");
         Ok(())
+    }
+
+    /// Wait for the background orphaned-run sweep this runtime started at
+    /// build time to finish, returning how many runs it moved to `Cancelled`.
+    ///
+    /// `build()` no longer waits for the sweep, so a caller that must not see
+    /// a previous process's orphans in `openhuman.agent_runs_active` can call
+    /// this first. Returns `None` when no sweep was started (or it was
+    /// already waited for), and `Some(0)` if the sweep task failed.
+    pub async fn wait_for_startup_sweep(&self) -> Option<usize> {
+        let handle = self.startup_sweep.lock().await.take()?;
+        match handle.await {
+            Ok(reaped) => Some(reaped),
+            Err(error) => {
+                log::warn!("[agent] startup run sweep task failed: {error}");
+                Some(0)
+            }
+        }
     }
 
     /// The initialized core context (host identity + resolved workspace).

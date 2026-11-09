@@ -179,6 +179,14 @@ host already puts in the system prompt: a pack whose every cited hit it
 excludes is left out (TinyMemory renders the pack, so single lines cannot be
 dropped yet).
 
+The memory block a new transcript generation renders (see
+`agent/session_host/runtime_session/memory_block.rs`) can likewise be taken off
+the turn's path: `[memory] memory_block_deadline_ms` (embed:
+`MemoryBinding::memory_block_deadline`) bounds the wait, a render that lapses
+is kept for the next generation start (`[memory_block] deferred`), and
+`Agent::prewarm_memory_block(thread_id)` renders it ahead of a turn. Its
+beliefs and learnings are read concurrently.
+
 The live prelude and compaction summarizer call the underlying work directly
 from the scoped prefetch workers. Their background deadlines bound engine I/O
 without a second manual timeout wrapper.

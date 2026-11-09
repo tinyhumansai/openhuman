@@ -169,7 +169,7 @@ E2E_PORT_BASE=31000 pnpm --filter openhuman-app test:e2e:web
 
 ### Push / PR checks
 
-The default pull-request gate is `.github/workflows/ci-fast.yml`: quality
+The default pull-request gate is `.github/workflows/ci-fast-hosted.yml`: quality
 checks plus the complete unit-test suites for each changed area. No E2E suite
 runs on a pull request to `main`.
 
@@ -183,7 +183,7 @@ desktop suite and Rust E2E:
 | Playwright web    | `playwright-e2e`                      | Four required Linux jobs, 16 ordinary shards per job plus round-robin special cases |
 | Desktop           | `e2e-desktop`, via `e2e-reusable.yml` | Four Linux suite groups                                                             |
 
-Playwright builds its web bundle and standalone core once, then uploads the same artifact to all four required lanes. The required selection runs 109 of the 110 discovered specs: all 48 active browser owners from the consolidation inventory and their assertion recipients remain required, as do every other healthy browser spec. It schedules 64 ordinary shards and nine isolated cases (Connections aliases, Connections deep links, and seven Skills search/install cases), each with its own core and workspace: 73 required units total. A separate `playwright-legacy-diagnostic` job runs the unchanged `aui-tool-result-elements.spec.ts` as one file-atomic unit. Its component compatibility blocker is tracked in [issue #236](https://github.com/senamakel/openhuman/issues/236#issuecomment-6284472501). Only this diagnostic job is advisory; it is excluded from the final gate, while all four required lanes remain strict. The scheduler continues through assigned units to collect failures and exits nonzero if any required unit fails. CI Full therefore runs 74 fresh Playwright units across the required and diagnostic jobs, without claiming the legacy diagnostic passed. Manual Playwright selects all 110 specs strictly, using the same 64 shards and nine isolated cases (73 units); it has no advisory selection.
+Playwright builds its web bundle and standalone core once, then uploads the same artifact to all four required lanes. The required selection runs 110 of the 111 discovered specs: all 48 active browser owners from the consolidation inventory and their assertion recipients remain required, as do every other healthy browser spec. It schedules 64 ordinary shards and nine isolated cases (Connections aliases, Connections deep links, and seven Skills search/install cases), each with its own core and workspace: 73 required units total. A separate `playwright-legacy-diagnostic` job runs the unchanged `aui-tool-result-elements.spec.ts` as one file-atomic unit. Its component compatibility blocker is tracked in [issue #236](https://github.com/senamakel/openhuman/issues/236#issuecomment-6284472501). Only this diagnostic job is advisory; it is excluded from the final gate, while all four required lanes remain strict. The scheduler continues through assigned units to collect failures and exits nonzero if any required unit fails. CI Full therefore runs 74 fresh Playwright units across the required and diagnostic jobs, without claiming the legacy diagnostic passed. Manual Playwright selects all 111 specs strictly, using the same 64 shards and nine isolated cases (73 units); it has no advisory selection.
 
 The desktop lane calls the reusable workflow with `run_linux: true`, `run_macos: false` and `run_windows: false`, so only the Linux harness runs. Linux uses four fresh WDIO sessions: `foundation` (`auth,navigation,system`), `chat` (`chat,skills,journeys`), `connections` (`providers,provider-web,connectors`), and `settings` (`settings,notifications`). Payments and webhooks have no native flows after their browser owners moved to Playwright, so they are absent from the native shard assignments. The consolidation reviewed 51 same-basename native/Playwright pairs; it retained only five narrowly split mixed cases and retired one obsolete offline-banner pair. The native suite also retains 24 preexisting native-only files outside that duplicate inventory, plus `tauri-commands.spec.ts`, whose browser bootstrap checks moved to the Playwright smoke owner while its native IPC checks remain. The 24 native-only files were not assessed for whether they require the desktop host. The reusable workflow applies the same group definitions to its macOS and Windows full-suite jobs, but those jobs are currently disabled.
 
@@ -217,7 +217,7 @@ renamed files), and add it only to the owning suite. If host and browser cases
 cover distinct behavior, name and document both responsibilities explicitly;
 never keep a second full copy as extra confidence.
 
-The current inventory has 30 native spec files and 110 Playwright spec files,
+The current inventory has 30 native spec files and 111 Playwright spec files,
 with only the five mixed files above shared by basename. The 24 preexisting
 native-only files were outside the duplicate inventory and were not assessed
 for whether they need a desktop host; `tauri-commands.spec.ts` retains the

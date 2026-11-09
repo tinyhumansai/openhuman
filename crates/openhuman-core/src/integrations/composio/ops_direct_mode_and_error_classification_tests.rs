@@ -663,3 +663,44 @@ async fn backend_mode_without_session_is_false_when_the_session_store_is_unreada
     config.config_path = occupied.join("config.toml");
     assert!(!backend_mode_without_session(&config).await);
 }
+
+// ── composio_op_report_message ─────────────────────────────────
+//
+// TAURI-RUST-116R (#8509): the op reporter sends a static message to Sentry,
+// so the direct-key backoff must be recognised BEFORE the message is replaced,
+// or the `ProviderUserState` demotion never sees it (CodeRabbit on #8516).
+
+#[test]
+fn the_direct_key_backoff_is_reported_as_its_demoted_anchor() {
+    let backoff = crate::integrations::composio::direct_auth::invalid_api_key_backoff_message(3);
+    for rendered in [backoff.clone(), format!("[composio-direct] {backoff}")] {
+        let message = composio_op_report_message(&rendered);
+        assert_eq!(
+            message,
+            crate::integrations::composio::direct_auth::COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR
+        );
+        assert_eq!(
+            crate::core::observability::expected_error_kind(message),
+            Some(crate::core::observability::ExpectedErrorKind::ProviderUserState),
+            "{rendered}"
+        );
+    }
+}
+
+#[test]
+fn other_op_errors_keep_the_static_message_and_stay_reportable() {
+    for rendered in [
+        "Backend returned 502 Bad Gateway for GET https://example.test/x: upstream down",
+        "Backend returned 502 Bad Gateway: Direct-mode Composio API key was rejected earlier",
+        "HTTP 401: Invalid API key",
+        "error sending request: operation timed out",
+    ] {
+        let message = composio_op_report_message(rendered);
+        assert_eq!(message, "connector operation failed", "{rendered}");
+        assert_eq!(
+            crate::core::observability::expected_error_kind(message),
+            None,
+            "{rendered}"
+        );
+    }
+}

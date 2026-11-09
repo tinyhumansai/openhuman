@@ -106,6 +106,15 @@ fn startup_preflight_allows_only_health_and_approval_rpc_methods() {
     assert!(super::preflight_rpc_method_allowed(
         "openhuman.approval_decide"
     ));
+    assert!(super::preflight_rpc_method_allowed(
+        "openhuman.keyring_consent_list_pending_operations"
+    ));
+    assert!(super::preflight_rpc_method_allowed(
+        "openhuman.keyring_consent_respond_operation"
+    ));
+    assert!(!super::preflight_rpc_method_allowed(
+        "openhuman.keyring_consent_status"
+    ));
     assert!(!super::preflight_rpc_method_allowed("core.config"));
     assert!(!super::preflight_rpc_method_allowed("openhuman.config_get"));
     assert!(!super::preflight_rpc_method_allowed(

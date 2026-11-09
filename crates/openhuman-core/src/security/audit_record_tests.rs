@@ -45,3 +45,41 @@ fn diagnostic_format_does_not_print_command_content() {
     );
     assert!(!format!("{event:?}").contains(secret));
 }
+
+fn audited_config() -> crate::config::Config {
+    let mut config = crate::config::Config::default();
+    config.audit.enabled = true;
+    config
+}
+
+fn an_event() -> HostAuditEvent {
+    HostAuditEvent::command_execution("tool:shell", "echo hello", true, true, true, 1)
+}
+
+#[cfg(not(feature = "security-module"))]
+#[tokio::test]
+async fn a_build_without_the_module_records_nothing_and_succeeds() {
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    assert_eq!(
+        record(&ctx, Some(&audited_config()), an_event()).await,
+        Ok(())
+    );
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn security_configured_off_records_nothing_and_succeeds() {
+    let mut config = audited_config();
+    config.security = crate::config::SecurityModeConfig::off();
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    assert_eq!(record(&ctx, Some(&config), an_event()).await, Ok(()));
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn an_enforcing_audit_without_the_module_fails() {
+    let mut config = audited_config();
+    config.modules.enabled = false;
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    assert!(record(&ctx, Some(&config), an_event()).await.is_err());
+}

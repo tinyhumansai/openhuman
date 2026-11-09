@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// The provider is asynchronous because session lookup may use the configured
 /// credential store. TinyHumans bridges it to the SDK callback via the shared
 /// storage blocking runtime.
-
+///
 /// Build a static provider that always returns the same token value.
 ///
 /// Used by the core-facing static-token connect operation.

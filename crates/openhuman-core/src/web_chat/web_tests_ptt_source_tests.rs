@@ -106,135 +106,135 @@ async fn ptt_source_turn_completes_without_publishing_a_voice_event() {
     let ctx = crate::core::runtime::DispatchCtx::new(Arc::clone(&core_context));
 
     crate::core::runtime::CoreContext::scope(core_context, async {
-        struct Events(tokio::sync::mpsc::UnboundedSender<crate::core::events::DomainEvent>);
+    struct Events(tokio::sync::mpsc::UnboundedSender<crate::core::events::DomainEvent>);
 
-        #[async_trait::async_trait]
-        impl EventHandler<crate::core::events::DomainEvent> for Events {
-            fn name(&self) -> &str {
-                "web_chat::ptt_regression_test"
-            }
-
-            async fn handle(&self, event: &crate::core::events::DomainEvent) {
-                let _ = self.0.send(event.clone());
-            }
+    #[async_trait::async_trait]
+    impl EventHandler<crate::core::events::DomainEvent> for Events {
+        fn name(&self) -> &str {
+            "web_chat::ptt_regression_test"
         }
 
-        crate::core::bus::init().await.expect("event bus init");
-        let (events_tx, mut observed_events) = tokio::sync::mpsc::unbounded_channel();
-        let _subscription = crate::core::bus::BUS
-            .subscribe(Arc::new(Events(events_tx)))
-            .expect("voice event subscription");
+        async fn handle(&self, event: &crate::core::events::DomainEvent) {
+            let _ = self.0.send(event.clone());
+        }
+    }
 
-        let bus_ready = "ptt-regression-bus-ready-403";
-        crate::core::bus::BUS.publish(crate::core::events::DomainEvent::SystemStartup {
-            component: bus_ready.to_string(),
-        });
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            loop {
-                if matches!(observed_events.recv().await,
-                Some(crate::core::events::DomainEvent::SystemStartup { component })
-                    if component == bus_ready)
-                {
-                    break;
-                }
+    crate::core::bus::init().await.expect("event bus init");
+    let (events_tx, mut observed_events) = tokio::sync::mpsc::unbounded_channel();
+    let _subscription = crate::core::bus::BUS
+        .subscribe(Arc::new(Events(events_tx)))
+        .expect("voice event subscription");
+
+    let bus_ready = "ptt-regression-bus-ready-403";
+    crate::core::bus::BUS.publish(crate::core::events::DomainEvent::SystemStartup {
+        component: bus_ready.to_string(),
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if matches!(observed_events.recv().await,
+            Some(crate::core::events::DomainEvent::SystemStartup { component })
+                if component == bus_ready)
+            {
+                break;
             }
-        })
-        .await
-        .expect("BUS subscriber should receive its control event");
+        }
+    })
+    .await
+    .expect("BUS subscriber should receive its control event");
 
-        let mut web_events = subscribe_web_channel_events();
-        let thread_id = "ptt-event-regression-403-thread";
-        let session_id = 403_042;
-        let request_id = start_chat(
-            &ctx,
-            "ptt-test-client",
-            thread_id,
-            "recognized words",
-            None,
-            None,
-            None,
-            None,
-            ChatRequestMetadata {
-                source: Some("ptt".to_string()),
-                session_id: Some(session_id),
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("PTT web chat turn should start");
+    let mut web_events = subscribe_web_channel_events();
+    let thread_id = "ptt-event-regression-403-thread";
+    let session_id = 403_042;
+    let request_id = start_chat(
+        &ctx,
+        "ptt-test-client",
+        thread_id,
+        "recognized words",
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata {
+            source: Some("ptt".to_string()),
+            session_id: Some(session_id),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("PTT web chat turn should start");
 
-        let done = tokio::time::timeout(std::time::Duration::from_secs(20), async {
-            loop {
-                let event = web_events
-                    .recv()
-                    .await
-                    .expect("web event stream stays open");
-                if event.context().request_id == request_id && event.event_name() == "chat_done" {
-                    break event;
-                }
-                assert_ne!(
-                    (event.context().request_id.as_str(), event.event_name()),
-                    (request_id.as_str(), "chat_error"),
-                    "PTT turn should complete successfully: {event:?}; scripted model received {} requests; invoke errors: {:?}",
-                    model.requests().len(),
-                    model_errors.lock().expect("recording model error lock").as_slice()
-                );
+    let done = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let event = web_events
+                .recv()
+                .await
+                .expect("web event stream stays open");
+            if event.context().request_id == request_id && event.event_name() == "chat_done" {
+                break event;
             }
-        })
-        .await
-        .unwrap_or_else(|_| {
-            panic!(
-                "PTT turn should finish; scripted model received {} requests; invoke errors: {:?}",
+            assert_ne!(
+                (event.context().request_id.as_str(), event.event_name()),
+                (request_id.as_str(), "chat_error"),
+                "PTT turn should complete successfully: {event:?}; scripted model received {} requests; invoke errors: {:?}",
                 model.requests().len(),
                 model_errors.lock().expect("recording model error lock").as_slice()
-            )
-        });
-        let full_response = match done.wire_event() {
-            crate::web_chat::WebChannelEvent::ChatDone { full_response, .. } => full_response.clone(),
-            _ => None,
-        };
-        assert_eq!(full_response.as_deref(), Some("hello from mock"));
-        assert!(
-            !model.requests().is_empty(),
-            "successful turn should invoke the scripted model"
-        );
-
-        // Subscriber dispatch is a single FIFO loop (`events/subscriber.rs`), so
-        // observing this marker proves it has handled every locally published
-        // event before the barrier, including any PTT event sent by the turn.
-        let barrier = "ptt-regression-bus-barrier-403";
-        crate::core::bus::BUS.publish(crate::core::events::DomainEvent::SystemStartup {
-            component: barrier.to_string(),
-        });
-        let matching_voice_event_seen =
-            tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                let mut matching_voice_event_seen = false;
-                loop {
-                    let Some(event) = observed_events.recv().await else {
-                        continue;
-                    };
-                    if matches!(
-                        &event,
-                        crate::core::events::DomainEvent::SystemStartup { component }
-                            if component == barrier
-                    ) {
-                        break matching_voice_event_seen;
-                    }
-                    let debug = format!("{event:?}");
-                    if event.domain() == "voice"
-                        && debug.contains(thread_id)
-                        && debug.contains(&session_id.to_string())
-                    {
-                        matching_voice_event_seen = true;
-                    }
-                }
-            })
-            .await
-            .expect("BUS subscriber should reach the post-turn barrier");
-        assert!(
-            !matching_voice_event_seen,
-            "a successful source=ptt message must not publish a voice event"
-        );
+            );
+        }
     })
-    .await;
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "PTT turn should finish; scripted model received {} requests; invoke errors: {:?}",
+            model.requests().len(),
+            model_errors.lock().expect("recording model error lock").as_slice()
+        )
+    });
+    let full_response = match done.wire_event() {
+        crate::web_chat::WebChannelEvent::ChatDone { full_response, .. } => full_response.clone(),
+        _ => None,
+    };
+    assert_eq!(full_response.as_deref(), Some("hello from mock"));
+    assert!(
+        !model.requests().is_empty(),
+        "successful turn should invoke the scripted model"
+    );
+
+    // Subscriber dispatch is a single FIFO loop (`events/subscriber.rs`), so
+    // observing this marker proves it has handled every locally published
+    // event before the barrier, including any PTT event sent by the turn.
+    let barrier = "ptt-regression-bus-barrier-403";
+    crate::core::bus::BUS.publish(crate::core::events::DomainEvent::SystemStartup {
+        component: barrier.to_string(),
+    });
+    let matching_voice_event_seen =
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut matching_voice_event_seen = false;
+            loop {
+                let Some(event) = observed_events.recv().await else {
+                    continue;
+                };
+                if matches!(
+                    &event,
+                    crate::core::events::DomainEvent::SystemStartup { component }
+                        if component == barrier
+                ) {
+                    break matching_voice_event_seen;
+                }
+                let debug = format!("{event:?}");
+                if event.domain() == "voice"
+                    && debug.contains(thread_id)
+                    && debug.contains(&session_id.to_string())
+                {
+                    matching_voice_event_seen = true;
+                }
+            }
+        })
+        .await
+        .expect("BUS subscriber should reach the post-turn barrier");
+    assert!(
+        !matching_voice_event_seen,
+        "a successful source=ptt message must not publish a voice event"
+    );
+})
+.await;
 }

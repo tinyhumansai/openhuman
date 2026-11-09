@@ -109,7 +109,18 @@ pub(crate) const SAMPLING_TOOLS: &[&str] = &["get_tool_output_sample", "get_tool
 /// on is not cheaper, it is just wrong more quietly — but a host that wants a
 /// bound should bound the *catalogue* (serve fewer tools, or page the listing),
 /// not cut the bytes underneath it.
-pub(crate) const DISCOVERY_TOOLS: &[&str] = &["mcp_list_tools", "mcp_list_servers"];
+///
+/// `tool_search` is the same kind of listing: its answer is the schemas of the
+/// tools it found, and the harness's collapse step later rewrites a *used*
+/// answer down to the schemas of the tools the run called. That rewrite
+/// recognises the answer by its shape, so a tabulated, summarised or cut one
+/// is skipped and keeps its full weight for the rest of the thread. The size
+/// is bounded by the search itself (`[agent.tool_search] max_limit`).
+pub(crate) const DISCOVERY_TOOLS: &[&str] = &[
+    "mcp_list_tools",
+    "mcp_list_servers",
+    tinytools::TOOL_SEARCH_NAME,
+];
 
 /// Steps 1 (TinyJuice summary) + 2 (tokenjuice compaction) exemption:
 /// proposal tools (final-output contract, see [`COMPACTION_EXEMPT_TOOLS`]),

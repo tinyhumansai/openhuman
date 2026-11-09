@@ -88,6 +88,7 @@ async fn a_compaction_records_the_summarizer_model_it_called() {
         SummarizationPolicy::default().with_trigger_override(200),
         crate::config::CompactionStrategy::TaskState,
         None,
+        None,
         CompactionSummarizer {
             model: state_model,
             model_id: "scaledown/summarize".into(),
@@ -153,6 +154,7 @@ async fn a_markers_compaction_sends_no_tool_output_and_caps_the_summary() {
     let mw = Arc::new(compression_middleware(
         SummarizationPolicy::default().with_trigger_override(200),
         crate::config::CompactionStrategy::Summary,
+        None,
         None,
         CompactionSummarizer {
             model: summarizer_model.clone(),
@@ -301,4 +303,104 @@ async fn an_idle_fold_with_nothing_old_enough_returns_none() {
     .expect("the fold runs");
     assert!(folded.is_none());
     assert!(summarizer_model.requests().is_empty());
+}
+
+/// Tokens of the conversation turns a compacted request still carries
+/// verbatim: the `ask` / `answer` messages the test wrote, not the summary.
+fn verbatim_tokens(request: &tinyinference_llm::model::ModelRequest) -> u64 {
+    request
+        .messages
+        .iter()
+        .filter(|message| {
+            let text = format!("{message:?}");
+            text.contains("ask ") || text.contains("answer ")
+        })
+        .map(tinyagents_harness::token_estimation::estimate_message_tokens)
+        .sum()
+}
+
+/// Runs one compacting turn over a long history and returns the tokens the
+/// turn's model call still saw verbatim.
+async fn tail_after_compaction(keep_recent_tokens: Option<u64>) -> u64 {
+    use tinyagents_harness::context::{RunConfig, RunContext};
+    use tinyagents_harness::testkit::ScriptedModel;
+
+    let turn_model = Arc::new(ScriptedModel::replies(vec!["done"]));
+    let mw = Arc::new(compression_middleware(
+        SummarizationPolicy::default().with_trigger_override(60_000),
+        crate::config::CompactionStrategy::TaskState,
+        None,
+        keep_recent_tokens,
+        CompactionSummarizer {
+            model: Arc::new(ScriptedModel::replies(vec![
+                "{\"goal\": \"keep going\"}";
+                4
+            ])),
+            model_id: "summarizer".into(),
+            settings: Default::default(),
+        },
+        "turn-model",
+        None,
+        None,
+    ));
+    let mut harness: AgentHarness<()> = AgentHarness::new();
+    harness.with_model_resolver(Arc::new(
+        tinyagents_harness::host::FixedModelResolver::named("turn-model", turn_model.clone() as _),
+    ));
+    harness.push_middleware(mw.clone());
+    harness.push_model_middleware(mw.clone());
+
+    let mut history = vec![Message::system("system")];
+    for round in 0..120 {
+        history.push(Message::user(format!(
+            "ask {round}: {}",
+            "detail ".repeat(280)
+        )));
+        history.push(Message::assistant(format!(
+            "answer {round}: {}",
+            "result ".repeat(280)
+        )));
+    }
+    history.push(Message::user("continue"));
+    harness
+        .invoke_in_context(
+            &(),
+            RunContext::new(RunConfig::new("compaction"), ()),
+            history,
+        )
+        .await
+        .expect("the turn runs");
+    assert!(!mw.records().is_empty(), "the turn compacted");
+    verbatim_tokens(turn_model.requests().last().expect("the model was called"))
+}
+
+/// `[context] keep_recent_tokens` sets the tail an in-turn compaction keeps
+/// verbatim; unset keeps the 20k it always had.
+#[tokio::test]
+async fn keep_recent_tokens_override_reaches_compaction() {
+    let default_tail = tail_after_compaction(None).await;
+    let short_tail = tail_after_compaction(Some(12_000)).await;
+    assert!(
+        (19_000..=21_000).contains(&default_tail),
+        "unset keeps about 20k tokens, kept {default_tail}"
+    );
+    assert!(
+        (11_000..=13_000).contains(&short_tail),
+        "12k keeps about 12k tokens, kept {short_tail}"
+    );
+}
+
+#[test]
+fn the_task_state_tail_is_the_override_capped_by_a_fifth_of_the_window() {
+    assert_eq!(task_state_keep_recent_tokens(None, None), 20_000);
+    assert_eq!(task_state_keep_recent_tokens(None, Some(12_000)), 12_000);
+    assert_eq!(task_state_keep_recent_tokens(Some(200_000), None), 20_000);
+    assert_eq!(
+        task_state_keep_recent_tokens(Some(200_000), Some(12_000)),
+        12_000
+    );
+    assert_eq!(
+        task_state_keep_recent_tokens(Some(40_000), Some(12_000)),
+        8_000
+    );
 }

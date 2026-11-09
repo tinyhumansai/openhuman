@@ -335,6 +335,7 @@ fn missing_and_remote_turn_origins_are_untrusted_spawn_sources() {
             reply_target: "test".into(),
             message_id: "test".into(),
             history_key: None,
+            channel_session: None,
         })),
         SpawnSource::Untrusted
     );

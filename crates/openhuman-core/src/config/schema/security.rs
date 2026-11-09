@@ -43,6 +43,14 @@ pub enum SandboxBackend {
     Firejail,
     Bubblewrap,
     Docker,
+    /// One long-lived box per tenant on an NVIDIA OpenShell gateway, through
+    /// the TinyBox module (`[runtime.openshell]`).
+    #[serde(rename = "openshell")]
+    OpenShell,
+    /// A box per command on the hosted agent37 HTTP sandbox service, through
+    /// the TinyBox module (`[runtime.agent37]`).
+    #[serde(rename = "agent37")]
+    Agent37,
     None,
 }
 

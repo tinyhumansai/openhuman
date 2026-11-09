@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::user_scope::{
-    activate_user_scope, rebind_after_credential_change, reload_config_or,
+    activate_user_scope, complete_user_scope_activation, rebind_after_credential_change,
+    reload_config_or, roll_back_user_scope_activation, UserScopeActivation,
 };
 use crate::core::observability::sentry_scope;
 use crate::credentials::session_state::{
@@ -11,19 +12,31 @@ use crate::credentials::{
     api_key, identity, AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 
-async fn rollback_failed_credential_rebind(auth: &AuthService, cause: &str) -> String {
+async fn rollback_failed_credential_rebind(
+    auth: &AuthService,
+    activation: Option<UserScopeActivation>,
+    cause: &str,
+) -> String {
     if let Err(rollback) = auth
         .remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
         .await
     {
         return format!("credential rebind failed: {cause}; rollback failed: {rollback}");
     }
-    if let Err(rollback) = crate::config::user_scope::deactivate_user_scope() {
-        return format!(
-            "credential rebind failed: {cause}; active-user rollback failed: {rollback}"
-        );
+    rollback_failed_activation(activation, cause)
+}
+
+/// Undo the directory activation of a sign-in that failed before its
+/// credential was committed, so a failure leaves the previous user active and
+/// no half-created profile behind.
+fn rollback_failed_activation(activation: Option<UserScopeActivation>, cause: &str) -> String {
+    let Some(activation) = activation else {
+        return cause.to_string();
+    };
+    match roll_back_user_scope_activation(activation) {
+        Ok(()) => cause.to_string(),
+        Err(rollback) => format!("{cause}; active-user rollback failed: {rollback}"),
     }
-    cause.to_string()
 }
 
 /// Install a backend credential. See the module docs for what the core does
@@ -86,6 +99,7 @@ pub async fn set_credential(
         .clone()
         .expect("session and local credentials always resolve a user id");
     let mut logs = Vec::new();
+    let needs_restart = sign_in_needs_restart(&user_id).await;
 
     // Refresh vs. install vs. account switch, decided on the stored profile.
     let existing = load_app_session_profile(config).await?;
@@ -145,14 +159,23 @@ pub async fn set_credential(
         metadata.insert(SESSION_EXPIRES_AT_META.to_string(), exp.to_rfc3339());
     }
 
+    let mut activation = None;
     let effective_config = if refresh {
         logs.push("credential refreshed (same secret, same user)".to_string());
         config.clone()
     } else {
-        logs.extend(activate_user_scope(ctx, &user_id)?);
+        if needs_restart {
+            return sign_in_across_restart(ctx, &user_id, logs);
+        }
+        let activated = activate_user_scope(ctx, &user_id)?;
+        logs.extend(activated.logs.iter().cloned());
+        activation = Some(activated);
         // Reload so auth-profiles.json, the encryption key and the workspace
         // resolve to the user-scoped location before the profile is written.
-        let effective = reload_config_or(ctx, config).await?;
+        let effective = match reload_config_or(ctx, config).await {
+            Ok(effective) => effective,
+            Err(error) => return Err(rollback_failed_activation(activation, &error)),
+        };
         if resolved.kind == CredentialKind::Local {
             match crate::config::ops::set_onboarding_completed(ctx, false).await {
                 Ok(_) => {
@@ -168,15 +191,18 @@ pub async fn set_credential(
     };
 
     let auth = AuthService::from_config(&effective_config);
-    auth.store_provider_token(
-        APP_SESSION_PROVIDER,
-        DEFAULT_AUTH_PROFILE_NAME,
-        &resolved.token,
-        metadata,
-        true,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    if let Err(error) = auth
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            &resolved.token,
+            metadata,
+            true,
+        )
+        .await
+    {
+        return Err(rollback_failed_activation(activation, &error.to_string()));
+    }
     logs.push(format!("{} credential stored", resolved.kind.as_str()));
 
     if !refresh {
@@ -186,9 +212,12 @@ pub async fn set_credential(
         {
             // A retry of the same credential takes the refresh fast-path, so
             // leaving its profile behind would let it skip this required bind.
-            return Err(rollback_failed_credential_rebind(&auth, &error).await);
+            return Err(rollback_failed_credential_rebind(&auth, activation, &error).await);
         }
         logs.push("process globals rebound after credential install".to_string());
+        if let Some(activation) = &activation {
+            logs.extend(complete_user_scope_activation(ctx, activation));
+        }
         start_credential_gated_services(ctx, &effective_config).await;
         logs.push("credential-gated services started".to_string());
     }
@@ -224,6 +253,68 @@ pub async fn set_credential(
     let state = build_session_state(&effective_config).await?;
     publish_credential_changed(ctx, resolved.kind.as_str());
     Ok(Outcome::new(state, logs))
+}
+
+/// Whether signing `user_id` in moves this process to a profile its
+/// TinySecurity was not admitted for. That identity is fixed for the life of
+/// the process, so the sign-in completes only after a restart.
+async fn sign_in_needs_restart(user_id: &str) -> bool {
+    #[cfg(feature = "security-module")]
+    {
+        if !crate::config::user_scope::operator_user_activation_allowed() {
+            return false;
+        }
+        let Some(admitted) = crate::modules::ops::security_admitted_key_path().await else {
+            return false;
+        };
+        let Ok(root) = crate::config::default_root_openhuman_dir() else {
+            return false;
+        };
+        crate::credentials::session_state::is_profile_switch(
+            &admitted,
+            &crate::config::user_openhuman_dir(&root, user_id).join(".secret_key"),
+        )
+    }
+    #[cfg(not(feature = "security-module"))]
+    {
+        let _ = user_id;
+        false
+    }
+}
+
+/// Refusal text for a sign-in that needs the process restarted first.
+const SIGN_IN_AGAIN: &str =
+    "restart required to finish switching profiles; sign in again after restarting";
+
+/// Activate `user_id`'s profile and report that the process must restart:
+/// this process's TinySecurity cannot serve it. Nothing is stored under this
+/// process's profile; the user signs in again once it has restarted.
+fn sign_in_across_restart(
+    ctx: &DispatchCtx,
+    user_id: &str,
+    mut logs: Vec<String>,
+) -> Result<Outcome<AuthStateResponse>, String> {
+    let activation = activate_user_scope(ctx, user_id)?;
+    logs.push(SIGN_IN_AGAIN.to_string());
+    logs.extend(activation.logs.iter().cloned());
+    tracing::info!(
+        domain = "credentials",
+        operation = "set_credential",
+        "{LOG_PREFIX} profile switch: restart required"
+    );
+    Ok(Outcome::new(
+        AuthStateResponse {
+            is_authenticated: false,
+            user_id: Some(user_id.to_owned()),
+            user: None,
+            profile_id: None,
+            credential: None,
+            expires_at: None,
+            issuing_backend: None,
+            restart_required: true,
+        },
+        logs,
+    ))
 }
 
 #[cfg(test)]

@@ -547,7 +547,7 @@ fn the_event_queues_grant_carries_their_collections_and_queues() {
     assert!(grant.validate().is_ok());
     assert_eq!(
         grant.collections,
-        tinyeventqueues_bus::storage::collection_specs()
+        crate::storage::schema::event_queue_collection_specs()
     );
     let manifest = grant.queues.expect("a queue manifest");
     assert!(manifest.get("teq.ingress").is_some());
