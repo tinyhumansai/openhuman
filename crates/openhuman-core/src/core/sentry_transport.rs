@@ -31,13 +31,17 @@ impl SharedReqwestTransport {
         if let Some(url) = options.http_proxy.as_ref() {
             match reqwest::Proxy::http(url.as_ref()) {
                 Ok(proxy) => builder = builder.proxy(proxy),
-                Err(error) => sentry_debug!("invalid HTTP proxy: {error:?}"),
+                Err(error) => {
+                    sentry_debug!("invalid HTTP proxy: {error:?}");
+                }
             }
         }
         if let Some(url) = options.https_proxy.as_ref() {
             match reqwest::Proxy::https(url.as_ref()) {
                 Ok(proxy) => builder = builder.proxy(proxy),
-                Err(error) => sentry_debug!("invalid HTTPS proxy: {error:?}"),
+                Err(error) => {
+                    sentry_debug!("invalid HTTPS proxy: {error:?}");
+                }
             }
         }
         let client = builder
@@ -111,7 +115,9 @@ impl SharedReqwestTransport {
                                 sentry_debug!("Sentry envelope rejected as too large");
                             }
                         }
-                        Err(error) => sentry_debug!("failed to send Sentry envelope: {error}"),
+                        Err(error) => {
+                            sentry_debug!("failed to send Sentry envelope: {error}");
+                        }
                     }
                 }
             })

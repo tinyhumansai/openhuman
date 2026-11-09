@@ -12,11 +12,14 @@
 //! stay JSON text: they carry arbitrary tool arguments whose keys a
 //! document-store driver (MongoDB) must never see as field names.
 
+use anyhow::Result;
 use serde_json::Value;
-use tinystoragedrivers::schema::{Schema, ScopeClass, SourceRecord, Step, TargetRecord};
-use tinystoragedrivers::{CollectionSpec, IndexSpec, Key, Result};
+use tinystoragedrivers::{CollectionSpec, IndexSpec};
 
-use crate::storage::schema_support::{key_of, owner, time_ms, Body};
+use crate::storage::schema_support::{
+    key_of, key_of_parts, map_legacy_collection, time_ms, Body, LegacySourceRecord as SourceRecord,
+    LegacyTargetRecord as TargetRecord,
+};
 
 /// The v2 request collection: one document per request id.
 pub(super) const APPROVALS: &str = "approvals.requests";
@@ -27,20 +30,12 @@ pub(super) const LEGACY_APPROVALS: &str = "approvals";
 /// The v1 grant collection.
 pub(super) const LEGACY_FLOW_TRUST: &str = "approval_flow_trust";
 /// The body version of both collections.
-const SCHEMA: u32 = 2;
-
-/// What the approval store keeps and the steps from the v1 collections.
-#[must_use]
-pub fn storage_schema() -> Schema {
-    let [requests, trust] = specs();
-    Schema::new(owner("approvals"))
-        .collection_with(SCHEMA, requests, ScopeClass::Tenant)
-        .collection_with(SCHEMA, trust, ScopeClass::Tenant)
-        .step(Step::new("requests_v2", APPROVALS, 1, SCHEMA, requests_v2).source(LEGACY_APPROVALS))
-        .step(
-            Step::new("flow_trust_v2", FLOW_TRUST, 1, SCHEMA, flow_trust_v2)
-                .source(LEGACY_FLOW_TRUST),
-        )
+/// Converts approval legacy documents into this owner's current record shapes.
+pub(crate) fn upgrade_records(
+    records: Vec<crate::storage::import::Record>,
+) -> Result<Vec<crate::storage::import::Record>> {
+    let records = map_legacy_collection(records, LEGACY_APPROVALS, requests_v2)?;
+    map_legacy_collection(records, LEGACY_FLOW_TRUST, flow_trust_v2)
 }
 
 /// The two v2 collections with their indexes.
@@ -52,6 +47,11 @@ pub(super) fn specs() -> [CollectionSpec; 2] {
             .index(IndexSpec::new("by_session", ["session_id", "pending"])),
         CollectionSpec::new(FLOW_TRUST).index(IndexSpec::new("by_flow", ["flow_id", "tool_name"])),
     ]
+}
+
+/// Collections owned by the approval store.
+pub(crate) fn collection_specs() -> Vec<CollectionSpec> {
+    specs().into()
 }
 
 /// The v1 collections as the legacy importer declares them.
@@ -74,10 +74,7 @@ pub(super) fn legacy_collections() -> Vec<CollectionSpec> {
 /// refused.
 pub(super) fn trust_id(flow_id: &str, tool_name: &str) -> String {
     #[allow(clippy::expect_used)]
-    Key::of([flow_id, tool_name])
-        .expect("a two-part key is valid")
-        .as_str()
-        .to_owned()
+    key_of_parts([flow_id, tool_name]).expect("a two-part key is valid")
 }
 
 fn requests_v2(batch: Vec<SourceRecord>) -> Result<Vec<TargetRecord>> {
@@ -107,7 +104,8 @@ fn requests_v2(batch: Vec<SourceRecord>) -> Result<Vec<TargetRecord>> {
                 )
                 .build();
             Ok(TargetRecord::new(APPROVALS, key_of(&record.id)?, body)
-                .created_ms(record.meta.created_ms))
+                .created_ms(record.meta.created_ms)
+                .source_metadata(record.meta))
         })
         .collect()
 }
@@ -129,7 +127,8 @@ fn flow_trust_v2(batch: Vec<SourceRecord>) -> Result<Vec<TargetRecord>> {
                 .build();
             Some(
                 TargetRecord::new(FLOW_TRUST, trust_id(flow_id, tool_name), body)
-                    .created_ms(record.meta.created_ms),
+                    .created_ms(record.meta.created_ms)
+                    .source_metadata(record.meta),
             )
         })
         .collect())

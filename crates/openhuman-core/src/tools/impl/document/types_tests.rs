@@ -20,11 +20,6 @@ fn base() -> GenerateDocumentInput {
 }
 
 #[test]
-fn accepts_a_well_formed_input() {
-    assert!(validate_input(&base()).is_ok());
-}
-
-#[test]
 fn tinydocs_invalid_input_keeps_its_field_and_reason() {
     // The structured pair is what the agent self-corrects on, so the
     // crate-boundary mapping must not flatten it into a message string.

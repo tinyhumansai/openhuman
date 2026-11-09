@@ -1,8 +1,8 @@
 use super::*;
-use crate::memory::error::INVALID_REQUEST;
 use crate::memory::sources::state;
 use crate::memory::test_fixtures::{bind_reference, config_in, stored};
 use tinymemory_api::{ItemKind, MetaFilter};
+use tinymemory_integrations::sources::{SourceState, SourceStatus};
 
 fn folder_source(id: &str, dir: &std::path::Path, mins: Option<u32>) -> MemorySourceConfig {
     MemorySourceConfig {
@@ -29,7 +29,7 @@ fn notes(config: &Config, n: usize) -> PathBuf {
     dir
 }
 
-async fn wait_for_idle(config: &Config, id: &str) -> state::SourceState {
+async fn wait_for_idle(config: &Config, id: &str) -> SourceState {
     for _ in 0..400 {
         if let Some(state) = state::load(&config.workspace_dir).get(id) {
             if state.status != SourceStatus::Syncing {
@@ -64,7 +64,7 @@ fn validate_accepts_every_kind_and_refuses_an_empty_target() {
         validate(&mk(MemorySourceKind::Folder, ""))
             .unwrap_err()
             .code(),
-        INVALID_REQUEST
+        "INVALID_REQUEST"
     );
 }
 
@@ -98,7 +98,7 @@ async fn sync_one_reports_memory_off_and_unreadable_sources() {
     let off = sync_one(&config, &folder_source("s", &dir, None))
         .await
         .unwrap_err();
-    assert_eq!(off.code(), crate::memory::error::MEMORY_OFF);
+    assert_eq!(off.code(), "MEMORY_OFF");
 
     bind_reference(&config);
     let missing = config.action_dir.join("does-not-exist");
@@ -123,6 +123,7 @@ async fn start_sync_walks_syncing_then_idle_and_records_items() {
         &config,
         Some("src-ok"),
     )
+    .await
     .unwrap();
     assert_eq!(started, vec!["src-ok".to_string()]);
     let done = wait_for_idle(&config, "src-ok").await;
@@ -148,22 +149,25 @@ async fn a_failing_sync_lands_in_error_with_the_message() {
         .sources
         .push(folder_source("src-bad", &missing, None));
 
-    start_sync(&crate::core::runtime::DispatchCtx::ambient(), &config, None).unwrap();
+    start_sync(&crate::core::runtime::DispatchCtx::ambient(), &config, None)
+        .await
+        .unwrap();
     let done = wait_for_idle(&config, "src-bad").await;
     assert_eq!(done.status, SourceStatus::Error);
     assert!(done.error.as_deref().is_some_and(|e| !e.is_empty()));
     assert!(done.last_sync_at.is_some());
 }
 
-#[test]
-fn start_sync_refuses_unknown_ids_and_memory_off() {
+#[tokio::test]
+async fn start_sync_refuses_unknown_ids_and_memory_off() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
     assert_eq!(
         start_sync(&crate::core::runtime::DispatchCtx::ambient(), &config, None)
+            .await
             .unwrap_err()
             .code(),
-        crate::memory::error::MEMORY_OFF
+        "MEMORY_OFF"
     );
     bind_reference(&config);
     assert_eq!(
@@ -172,12 +176,14 @@ fn start_sync_refuses_unknown_ids_and_memory_off() {
             &config,
             Some("src-nope")
         )
+        .await
         .unwrap_err()
         .code(),
-        INVALID_REQUEST
+        "INVALID_REQUEST"
     );
     assert!(
         start_sync(&crate::core::runtime::DispatchCtx::ambient(), &config, None)
+            .await
             .unwrap()
             .is_empty(),
         "no sources, nothing started"
@@ -202,6 +208,7 @@ async fn a_source_already_syncing_is_not_started_twice() {
         &config,
         Some("src-once")
     )
+    .await
     .unwrap()
     .is_empty());
     drop(held);
@@ -211,6 +218,7 @@ async fn a_source_already_syncing_is_not_started_twice() {
             &config,
             Some("src-once")
         )
+        .await
         .unwrap()
         .len(),
         1
@@ -241,7 +249,7 @@ async fn sync_due_starts_only_scheduled_sources_that_are_due() {
         s.last_sync_at = Some(now);
     });
 
-    let started = sync_due(&crate::core::runtime::DispatchCtx::ambient(), &config, now);
+    let started = sync_due(&crate::core::runtime::DispatchCtx::ambient(), &config, now).await;
     assert_eq!(started, vec!["src-sched".to_string()]);
     wait_for_idle(&config, "src-sched").await;
 
@@ -250,7 +258,8 @@ async fn sync_due_starts_only_scheduled_sources_that_are_due() {
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         now + chrono::Duration::minutes(16),
-    );
+    )
+    .await;
     assert!(later.contains(&"src-sched".to_string()));
     assert!(later.contains(&"src-fresh".to_string()));
     assert!(!later.contains(&"src-manual".to_string()));
@@ -258,8 +267,8 @@ async fn sync_due_starts_only_scheduled_sources_that_are_due() {
     wait_for_idle(&config, "src-fresh").await;
 }
 
-#[test]
-fn sync_due_with_memory_off_starts_nothing() {
+#[tokio::test]
+async fn sync_due_with_memory_off_starts_nothing() {
     let tmp = tempfile::tempdir().unwrap();
     let mut config = config_in(&tmp);
     config
@@ -271,6 +280,7 @@ fn sync_due_with_memory_off_starts_nothing() {
         &config,
         Utc::now()
     )
+    .await
     .is_empty());
 }
 
@@ -336,7 +346,7 @@ async fn github_files_per_repository_only_when_switched_on() {
     let tmp = tempfile::tempdir().unwrap();
     let mut config = config_in(&tmp);
     let engine = bind_reference(&config);
-    let bound = engine::resolve(&config).engine().unwrap();
+    let bound = engine::resolve(&config).await.engine().unwrap();
     let issue = |repo: &str, text: &str| {
         let mut meta = tinymemory_api::MemoryMeta::default();
         meta.repo = Some(repo.to_string());
@@ -393,22 +403,4 @@ async fn github_files_per_repository_only_when_switched_on() {
         3,
         "one belief build per node written"
     );
-}
-
-#[test]
-fn orphaned_connector_files_are_removed_and_missing_ones_ignored() {
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().join("memory");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("connector_items.json"), "{}").unwrap();
-    std::fs::write(dir.join("connection_roots.json"), "{}").unwrap();
-    std::fs::write(dir.join("sources_state.json"), "{}").unwrap();
-    state::remove_orphaned_connector_files(tmp.path());
-    assert!(!dir.join("connector_items.json").exists());
-    assert!(!dir.join("connection_roots.json").exists());
-    assert!(
-        dir.join("sources_state.json").exists(),
-        "live state is kept"
-    );
-    state::remove_orphaned_connector_files(tmp.path());
 }

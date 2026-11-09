@@ -1,24 +1,27 @@
 # cron
 
-The cron domain runs scheduled jobs. It owns the background scheduler loop that
-fires due jobs, the three ways a job can run (a shell command, an agent turn, or
-a hand-off to another domain), the delivery layer that routes a run's output to
-the right place, and the `cron.*` RPC controllers and agent tools that create
-and manage jobs. The scheduler is spawned as a core background service; agents
-reach it through the `cron` and `schedule` tools, and the desktop UI through
-the `cron` RPC namespace.
+The cron domain exposes the `cron.*` RPC controllers and agent tools that
+create and manage scheduled jobs. The core service drives scheduler dispatch,
+publishes health transitions, and supplies the host job handlers and delivery
+callbacks. Agents reach it through the `scheduling` pack's per-operation
+tools (`cron_add`, `cron_list`, `cron_update`, `cron_remove`, `cron_run`,
+`cron_runs`; the collapsed `cron` stays registered, deferred) and the
+`schedule` tool, and the desktop UI through the `cron` RPC namespace.
 
 Scheduling itself is not in core. The `tinyflows` loadable module owns the
 scheduler runtime (poll pass, process-wide run claims, retry with backoff,
 completion and rescheduling), the cron job and run store, and the schedule
 maths (cron expressions, one-shot instants, intervals, active hours, the
 agent-job cadence floor). Core reaches it only through the `tinyflows-bus`
-contract (`tinyflows_bus::schedule`, v3), and keeps what is policy and what is
+contract (`tinyflows_bus::schedule`, v6), and keeps what is policy and what is
 pluggable: the callbacks the module runs jobs through, the document port it
 persists through, the job-kind handler registry, delivery, the operator limits
-and the RPC and tool surface. Core links neither `tinyflows-schedule` nor
-`tinyflows-drivers`' schedule store (`cargo tree -p openhuman -e normal -i
-tinyflows-schedule` is empty).
+and the RPC and tool surface. The core's normal dependency graph excludes the
+TinyFlows engine, catalog, copilot, drivers, and schedule implementation; the
+pure `tinyflows-import` readers remain for legacy data.
+
+Check this boundary with
+`scripts/assert-shed.sh flows tinyflows tinyflows-catalog tinyflows-copilot tinyflows-drivers tinyflows-schedule`.
 
 ## How it works
 
@@ -53,8 +56,20 @@ scope's config, security policy and `CoreContext`. The host drives the ticks
 rather than letting the module run its own loop so the poll interval, the
 transition-only `HealthChanged` signals and the live-agent reconcile stay in one
 place, and so a test or embedder can run one deterministic pass
-(`run_live_agent_pass`). Dropping a dispatcher stops its scheduler
-(`StopScheduler`) and unserves its object.
+(`run_live_agent_pass`). A host that decides when one agent's jobs run (it
+opens agents on demand, or hands due work to a queue) runs that agent's pass
+alone with `run_agent_pass(agent_id)`, which is `Ok(None)` when the agent is
+not live and errors when the agent's config, policy or job store is
+unavailable, or a run could not be executed or recorded (a job that ran and
+failed is in its run record, not the result). It runs one batch of at most
+`scheduler.max_tasks` jobs, so a host calls it again after a full batch, and it
+stops the agent's scheduler before returning. Such a host must not also run the
+scheduler loop over that agent: the loop's scheduler owns the agent's job scope
+and the pass is refused ("a scheduler already owns this scope"). Both are the
+loop's own run, so occurrence claims keep two processes' passes from running an
+occurrence twice.
+Dropping a dispatcher stops its scheduler (`StopScheduler`) and unserves its
+object.
 
 Health is published on transitions only, so an idle queue does not put a
 steady `healthy: true` event on the bus every poll. A successful tick after a
@@ -67,14 +82,14 @@ jobs, the turn's message id.
 
 ### Run claims
 
-The module keeps process-wide run claims per `(scope, job id)`; the host uses
-the scope `openhuman` for every scheduler so the poll loop of any agent and
-Run Now refuse to start a job another of them is running. `cron.run` also
-takes a host-side guard (`scheduler::try_acquire_run`) so a second concurrent
-Run Now is rejected at once; a Run Now that loses to a scheduled run is
-refused by the module's `ExecuteJob` ("job is already running"), and the host
-records nothing for it. A claim releases on drop, so a scheduled run and a manual run
-never overlap.
+The module keeps process-wide occurrence claims per scheduler scope and job
+id. Each host scheduler and manual run uses the stable `DocScope` identity, so
+jobs in one document scope cannot overlap while distinct workspaces or agent
+scopes remain independent. Run Now reserves an inert module handle, starts
+the worker, and observes its state until the module confirms admission or a
+terminal result. The owner task keeps that invocation's callback and context
+alive through terminal acknowledgement, even if the RPC or tool caller goes
+away.
 
 ### Executing a job
 
@@ -98,15 +113,16 @@ permanent-failure classification stay in the executor and are not pluggable.
 
 `shell` jobs run through `run_job_command_with_timeout`
 ([`scheduler/shell_job.rs`](./scheduler/shell_job.rs)). Before spawning anything,
-it checks `can_act`, `is_rate_limited`, the host security policy against command
-facts returned by TinyBox `AnalyzeCommand`, and `record_action` against the
-action budget. Missing module analysis fails closed; no local parser replaces
-it. Any refusal returns a string starting `blocked by security policy:`, which
-the retry loop treats as final. Execution uses TinyBox `StartExec` on a
-module-owned passthrough resource, preserving the action directory and the
-shell's default pipeline exit status. The command has a hard 120 second timeout
-(`SHELL_JOB_TIMEOUT_SECS`); timeout cancellation and output cleanup are
-acknowledged by TinyBox before the resource is closed. With the autonomy policy
+`authorize_shell_command` checks the command with TinySecurity
+(`check_command`, `CommandFlow::Scheduled`), which also reserves it against the
+action budget. A refusal the policy decided (protected path, read-only,
+allowlist, hidden execution, high risk, category, local-only, or a `Block`
+gate) returns a string starting `blocked by security policy:`
+(`POLICY_REFUSAL_PREFIX`), which the retry loop treats as final. An unavailable
+module (fail closed) or an exhausted action budget may recover, so those stay
+retryable. Execution runs on the host (`sandbox::shell_exec::run_host`), in the
+action directory and with the shell's default pipeline exit status, under a
+hard 120 second timeout (`SHELL_JOB_TIMEOUT_SECS`). With the autonomy policy
 disabled (the default), most policy checks are inert; see the project
 `CLAUDE.md`.
 
@@ -128,9 +144,16 @@ disabled (the default), most policy checks are inert; see the project
    `start_cron_turn_clean` sets `suppress_transcript_autoload`. A cron agent has
    no thread, so without this its first turn would resume whatever unthreaded
    transcript was newest for that agent name.
-6. The turn runs inside `security::turn_origin::with_origin` with the origin from
+6. The turn runs inside `core::runtime::turn_origin::with_origin` with the origin from
    `origin::turn_origin_for_job_run`. The morning briefing job also runs under a
    24 hour task-recency window so task-fetch tools only return recent tasks.
+
+A job whose `agent_id` is not live is first offered to the host through
+`HostAgentResolver::open` (an embedding host sets it with
+`RuntimeBuilder::on_missing_agent`). If the host opens the agent the job runs as
+it, and the opened agent is held only for that run. If the host has no opener or
+declines, the job fails with a logged error; it never runs as the canonical
+orchestrator or any other agent.
 
 An agent failure is classified before anything is logged. The user sees a
 canned string from `classify_agent_anyhow_for_user`
@@ -169,12 +192,22 @@ alerts tab and run history.
 | Mode | What happens |
 | --- | --- |
 | `none` | Silent. Output lives in the job's `last_output` only. This is `DeliveryConfig::default()`. |
-| `proactive` | Publishes `ProactiveMessageRequested`. `channels::proactive::ProactiveMessageSubscriber` pushes to the in-app web stream and mirrors to `channels_config.active_channel` when set. Used for briefings and other desktop-first output. |
-| `announce` | Requires `channel` and `to`. Publishes `CronDeliveryRequested`; `cron::bus::CronDeliverySubscriber` (`cron::delivery`) sends it through the named `tinychannels_bus::Channel`. The `cron_add` tool checks `to` against the channel's `allowed_users`. |
+| `proactive` | Publishes `ProactiveMessageRequested` with the originating tenant. `web_chat::proactive::WebProactiveSubscriber` publishes to that tenant's in-app web stream; when configured, `channels::proactive::ProactiveMessageSubscriber` also sends to `channels_config.active_channel`. Used for briefings and other user-facing proactive output. |
+| `announce` | Requires `channel` and `to`. Sends synchronously through `cron::channel_bridge::announce_to_channel` (the provider's single configured account in the TinyChannels module); the run records `Delivered` only after the channel confirms the message, otherwise `Failed`. The `cron_add` tool checks `to` against the channel's `allowed_users`. |
 | `origin` | Sends the reply back into the conversation that created the job ([`scheduler/origin_delivery.rs`](./scheduler/origin_delivery.rs)). Requires `CronJob.origin`. |
 
-Origin delivery treats blank output or exactly `NO_REPLY` as `Suppressed`:
-nothing is sent and no alert is raised. For a web origin, the reply is stored in
+A run that has nothing to send is recorded as `Suppressed` in every delivering
+mode: nothing is sent and no alert is raised. That is blank output, or
+`NO_REPLY` (in any case, with `_`, `-` or a space, quoted or with trailing
+punctuation) from a job whose own prompt names the `NO_REPLY` token, such as
+"report new mail, otherwise reply NO_REPLY". Reminders and other jobs whose
+prompt does not name it must deliver: a run that answers `NO_REPLY` or nothing
+gets one corrective turn (the prompt again, plus "NO_REPLY is not allowed for
+this task"), and if that still yields no message the run delivers
+`Reminder: <job name>`. The token itself is never sent. Shell and flow output
+is not model-written, so those jobs may always answer `NO_REPLY`.
+
+For a web origin, the reply is stored in
 the origin thread under `run_reply_message_id("cron:<job>:<run>")`, the
 web-channel `proactive_message` event is emitted with that `thread_id` and
 `request_id`, and `append_to_origin_transcript` appends it to the thread's agent
@@ -187,8 +220,7 @@ chat's in-memory history.
 Independently of the mode, `push_cron_alert` writes an entry into the
 notifications store (the alerts tab) for any failed run, and for a non-empty
 successful run in a delivering mode (`proactive`, `announce`, `origin`). A
-`none`-mode success stays silent, and so does an origin run that chose
-`NO_REPLY`.
+`none`-mode success stays silent, and so does a suppressed run.
 
 ### Origin and session targets
 
@@ -213,7 +245,7 @@ The session target shapes the prompt:
 | Target | Prompt |
 | --- | --- |
 | `isolated` | `[cron:<id> <name>] <prompt>` |
-| `current` | An unattended-run preamble (the reply is delivered as-is; reply `NO_REPLY` to send nothing), then a tail of the origin conversation (last 10 messages, at most 1400 characters, newest kept), then the task. Web history comes from the thread store, channel history from `channel_bridge`. |
+| `current` | An unattended-run preamble, then a tail of the origin conversation (last 10 messages, at most 1400 characters, newest kept), then the task. Web history comes from the thread store, channel history from `channel_bridge`. The preamble says the reply is delivered as-is; only a job whose prompt names `NO_REPLY` is told it may answer `NO_REPLY` when its condition is not met, every other job is told to always reply with the message. |
 | `main` | Runs like `current`; it is not yet a distinct main session. |
 
 Trust follows the origin. A job with a channel origin runs under
@@ -266,7 +298,7 @@ current ones, `memory_background` and `memory_sources_sync` (every 15 minutes),
 handled in `memory::bus`. `ensure_memory_jobs` is idempotent: it creates a
 missing row, reschedules a drifted one, and removes the retired
 `memory_context_refresh` row. It runs from [`core/runtime/services.rs`](../core/runtime/services.rs) and from
-[`security/credentials/ops/user_scope.rs`](../security/credentials/ops/user_scope.rs).
+[`config/user_scope.rs`](../config/user_scope.rs).
 
 ### Storage
 
@@ -278,8 +310,11 @@ on the storage ports via the host's document port
 ([`documents_port.rs`](./documents_port.rs)): one `ScheduleDocuments` object per
 `(workspace, storage scope)`, which relays `get`/`put`/`query`/`atomic_batch`
 and friends mechanically, preserves the `conflict` error kind and refuses any
-collection other than the four schedule ones. The configured history cap and
-due-job batch size ride on every request. tinyflows has no SQLite store of its
+collection or shared TSD key outside the schedule module's owner namespace.
+The module owns the v1-to-v2 schedule migration, including its exact progress
+keys and legacy source retirement. Core calls its `Migrate` operation before
+store CRUD, scheduler start and manual-run preparation. The configured history
+cap and due-job batch size ride on every request. tinyflows has no SQLite store of its
 own, so there is one path whatever the storage URL says: the installed backend
 when there is one, else the workspace default (`sqlite:<workspace>/storage`).
 The `jobs.db` tinyflows used to write (with its policy side table) is decoded
@@ -299,26 +334,25 @@ feature) nothing loads and every cron call answers `COMPONENT_DISABLED:tinyflows
 | --- | --- |
 | [`mod.rs`](./mod.rs) | Module wiring and re-exports. Re-exports the schedule records from `tinyflows_bus::schedule` so `cron::CronJob`, `cron::Schedule` and friends resolve here (none is redeclared). |
 | [`store.rs`](./store.rs) | The synchronous job and run API the core calls. Applies the operator limits, then sends one `StoreOperation` to the module. |
-| [`client.rs`](./client.rs) | Typed calls to the module's `Schedule` object: `store_in`/`store_blocking`, and the maths and validation members (`next_run`, `validate_schedule`, `runs_closer_than`, `normalize_expression`, `parse_human_delay`, `default_delivery`, `check_origin_requirements`, ...). |
+| [`client.rs`](./client.rs) | Typed calls to the module's `Schedule` object: `store_in`/`store_blocking`, `runs_closer_than`, `parse_human_delay`, `default_delivery`, `check_origin_requirements`, and other host adapters. |
 | [`documents_port.rs`](./documents_port.rs) | The `ScheduleDocuments` callback object: the scope's document store, served to the module. |
-| [`bus_host.rs`](./bus_host.rs) | `Binding` (config, policy, context of one scope) and the `ScheduleHost` callback object (`Execute`, `Failed`, `Deliver`, `ScheduleTrigger`), served per scheduler. |
+| [`bus_host.rs`](./bus_host.rs) | `Binding` (config, policy, context of one scope) and `ScheduleHost` callbacks (`Execute`, `Failed`, `Send`, `Deliver`, `ScheduleTrigger`), served per scheduler or manual invocation. |
 | [`handlers.rs`](./handlers.rs) | The job-kind handler registry (`JobKindHandler`, `JobOutcome`, `register_kind`) and the system-job handlers. |
-| `ops.rs` | Business operations: `add_once`, `add_once_at`, pause/resume, `update_cron_job`, `try_acquire_run`, and the async `cron_*` RPC operations. Also re-exported as `cron::rpc`. |
+| `ops.rs` | Business operations: `add_once`, `add_once_at`, pause/resume, and the async `cron_*` RPC operations. Also re-exported as `cron::rpc`. |
 | [`schemas.rs`](./schemas.rs) | Controller schemas and handlers for the `cron` namespace. |
-| [`scheduler.rs`](./scheduler.rs) | The host loop: `run`, `tick_once`, `JobDispatcher` (one manual-tick module scheduler per scope), the live-agent pass, `execute_job_now` (Run Now, through `ExecuteJob`), the manual-run guard and the health signals. |
+| [`scheduler.rs`](./scheduler.rs) | The host loop: `run`, `tick_once`, `JobDispatcher` (one manual-tick module scheduler per scope), the live-agent pass, and health signals. Run Now uses a per-invocation manual-worker owner through Schedule contract v6. |
 | `scheduler/executor.rs` | `HostExecutor`: one shell or agent attempt through the registry, failure classification, the retries-exhausted report, the cadence warning. |
 | `scheduler/builtin.rs` | The default `shell`, `agent` and `flow` handlers. |
 | `scheduler/run_delivery.rs` | `deliver` (delivery plus completion events) and `trigger` (flow schedule trigger, system jobs). |
 | `scheduler/failure_classification.rs` | Canned user messages and the permanent-failure classifiers that halt retries. |
 | `scheduler/shell_job.rs` | Security-gated shell execution with a timeout. |
-| `scheduler/agent_run.rs` | Agent-job turns, and `build_agent_for_cron_job`. |
+| `scheduler/agent_run.rs` | Agent-job turns (with the corrective turn for a disallowed `NO_REPLY`), and `build_agent_for_cron_job`. |
 | `scheduler/origin_context.rs` | `build_run_prompt`: the isolated prefix or the `current` preamble plus conversation tail. |
 | `scheduler/delivery.rs` | `deliver_run` and `deliver_job`, the mode switch, and `push_cron_alert`. |
-| `scheduler/origin_delivery.rs` | `deliver_to_origin`, `NO_REPLY` suppression, transcript append. |
+| `scheduler/origin_delivery.rs` | `deliver_to_origin`, the `NO_REPLY` rules (`is_no_reply`, `job_allows_no_reply`, `deliverable_reply`, `fallback_reminder`), transcript append. |
 | [`origin.rs`](./origin.rs) | `JobOrigin` capture from the live turn, the approval-gate exemption, and the turn origin a run executes under. |
 | [`job_builder.rs`](./job_builder.rs) | `create_agent_job`: origin-aware defaults and delivery validation shared by the `cron` and `schedule` tools. |
 | [`channel_bridge.rs`](./channel_bridge.rs) | Cron's handle on the channel runtime: per-chat history and live channels, registered by `start_channels`. |
-| [`bus.rs`](./bus.rs) | `CronDeliverySubscriber`, which sends `announce` output to a channel. |
 | [`seed.rs`](./seed.rs) | Built-in proactive jobs and pruning of retired rows. |
 | `system_jobs.rs` | `system:<name>` flow rows owned by other domains. |
 | [`tools.rs`](./tools.rs), `tools/` | Agent tools. See [tools/README.md](tools/README.md). |
@@ -335,15 +369,18 @@ feature) nothing loads and every cron call answers `COMPONENT_DISABLED:tinyflows
 - `AgentJobSpec`: the store's agent-job creation spec (from `tinyflows_bus::schedule`),
   used by `add_agent_job_from_spec`.
 - `scheduler::run(ctx, config)`: the service entry point.
-- `scheduler::execute_job_now` and `scheduler::deliver_job`: what Run Now uses
-  to execute and deliver outside the loop.
-- `add_job`, `add_shell_job`, `add_agent_job`, `add_agent_job_with_definition`,
+- `scheduler::run_agent_pass(agent_id)`: one live agent's due jobs, run to
+  completion.
+- `scheduler::run_job_now`: manual worker lifecycle owner used by Run Now and
+  the run tool; `scheduler::execute_job_now` preserves the synchronous tuple
+  adapter for existing host callers.
+- `add_job`, `add_shell_job`, `add_agent_job_with_definition`,
   `add_agent_job_from_spec`, `add_flow_schedule_job`, `find_flow_schedule_job`,
-  `get_job`, `list_jobs`, `update_job`, `remove_job`, `due_jobs`, `list_runs`,
+  `get_job`, `list_jobs`, `update_job`, `remove_job`, `list_runs`,
   `record_run`, `record_run_with_delivery`: store operations in `store.rs`.
-- `client::next_run`, `normalize_expression`, `validate_schedule`,
-  `runs_closer_than`, `schedule_cron_expression`: the schedule maths, which runs
-  in the module; `TooFrequent` and `MIN_AGENT_JOB_INTERVAL` are contract types.
+- `client::runs_closer_than`: asks the module to inspect the schedule; schedule
+  parsing and validation remain in the module. `TooFrequent` and
+  `MIN_AGENT_JOB_INTERVAL` are contract types.
 - `job_builder::create_agent_job`: the creation path for agent jobs from a
   conversation.
 - `origin::current_job_origin`: the origin of the live turn, if any.
@@ -364,7 +401,7 @@ Namespace `cron`, registered through `all_cron_registered_controllers` in
 | `cron.list` | List all jobs. |
 | `cron.update` | Patch a job. |
 | `cron.remove` | Delete a job. |
-| `cron.run` | Run Now. Records a `queued` placeholder run, returns at once, then executes in the background through `execute_job_now` and `deliver_job` and records the real result. Refused when `cron.enabled` is false or the job is already running. |
+| `cron.run` | Run Now. Waits for module-confirmed admission, then returns `queued` while the invocation owner observes completion and acknowledges its module handle. Refused when `cron.enabled` is false or the job is already running. |
 | `cron.runs` | Run history for a job. |
 
 ## Event bus
@@ -374,11 +411,12 @@ Cron publishes, through [`core/bus.rs`](../core/bus.rs), these `DomainEvent` var
 
 - `SystemStartup` and `HealthChanged` for component `scheduler`.
 - `CronJobTriggered` and `CronJobCompleted` around each scheduled execution
-  (output truncated to 512 characters).
-- `ProactiveMessageRequested` (`proactive` delivery), consumed by
-  `channels::proactive`.
-- `CronDeliveryRequested` (`announce` delivery), consumed by
-  `cron::bus::CronDeliverySubscriber`.
+  (output truncated to 512 characters). The completion event carries its
+  optional tenant so notification subscribers keep the original profile and
+  agent scope after a one-shot job is removed.
+- `ProactiveMessageRequested` (`proactive` delivery), consumed by the
+  always-registered `web_chat::proactive` subscriber and, when the channels
+  runtime is enabled, `channels::proactive` for external delivery.
 - `CronSystemJobDue`, consumed by `memory::bus`.
 
 ## Who calls in
@@ -387,16 +425,16 @@ Cron publishes, through [`core/bus.rs`](../core/bus.rs), these `DomainEvent` var
   service when `cron.enabled` is set, after flows reconcile their schedule
   triggers. It also calls `ensure_memory_jobs` and `prune_retired_jobs`.
 - `core/all.rs` registers the controllers.
-- [`tools/impl/system/schedule.rs`](../tools/impl/system/schedule.rs) is the `schedule` tool, built on the same
+- [`tools/schedule.rs`](./tools/schedule.rs) is the `schedule` tool, built on the same
   store functions and `create_agent_job`.
 - [`channels/runtime/startup/start_channels.rs`](../channels/runtime/startup/start_channels.rs) registers
-  `CronDeliverySubscriber` and the channel bridge.
+  the channel bridge used by `announce` and origin delivery.
 - [`flows/ops/triggers.rs`](../flows/ops/triggers.rs) creates and removes flow schedule rows
   (`bind_schedule_trigger` / `unbind_schedule_trigger`), idempotent through
   `find_flow_schedule_job`. These rows are never created by the `cron_add`
   tool, whose `job_type` is `shell` or `agent` only.
 - `config/ops/ui.rs` calls `seed_proactive_agents`;
-  `security/credentials/ops/user_scope.rs` calls `prune_retired_jobs` and
+  `config/user_scope.rs` calls `prune_retired_jobs` and
   `ensure_memory_jobs` on user-scope activation.
 
 ## Boundaries
@@ -417,7 +455,7 @@ Cron publishes, through [`core/bus.rs`](../core/bus.rs), these `DomainEvent` var
 
 - the LLM gate (`platform::llm_gate`) is not part of cron; it used to live here, but the poll loop does not
   consult it. Its consumers are `modules/memory_host.rs` and
-  [`security/credentials/`](../security/credentials/).
+  [`credentials/`](../credentials/).
 - Dispatch is non-blocking: the module spawns each due job, bounded by
   `scheduler.max_concurrent`, so one long job does not hold up the poll loop. A
   job is claimed (module-side, shared with Run Now) from dispatch until its run
@@ -437,13 +475,14 @@ Cron publishes, through [`core/bus.rs`](../core/bus.rs), these `DomainEvent` var
   table, then collection) are folded into the job by the importer and by
   the module's store when it opens.
 - A `CronJobPatch` crosses the bus as JSON and `agent_id` is a double option
-  whose `null` means "clear"; the contract (tinyflows v0.8.23) omits it when
+  whose `null` means "clear"; the contract (tinyflows v0.8.25) omits it when
   unset, so an unrelated patch leaves the agent definition alone
   (`a_patch_over_the_bus_keeps_the_agent_definition_it_does_not_mention`).
 - The hosted-profile sweep runs an agent-only scheduler (`JobDispatcher::agent_only`):
-  a due shell or flow row of a profile is refused by the callback (and recorded
-  as a failed run), never executed. The sweep ticks on the module's clock; its
-  `now` only decides which profiles are opened.
+  due shell and user-owned flow rows are refused by the callback (and recorded
+  as failed runs), never executed. The memory domain's two code-owned system
+  jobs are admitted for their internal maintenance handlers. The sweep ticks on
+  the module's clock; its `now` only decides which profiles are opened.
 - System jobs: `system_job_handlers::register(name, handler)` installs an awaited in-process
   handler; the scheduler still publishes `CronSystemJobDue`, then records the handler's
   result as the run's status. With no handler, behaviour is unchanged.
@@ -477,7 +516,8 @@ pnpm debug rust cron
 `[cron] agent_jobs_only = true` is an operator-owned mode for hosted
 profiles (`SaasConfig::cron` forces it, with `min_interval_secs` = 300 and
 `max_active_jobs` = 20, onto every profile; a profile's own config cannot
-loosen it). It refuses shell and flow jobs, restricts delivery to `origin` and
+loosen it). It refuses shell and user-owned flow jobs, while allowing only the
+memory owner's two internal maintenance jobs. It restricts delivery to `origin` and
 `none`, requires a job to be created from a conversation (the origin is read
 from the live turn, never from tool arguments), keeps recurring jobs
 `min_interval_secs` apart and caps enabled jobs at `max_active_jobs`, counted

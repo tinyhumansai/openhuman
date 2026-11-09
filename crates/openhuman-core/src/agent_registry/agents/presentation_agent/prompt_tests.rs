@@ -20,6 +20,7 @@ fn build_returns_grounding_contract() {
         personality_roster: vec![],
         agents_md_global: None,
         agents_md_local: None,
+        flow_archetype_text: None,
     };
     let body = build(&ctx).unwrap();
     assert!(body.contains("Presentation Agent"));

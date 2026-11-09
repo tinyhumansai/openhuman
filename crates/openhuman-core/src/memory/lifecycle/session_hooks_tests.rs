@@ -3,6 +3,218 @@ use super::*;
 use tinyagents_harness::summarization::{checkpoint_message, SummaryPlacement};
 use tinyinference_llm::ToolCall;
 
+fn external_channel_origin(
+    channel: &str,
+    message_id: &str,
+) -> crate::core::runtime::turn_origin::AgentTurnOrigin {
+    crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
+        channel: channel.into(),
+        sender: None,
+        sender_name: None,
+        reply_target: "chat".into(),
+        message_id: message_id.into(),
+        history_key: None,
+        channel_session: None,
+    }
+}
+
+#[test]
+fn logged_channel_keeps_normalized_custom_external_provider_ids() {
+    assert_eq!(
+        logged_channel(Some(&external_channel_origin(
+            "  MyCustomProvider  ",
+            "message-1"
+        ))),
+        Some("mycustomprovider".into()),
+        "an external provider remains the channel owner even when it is not in the built-in catalog"
+    );
+}
+
+#[test]
+fn logged_channel_is_none_for_non_channel_origins_none_and_cron_replays() {
+    use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+
+    assert_eq!(logged_channel(None), None);
+    assert_eq!(logged_channel(Some(&AgentTurnOrigin::Cli)), None);
+    assert_eq!(logged_channel(Some(&AgentTurnOrigin::DirectChat)), None);
+    assert_eq!(logged_channel(Some(&AgentTurnOrigin::Unknown)), None);
+    assert_eq!(
+        logged_channel(Some(&AgentTurnOrigin::TrustedAutomation {
+            job_id: "job-1".into(),
+            source: TrustedAutomationSource::Cron,
+        })),
+        None
+    );
+    assert_eq!(
+        logged_channel(Some(&external_channel_origin(
+            "telegram",
+            "cron:job-1:run-1"
+        ))),
+        None
+    );
+}
+
+#[tokio::test]
+async fn session_pre_and_post_turn_use_the_external_channel_origin_not_event_labels() {
+    crate::agent::session_host::test_support::install_model_fixture();
+    use crate::memory::test_fixtures::stored;
+    use tinyagents_runtime::{
+        CommitReceipt, ResumeMode, SessionTurnOutcome, TranscriptTurnOptions,
+    };
+    use tinymemory_api::{ItemKind, ListRequest, MemoryEngine, MetaFilter};
+
+    async fn log_turn(
+        prelude: &mut OpenHumanTurnPrelude,
+        engine: &tinymemory_api::conformance::ReferenceEngine,
+        thread_id: &str,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
+        expected_channel: Option<&str>,
+    ) {
+        prelude.thread_id = Some(thread_id.into());
+        prelude
+            .mutable
+            .lock()
+            .expect("prelude state")
+            .pending_user_text = Some(format!("question for {thread_id}"));
+        let _pack = prelude
+            .memory_pre_turn(&[], 0, None, origin)
+            .await
+            .expect("memory turn");
+        let pending_channel = prelude
+            .mutable
+            .lock()
+            .expect("prelude state")
+            .pending_memory_turn
+            .as_ref()
+            .and_then(|pending| pending.channel.clone());
+        assert_eq!(pending_channel.as_deref(), expected_channel);
+
+        let receipt = CommitReceipt {
+            outcome: SessionTurnOutcome {
+                history: vec![],
+                output: Some(format!("answer for {thread_id}")),
+                interrupted: false,
+            },
+            options: TranscriptTurnOptions {
+                request_id: None,
+                thread_id: Some(thread_id.into()),
+                stream: false,
+                resume: ResumeMode::Never,
+                context: crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+            },
+            transcript: None,
+        };
+        prelude.memory_post_turn(&receipt, None);
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let items = stored(
+                    engine,
+                    MetaFilter {
+                        thread_id: Some(thread_id.into()),
+                        ..MetaFilter::kinds([ItemKind::Conversation])
+                    },
+                )
+                .await;
+                if items.len() >= 2 {
+                    assert_eq!(items.len(), 2);
+                    let user_turn = items
+                        .iter()
+                        .find(|item| item.text.contains(&format!("question for {thread_id}")))
+                        .expect("logged user turn");
+                    let assistant_turn = items
+                        .iter()
+                        .find(|item| item.text.contains(&format!("answer for {thread_id}")))
+                        .expect("logged assistant turn");
+                    assert_eq!(user_turn.meta.channel.as_deref(), expected_channel);
+                    assert_eq!(assistant_turn.meta.channel.as_deref(), expected_channel);
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both turns should be logged with their origin metadata");
+    }
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::config::Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        ..Default::default()
+    };
+    config.memory.conversations.enabled = true;
+    config.secrets.encrypt = false;
+    std::fs::create_dir_all(&config.workspace_dir).expect("workspace");
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
+    let engine = Arc::new(tinymemory_api::conformance::ReferenceEngine::new());
+    crate::memory::engine::install_test_engine(&config.workspace_dir, engine.clone());
+
+    let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "orchestrator",
+    )
+    .await
+    .expect("host");
+    host.ensure_runtime_session().expect("runtime session");
+    let mut prelude = host
+        .runtime_state
+        .lock()
+        .expect("runtime state")
+        .prelude
+        .clone()
+        .expect("turn prelude");
+    prelude.runtime_config = Some(Arc::new(config.clone()));
+    prelude.event_channel = "voice-event-label".into();
+
+    let external = external_channel_origin("  MyCustomProvider  ", "message-1");
+    log_turn(
+        &mut prelude,
+        &engine,
+        "external-channel-thread",
+        Some(external),
+        Some("mycustomprovider"),
+    )
+    .await;
+
+    use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+    log_turn(
+        &mut prelude,
+        &engine,
+        "cli-thread",
+        Some(AgentTurnOrigin::Cli),
+        None,
+    )
+    .await;
+    log_turn(
+        &mut prelude,
+        &engine,
+        "cron-replay-thread",
+        Some(external_channel_origin("telegram", "cron:job-1:run-1")),
+        None,
+    )
+    .await;
+
+    let all = engine
+        .list(ListRequest {
+            filter: MetaFilter::kinds([ItemKind::Conversation]),
+            limit: 100,
+            cursor: None,
+        })
+        .await
+        .expect("list all logged turns");
+    assert_eq!(all.items.len(), 6);
+    assert_eq!(
+        logged_channel(Some(&AgentTurnOrigin::TrustedAutomation {
+            job_id: "job-1".into(),
+            source: TrustedAutomationSource::Cron,
+        })),
+        None
+    );
+}
+
 fn assistant_with_call(id: &str, name: &str) -> Message {
     let mut message = Message::assistant("");
     if let Message::Assistant(assistant) = &mut message {
@@ -102,7 +314,10 @@ async fn deferred_memory_commit_survives_the_turn_scope_without_pinning_the_prof
                 .as_deref(),
             Some(id.as_str())
         );
-        let binding = crate::memory::engine::resolve(&config).engine().unwrap();
+        let binding = crate::memory::engine::resolve(&config)
+            .await
+            .engine()
+            .unwrap();
         binding
             .engine
             .store(StoreItem::learning(

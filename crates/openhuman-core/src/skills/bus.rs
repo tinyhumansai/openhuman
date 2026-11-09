@@ -207,6 +207,20 @@ pub fn ensure_triggered_workflow_subscriber(workspace: &std::path::Path) {
     });
 }
 
+/// Idempotently install the subscriber from the exact startup Config and
+/// profile context after async builtin prewarming has completed.
+pub(crate) fn ensure_triggered_workflow_subscriber_for(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &crate::config::Config,
+    domains: Option<crate::core::runtime::DomainSet>,
+) {
+    TRIGGERED_WORKFLOW_HANDLE.get_or_init(|| {
+        let workflows =
+            crate::skills::ops_discover::load_workflow_metadata_for_domains(ctx, config, domains);
+        register_triggered_workflow_subscriber(&workflows)
+    });
+}
+
 #[cfg(test)]
 #[path = "bus_tests.rs"]
 mod tests;

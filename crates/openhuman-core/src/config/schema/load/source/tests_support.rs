@@ -5,12 +5,12 @@ use std::sync::Arc;
 
 use tinystoragedrivers::secrets::KeyProvider;
 
-use crate::storage::{Scope, ScopedStorage};
+use crate::storage::{Scope, Storage};
 
 /// What a forced document source is built from.
 #[derive(Clone)]
 pub(crate) struct Forced {
-    pub scoped: ScopedStorage,
+    pub scoped: Storage,
     pub scope: Scope,
     pub keys: Arc<dyn KeyProvider>,
     pub identity: Arc<()>,
@@ -31,7 +31,7 @@ pub(crate) struct ForcedDocumentSource {
 }
 
 impl ForcedDocumentSource {
-    pub(crate) fn new(scoped: ScopedStorage, scope: Scope, keys: Arc<dyn KeyProvider>) -> Self {
+    pub(crate) fn new(scoped: Storage, scope: Scope, keys: Arc<dyn KeyProvider>) -> Self {
         let previous = FORCED.with(|forced| {
             forced.borrow_mut().replace(Forced {
                 scoped,

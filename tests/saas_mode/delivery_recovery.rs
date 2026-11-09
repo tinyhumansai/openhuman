@@ -5,7 +5,7 @@
 //! sub-agent finishing and its result being delivered: a pending record in
 //! the profile's completion queue (the `orchestration_completions` documents
 //! of its scope in `<workspace>/storage`), addressed by thread id. The SaaS user
-//! surface does not offer `spawn_async_subagent` (the `agent` domain is off
+//! surface does not offer `spawn_subagent` (the `agent` domain is off
 //! for profiles), so the record is written here, through the harness's own
 //! store, while the core is down, exactly as `record_completion` would have
 //! written it.
@@ -25,6 +25,37 @@ use tinyagents_tasks::{
 };
 
 use super::*;
+
+/// Presents the host's storage backend as the storage-kit backend the
+/// completion store opens, as the core's own adapter does.
+struct KitBackend(Arc<dyn openhuman_core::storage::StorageBackend>);
+
+impl tinyagents_storage_kit::StorageBackend for KitBackend {
+    fn for_scope(
+        &self,
+        scope: &tinyagents_storage_kit::Scope,
+    ) -> tinyagents_storage_kit::error::Result<tinyagents_storage_kit::ScopedStorage> {
+        let host_scope = openhuman_core::storage::Scope::new(scope.as_str())?;
+        let storage = self.0.for_scope(&host_scope)?;
+        Ok(tinyagents_storage_kit::ScopedStorage::new(
+            storage,
+            scope.clone(),
+        ))
+    }
+
+    fn for_scope_conditioned(
+        &self,
+        scope: &tinyagents_storage_kit::Scope,
+        condition: &tinyagents_storage_kit::WriteCondition,
+    ) -> tinyagents_storage_kit::error::Result<tinyagents_storage_kit::ScopedStorage> {
+        let host_scope = openhuman_core::storage::Scope::new(scope.as_str())?;
+        let storage = self.0.for_scope_conditioned(&host_scope, condition)?;
+        Ok(tinyagents_storage_kit::ScopedStorage::new(
+            storage,
+            scope.clone(),
+        ))
+    }
+}
 
 const OWNER: &str = "ann";
 const OTHER: &str = "bob";
@@ -88,22 +119,21 @@ fn seed_thread(node: &Node, user: &str) {
 
 /// The pending record a core killed before delivery leaves in `user`'s
 /// completion queue.
-fn leave_undelivered_result(root: &std::path::Path, user: &str) {
+fn leave_undelivered_result(d: &Deployment, user: &str) {
     let id = ProfileId::for_user(user, ProfileIdMode::Raw).unwrap();
-    let workspace = ProfileLayout::new(root, &id).workspace_dir;
-    // The profile's default database, in the profile's own scope: where the
-    // running core keeps (and looks for) its completion queue.
-    let url = openhuman_core::storage::config::default_url(&workspace);
+    let workspace = ProfileLayout::new(&d.root, &id).workspace_dir;
+    // SaaS nodes default to one deployment database with profile-scoped
+    // collections; seed the same backend that ProfileHost reads on restart.
+    let url = format!("sqlite:{}/saas-storage.db", d.tmp.path().display());
     std::fs::create_dir_all(workspace.join(openhuman_core::storage::config::DEFAULT_DIR)).unwrap();
     let backend = openhuman_core::storage::block_on_anyhow(async move {
         Ok(openhuman_core::storage::open(&url).await?)
     })
     .expect("open the profile's database");
-    let scoped = backend
-        .for_scope(&openhuman_core::storage::scope_for_profile(id.as_str()))
-        .expect("the profile's scope");
+    let scope = openhuman_core::storage::scope_for_profile(id.as_str());
+    let scope = tinyagents_storage_kit::Scope::new(scope.as_str()).expect("the profile's scope");
     let store: Arc<dyn CompletionStore> = Arc::new(
-        DriverCompletionStore::new(Arc::clone(scoped.documents()))
+        DriverCompletionStore::new(Arc::new(KitBackend(backend)), scope)
             .expect("open the completion queue"),
     );
     let record = CompletionRecord::new(
@@ -114,7 +144,20 @@ fn leave_undelivered_result(root: &std::path::Path, user: &str) {
         CompletionResult::text(RESULT),
     )
     .with_notify_mode(NotifyMode::Followup);
-    store.put(&record).expect("write the pending record");
+    let gate = store
+        .acquire_parent_gate(
+            THREAD,
+            "delivery-recovery-fixture",
+            std::time::Duration::from_secs(30),
+        )
+        .expect("acquire the parent's completion gate")
+        .expect("the completion gate is free");
+    store
+        .put_fenced(&record, THREAD, &gate)
+        .expect("write the pending record under the parent gate");
+    assert!(store
+        .release_parent_gate(THREAD, &gate)
+        .expect("release the fixture's parent gate"));
 }
 
 #[test]
@@ -130,7 +173,7 @@ fn an_undelivered_subagent_result_reaches_its_own_profile_after_a_restart() {
 
     // The core dies with ann's sub-agent result recorded but undelivered.
     node.kill();
-    leave_undelivered_result(&d.root, OWNER);
+    leave_undelivered_result(&d, OWNER);
 
     // Restart. Opening bob, whose thread has the same id, delivers nothing.
     let node = node_logging(&d, llm.port);

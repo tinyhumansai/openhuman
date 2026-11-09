@@ -5,6 +5,7 @@ use super::*;
 use crate::storage::{Scope, StorageBackend};
 use std::sync::Arc;
 use tinyflows_bus::schedule::types::CronRun;
+use tinyflows_bus::schedule::CronJob;
 
 fn run<T: Send + DeserializeOwned + 'static>(
     backend: &Arc<dyn StorageBackend>,

@@ -1,148 +1,30 @@
 use super::*;
+use crate::integrations::composio::catalog::{seed_live_catalog_cache, ToolContract};
 
-/// (Codex feedback on this PR) `notion` ships a static curated catalog
-/// (`catalog_for_toolkit`), so at RUNTIME `flow_tool_allowed`'s Path A
-/// hard-rejects any slug `find_curated` doesn't recognize — even a real,
-/// live action. Without this check, a real-but-uncurated action for a
-/// statically-catalogued toolkit would pass authoring/save here and then
-/// fail every single run as "tool not permitted". Uses its own toolkit key
-/// (`notion`, not `slack`/`gmail`) since it seeds different `is_curated`
-/// content than every other test sharing those keys.
+fn seeded_alias_contract() -> ToolContract {
+    ToolContract {
+        slug: "GOOGLEDRIVE_FIND_FILE".to_string(),
+        toolkit: "googledrive".to_string(),
+        description: None,
+        required_args: vec![],
+        input_schema: None,
+        output_fields: vec!["files".to_string()],
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": { "files": { "type": "array" } }
+        })),
+        primary_array_path: Some("data.files".to_string()),
+        is_curated: true,
+    }
+}
+
 #[tokio::test]
-async fn validate_tool_contracts_rejects_a_real_but_uncurated_action_on_a_statically_catalogued_toolkit(
-) {
+async fn flows_get_tool_contract_rpc_warns_for_runtime_gated_uncurated_action() {
     seed_live_catalog_cache(
-        "notion",
+        "airtable",
         vec![ToolContract {
-            slug: "NOTION_UNCURATED_ACTION".to_string(),
-            toolkit: "notion".to_string(),
-            description: None,
-            required_args: vec![],
-            input_schema: None,
-            output_fields: vec![],
-            output_schema: None,
-            primary_array_path: None,
-            // Real (a live catalog fetch found it), but NOT one of
-            // OpenHuman's curated Notion actions.
-            is_curated: false,
-        }],
-    );
-    let config = Config::default();
-    let g = graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "post", "kind": "tool_call", "name": "Post",
-              "config": { "slug": "NOTION_UNCURATED_ACTION", "args": {} } }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "post" } ]
-    }));
-    let errors = validate_tool_contracts(&config, &g).await;
-    assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(
-        errors[0].contains("NOTION_UNCURATED_ACTION"),
-        "{}",
-        errors[0]
-    );
-    assert!(errors[0].contains("curated"), "{}", errors[0]);
-}
-
-#[tokio::test]
-async fn validate_tool_contracts_skips_expression_derived_and_native_slugs() {
-    let config = Config::default();
-    let g = graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "dynamic", "kind": "tool_call", "name": "Dynamic",
-              "config": { "slug": "=item.tool", "args": {} } },
-            { "id": "native", "kind": "tool_call", "name": "Native",
-              "config": { "slug": "oh:web_search", "args": {} } }
-        ],
-        "edges": [
-            { "from_node": "t", "to_node": "dynamic" },
-            { "from_node": "t", "to_node": "native" }
-        ]
-    }));
-    let errors = validate_tool_contracts(&config, &g).await;
-    assert!(errors.is_empty(), "{errors:?}");
-}
-
-#[tokio::test]
-async fn validate_tool_contracts_skips_rather_than_rejects_when_the_catalog_is_unreachable() {
-    // No seed for this toolkit and no live backend configured — the fetch
-    // fails, and the node must be SKIPPED (never false-rejected).
-    let config = Config::default();
-    let g = graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "post", "kind": "tool_call", "name": "Post",
-              "config": { "slug": "SOMEUNSEEDEDTOOLKIT_DO_THING", "args": {} } }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "post" } ]
-    }));
-    let errors = validate_tool_contracts(&config, &g).await;
-    assert!(
-        errors.is_empty(),
-        "a live-catalog fetch failure must skip, not reject: {errors:?}"
-    );
-}
-
-#[tokio::test]
-async fn validate_tool_contracts_rejects_an_arg_name_not_in_the_input_schema() {
-    seed_live_catalog_cache(
-        "slackargnametest",
-        vec![seeded_slack_send_message_contract_with_schema()],
-    );
-    let config = Config::default();
-    let g = graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "post", "kind": "tool_call", "name": "Post",
-              "config": { "slug": "SLACKARGNAMETEST_SEND_MESSAGE",
-                "args": { "channel": "#general", "text": "hi" } } }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "post" } ]
-    }));
-    let errors = validate_tool_contracts(&config, &g).await;
-    assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].contains("post"), "{}", errors[0]);
-    assert!(errors[0].contains("`text`"), "{}", errors[0]);
-    assert!(errors[0].contains("markdown_text"), "{}", errors[0]);
-    assert!(errors[0].contains("get_tool_contract"), "{}", errors[0]);
-}
-
-#[tokio::test]
-async fn validate_tool_contracts_passes_the_real_arg_name_from_the_input_schema() {
-    seed_live_catalog_cache(
-        "slackargnametest",
-        vec![seeded_slack_send_message_contract_with_schema()],
-    );
-    let config = Config::default();
-    let g = graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "post", "kind": "tool_call", "name": "Post",
-              "config": { "slug": "SLACKARGNAMETEST_SEND_MESSAGE",
-                "args": { "channel": "#general", "markdown_text": "hi" } } }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "post" } ]
-    }));
-    let errors = validate_tool_contracts(&config, &g).await;
-    assert!(errors.is_empty(), "{errors:?}");
-}
-
-/// Uses its own cache key/toolkit (never `"slack"`/`"gmail"`) since the
-/// arg-name check must behave identically no matter which slug it's
-/// exercised against, and a dedicated, unregistered toolkit sidesteps both
-/// the process-global `LIVE_CATALOG_CACHE` sharing risk the other
-/// `validate_tool_contracts` tests accept AND the static curated-catalog
-/// gate (this toolkit has none, so `is_curated` is irrelevant here).
-#[tokio::test]
-async fn validate_tool_contracts_skips_arg_name_check_when_input_schema_is_unknown() {
-    seed_live_catalog_cache(
-        "argschemaunknown",
-        vec![ToolContract {
-            slug: "ARGSCHEMAUNKNOWN_DO_THING".to_string(),
-            toolkit: "argschemaunknown".to_string(),
+            slug: "AIRTABLE_OBSCURE_RPC_ACTION".to_string(),
+            toolkit: "airtable".to_string(),
             description: None,
             required_args: vec![],
             input_schema: None,
@@ -152,73 +34,32 @@ async fn validate_tool_contracts_skips_arg_name_check_when_input_schema_is_unkno
             is_curated: false,
         }],
     );
-    let config = Config::default();
-    let g = graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "post", "kind": "tool_call", "name": "Post",
-              "config": { "slug": "ARGSCHEMAUNKNOWN_DO_THING",
-                "args": { "totally_made_up_field": "hi" } } }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "post" } ]
-    }));
-    let errors = validate_tool_contracts(&config, &g).await;
+
+    let outcome = flows_get_tool_contract(&Config::default(), "AIRTABLE_OBSCURE_RPC_ACTION")
+        .await
+        .expect("seeded catalog lookup should succeed");
+
+    assert_eq!(
+        outcome.value["contract"]["slug"],
+        "AIRTABLE_OBSCURE_RPC_ACTION"
+    );
+    assert_eq!(outcome.value["contract"]["is_curated"], false);
     assert!(
-        errors.is_empty(),
-        "an unknown input_schema must skip the arg-name check, never reject: {errors:?}"
+        outcome.value["runtime_gate"]
+            .as_str()
+            .is_some_and(|warning| warning.contains("REJECTED on every real run")),
+        "RPC should explain the runtime rejection: {}",
+        outcome.value
     );
 }
 
-#[tokio::test]
-async fn validate_tool_contracts_allows_arbitrary_arg_names_when_schema_permits_additional_properties(
-) {
-    seed_live_catalog_cache(
-        "argschemaadditional",
-        vec![ToolContract {
-            slug: "ARGSCHEMAADDITIONAL_DO_THING".to_string(),
-            toolkit: "argschemaadditional".to_string(),
-            description: None,
-            required_args: vec![],
-            input_schema: Some(json!({
-                "type": "object",
-                "properties": { "channel": { "type": "string" } },
-                "additionalProperties": true
-            })),
-            output_fields: vec![],
-            output_schema: None,
-            primary_array_path: None,
-            is_curated: false,
-        }],
-    );
-    let config = Config::default();
-    let g = graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "post", "kind": "tool_call", "name": "Post",
-              "config": { "slug": "ARGSCHEMAADDITIONAL_DO_THING",
-                "args": { "channel": "#general", "any_extra_field": "hi" } } }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "post" } ]
-    }));
-    let errors = validate_tool_contracts(&config, &g).await;
-    assert!(
-        errors.is_empty(),
-        "additionalProperties: true must allow arbitrary arg names: {errors:?}"
-    );
-}
+// ── TinyFlows wiring warnings and the single hard required-arg gate ────────
 
-// ── graph_wiring_warnings: required-arg advisory + output-field/split_out.path
-//    advisories (Part 2c/2d) ────────────────────────────────────────────────
-
-/// `graph_wiring_warnings`'s own required-arg check, exercised DIRECTLY
-/// (rather than through `revise_workflow`/`save_workflow`, where the newer
-/// `validate_tool_contracts` hard-rejects the identical condition first —
-/// see `revise_workflow_rejects_a_missing_required_composio_arg` in
-/// `builder_tools_tests.rs`). Keeps this advisory code path covered for any
-/// caller that consults `graph_wiring_warnings` without also running the
-/// hard gate first.
+/// Required args have one authoritative authoring check: the hard host gate.
+/// The TinyFlows advisory surface reports portable wiring diagnostics only,
+/// so this condition must not produce a duplicate warning.
 #[tokio::test]
-async fn graph_wiring_warnings_flags_a_missing_required_arg() {
+async fn wiring_warnings_omits_missing_required_arg_advisory_but_host_gate_rejects() {
     seed_live_catalog_cache("slack", vec![seeded_slack_send_contract()]);
     let config = Config::default();
     let g = graph(json!({
@@ -230,12 +71,18 @@ async fn graph_wiring_warnings_flags_a_missing_required_arg() {
         ],
         "edges": [ { "from_node": "t", "to_node": "post" } ]
     }));
-    let warnings = graph_wiring_warnings(&config, &g).await;
+    let warnings =
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let graph_json = serde_json::to_value(&g).unwrap();
+    let errors = crate::flows::host_gates::validate_tool_contracts(&config, &graph_json).await;
     assert!(
-        warnings
+        errors
             .iter()
-            .any(|w| w.contains("`text`") && w.contains("post")),
-        "{warnings:?}"
+            .any(|error| error.contains("text") && error.contains("post")),
+        "the hard host gate must remain authoritative: {errors:?}"
     );
 }
 
@@ -261,7 +108,10 @@ async fn graph_wiring_warnings_flags_a_downstream_field_not_in_output_fields() {
             { "from_node": "post", "to_node": "xform" }
         ]
     }));
-    let warnings = graph_wiring_warnings(&config, &g).await;
+    let warnings =
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed");
     assert!(
         warnings
             .iter()
@@ -290,7 +140,10 @@ async fn graph_wiring_warnings_is_silent_when_the_downstream_field_is_real() {
             { "from_node": "post", "to_node": "xform" }
         ]
     }));
-    let warnings = graph_wiring_warnings(&config, &g).await;
+    let warnings =
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed");
     assert!(
         !warnings.iter().any(|w| w.contains("not in")),
         "a real output field must not warn: {warnings:?}"
@@ -323,11 +176,14 @@ async fn graph_wiring_warnings_flags_a_downstream_binding_missing_the_data_prefi
             { "from_node": "post", "to_node": "xform" }
         ]
     }));
-    let warnings = graph_wiring_warnings(&config, &g).await;
+    let warnings =
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed");
     assert!(
         warnings.iter().any(|w| w.contains("item.json.data.ts")
             && w.contains("post")
-            && w.contains("wraps its payload in `data`")),
+            && w.contains("payload is wrapped in `data`")),
         "{warnings:?}"
     );
 }
@@ -357,9 +213,14 @@ async fn graph_wiring_warnings_is_silent_for_a_whole_payload_binding() {
         ]
     }));
     assert!(
-        graph_wiring_warnings(&config, &g).await.is_empty(),
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed")
+            .is_empty(),
         "{:?}",
-        graph_wiring_warnings(&config, &g).await
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed")
     );
 }
 
@@ -391,9 +252,14 @@ async fn graph_wiring_warnings_is_silent_for_composio_envelope_metadata_fields()
         ]
     }));
     assert!(
-        graph_wiring_warnings(&config, &g).await.is_empty(),
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed")
+            .is_empty(),
         "{:?}",
-        graph_wiring_warnings(&config, &g).await
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed")
     );
 }
 
@@ -419,7 +285,10 @@ async fn graph_wiring_warnings_suggests_the_real_split_out_path() {
             { "from_node": "post", "to_node": "split" }
         ]
     }));
-    let warnings = graph_wiring_warnings(&config, &g).await;
+    let warnings =
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed");
     assert!(
         warnings.iter().any(|w| w.contains("json.data.messages")),
         "{warnings:?}"
@@ -454,11 +323,14 @@ async fn graph_wiring_warnings_flags_a_split_out_path_that_resolves_to_a_non_arr
             { "from_node": "post", "to_node": "split" }
         ]
     }));
-    let warnings = graph_wiring_warnings(&config, &g).await;
+    let warnings =
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed");
     assert!(
         warnings
             .iter()
-            .any(|w| w.contains("split") && w.contains("does not name an array")),
+            .any(|w| w.contains("split") && w.contains("known non-array value there")),
         "{warnings:?}"
     );
 }
@@ -495,9 +367,14 @@ async fn graph_wiring_warnings_is_silent_on_split_out_when_schema_is_wholly_unkn
         ]
     }));
     assert!(
-        graph_wiring_warnings(&config, &g).await.is_empty(),
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed")
+            .is_empty(),
         "{:?}",
-        graph_wiring_warnings(&config, &g).await
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed")
     );
 }
 
@@ -549,7 +426,10 @@ async fn graph_wiring_warnings_suggests_the_probed_split_out_path_when_schema_is
             { "from_node": "post", "to_node": "split" }
         ]
     }));
-    let warnings = graph_wiring_warnings(&config, &g).await;
+    let warnings =
+        graph_wiring_warnings(&crate::core::runtime::DispatchCtx::unbound(), &config, &g)
+            .await
+            .expect("TinyFlows wiring warnings should succeed");
     assert!(
         warnings.iter().any(|w| w.contains("json.data.issues")),
         "{warnings:?}"
@@ -572,8 +452,66 @@ async fn graph_wiring_warnings_suggests_the_probed_split_out_path_when_schema_is
         ]
     }));
     assert!(
-        graph_wiring_warnings(&config, &fixed).await.is_empty(),
+        graph_wiring_warnings(
+            &crate::core::runtime::DispatchCtx::unbound(),
+            &config,
+            &fixed
+        )
+        .await
+        .expect("TinyFlows wiring warnings should succeed")
+        .is_empty(),
         "{:?}",
-        graph_wiring_warnings(&config, &fixed).await
+        graph_wiring_warnings(
+            &crate::core::runtime::DispatchCtx::unbound(),
+            &config,
+            &fixed
+        )
+        .await
+        .expect("TinyFlows wiring warnings should succeed")
+    );
+}
+
+#[tokio::test]
+async fn graph_wiring_warnings_resolves_a_separated_action_slug_alias() {
+    seed_live_catalog_cache("googledrive", vec![seeded_alias_contract()]);
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "find", "kind": "tool_call", "name": "Find",
+              "config": { "slug": "GOOGLE_DRIVE_FIND_FILE", "args": {} } },
+            { "id": "split", "kind": "split_out", "name": "Split",
+              "config": { "path": "json.data.wrong" } },
+            { "id": "shape", "kind": "transform", "name": "Shape",
+              "config": { "set": { "file": "=nodes.find.item.json.data.wrong" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "find" },
+            { "from_node": "find", "to_node": "split" },
+            { "from_node": "find", "to_node": "shape" }
+        ]
+    }));
+
+    let warnings = graph_wiring_warnings(
+        &crate::core::runtime::DispatchCtx::unbound(),
+        &Config::default(),
+        &g,
+    )
+    .await
+    .expect("TinyFlows wiring warnings should succeed");
+
+    assert_eq!(
+        warnings.len(),
+        2,
+        "alias should reach both wiring checks: {warnings:?}"
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("json.data.files")),
+        "{warnings:?}"
+    );
+    assert!(
+        warnings.iter().any(|warning| warning.contains("wrong")),
+        "{warnings:?}"
     );
 }

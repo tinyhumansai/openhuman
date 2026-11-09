@@ -1,97 +1,8 @@
 use super::*;
+use chrono::Utc;
 
-#[tokio::test]
-async fn flows_cancel_run_of_a_completed_with_warnings_run_errors() {
-    // A settled `completed_with_warnings` run (run honesty, PR2) must be just
-    // as terminal as a plain `completed` run — otherwise `flows_cancel_run`
-    // falls through to its not-in-flight path and overwrites the row (and the
-    // flow summary) as `"cancelled"`, silently discarding the warning status
-    // the run already recorded.
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let created = flows_create(&config, "demo".to_string(), trigger_only_graph(), false)
-        .await
-        .unwrap();
-
-    let run = flows_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        json!({}),
-        serde_json::Map::new(),
-        FlowRunTrigger::Rpc,
-    )
-    .await
-    .unwrap();
-    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
-
-    // Force the settled row to the warning status directly — an end-to-end
-    // null-binding graph isn't needed to exercise this guard.
-    // Fixture-only forcing write: the run above already settled `completed`, so
-    // `finish_flow_run`'s liveness guard (correctly) refuses a terminal →
-    // terminal transition. Staging a row at an arbitrary terminal status is a
-    // test concern, not a production one.
-    store::force_run_status_for_test(&config, &thread_id, "completed_with_warnings", None).unwrap();
-
-    let err = flows_cancel_run(&config, &thread_id)
-        .await
-        .expect_err("cancelling a completed_with_warnings run must be a clear error");
-    assert!(err.contains("already terminal"), "got: {err}");
-
-    // And the row must still read back as the warning status, not overwritten.
-    let run_row = flows_get_run(&config, &thread_id).await.unwrap();
-    assert_eq!(run_row.value.status, "completed_with_warnings");
-}
-
-#[tokio::test]
-async fn flows_cancel_run_of_an_interrupted_run_errors() {
-    // An `interrupted` run (bug B42 — reconciled by the drop-guard / boot
-    // sweep) is terminal: cancelling it must be a clear error, never fall
-    // through to the not-in-flight path and clobber the row to `"cancelled"`,
-    // discarding the interruption reason it already carries.
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let created = flows_create(&config, "demo".to_string(), trigger_only_graph(), false)
-        .await
-        .unwrap();
-
-    let run = flows_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        json!({}),
-        serde_json::Map::new(),
-        FlowRunTrigger::Rpc,
-    )
-    .await
-    .unwrap();
-    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
-
-    // Force the settled row to `interrupted` directly.
-    // Fixture-only forcing write — see the sibling test above: the run has
-    // already settled, and `finish_flow_run` now (correctly) refuses a
-    // terminal -> terminal transition.
-    store::force_run_status_for_test(
-        &config,
-        &thread_id,
-        "interrupted",
-        Some("interrupted mid-flight"),
-    )
-    .unwrap();
-
-    let err = flows_cancel_run(&config, &thread_id)
-        .await
-        .expect_err("cancelling an interrupted run must be a clear error");
-    assert!(err.contains("already terminal"), "got: {err}");
-
-    // And the row must still read back as `interrupted`, not overwritten.
-    let run_row = flows_get_run(&config, &thread_id).await.unwrap();
-    assert_eq!(run_row.value.status, "interrupted");
-    assert_eq!(
-        run_row.value.error.as_deref(),
-        Some("interrupted mid-flight")
-    );
-}
+// The module owns terminal status classification; the public cancel boundary
+// is covered by real module-created completed runs in ops_run_rows_and_notifications_tests.rs.
 
 #[tokio::test]
 async fn flows_cancel_run_missing_run_errors() {
@@ -112,27 +23,30 @@ async fn parked_run_ttl_sweep_expires_stale_runs_but_spares_fresh_ones() {
     let created = flows_create(&config, "gated".to_string(), approval_gated_graph(), false)
         .await
         .unwrap();
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
 
-    // Seed a parked run whose "parked since" (finished_at) is far in the past,
-    // so it is well beyond the TTL.
-    let stale_id = format!("flow:{}:stale-run", created.value.id);
-    let ancient = "2000-01-01T00:00:00+00:00";
-    store::insert_flow_run(&config, &stale_id, &created.value.id, &stale_id, ancient).unwrap();
-    store::finish_flow_run(
+    // Start both rows through TinyFlows, then age only the parked timestamp on
+    // one module-created document to model an approval left behind across TTL.
+    let stale = flows_run(
+        &ctx,
+        &config,
+        &created.value.id,
+        json!({}),
+        serde_json::Map::new(),
+        FlowRunTrigger::Rpc,
+    )
+    .await
+    .unwrap();
+    let stale_id = stale.value["thread_id"].as_str().unwrap().to_string();
+    let ancient_ms = (Utc::now() - chrono::Duration::days(365 * 20)).timestamp_millis();
+    super::resume_checkpoint_tests::update_parked_run_document_for_test(
         &config,
         &stale_id,
-        "pending_approval",
-        ancient,
-        &[],
-        &["gate".to_string()],
-        None,
-        None,
-    )
-    .unwrap();
+        |document| document["finished_ms"] = json!(ancient_ms),
+    );
 
-    // A genuinely fresh parked run (just paused now) must survive the sweep.
     let fresh = flows_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
+        &ctx,
         &config,
         &created.value.id,
         json!({}),
@@ -143,25 +57,24 @@ async fn parked_run_ttl_sweep_expires_stale_runs_but_spares_fresh_ones() {
     .unwrap();
     let fresh_id = fresh.value["thread_id"].as_str().unwrap().to_string();
 
-    let swept = sweep_expired_parked_runs(&config).await;
+    let swept = crate::flows::recovery::expire_parked_runs(&ctx, &config).await;
     assert_eq!(swept, 1, "only the stale parked run should be swept");
 
-    let stale_row = store::get_flow_run(&config, &stale_id).unwrap().unwrap();
+    let stale_row = flows_get_run(&config, &stale_id).await.unwrap().value;
     assert_eq!(stale_row.status, "cancelled");
     assert!(
         stale_row.error.unwrap_or_default().contains("expired"),
         "an expired run's error must note the TTL expiry"
     );
 
-    let fresh_row = store::get_flow_run(&config, &fresh_id).unwrap().unwrap();
+    let fresh_row = flows_get_run(&config, &fresh_id).await.unwrap().value;
     assert_eq!(
         fresh_row.status, "pending_approval",
         "a run parked within the TTL must not be swept"
     );
 
-    // The swept run is no longer resumable.
     let err = flows_resume(
-        &crate::core::runtime::DispatchCtx::ambient(),
+        &ctx,
         &config,
         &created.value.id,
         &stale_id,
@@ -170,12 +83,17 @@ async fn parked_run_ttl_sweep_expires_stale_runs_but_spares_fresh_ones() {
     )
     .await
     .expect_err("an expired parked run must not be resumable");
-    assert!(err.contains("not pending approval") || err.contains("no paused run"));
+    assert!(err.contains("not waiting for approval"));
 }
 
-#[test]
-fn flows_validate_warns_on_unfired_webhook_trigger() {
-    let outcome = flows_validate(webhook_trigger_graph());
+#[tokio::test]
+async fn flows_validate_warns_on_unfired_webhook_trigger() {
+    let outcome = flows_validate(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &Config::default(),
+        webhook_trigger_graph(),
+    )
+    .await;
     assert!(outcome.value.valid, "a webhook graph is structurally valid");
     assert!(outcome.value.errors.is_empty());
     assert_eq!(
@@ -192,9 +110,14 @@ fn flows_validate_warns_on_unfired_webhook_trigger() {
     );
 }
 
-#[test]
-fn flows_validate_does_not_warn_on_schedule_trigger() {
-    let outcome = flows_validate(schedule_trigger_graph("0 9 * * *"));
+#[tokio::test]
+async fn flows_validate_does_not_warn_on_schedule_trigger() {
+    let outcome = flows_validate(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &Config::default(),
+        schedule_trigger_graph("0 9 * * *"),
+    )
+    .await;
     assert!(outcome.value.valid);
     assert!(
         outcome.value.warnings.is_empty(),
@@ -203,14 +126,19 @@ fn flows_validate_does_not_warn_on_schedule_trigger() {
     );
 }
 
-#[test]
-fn flows_validate_reports_error_for_graph_without_trigger() {
+#[tokio::test]
+async fn flows_validate_reports_error_for_graph_without_trigger() {
     let graph = json!({
         "name": "bad",
         "nodes": [ { "id": "a", "kind": "output_parser", "name": "A" } ],
         "edges": []
     });
-    let outcome = flows_validate(graph);
+    let outcome = flows_validate(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &Config::default(),
+        graph,
+    )
+    .await;
     assert!(!outcome.value.valid);
     assert_eq!(outcome.value.errors.len(), 1);
     assert!(outcome.value.errors[0].contains("trigger"));
@@ -220,8 +148,8 @@ fn flows_validate_reports_error_for_graph_without_trigger() {
     );
 }
 
-#[test]
-fn flows_validate_accumulates_every_structural_error() {
+#[tokio::test]
+async fn flows_validate_accumulates_every_structural_error() {
     // A graph with several independent problems: no trigger, a duplicate node
     // id, and a dangling edge. Multi-error validation must surface all of them
     // in one call (fail-fast would report only the first).
@@ -233,7 +161,12 @@ fn flows_validate_accumulates_every_structural_error() {
         ],
         "edges": [ { "from_node": "dup", "to_node": "ghost" } ]
     });
-    let outcome = flows_validate(graph);
+    let outcome = flows_validate(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &Config::default(),
+        graph,
+    )
+    .await;
     assert!(!outcome.value.valid);
     // errors[] and error_details[] must be 1:1.
     assert_eq!(
@@ -274,8 +207,8 @@ fn flows_validate_accumulates_every_structural_error() {
     assert_eq!(missing.node_id, None);
 }
 
-#[test]
-fn flows_validate_reports_unparseable_graph_as_single_error() {
+#[tokio::test]
+async fn flows_validate_reports_unparseable_graph_as_single_error() {
     // A pre-validation failure (an unknown node kind can't deserialize) is a
     // genuine single error, not a structural-error accumulation.
     let graph = json!({
@@ -283,7 +216,12 @@ fn flows_validate_reports_unparseable_graph_as_single_error() {
         "nodes": [ { "id": "a", "kind": "not_a_real_kind", "name": "A" } ],
         "edges": []
     });
-    let outcome = flows_validate(graph);
+    let outcome = flows_validate(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &Config::default(),
+        graph,
+    )
+    .await;
     assert!(!outcome.value.valid);
     assert_eq!(outcome.value.errors.len(), 1);
     assert_eq!(outcome.value.error_details.len(), 1);
@@ -364,7 +302,7 @@ fn build_flow_connections_emits_parseable_refs_for_both_kinds() {
     // exact parser the caps seam uses on execution.
     assert_eq!(gmail.connection_ref, "composio:gmail:ca_abc");
     assert_eq!(
-        crate::flows::tinyflows::caps::composio_connection_id(&gmail.connection_ref),
+        crate::integrations::composio::flow_gate::composio_connection_id(&gmail.connection_ref),
         Some("ca_abc")
     );
     assert_eq!(gmail.toolkit.as_deref(), Some("gmail"));
@@ -375,10 +313,6 @@ fn build_flow_connections_emits_parseable_refs_for_both_kinds() {
     let stripe = &out[1];
     assert_eq!(stripe.kind, "http");
     assert_eq!(stripe.connection_ref, "http_cred:stripe");
-    assert_eq!(
-        crate::flows::tinyflows::caps::http_cred_name(&stripe.connection_ref),
-        Some("stripe")
-    );
     assert_eq!(stripe.scheme.as_deref(), Some("bearer"));
     assert_eq!(stripe.display, "stripe (bearer)");
     assert!(stripe.toolkit.is_none());
@@ -485,6 +419,7 @@ async fn flows_list_connections_aggregates_http_creds_and_tolerates_composio() {
     let store = HttpCredentialsStore::from_config(&config);
     store
         .upsert(&HttpCredential::bearer("stripe", "sk_live_seed_secret"))
+        .await
         .unwrap();
 
     let outcome = flows_list_connections(&crate::core::runtime::DispatchCtx::ambient(), &config)
@@ -515,9 +450,10 @@ async fn list_suggestions_filters_by_status() {
     seed_suggestion(&config, "s1");
     seed_suggestion(&config, "s2");
 
-    let active = flows_list_suggestions(&config, Some(tinyflows_catalog::SuggestionStatus::New))
-        .await
-        .unwrap();
+    let active =
+        flows_list_suggestions(&config, Some(tinyflows_bus::catalog::SuggestionStatus::New))
+            .await
+            .unwrap();
     assert_eq!(active.value.len(), 2);
 
     // Unfiltered returns all too.
@@ -538,9 +474,10 @@ async fn dismiss_and_mark_built_move_suggestions_out_of_active() {
     assert_eq!(b.value["built"], json!(true));
 
     // Neither is in the active (New) set anymore.
-    let active = flows_list_suggestions(&config, Some(tinyflows_catalog::SuggestionStatus::New))
-        .await
-        .unwrap();
+    let active =
+        flows_list_suggestions(&config, Some(tinyflows_bus::catalog::SuggestionStatus::New))
+            .await
+            .unwrap();
     assert!(active.value.is_empty());
 }
 

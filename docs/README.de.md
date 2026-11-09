@@ -320,7 +320,7 @@ Kurz gesagt: Die anderen sind großartig für eine Person, die mit einem Agenten
 
 Lies [`CONTRIBUTING.md`](../CONTRIBUTING.md) oder lass dich von einem KI-Coding-Agenten mit [diesem Prompt](./CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) anleiten.
 
-1. Installiere Git, Node.js 24+, pnpm 10.10.0, Rust 1.96.1 (mit `rustfmt` und `clippy`), CMake, Ninja, ripgrep und die Voraussetzungen für den Desktop-Build deiner Plattform.
+1. Installiere Git, Node.js 24+, pnpm 10.10.0, Rust 1.99.1 (mit `rustfmt` und `clippy`), CMake, Ninja, ripgrep und die Voraussetzungen für den Desktop-Build deiner Plattform.
 2. Forke das Repo und klone es. Führe `git submodule update --init --recursive` aus, dann `pnpm install`.
 3. Starte `pnpm dev` für Arbeit an der Oberfläche oder `pnpm dev:app` für die Desktop-App. Bevor du einen PR öffnest, führe `pnpm typecheck`, `pnpm format:check` und `cargo check --manifest-path Cargo.toml` aus.
 

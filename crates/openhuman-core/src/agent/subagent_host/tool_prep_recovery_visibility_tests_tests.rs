@@ -1,7 +1,7 @@
 use super::*;
-use crate::inference::tokenjuice::LEGACY_RETRIEVE_TOOL_NAME as RECOVERY_TOOL_NAME;
+const RECOVERY_TOOL_NAME: &str = "retrieve_tool_output";
 use crate::tools::retrieve_tool_output_tool;
-use tinyagents_harness::tools::CurrentTimeTool;
+use tinyagents_harness_tools::CurrentTimeTool;
 
 fn tools() -> Vec<Box<dyn tinytools::Tool>> {
     vec![
@@ -68,7 +68,7 @@ fn parent_visibility_caps_wildcard_child_scope() {
     let mut idx = filter_tool_indices(&t, &ToolScope::Wildcard, &[], None);
     let parent_visible = ["current_time".to_string()].into_iter().collect();
 
-    retain_parent_visible_tool_indices(&mut idx, &t, &parent_visible);
+    retain_parent_visible_tool_indices(&mut idx, &t, &parent_visible, false);
 
     assert_eq!(names(&idx, &t), vec!["current_time".to_string()]);
 }

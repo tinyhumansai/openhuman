@@ -36,7 +36,6 @@ fn allowed_users_for_channel<'a>(config: &'a Config, channel: &str) -> Option<&'
         "discord" => cc.discord.as_ref().map(|c| c.allowed_users.as_slice()),
         "slack" => cc.slack.as_ref().map(|c| c.allowed_users.as_slice()),
         "mattermost" => cc.mattermost.as_ref().map(|c| c.allowed_users.as_slice()),
-        "matrix" => cc.matrix.as_ref().map(|c| c.allowed_users.as_slice()),
         "irc" => cc.irc.as_ref().map(|c| c.allowed_users.as_slice()),
         "lark" => cc.lark.as_ref().map(|c| c.allowed_users.as_slice()),
         "dingtalk" => cc.dingtalk.as_ref().map(|c| c.allowed_users.as_slice()),
@@ -48,7 +47,7 @@ fn allowed_users_for_channel<'a>(config: &'a Config, channel: &str) -> Option<&'
 /// Validate `delivery` at creation time: the module rules
 /// (the module's `ValidateDelivery`) plus the channel's
 /// configured `allowed_users`, which only the host knows.
-fn validate_delivery_for_config(
+pub(crate) fn validate_delivery_for_config(
     config: &Config,
     delivery: &DeliveryConfig,
     origin: Option<&JobOrigin>,
@@ -64,6 +63,60 @@ fn validate_delivery_for_config(
             .await
     })
     .map_err(|e| e.to_string())
+}
+
+/// Validate the module's delivery shape against the origin the job will
+/// actually store, then authorize any channel destination using only a
+/// verified current turn. A persisted or request-supplied channel origin may
+/// describe routing, but it cannot prove that the caller is allowed to route
+/// there.
+pub(crate) fn validate_delivery_for_config_with_trusted_origin(
+    config: &Config,
+    delivery: &DeliveryConfig,
+    effective_origin: Option<&JobOrigin>,
+    trusted_origin: Option<&JobOrigin>,
+) -> Result<(), String> {
+    let mode = delivery.mode.trim();
+    if mode.eq_ignore_ascii_case(delivery_mode::ANNOUNCE) {
+        // Announce has an explicit destination. Let the validator's exemption
+        // see only the verified turn, never the job's mutable origin field.
+        return validate_delivery_for_config(config, delivery, trusted_origin);
+    }
+
+    validate_delivery_for_config(config, delivery, effective_origin)?;
+
+    if mode.eq_ignore_ascii_case(delivery_mode::ORIGIN) {
+        if let Some(JobOrigin::Channel {
+            channel,
+            reply_target,
+            ..
+        }) = effective_origin
+        {
+            if channel_target_matches(trusted_origin, channel, reply_target) {
+                return Ok(());
+            }
+            // Origin delivery has no explicit `channel`/`to` fields, so
+            // project its effective destination through the same module
+            // validation and host allowlist used by announce delivery.
+            let projected = DeliveryConfig {
+                mode: delivery_mode::ANNOUNCE.to_string(),
+                channel: Some(channel.clone()),
+                to: Some(reply_target.clone()),
+                best_effort: delivery.best_effort,
+            };
+            validate_delivery_for_config(config, &projected, None)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn channel_target_matches(origin: Option<&JobOrigin>, channel: &str, target: &str) -> bool {
+    matches!(origin,
+        Some(JobOrigin::Channel { channel: trusted_channel, reply_target, .. })
+            if trusted_channel.trim().eq_ignore_ascii_case(channel.trim())
+                && reply_target == target
+    )
 }
 
 /// Create an agent job from the current turn.

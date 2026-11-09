@@ -63,7 +63,6 @@ import {
   MailXIcon,
   MapPinIcon,
   MessageCircleQuestionIcon,
-  MessageSquareReplyIcon,
   MousePointerClickIcon,
   NetworkIcon,
   NewspaperIcon,
@@ -90,7 +89,6 @@ import {
   TextSearchIcon,
   TrendingUpIcon,
   UserRoundIcon,
-  UsersIcon,
   VideoIcon,
   WalletIcon,
   WorkflowIcon,
@@ -173,6 +171,8 @@ export const EXACT_TOOL_SPECS: Record<string, ToolSpec> = {
 
   // ── Shell and system ────────────────────────────────────────────────────
   shell: spec('runCommand', SquareTerminalIcon, 'shell', { chip: chip.command(), body: 'shell' }),
+  // Follows a `shell` command left running past its yield point.
+  shell_process: spec('wait', SquareTerminalIcon, 'shell', { chip: chip.text('process') }),
   detect_tools: spec('checkInstalledTools', ScanSearchIcon, 'system'),
   install_tool: spec('installTool', PackagePlusIcon, 'system', {
     chip: chip.text('package', 'tool_name'),
@@ -299,23 +299,8 @@ export const EXACT_TOOL_SPECS: Record<string, ToolSpec> = {
 
   // ── Agents and delegation ──────────────────────────────────────────────
   spawn_subagent: spec('delegateTask', BotIcon, 'agent', { chip: chip.text('agent_id') }),
+  // Kept for recorded transcripts from before the single-spawn contract.
   spawn_async_subagent: spec('delegateTask', BotIcon, 'agent', { chip: chip.text('agent_id') }),
-  spawn_worker_thread: spec('delegateTask', BotIcon, 'agent', { chip: chip.text('agent_id') }),
-  delegate_graph: spec('delegateTask', BotIcon, 'agent', { chip: chip.text('agent_id') }),
-  delegate: spec('delegateTask', BotIcon, 'agent', { chip: chip.text('agent') }),
-  delegate_to: spec('delegateTask', BotIcon, 'agent', { chip: chip.text('agent', 'agent_id') }),
-  spawn_parallel_agents: spec('runAgentsInParallel', UsersIcon, 'agent'),
-  continue_subagent: spec('messageAgent', MessageSquareReplyIcon, 'agent', {
-    chip: chip.text('agent_id'),
-  }),
-  steer_subagent: spec('messageAgent', MessageSquareReplyIcon, 'agent', {
-    chip: chip.text('agent_id'),
-  }),
-  wait_subagent: spec('waitForAgent', HourglassIcon, 'agent'),
-  close_subagent: spec('closeAgent', BotIcon, 'agent'),
-  list_subagents: spec('checkAgents', BotIcon, 'agent'),
-  wait: spec('wait', HourglassIcon, 'agent'),
-  wait_loop: spec('wait', HourglassIcon, 'agent'),
   ask_user_clarification: spec('askQuestion', MessageCircleQuestionIcon, 'agent', {
     chip: chip.text('question'),
   }),
@@ -328,6 +313,7 @@ export const EXACT_TOOL_SPECS: Record<string, ToolSpec> = {
   goal_set: spec('setGoal', FlagIcon, 'plan', { chip: chip.text('objective') }),
   goal_get: spec('checkGoal', FlagIcon, 'plan'),
   goal_complete: spec('completeGoal', FlagIcon, 'plan'),
+  goal_resume: spec('resumeGoal', FlagIcon, 'plan'),
 
   // ── Scheduling ──────────────────────────────────────────────────────────
   cron: spec('checkSchedules', CalendarClockIcon, 'schedule'),

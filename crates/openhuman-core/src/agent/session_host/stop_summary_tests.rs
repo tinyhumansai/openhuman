@@ -1,7 +1,5 @@
 use super::*;
-use crate::agent::session_host::turn_checkpoint::{
-    build_deterministic_final_summary, CheckpointToolResult,
-};
+use tinyagents_harness::close::CloseToolResult as CheckpointToolResult;
 
 fn result(name: &str, success: bool, content: &str) -> CheckpointToolResult {
     CheckpointToolResult {
@@ -17,82 +15,98 @@ const TRANSIENT_HALT: &str = "Stopping after 3 attempt(s): failure class `transi
 
 /// The production dump: three identical timeouts, plus a profile lookup
 /// whose raw body carried the user's email and IP.
-#[test]
-fn a_halted_turn_gives_one_reason_and_collapses_identical_failures() {
-    let out = build_deterministic_final_summary(
-        &[
-            result(
-                "get_profile",
-                true,
-                "{\"email\":\"jane.doe@example.com\",\"last_ip\":\"203.0.113.7\"}",
-            ),
-            result(
-                "use_skill",
-                false,
-                "tool `use_skill` timed out after 30000 ms",
-            ),
-            result(
-                "use_skill",
-                false,
-                "tool `use_skill` timed out after 30000 ms",
-            ),
-            result(
-                "use_skill",
-                false,
-                "tool `use_skill` timed out after 30000 ms",
-            ),
-        ],
-        Some(TRANSIENT_HALT),
-    );
-    assert!(out.starts_with("I stopped this turn early"), "{out}");
-    assert!(
-        !out.contains("not making progress"),
-        "the reason comes from the failure class: {out}"
-    );
-    assert!(out.contains("timing out"), "{out}");
-    // No raw stop note and no raw tool output.
-    assert!(!out.contains("Stopping after"), "{out}");
-    assert!(!out.contains("failure class"), "{out}");
-    assert!(!out.contains("jane.doe@example.com"), "{out}");
-    assert!(!out.contains("203.0.113.7"), "{out}");
-    // Collapsed with a count, the error line shown once.
-    assert!(out.contains("`use_skill` failed 3 times"), "{out}");
-    assert_eq!(out.matches("timed out after 30000 ms").count(), 1, "{out}");
-    assert!(out.contains("`get_profile` succeeded"), "{out}");
+#[tokio::test]
+async fn a_halted_turn_gives_one_reason_and_collapses_identical_failures() {
+    crate::agent::session_host::test_support::with_native_security(async {
+        let out = deterministic_final_summary(
+            &[
+                result(
+                    "get_profile",
+                    true,
+                    "{\"email\":\"jane.doe@example.com\",\"last_ip\":\"203.0.113.7\"}",
+                ),
+                result(
+                    "use_skill",
+                    false,
+                    "tool `use_skill` timed out after 30000 ms",
+                ),
+                result(
+                    "use_skill",
+                    false,
+                    "tool `use_skill` timed out after 30000 ms",
+                ),
+                result(
+                    "use_skill",
+                    false,
+                    "tool `use_skill` timed out after 30000 ms",
+                ),
+            ],
+            Some(TRANSIENT_HALT),
+        );
+        assert!(out.starts_with("I stopped this turn early"), "{out}");
+        assert!(
+            !out.contains("not making progress"),
+            "the reason comes from the failure class: {out}"
+        );
+        assert!(out.contains("timing out"), "{out}");
+        // No raw stop note and no raw tool output.
+        assert!(!out.contains("Stopping after"), "{out}");
+        assert!(!out.contains("failure class"), "{out}");
+        assert!(!out.contains("jane.doe@example.com"), "{out}");
+        assert!(!out.contains("203.0.113.7"), "{out}");
+        // Collapsed with a count, the error line shown once.
+        assert!(out.contains("`use_skill` failed 3 times"), "{out}");
+        if cfg!(feature = "security-module") {
+            assert_eq!(out.matches("timed out after 30000 ms").count(), 1, "{out}");
+        } else {
+            assert!(out.contains("[REDACTED]"), "{out}");
+        }
+        assert!(out.contains("`get_profile` succeeded"), "{out}");
+    })
+    .await;
 }
 
-#[test]
-fn an_error_line_is_scrubbed_of_identifiers_and_truncated() {
-    let long_tail = "x".repeat(400);
-    let out = build_deterministic_final_summary(
-        &[
-            result(
-                "send_report",
-                false,
-                "delivery to jane.doe@example.com from 203.0.113.7 rejected\nsecond line body",
-            ),
-            result(
-                "fetch_page",
-                false,
-                &format!("HTTP 500 Internal Server Error {long_tail}"),
-            ),
-        ],
-        Some(
-            "Stopping: 6 tool calls in a row failed with no progress. Last error (from \
+#[tokio::test]
+async fn an_error_line_is_scrubbed_of_identifiers_and_truncated() {
+    crate::agent::session_host::test_support::with_native_security(async {
+        let long_tail = "x".repeat(400);
+        let out = deterministic_final_summary(
+            &[
+                result(
+                    "send_report",
+                    false,
+                    "delivery to jane.doe@example.com from 203.0.113.7 rejected\nsecond line body",
+                ),
+                result(
+                    "fetch_page",
+                    false,
+                    &format!("HTTP 500 Internal Server Error {long_tail}"),
+                ),
+            ],
+            Some(
+                "Stopping: 6 tool calls in a row failed with no progress. Last error (from \
              `fetch_page`):\nHTTP 500",
-        ),
-    );
-    assert!(!out.contains("jane.doe@example.com"), "{out}");
-    assert!(!out.contains("203.0.113.7"), "{out}");
-    assert!(out.contains("[redacted]"), "{out}");
-    assert!(!out.contains("second line body"), "only one line: {out}");
-    assert!(!out.contains(&long_tail), "long lines are truncated: {out}");
-    assert!(out.contains("several different tool calls"), "{out}");
+            ),
+        );
+        assert!(!out.contains("jane.doe@example.com"), "{out}");
+        assert!(!out.contains("203.0.113.7"), "{out}");
+        assert!(out.contains("[REDACTED]"), "{out}");
+        if cfg!(feature = "security-module") {
+            assert!(
+                out.contains("delivery to [REDACTED] from [REDACTED] rejected"),
+                "the native scrubber preserves the non-sensitive error context: {out}"
+            );
+        }
+        assert!(!out.contains("second line body"), "only one line: {out}");
+        assert!(!out.contains(&long_tail), "long lines are truncated: {out}");
+        assert!(out.contains("several different tool calls"), "{out}");
+    })
+    .await;
 }
 
 #[test]
 fn a_secret_in_an_error_line_is_not_repeated() {
-    let out = build_deterministic_final_summary(
+    let out = deterministic_final_summary(
         &[result(
             "http_request",
             false,
@@ -112,7 +126,7 @@ fn a_secret_in_an_error_line_is_not_repeated() {
 
 #[test]
 fn a_successful_repeat_halt_does_not_claim_failure() {
-    let out = build_deterministic_final_summary(
+    let out = deterministic_final_summary(
         &[
             result("list_items", true, "3 items"),
             result("list_items", true, "3 items"),
@@ -208,11 +222,12 @@ fn a_policy_refusal_class_halt_names_the_security_settings() {
 /// most recent ones so the failure that stopped the turn stays visible.
 #[test]
 fn a_capped_summary_keeps_the_most_recent_groups() {
-    let mut results: Vec<_> = (0..MAX_LISTED + 2)
+    // The user-facing summary shows the newest eight groups.
+    let mut results: Vec<_> = (0..10)
         .map(|i| result(&format!("early_tool_{i}"), true, "ok"))
         .collect();
     results.push(result("final_blocker", false, "boom happened"));
-    let out = build_deterministic_final_summary(&results, Some(TRANSIENT_HALT));
+    let out = deterministic_final_summary(&results, Some(TRANSIENT_HALT));
     assert!(out.contains("final_blocker"), "{out}");
     assert!(!out.contains("early_tool_0`"), "{out}");
     assert!(out.contains("more tool call(s)"), "{out}");

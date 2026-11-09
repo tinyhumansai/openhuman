@@ -37,6 +37,33 @@ pub fn load_workflow_metadata(_workspace_dir: &Path) -> Vec<Workflow> {
     Vec::new()
 }
 
+/// Always empty: the disabled skills facade cannot discover configured skills.
+pub fn load_workflow_metadata_for(
+    _ctx: &crate::core::runtime::DispatchCtx,
+    _config: &crate::config::Config,
+) -> Vec<Workflow> {
+    Vec::new()
+}
+
+/// Refuse resource reads when the skills domain is compiled out.
+pub fn read_workflow_resource(
+    _workspace_dir: &Path,
+    _skill_id: &str,
+    _relative_path: &Path,
+) -> Result<String, String> {
+    Err("skills are unavailable in this build".to_string())
+}
+
+/// Refuse scoped resource reads when the skills domain is compiled out.
+pub fn read_workflow_resource_for(
+    _ctx: &crate::core::runtime::DispatchCtx,
+    _config: &crate::config::Config,
+    _skill_id: &str,
+    _relative_path: &Path,
+) -> Result<String, String> {
+    Err("skills are unavailable in this build".to_string())
+}
+
 /// No-op: with skills compiled out nothing can discover a bundled skill, so
 /// writing one into the workspace would only leave files nothing reads.
 ///
@@ -84,6 +111,15 @@ pub mod bus {
     /// No-op: there are no triggered skills to subscribe to the event bus for.
     pub fn ensure_triggered_workflow_subscriber(_workspace: &std::path::Path) {
         log::debug!("[skills-stub] ensure_triggered_workflow_subscriber skipped (skills disabled)");
+    }
+
+    /// No-op with skills compiled out.
+    pub fn ensure_triggered_workflow_subscriber_for(
+        _ctx: &crate::core::runtime::DispatchCtx,
+        _config: &crate::config::Config,
+        _domains: Option<crate::core::runtime::DomainSet>,
+    ) {
+        log::debug!("[skills-stub] scoped triggered-workflow subscriber skipped (skills disabled)");
     }
 }
 

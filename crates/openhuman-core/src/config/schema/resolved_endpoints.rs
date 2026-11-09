@@ -103,7 +103,12 @@ impl ResolvedEndpoints {
 fn host_of(url: &str) -> String {
     let lower = url.trim().to_ascii_lowercase();
     let without_scheme = lower.split("://").nth(1).unwrap_or(&lower);
-    let authority = without_scheme.split('/').next().unwrap_or("");
+    // The authority ends at the path, query or fragment (a backslash is a path
+    // separator for http(s)), so an `@` after any of them is not userinfo.
+    let authority = without_scheme
+        .split(['/', '\\', '?', '#'])
+        .next()
+        .unwrap_or("");
     let host = authority.split('@').next_back().unwrap_or(authority);
     host.split(':').next().unwrap_or(host).to_string()
 }

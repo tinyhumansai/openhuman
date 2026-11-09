@@ -192,7 +192,7 @@ for (const helper of [
 test("private core coverage runs sequentially without a second target directory", () => {
   const source = fs.readFileSync(runner, "utf8");
   assert.doesNotMatch(source, /UNIT_PID|cov-unit|export CARGO_TARGET_DIR/);
-  assert.match(source, /suite "openhuman lib\+bins \(nextest\)" llvm_cov/);
+  assert.match(source, /suite "openhuman product suites \(nextest\)" llvm_cov/);
   assert.match(source, /suite "openhuman-embed \(default\)" llvm_cov_package/);
   assert.match(
     source,
@@ -247,11 +247,12 @@ function runMockedCoverage(exitCode) {
       "bin/cargo",
       `#!/bin/bash
 printf '%s\\n' "$*" >> "$MOCK_CALLS"
-case "$*" in *"-p openhuman --lib --bins"*) [ "${exitCode}" = 0 ] || exit "${exitCode}" ;; esac
+case "$*" in *"llvm-cov nextest"*"-E package(=openhuman) | "*) [ "${exitCode}" = 0 ] || exit "${exitCode}" ;; esac
 node - "$@" <<'JS'
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 if (args[0] === 'metadata') console.log(JSON.stringify({ packages: [] }));
+if (args[0] === 'llvm-cov' && args[1] === 'show-env') console.log('export CARGO_LLVM_COV_TARGET_DIR=target');
 if (args[0] === 'nextest' && args[1] === 'list') {
   console.log(JSON.stringify({ 'rust-suites': { active: { 'binary-name': 'active', testcases: { active: { ignored: false, 'filter-match': { status: 'matches' } } } } } }));
 }
@@ -293,14 +294,25 @@ test("private coverage executes every package configuration once and reports aft
   const { status, calls } = runMockedCoverage(7);
   assert.equal(status, 1);
   const selections = calls.filter((line) => line.includes("llvm-cov nextest"));
-  assert.equal(selections.length, 8);
-  assert.equal(new Set(selections).size, 8);
+  // The product suites (core, embed, tinyhumans, cli), rpc, the two default
+  // feature suites and the tui.
+  assert.equal(selections.length, 5);
+  assert.equal(new Set(selections).size, 5);
   assert.ok(selections.every((line) => line.includes("--no-tests=fail")));
-  assert.ok(
-    selections.some((line) =>
-      line.includes("-p openhuman-cli --tests -E kind(test)"),
+  // One build and one run of the product graph, over the union of the old
+  // per-package filters, listed first with the same arguments.
+  const product = selections.filter((line) =>
+    line.includes(
+      "--features channels --no-report --no-fail-fast -p openhuman -p openhuman-embed -p openhuman-tinyhumans -p openhuman-cli --all-targets -E ",
     ),
   );
+  assert.equal(product.length, 1);
+  assert.equal(
+    product[0].slice(product[0].indexOf("-E ") + 3),
+    "package(=openhuman) | package(=openhuman-embed) | package(=openhuman-tinyhumans) | (package(=openhuman-cli) & kind(test))",
+  );
+  const listing = calls.findIndex((line) => line.startsWith("nextest list"));
+  assert.ok(listing >= 0 && listing < calls.indexOf(product[0]));
   assert.equal(
     calls.filter((line) => line.includes("llvm-cov report")).length,
     1,
@@ -320,7 +332,7 @@ test("private coverage cancels remaining suites but still preserves a report", (
   );
 });
 
-test("private coverage passes when all eight selected configurations report tests", () => {
+test("private coverage passes when all five selected configurations report tests", () => {
   const { status } = runMockedCoverage(0);
   assert.equal(status, 0);
 });
@@ -338,16 +350,19 @@ test("instrumented CLI inventory is cancellation-aware and reuses llvm-cov's env
   );
 });
 
-test("CLI inventory sends product features only to nextest, preserving instrumentation", () => {
+test("product inventory lists llvm-cov's own build instead of instrumenting a second copy", () => {
   const source = fs.readFileSync(runner, "utf8");
-  const start = source.indexOf("    cli_inventory() (");
-  const end = source.indexOf("\n    )", start);
+  const start = source.indexOf("  product_inventory() (");
+  const end = source.indexOf("\n  )", start);
   assert.notEqual(start, -1);
   assert.notEqual(end, -1);
-  const inventory = source.slice(start, end + "\n    )".length);
+  const inventory = source.slice(start, end + "\n  )".length);
   const script = [
     "set -euo pipefail",
     'CORE_PRODUCT_FEATURES="channels,modules"',
+    ...source
+      .split("\n")
+      .filter((line) => /^(UNIFIED_PRODUCT_ARGS|FILTER_[A-Z_]+)=/.test(line)),
     "expected_inventory=/dev/null",
     "export CARGO_BUILD_TARGET_DIR=preserved-target",
     `bash() {
@@ -355,15 +370,16 @@ test("CLI inventory sends product features only to nextest, preserving instrumen
         for arg in "$@"; do
           [[ "$arg" != --features ]] || { echo 'show-env rejects --features' >&2; return 64; }
         done
-        printf '%s\\n' 'export INVENTORY_INSTRUMENTED=1' 'export CARGO_TARGET_DIR=instrumented-target'
+        printf '%s\\n' 'export INVENTORY_INSTRUMENTED=1' 'export CARGO_TARGET_DIR=instrumented-target' 'export CARGO_LLVM_COV_TARGET_DIR=cov-target'
       elif [[ "$*" == *"nextest list"* ]]; then
-        [[ "$*" == *"--features channels,modules"* ]] || return 65
+        [[ "$*" == *"--features channels,modules --target-dir cov-target/llvm-cov-target -p openhuman -p openhuman-embed -p openhuman-tinyhumans -p openhuman-cli --all-targets -E package(=openhuman) | package(=openhuman-embed) | package(=openhuman-tinyhumans) | (package(=openhuman-cli) & kind(test))"* ]] || return 65
         [[ "$INVENTORY_INSTRUMENTED" == 1 && "$CARGO_TARGET_DIR" == instrumented-target && "$CARGO_BUILD_TARGET_DIR" == preserved-target ]] || return 66
+        [[ "$LLVM_PROFILE_FILE" == */ci-out/nextest/product-inventory-profraw/* ]] || return 68
       else return 67
       fi
     }`,
     inventory,
-    "cli_inventory",
+    "product_inventory",
   ].join("\n");
   execFileSync("bash", ["-c", script], { encoding: "utf8" });
 });
@@ -377,7 +393,7 @@ for (const platform of ["Linux", "Darwin", "MINGW64_NT-10.0", "Windows_NT"]) {
       [
         `if target_expected_in_coverage composio_list_tools_stack_overflow_regression '${platform}'; then exit 11; fi`,
         `if target_expected_in_coverage windows_sandbox_env_e2e '${platform}'; then ${windows ? ":" : "exit 12"}; else ${windows ? "exit 13" : ":"}; fi`,
-        `target_expected_in_coverage json_rpc_e2e '${platform}'`,
+        `target_expected_in_coverage json_rpc_threads_e2e '${platform}'`,
         `target_expected_in_coverage future_empty_suite '${platform}'`,
       ].join("\n"),
     );
@@ -418,5 +434,75 @@ test("coverage inventory exceptions match the source gates and remain required a
   assert.match(
     fs.readFileSync(runner, "utf8"),
     /target_features_satisfied "\$\{target\}" && target_expected_in_coverage "\$\{target\}"/,
+  );
+});
+
+test("nextest product suites are one build and one run over the union of their filters", () => {
+  // Join line continuations so each suite call reads as one command.
+  const source = fs.readFileSync(runner, "utf8").replace(/\\\n\s*/g, "");
+  assert.match(
+    source,
+    /suite "openhuman product suites \(nextest\)" llvm_cov --no-report --no-fail-fast "\$\{UNIFIED_PRODUCT_ARGS\[@\]\}" -E "\$\{FILTER_PRODUCT\}"/,
+  );
+  // The inventory is listed with the same arguments so the run reuses its build.
+  assert.match(
+    source,
+    /cargo nextest list .*"\$\{UNIFIED_PRODUCT_ARGS\[@\]\}" -E "\$\{FILTER_PRODUCT\}"/,
+  );
+  // One package set, whose cargo resolution unifies the core's features once.
+  const args = source.match(/^UNIFIED_PRODUCT_ARGS=\((.*)\)$/m)[1];
+  assert.equal(
+    args,
+    "-p openhuman -p openhuman-embed -p openhuman-tinyhumans -p openhuman-cli --all-targets",
+  );
+  // Exact package matches: `package(openhuman)` alone would be a glob of the name.
+  for (const value of [
+    "FILTER_CORE='package(=openhuman)'",
+    "FILTER_EMBED='package(=openhuman-embed)'",
+    "FILTER_TINYHUMANS='package(=openhuman-tinyhumans)'",
+    "FILTER_CLI_TESTS='package(=openhuman-cli) & kind(test)'",
+    'FILTER_PRODUCT="${FILTER_CORE} | ${FILTER_EMBED} | ${FILTER_TINYHUMANS} | (${FILTER_CLI_TESTS})"',
+  ])
+    assert.ok(source.includes(value), value);
+  // No per-package product suites remain; rpc, tui and the default feature
+  // suites keep their own resolutions.
+  assert.doesNotMatch(source, /-p openhuman-cli --tests/);
+  assert.doesNotMatch(source, /-E "\$\{FILTER_(CORE|EMBED|TINYHUMANS|CLI_TESTS)\}"/);
+
+  assert.match(source, /suite "openhuman-rpc" llvm_cov_package .*-p openhuman-rpc --all-targets/);
+  assert.match(source, /suite "openhuman-tui" llvm_cov_package .*-p openhuman-tui --all-targets/);
+  assert.match(source, /suite "openhuman-embed \(default\)" llvm_cov_package .*-p openhuman-embed --all-targets/);
+});
+
+test("coverage suites record why cargo rebuilt and drop the verbose noise", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rust-coverage-rebuilds-"));
+  try {
+    const result = withRunnerFunctions(
+      ["explain_rebuilds"],
+      "",
+      [
+        `printf '%s\\n' '       Dirty libc v0.2.189: the file \`build.rs\` has changed' '     Running \`rustc --crate-name libc\`' '       Fresh memchr v2.7.4' '   Compiling libc v0.2.189' 'test output' | explain_rebuilds ${JSON.stringify(path.join(dir, "suite.log"))}`,
+      ].join("\n"),
+    );
+    assert.equal(result.status, 0, result.output);
+    assert.match(result.output, /Dirty libc/);
+    assert.match(result.output, /Compiling libc/);
+    assert.match(result.output, /test output/);
+    assert.doesNotMatch(result.output, /Running `rustc|Fresh memchr/);
+    assert.equal(
+      fs.readFileSync(path.join(dir, "suite.log"), "utf8"),
+      "       Dirty libc v0.2.189: the file `build.rs` has changed\n",
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the nextest coverage run scales the model retry backoff down, overridably", () => {
+  const source = fs.readFileSync(runner, "utf8");
+  const block = source.slice(source.indexOf('if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then\n  # One process per test'));
+  assert.match(
+    block.split("\nfi\n")[0],
+    /export OPENHUMAN_MODEL_RETRY_BACKOFF_MS="\$\{OPENHUMAN_MODEL_RETRY_BACKOFF_MS:-100\}"/,
   );
 });

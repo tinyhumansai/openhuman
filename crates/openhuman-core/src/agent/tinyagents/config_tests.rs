@@ -1,25 +1,27 @@
 use super::*;
 
 fn base() -> Config {
-    Config::default()
+    let mut config = Config::default();
+    config.default_model = Some("test-model".to_string());
+    config
 }
 
 #[test]
 fn maps_the_path_roots_verbatim() {
     let c = base();
-    let s = session_config_from(&c);
+    let s = session_config_from(&c).unwrap();
     assert_eq!(s.workspace_dir, c.workspace_dir);
     assert_eq!(s.action_dir, c.action_dir);
 }
 
 #[test]
-fn falls_back_to_default_model_when_none_is_configured() {
+fn missing_model_is_reported_without_inventing_a_default() {
     let mut c = base();
     c.default_model = None;
-    assert_eq!(session_config_from(&c).model, DEFAULT_MODEL);
+    assert!(session_config_from(&c).is_err());
 
     c.default_model = Some("some-model".into());
-    assert_eq!(session_config_from(&c).model, "some-model");
+    assert_eq!(session_config_from(&c).unwrap().model, "some-model");
 }
 
 #[test]
@@ -39,7 +41,7 @@ fn turn_limits_come_from_the_agent_section() {
     c.agent.compact_context = !AgentConfig::default().compact_context;
     c.agent.tool_result_budget_bytes = 4242;
 
-    let t = session_config_from(&c).turn;
+    let t = session_config_from(&c).unwrap().turn;
     assert_eq!(t.max_tool_iterations, 7);
     assert_eq!(t.max_history_messages, 11);
     assert!(t.parallel_tools);
@@ -54,7 +56,7 @@ fn default_config_maps_to_the_crate_defaults() {
     // The two schemas drifting apart is the failure mode this whole mapper
     // exists to make visible, so pin that an unconfigured host produces an
     // unconfigured crate config.
-    let s = session_config_from(&base());
+    let s = session_config_from(&base()).unwrap();
     assert_eq!(s.turn, TurnConfig::default());
     // The default dialect is `auto` (native, else JSON-in-tag), never a code
     // dialect: python-style calls mis-parse on too many models.
@@ -90,6 +92,7 @@ fn required_output_contract_is_carried_across() {
     });
 
     let r = session_config_from(&c)
+        .unwrap()
         .turn
         .required_output
         .expect("contract is mapped");
@@ -106,7 +109,7 @@ fn apply_agent_config_overrides_the_global_agent_section() {
     let mut c = base();
     c.agent.max_tool_iterations = 3;
 
-    let mut s = session_config_from(&c);
+    let mut s = session_config_from(&c).unwrap();
     assert_eq!(s.turn.max_tool_iterations, 3, "global applies first");
 
     let mut per_agent = AgentConfig::default();
@@ -118,7 +121,7 @@ fn apply_agent_config_overrides_the_global_agent_section() {
     assert!(!s.agents_md_enabled);
     // Path roots and model are session-level and must survive the overlay.
     assert_eq!(s.workspace_dir, c.workspace_dir);
-    assert_eq!(s.model, session_config_from(&c).model);
+    assert_eq!(s.model, session_config_from(&c).unwrap().model);
 }
 
 #[test]
@@ -127,7 +130,7 @@ fn per_section_mappers_agree_with_the_composed_one() {
     c.agent.max_history_messages = 9;
     c.agent.tool_dispatcher = "pformat".into();
 
-    let s = session_config_from(&c);
+    let s = session_config_from(&c).unwrap();
     assert_eq!(s.turn, turn_config_from(&c.agent));
     assert_eq!(s.tools, tool_config_from(&c.agent));
     assert_eq!(s.tools.dispatcher, ToolDispatcher::Pformat);
@@ -157,7 +160,7 @@ fn required_output_from_preserves_key_semantics() {
 
 #[test]
 fn base_mapping_implies_no_delegation_and_no_model_pins() {
-    let s = session_config_from(&base());
+    let s = session_config_from(&base()).unwrap();
     assert_eq!(s.max_depth, 0, "depth is per-delegate, not global");
     assert!(!s.may_delegate_at(0));
     assert!(s.lead_model.is_none());
@@ -175,13 +178,13 @@ fn team_pins_apply_and_a_missing_team_is_a_no_op() {
         },
     );
 
-    let mut s = session_config_from(&c);
+    let mut s = session_config_from(&c).unwrap();
     apply_team_models(&mut s, &c, "research");
     assert_eq!(s.effective_lead_model(), "opus");
     assert_eq!(s.effective_subagent_model(), "haiku");
 
     // An unknown team leaves the session exactly as it was.
-    let mut untouched = session_config_from(&c);
+    let mut untouched = session_config_from(&c).unwrap();
     let before = untouched.clone();
     apply_team_models(&mut untouched, &c, "no-such-team");
     assert_eq!(untouched, before);
@@ -204,7 +207,7 @@ fn a_team_pinning_only_one_tier_applies_it_to_both() {
         },
     );
 
-    let mut s = session_config_from(&c);
+    let mut s = session_config_from(&c).unwrap();
     apply_team_models(&mut s, &c, "solo");
     assert_eq!(s.effective_lead_model(), "opus");
     assert_eq!(
@@ -228,63 +231,8 @@ fn a_blank_team_pin_does_not_displace_the_default() {
         },
     );
 
-    let mut s = session_config_from(&c);
+    let mut s = session_config_from(&c).unwrap();
     apply_team_models(&mut s, &c, "blank");
     assert_eq!(s.effective_lead_model(), "sonnet");
     assert_eq!(s.effective_subagent_model(), "sonnet");
-}
-
-#[test]
-fn a_blank_delegate_model_keeps_the_session_default() {
-    let mut c = base();
-    c.default_model = Some("sonnet".into());
-    let mut s = session_config_from(&c);
-    apply_delegate(
-        &mut s,
-        &DelegateAgentConfig {
-            model: "  ".into(),
-            system_prompt: None,
-            temperature: None,
-            max_depth: 1,
-        },
-    );
-    assert_eq!(s.model, "sonnet");
-}
-
-#[test]
-fn delegate_overrides_replace_the_base_model_and_enable_delegation() {
-    let c = base();
-    let mut s = session_config_from(&c);
-    apply_delegate(
-        &mut s,
-        &DelegateAgentConfig {
-            model: "haiku".into(),
-            system_prompt: None,
-            temperature: Some(0.1),
-            max_depth: 2,
-        },
-    );
-
-    assert_eq!(s.model, "haiku");
-    assert_eq!(s.temperature, Some(0.1));
-    assert_eq!(s.max_depth, 2);
-    assert!(s.may_delegate_at(1));
-    assert!(!s.may_delegate_at(2));
-}
-
-#[test]
-fn a_delegate_without_a_temperature_keeps_the_configured_default() {
-    let mut c = base();
-    c.default_temperature = 0.7;
-    let mut s = session_config_from(&c);
-    apply_delegate(
-        &mut s,
-        &DelegateAgentConfig {
-            model: "haiku".into(),
-            system_prompt: None,
-            temperature: None,
-            max_depth: 1,
-        },
-    );
-    assert_eq!(s.temperature, Some(0.7));
 }

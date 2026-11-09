@@ -2,9 +2,9 @@
 //!
 //! Each migration is a one-shot, idempotent transformation of on-disk
 //! data. The runner is invoked from [`Config::load_or_init`] and is a
-//! fast no-op for workspaces whose `schema_version` already matches
-//! [`CURRENT_SCHEMA_VERSION`]. Failures are logged but never block
-//! startup — the next launch retries.
+//! schema steps are a fast no-op for current workspaces; registered host
+//! normalizers still run regardless of version. Failures are logged but never
+//! block startup — the next launch retries.
 //!
 //! ## Adding a new migration
 //!
@@ -26,49 +26,24 @@ use crate::config::Config;
 mod enable_session_shadow_reads;
 mod expand_autonomy_defaults;
 mod migrate_legacy_embedding_provider;
-mod normalize_default_model_tier;
-mod phase_out_profile_md;
+pub(crate) mod phase_out_profile_md;
 mod reconcile_orphaned_providers;
 mod remove_write_auto_approve;
 mod repair_http_request_limits;
 mod retire_chat_v1_model;
 pub(crate) mod retire_cloud_provider_type;
+pub(crate) mod retire_configured_agents;
 mod retire_local_whisper_stt;
-mod retire_managed_tier_slugs;
 mod unify_ai_provider_settings;
 
 /// Current target schema version. Bumped alongside every new migration.
-pub const CURRENT_SCHEMA_VERSION: u32 = 14;
+pub const CURRENT_SCHEMA_VERSION: u32 = 15;
 
-/// Give a brand-new [`Config`] the managed `openhuman` cloud-provider entry.
-///
-/// A fresh workspace is created already stamped at [`CURRENT_SCHEMA_VERSION`]
-/// (`Config::load_or_init`), so **every** version gate in [`run_pending`] is
-/// false on its first launch — including the `== 1` step that is the only place
-/// the managed entry has ever been seeded. Nothing was missed and no migration
-/// failed: the entry was simply never created, and no later run can create it,
-/// because the gate that would have is behind a version the workspace skipped.
-///
-/// That is why this is called at the creation site rather than expressed as a
-/// migration. A migration cannot fix a config that is born at the target
-/// version, and bumping [`CURRENT_SCHEMA_VERSION`] to add one only moves the
-/// same hole forward a number.
-///
-/// Seeding is *not* folded into `Config::default()` on purpose. `Config` has no
-/// container-level `#[serde(default)]`, so a default-constructed provider list
-/// would not reach deserialization anyway — but it would reach every test and
-/// helper that builds a `Config` from `Default`, and [`seed_cloud_providers`]
-/// early-returns on a non-empty list. The migration tests that assert "empty
-/// list gets seeded" would then be asserting nothing at all.
-///
-/// [`seed_cloud_providers`]: unify_ai_provider_settings::seed_cloud_providers
+/// Run registered host initializers for a new configuration before its first
+/// save. Bare core has no initializer and remains host-neutral.
 pub(crate) fn seed_new_workspace(config: &mut Config) {
-    let mut stats = unify_ai_provider_settings::MigrationStats::default();
-    unify_ai_provider_settings::seed_cloud_providers(config, &mut stats);
-    log::debug!(
-        "[migrations] new workspace seeded with {} cloud provider(s)",
-        stats.cloud_providers_seeded
-    );
+    crate::config::schema::cloud_providers::seed_cloud_providers(config);
+    crate::inference::registry::normalize_config(config);
 }
 
 /// Run any migrations whose `schema_version` gate hasn't yet been
@@ -80,6 +55,21 @@ pub(crate) fn seed_new_workspace(config: &mut Config) {
 /// so a partial run leaves the gate unchanged and the next launch
 /// retries from the same starting version.
 pub async fn run_pending(config: &mut Config) {
+    // Provider-owned normalization is independent of the schema version. It
+    // must still run when an unhosted core already advanced the generic schema,
+    // so a later hosted boot can repair provider-specific legacy values.
+    let before_normalization = config.clone();
+    if crate::inference::registry::normalize_config(config) && !config.recovered_from_corruption {
+        if let Err(err) = config.save().await {
+            *config = before_normalization;
+            log::warn!(
+                "[migrations] provider config normalization ran but config.save failed: \
+                 {err:#} — restored the in-memory config; it will retry on next launch"
+            );
+            return;
+        }
+    }
+
     if config.schema_version >= CURRENT_SCHEMA_VERSION {
         log::debug!(
             "[migrations] schema_version={} already at current={} — nothing to do",
@@ -420,47 +410,17 @@ pub async fn run_pending(config: &mut Config) {
         }
     }
 
-    // 7 -> 8: retire the two stale OpenHuman reasoning-tier `default_model`
-    // defaults to `chat-v1`. `reasoning-v1` (a former DEFAULT_MODEL) and the
-    // deprecated `reasoning-quick-v1` alias were the persisted default for older
-    // builds and drive the implicit managed turns (triage,
-    // escalation base, chat-fallback) onto a stale tier, since app updates never
-    // refresh `default_model`. Only those two values are rewritten — `default_model`
-    // round-trips arbitrary custom/BYOK ids (config-mutation contract), so anything
-    // else (including `chat-v1` and `None`) is left untouched. Guard on `== 7` so
-    // an earlier failed step doesn't get skipped.
+    // 7 -> 8: retain the generic schema sequence. Provider-specific values are
+    // handled independently by registered host normalizers above.
     if config.schema_version == 7 {
-        let previous_default_model = config.default_model.clone();
-        match normalize_default_model_tier::run(config) {
-            Ok(stats) => {
-                let previous_version = config.schema_version;
-                config.schema_version = 8;
-                if let Err(err) = config.save().await {
-                    // Roll back BOTH the version and the mutated `default_model`
-                    // so a failed save doesn't leave `load_or_init` returning a
-                    // half-migrated in-memory config; next launch retries.
-                    config.default_model = previous_default_model;
-                    config.schema_version = previous_version;
-                    log::warn!(
-                        "[migrations] normalize_default_model_tier ran but config.save failed: \
-                         {err:#} — rolled in-memory schema_version back to {previous_version}, \
-                         will retry on next launch"
-                    );
-                    return;
-                }
-                log::info!(
-                    "[migrations] schema_version bumped to 8 (normalize_default_model_tier \
-                     default_model_normalized={})",
-                    stats.default_model_normalized,
-                );
-            }
-            Err(err) => {
-                log::warn!(
-                    "[migrations] normalize_default_model_tier failed: {err:#} — \
-                     will retry on next launch"
-                );
-            }
+        let previous_version = config.schema_version;
+        config.schema_version = 8;
+        if let Err(err) = config.save().await {
+            config.schema_version = previous_version;
+            log::warn!("[migrations] schema_version 8 save failed: {err:#}");
+            return;
         }
+        log::info!("[migrations] schema_version bumped to 8");
     }
 
     // 8 -> 9: opt existing workspaces into the session shadow-read parity soak.
@@ -547,60 +507,20 @@ pub async fn run_pending(config: &mut Config) {
         }
     }
 
-    // 10 -> 11: backfill `cloud_providers` for workspaces that never got the
-    // managed `openhuman` entry.
-    //
-    // This is the repair half, not the fix. The cause is at the creation site:
-    // a fresh workspace is stamped at `CURRENT_SCHEMA_VERSION` and therefore
-    // crosses no gate at all, so the `== 1` step that seeds the managed entry
-    // never ran for it. `seed_new_workspace` closes that hole going forward;
-    // this step exists only for the workspaces already on disk without an
-    // entry, which no creation-site fix can reach. Observed on every workspace
-    // on a developer machine (two production users and one staging), all at
-    // `schema_version = 10` with `cloud_providers = []` — none of which was
-    // ever at version 1, which is what pointed at the creation site.
-    //
-    // The symptom is not subtle now that #6201 lists the managed OpenRouter
-    // catalog in the model picker: `inference_list_models("openhuman")` fails
-    // its lookup in `inference::provider::ops::models` before any HTTP request
-    // is made, the picker renders "Could not load models from this provider.",
-    // and the failure reaches Sentry through `rpc.invoke_method` — the same
-    // string `is_unknown_provider_user_config` was written to keep out of it.
-    //
-    // Reuses `seed_cloud_providers`, which early-returns when the list is
-    // already populated, so this is a no-op for every healthy workspace and
-    // cannot disturb a user's configured providers.
+    // 10 -> 11: generic schema progression; hosted preset repair is supplied
+    // by the host's registered config normalizer above.
     if config.schema_version == 10 {
-        let mut stats = unify_ai_provider_settings::MigrationStats::default();
-        unify_ai_provider_settings::seed_cloud_providers(config, &mut stats);
         let previous_version = config.schema_version;
-        let seeded = stats.cloud_providers_seeded;
         config.schema_version = 11;
         if let Err(err) = config.save().await {
-            // Roll back BOTH the version and the seeded entries: leaving them
-            // in memory would hand `load_or_init` a config whose providers are
-            // not on disk, and the next launch would seed a second copy.
-            //
-            // Safe to revert unconditionally only because `save` now fails
-            // exclusively *before* it replaces the file: a post-rename
-            // directory-fsync failure warns instead of returning `Err` (see
-            // `Config::save`). While it did return `Err` there, this rollback
-            // could revert state that was genuinely committed, leaving the
-            // process on 10 with no providers while disk held 11 with one.
-            if seeded > 0 {
-                config.cloud_providers.clear();
-            }
             config.schema_version = previous_version;
             log::warn!(
-                "[migrations] reseed_cloud_providers ran but config.save failed: {err:#} — \
-                 rolled in-memory schema_version back to {previous_version} and dropped {seeded} \
-                 seeded entr(y/ies), will retry on next launch"
+                "[migrations] schema_version 10->11 save failed: {err:#} — \
+                 rolled in-memory schema_version back to {previous_version}; will retry"
             );
             return;
         }
-        log::info!(
-            "[migrations] schema_version bumped to 11 (reseed_cloud_providers seeded={seeded})"
-        );
+        log::info!("[migrations] schema_version bumped to 11");
     }
 
     // 11 -> 12: reserialize the config. This step once rewrote a retired
@@ -617,39 +537,17 @@ pub async fn run_pending(config: &mut Config) {
         log::info!("[migrations] schema_version bumped to 12");
     }
 
-    // 12 -> 13: retire the managed tier slugs (`chat-v1`, `agentic-v1`, …).
-    // The managed backend serves OpenRouter model ids only, so every persisted
-    // tier slug — `default_model`, orchestrator/team/delegate pins, model
-    // routes — is rewritten to the managed default model. Guard on `== 12` so
-    // an earlier failed step isn't skipped.
+    // 12 -> 13: retain the generic schema sequence. Provider-specific values are
+    // handled independently by registered host normalizers above.
     if config.schema_version == 12 {
-        let snapshot = config.clone();
-        match retire_managed_tier_slugs::run(config) {
-            Ok(stats) => {
-                let previous_version = config.schema_version;
-                config.schema_version = 13;
-                if let Err(err) = config.save().await {
-                    *config = snapshot;
-                    log::warn!(
-                        "[migrations] retire_managed_tier_slugs ran but config.save failed: \
-                         {err:#} — rolled in-memory schema_version back to {previous_version}, \
-                         will retry on next launch"
-                    );
-                    return;
-                }
-                log::info!(
-                    "[migrations] schema_version bumped to 13 (retire_managed_tier_slugs \
-                     rewritten={})",
-                    stats.rewritten
-                );
-            }
-            Err(err) => {
-                log::warn!(
-                    "[migrations] retire_managed_tier_slugs failed: {err:#} — \
-                     will retry on next launch"
-                );
-            }
+        let previous_version = config.schema_version;
+        config.schema_version = 13;
+        if let Err(err) = config.save().await {
+            config.schema_version = previous_version;
+            log::warn!("[migrations] schema_version 13 save failed: {err:#}");
+            return;
         }
+        log::info!("[migrations] schema_version bumped to 13");
     }
     // 13 -> 14: persist provider discriminators normalized before typed decode.
     // Saves also retain the provider-native default_model used by BYOK routing.
@@ -658,6 +556,17 @@ pub async fn run_pending(config: &mut Config) {
         if let Err(err) = config.save().await {
             config.schema_version = 13;
             log::warn!("[migrations] schema_version 14 save failed: {err:#}");
+            return;
+        }
+    }
+    // 14 -> 15: reserialize the config without the retired
+    // autonomy.max_cost_per_day_cents field. The value was never enforced;
+    // serialization drops the unknown field from existing config files.
+    if config.schema_version == 14 {
+        config.schema_version = 15;
+        if let Err(err) = config.save().await {
+            config.schema_version = 14;
+            log::warn!("[migrations] schema_version 15 save failed: {err:#}");
         }
     }
 }

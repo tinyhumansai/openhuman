@@ -112,6 +112,11 @@ impl Tool for DesktopTool {
         let thread_id = context
             .and_then(ToolRunContext::thread_id)
             .filter(|thread_id| !thread_id.is_empty());
+        if !super::ops::platform_supported() {
+            return Ok(ToolResult::error(
+                "Desktop control is not available on this platform yet.",
+            ));
+        }
         if !super::ops::listener_is_loopback() || !super::ops::enabled(&self.config) {
             return Ok(ToolResult::error(
                 "Desktop control is disabled in Connections.",

@@ -4,7 +4,7 @@
 //! could edit would let a caller move a dangerous tool out of the advertised
 //! surface (or back into it) without review. Adding a pack is a source change.
 
-use tinyagents_harness::tool::packs::{PackCatalog, ToolPack};
+use tinyagents_harness_tools::skills::{PackCatalog, ToolPack};
 
 /// Every pack this build knows about.
 ///
@@ -21,8 +21,6 @@ pub const PACKS: &[ToolPack] = &[
         id: "workflows",
         summary: "Saved automation workflows: build, discover, run, inspect runs.",
         tools: &[
-            "build_workflow",
-            "discover_workflows",
             "run_workflow",
             "await_workflow",
             "describe_workflow",
@@ -58,7 +56,7 @@ pub const PACKS: &[ToolPack] = &[
             "list_connectable_toolkits",
         ],
         // The orchestrator is NOT an owner: it builds and discovers through
-        // `spawn_async_subagent` (prompt.md) and reaches the rest via `use_skill`,
+        // `spawn_subagent` (prompt.md) and reaches the rest via `use_skill`,
         // so owning the pack put all of it on its wire for nothing.
         owners: &["workflow_builder", "flow_discovery"],
         guide: "",
@@ -149,16 +147,10 @@ pub const PACKS: &[ToolPack] = &[
     },
     ToolPack {
         id: "skills",
-        // The install hand-off (`setup_skills`) is a member like the other
-        // packed hand-offs (`build_workflow`, `manage_tasks`): it cost ~270
-        // tokens on every orchestrator request for a family used a few times a
-        // week. Packed, it no longer closes this pack to the orchestrator
-        // (`ops::closed_by_direct_handoff` keys on UNPACKED hand-offs), so the
-        // listing offers the hand-off beside the raw registry tools. Running an
-        // installed skill is the orchestrator's own `run_workflow`.
-        summary: "Skills: install or find agent skills (setup_skills hands the whole request to the installer), browse registries, read resources.",
+        // Skill installation and registry work are routed through
+        // `spawn_subagent` to the `skill_setup` specialist.
+        summary: "Skills: find and install agent skills, browse registries, read resources.",
         tools: &[
-            "setup_skills",
             // In the pack, not outside it. A search tool advertised while the
             // tool it hands off to (`describe_workflow`) stays
             // withheld would cost 748 B on every wildcard agent to produce an id
@@ -200,11 +192,6 @@ pub const PACKS: &[ToolPack] = &[
         tools: &[
             "generate_document",
             "generate_presentation",
-            // The delegate, not just the leaf tools: an orchestrator that can
-            // see `make_presentation` pays its schema on every turn to route a
-            // request that arrives in a small minority of them, and the pack
-            // it would route into is already withheld.
-            "make_presentation",
         ],
         owners: &["presentation_agent"],
         guide: "",
@@ -291,9 +278,6 @@ pub const PACKS: &[ToolPack] = &[
         // `tool_search` finds one of them, and this skill hands out the whole
         // loop with its playbook. It replaced the `code_executor` / `critic` /
         // `tool_maker` specialists, whose value was that playbook.
-        // `lsp` is not listed: it registers only behind its capability gate,
-        // and every pack member must resolve in a default build. It is
-        // `Deferred` too, so `tool_search` still finds it when enabled.
         tools: &[
             "grep",
             "glob",
@@ -331,7 +315,7 @@ pub const PACKS: &[ToolPack] = &[
     ToolPack {
         id: "scheduling",
         summary: "Reminders and scheduled jobs: create, list, update, remove, run, inspect.",
-        tools: &["cron"],
+        tools: crate::cron::tools::CRON_OPERATION_TOOLS,
         owners: &[],
         guide: include_str!("guides/scheduling.md"),
     },
@@ -339,24 +323,11 @@ pub const PACKS: &[ToolPack] = &[
         id: "media",
         summary: "Images and clips: generate, or read (describe, OCR, charts, UI elements).",
         tools: &[
-            "create_image",
-            "create_video",
-            // Reading an image, not making one, but it is the same belt from
-            // the model's point of view: the request that reaches for it names
-            // a picture either way.
-            "analyze_image",
             "media_generate_image",
             "media_generate_video",
             "media_list_models",
         ],
         owners: &["image_agent", "video_agent", "vision_agent"],
-        guide: "",
-    },
-    ToolPack {
-        id: "tasks",
-        summary: "Task sources, workflows, artifacts: add, preview, fetch, update, remove.",
-        tools: &["manage_tasks"],
-        owners: &["task_manager_agent"],
         guide: "",
     },
     ToolPack {
@@ -386,31 +357,20 @@ pub const PACKS: &[ToolPack] = &[
     },
 ];
 
-/// The fleet tools are deliberately NOT a pack, and this is worth stating
-/// because they look like an obvious 1.6k-token candidate.
-///
-/// `steer_subagent`, `wait_subagent`, `close_subagent`, `list_subagents`,
-/// `continue_subagent`, `wait`, `wait_loop` and `spawn_parallel_agents` are
-/// needed *reactively*, mid-turn — exactly when an async worker returns or
-/// pauses on `ask_user_clarification`. A load round-trip at that moment is the
-/// worst possible time to add one, and a `continue_subagent` the model cannot
-/// see is the known infinite-re-delegation failure mode (#4291): the only
-/// continuation left is a fresh stateless sub-agent that asks the same
-/// question again.
-#[cfg(test)]
-pub(crate) const DELIBERATELY_UNPACKED_FLEET_TOOLS: &[&str] = &[
-    "steer_subagent",
-    "wait_subagent",
-    "close_subagent",
-    "list_subagents",
-    "continue_subagent",
-    "wait",
-    "wait_loop",
-    "spawn_parallel_agents",
+/// Pack families that a directly callable `spawn_subagent` owner replaces for
+/// this host. This is separate from `ToolPack::owners`: a pack may give an
+/// agent a few auxiliary tools without making that agent the route for the
+/// whole family (for example, media specialists own image helpers in the
+/// coding pack, but the Master Agent still owns ordinary coding work).
+pub const DIRECT_HANDOFF_PACK_OWNERS: &[(&str, &[&str])] = &[
+    ("workflows", &["workflow_builder", "flow_discovery"]),
+    ("skills", &["skill_setup"]),
+    ("documents", &["presentation_agent"]),
+    ("media", &["image_agent", "video_agent", "vision_agent"]),
 ];
 
 /// The lookup surface over [`PACKS`] handed to the generic `use_skill` tool
-/// (`tinyagents_harness::tool::packs`). `NOT_FOUND_MARKER` is the host's status
+/// (`tinyagents_harness_tools::skills`). `NOT_FOUND_MARKER` is the host's status
 /// vocabulary, so a "no such skill / tool" result classifies as `NotFound`.
 pub const CATALOG: PackCatalog = PackCatalog::new(PACKS, tinytools::status::NOT_FOUND_MARKER);
 

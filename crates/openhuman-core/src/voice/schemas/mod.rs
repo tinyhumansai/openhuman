@@ -15,7 +15,13 @@ mod helpers;
 mod params;
 mod registry;
 
+#[cfg(test)]
+mod parameter_contracts;
+#[cfg(test)]
+pub(crate) use parameter_contracts::contracts as parameter_contracts;
+
 // Re-export the public API that callers outside this module use.
+pub(crate) use registry::all_voice_controller_entries;
 pub use registry::{all_voice_controller_schemas, all_voice_registered_controllers, voice_schemas};
 
 // ---------------------------------------------------------------------------
@@ -23,9 +29,8 @@ pub use registry::{all_voice_controller_schemas, all_voice_registered_controller
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[cfg(test)]
 use helpers::{
-    deserialize_params, generate_silent_wav, to_json, validate_stt_provider, validate_tts_provider,
+    deserialize_params, generate_silent_wav, validate_stt_provider, validate_tts_provider,
 };
 #[cfg(test)]
 use params::{
@@ -34,8 +39,6 @@ use params::{
     VoiceUpdateProviderSettingsParams,
 };
 
-#[cfg(test)]
-use crate::core::Outcome;
 #[cfg(test)]
 use serde_json::Map;
 #[cfg(test)]

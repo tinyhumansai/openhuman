@@ -6,7 +6,8 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use serde_json::json;
 use tinystoragedrivers::secrets::{crypto, KeyProvider};
-use tinystoragedrivers::{CollectionSpec, DocumentStore, Precondition};
+use tinystoragedrivers::{CollectionSpec, Precondition};
+use tinystoragedrivers_api::DocumentStore;
 
 use super::{
     apply_bootstrap, strip_bootstrap, ConfigRead, ConfigSource, ConfigSourceAnchor,

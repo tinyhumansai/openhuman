@@ -1,15 +1,14 @@
-//! The `flows::` domain: saved automation workflows (tinyflows graphs) —
-//! create/get/list/update/delete/enable/run, backed by SQLite. Mirrors
-//! `crates/openhuman-core/src/cron/`'s module shape.
+//! The `flows::` domain: saved automation workflows (TinyFlows graphs) —
+//! create/get/list/update/delete/enable/run through the TinyFlows module and
+//! its CatalogStorage callback. Mirrors `crates/openhuman-core/src/cron/`'s
+//! module shape.
 //!
-//! Business logic lives in [`ops`]; persistence in `store` (private, with a
-//! handful of functions re-exported below for the capability seam's
-//! `tinyflows_sqlite::flows::SqliteStateStore`); the RPC/CLI
+//! Business logic lives in [`ops`]; workflow definitions in `store`; the RPC/CLI
 //! controller surface in `schemas` (private, re-exported below).
 //!
 //! # Gate shape — leaf, not facade
 //!
-//! The whole family (this module plus [`tinyflows`]) is gated at
+//! This domain is gated at
 //! `pub mod flows;` in `crates/openhuman-core/src/lib.rs` on `#[cfg(feature = "flows")]`,
 //! and the submodules below inherit that gate. There is **no `stub.rs`**:
 //! every symbol reached from outside is a *registration site* (`core::all`,
@@ -23,42 +22,33 @@
 //! edge into this tree. If one ever gains a real `use` of `flows::`, this
 //! family must convert to the facade+stub shape (see `voice/`).
 
-pub mod agents;
+mod agent_route;
+pub(crate) mod authoring_host;
 pub mod builder_host;
-pub mod builder_tools;
+pub(crate) mod builder_tools;
+mod builder_tools_connection_reads;
 pub mod bus;
+pub(crate) mod caps_host;
+pub(crate) mod catalog_storage;
 pub mod catalogue;
+mod copilot_bus;
 mod draft_store;
+pub(crate) mod host_gates;
+pub mod http_credentials;
 pub mod memory_tools;
 pub mod node_contracts;
 pub mod ops;
+pub(crate) mod recovery;
 pub(crate) mod registration;
+pub(crate) mod runs_adapter;
 mod schemas;
-/// Skills this domain ships inside the binary. Needs BOTH gates: the pages
-/// teach flows authoring, and `BundledSkill` is part of the skills subsystem.
-#[cfg(feature = "skills")]
-pub mod skills;
 mod store;
-/// The tinyflows engine seam (formerly `crate::tinyflows`).
-pub mod tinyflows;
-pub mod tools;
-
-// Portable catalog vocabulary is imported directly from `tinyflows-catalog`.
-
+#[cfg(test)]
+pub(crate) mod test_support;
 pub use schemas::{
     all_controller_schemas as all_flows_controller_schemas,
     all_registered_controllers as all_flows_registered_controllers,
 };
-// `kv_get`/`kv_set` are re-exported (not just `pub(crate)`-visible within this
-// domain's own module tree) because `tinyflows_sqlite::flows::SqliteStateStore`
-// (built in `crates/openhuman-core/src/flows/tinyflows/caps/ops.rs`) lives in a sibling module and needs
-// them to implement `tinyflows::caps::StateStore` without duplicating the
-// `flow_state` table's persistence logic.
-// `upsert_flow_run_step` is likewise re-exported for the tinyflows seam: the
-// live run observer (`tinyflows::observability::FlowRunObserver`, issue G2)
-// lives in the sibling `tinyflows` domain and persists each finished step onto
-// the `flow_runs` row through this function as the run executes.
-pub use store::{kv_get, kv_set, upsert_flow_run_step};
 pub use {node_contracts::all_node_kind_contracts, node_contracts::node_kind_contract};
 // Flow memory scoping (`flow:<id>` tags over memory v2) lives in
 // `memory_tools`, the sibling that owns the agent tools; the digest

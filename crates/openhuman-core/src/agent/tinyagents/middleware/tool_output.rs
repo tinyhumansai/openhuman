@@ -63,7 +63,7 @@ pub(crate) const COMPACTION_EXEMPT_TOOLS: &[&str] = &[
 
 /// Tools whose results the model reads to derive an exact schema (e.g.
 /// `primary_array_path` / `output_fields`) from a *real* sampled tool
-/// response, per the B12 output-probe contract (`flows::builder_tools`).
+/// response, per the B12 output-probe contract (`integrations::composio::builder_tools`).
 /// TokenJuice's array-elision tabulation defeats their purpose outright — a
 /// tabulated sample hides the very array shape the model is calling the tool
 /// to observe, so it derives a wrong or nonexistent `split_out.path` from the
@@ -109,7 +109,18 @@ pub(crate) const SAMPLING_TOOLS: &[&str] = &["get_tool_output_sample", "get_tool
 /// on is not cheaper, it is just wrong more quietly — but a host that wants a
 /// bound should bound the *catalogue* (serve fewer tools, or page the listing),
 /// not cut the bytes underneath it.
-pub(crate) const DISCOVERY_TOOLS: &[&str] = &["mcp_list_tools", "mcp_list_servers"];
+///
+/// `tool_search` is the same kind of listing: its answer is the schemas of the
+/// tools it found, and the harness's collapse step later rewrites a *used*
+/// answer down to the schemas of the tools the run called. That rewrite
+/// recognises the answer by its shape, so a tabulated, summarised or cut one
+/// is skipped and keeps its full weight for the rest of the thread. The size
+/// is bounded by the search itself (`[agent.tool_search] max_limit`).
+pub(crate) const DISCOVERY_TOOLS: &[&str] = &[
+    "mcp_list_tools",
+    "mcp_list_servers",
+    tinytools::TOOL_SEARCH_NAME,
+];
 
 /// Steps 1 (TinyJuice summary) + 2 (tokenjuice compaction) exemption:
 /// proposal tools (final-output contract, see [`COMPACTION_EXEMPT_TOOLS`]),
@@ -211,7 +222,7 @@ pub(crate) struct ToolOutputMiddleware {
     /// Calls that only print files the agent can read again (`cat`, `sed -n`,
     /// `file_read`, ...), keyed by call id; the same `before_tool` →
     /// `after_tool` seam. Their results skip the LLM summary. See
-    /// `tinytools_std::filesystem::is_read_only_call`.
+    /// `tinyagents_harness_tools::fs::filesystem::is_read_only_call`.
     pub(crate) file_reads: Mutex<std::collections::HashSet<String>>,
 }
 
@@ -284,7 +295,7 @@ impl OutputCapPolicy for ToolOutputMiddleware {
     /// An artifact nobody can read back is worse than the processed copy, so
     /// a body larger than `file_read` will open is not kept whole.
     fn max_persistable_bytes(&self) -> u64 {
-        tinytools_std::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES
+        tinyagents_harness_tools::fs::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES
     }
 }
 
@@ -462,7 +473,8 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for Too
                 reads.insert(call.id.clone(), read);
             }
         }
-        if tinytools_std::filesystem::is_read_only_call(&call.name, &call.arguments) {
+        if tinyagents_harness_tools::fs::filesystem::is_read_only_call(&call.name, &call.arguments)
+        {
             tracing::debug!(
                 tool = %call.name,
                 call_id = %call.id,
@@ -577,7 +589,7 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for Too
             );
         }
         // A file read within the budget goes in verbatim; past it, it never
-        // gets an LLM summary (see `tinytools_std::filesystem::is_read_only_call`).
+        // gets an LLM summary (see `tinyagents_harness_tools::fs::filesystem::is_read_only_call`).
         let verbatim_file_read =
             file_read && (plan.budget_bytes == 0 || content.len() <= plan.budget_bytes);
         if file_read {

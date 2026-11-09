@@ -17,9 +17,12 @@ pub(super) fn is_embedder_host() -> bool {
 
 /// Populate the process cache away from the next chat turn after startup or a
 /// credential change. Connection changes have their own invalidation paths.
-pub(super) fn spawn_integrations_cache_warm(config: &Config) {
+pub(super) fn spawn_integrations_cache_warm(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+) {
     let integration_config = config.clone();
-    tokio::spawn(async move {
+    ctx.spawn(async move {
         let started = std::time::Instant::now();
         match crate::integrations::composio::fetch_connected_integrations_status(
             &integration_config,
@@ -44,9 +47,30 @@ pub(super) fn spawn_integrations_cache_warm(config: &Config) {
 /// from the initial boot path (when an existing
 /// session is detected) and from `set_credential()` when a credential is installed.
 pub async fn start_credential_gated_services(
-    _ctx: &crate::core::runtime::DispatchCtx,
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
 ) {
+    // Optional TinyFlows resources warm in the background and must never hold
+    // credential activation or ordinary chat startup on module availability.
+    crate::skills::schedule_flow_authoring_prewarm(ctx, config, None);
+    // These login-gated services are mutually independent — the ONLY ordering
+    // constraint is voice-server → standalone-dictation-listener (they contend
+    // for the single rdev global listener on macOS). Previously each was
+    // `.await`ed in series, so their cold-start costs SUMMED: the local-AI
+    // bootstrap (Ollama/embeddings) + the Windows WASAPI microphone init
+    // (a synchronous readiness handshake in `always_on::spawn_capture_thread`)
+    // stacked into the ~10s stall users hit before hotkeys/commands were usable
+    // — worst on Windows (#3490). Worse,
+    // the hotkey/command registration (steps 2–3) sat
+    // *after* the local-AI bootstrap in the series, so commands could not
+    // register until Ollama finished warming.
+    //
+    // Run them concurrently on independent tasks instead: readiness is bounded
+    // by the slowest single service rather than their sum, and command
+    // registration no longer waits behind local-AI warm-up. Each task logs its
+    // own elapsed time so a future regression can be attributed to one stage; a
+    // panic in one service is logged on join and never aborts the others.
+
     // Unit tests must not launch the real login-gated background services: they
     // include detached listeners that outlive the test that spawned them and interleave with the
     // shared process state (HOME / active_user.toml) of the parallel `cargo
@@ -60,18 +84,7 @@ pub async fn start_credential_gated_services(
         return;
     }
 
-    // An embedder's task-local user-root policy does not cross spawn_blocking;
-    // its first agent build warms the correctly scoped cache instead.
-    if !is_embedder_host() {
-        let skills_workspace = config.workspace_dir.clone();
-        // Detached on purpose: the warm-up must not delay startup.
-        tokio::task::spawn_blocking(move || {
-            let count = crate::skills::load_workflow_metadata(&skills_workspace).len();
-            log::debug!("[services] skill metadata cache warmed entries={count}");
-        });
-    }
-
-    spawn_integrations_cache_warm(config);
+    spawn_integrations_cache_warm(ctx, config);
 
     let started = std::time::Instant::now();
     // (service label, task) pairs so a panic surfaced on join is attributed to
@@ -83,9 +96,10 @@ pub async fn start_credential_gated_services(
     //    critical path so a slow endpoint cannot delay the other services.
     {
         let config = config.clone();
+        let service_ctx = ctx.clone();
         tasks.push((
             "local_ai",
-            tokio::spawn(async move {
+            service_ctx.spawn(async move {
                 if config.local_ai.runtime_enabled {
                     let step = std::time::Instant::now();
                     log::debug!("[services] local AI endpoint probe starting");

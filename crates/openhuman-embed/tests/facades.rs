@@ -8,9 +8,10 @@ use openhuman_embed::artifacts::{
     create_artifact, finalize_artifact, resolve_ready_file, ArtifactKind, ArtifactStatus, FileRoots,
 };
 use openhuman_embed::chat_surface::{
-    publish_web_channel_event, subscribe_web_channel_events, WebChannelEvent,
+    publish_web_channel_event, subscribe_web_channel_events, WebChannelEvent, WebEventContext,
 };
 use openhuman_embed::identity::{peek_credential_user_identity, UserIdentity};
+use openhuman_embed::sandbox::{read_file, write_file, BoxError, MAX_FILE_BYTES};
 
 #[tokio::test]
 async fn an_artifact_resolves_only_once_ready_and_only_under_its_roots() {
@@ -74,22 +75,32 @@ async fn an_artifact_resolves_only_once_ready_and_only_under_its_roots() {
 #[tokio::test]
 async fn web_channel_events_reach_a_subscriber_with_a_timestamp() {
     let mut events = subscribe_web_channel_events();
-    publish_web_channel_event(WebChannelEvent {
-        event: "facade_probe".into(),
-        thread_id: "thread-facade".into(),
-        ..WebChannelEvent::default()
+    publish_web_channel_event(WebChannelEvent::UserError {
+        context: WebEventContext {
+            client_id: "facade".into(),
+            thread_id: "thread-facade".into(),
+            request_id: "facade-request".into(),
+            ..WebEventContext::default()
+        },
+        error_type: Some("facade_probe".into()),
+        error_source: None,
     });
     let received = loop {
         let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
             .await
             .expect("an event arrives")
             .expect("bus open");
-        if event.event == "facade_probe" {
+        if matches!(
+            event.wire_event(),
+            WebChannelEvent::UserError {
+                error_type: Some(error_type), ..
+            } if error_type == "facade_probe"
+        ) {
             break event;
         }
     };
-    assert_eq!(received.thread_id, "thread-facade");
-    assert!(received.ts.is_some(), "the publisher stamps ts");
+    assert_eq!(received.context().thread_id, "thread-facade");
+    assert!(received.context().ts.is_some(), "the publisher stamps ts");
 }
 
 #[test]
@@ -155,4 +166,21 @@ fn the_bundled_releases_dir_is_set_once() {
     let second = std::path::PathBuf::from("/nonexistent/embed-facade-second");
     assert!(set_bundled_releases_dir(first).is_ok());
     assert_eq!(set_bundled_releases_dir(second.clone()), Err(second));
+}
+
+#[tokio::test]
+async fn sandbox_files_are_refused_without_a_tenant() {
+    let config = openhuman_embed::RuntimeConfig::default();
+
+    let wrote = write_file(Err(openhuman_embed::NoTenant), &config, "a.txt", b"x").await;
+    let read = read_file(
+        Err(openhuman_embed::NoTenant),
+        &config,
+        "a.txt",
+        MAX_FILE_BYTES,
+    )
+    .await;
+
+    assert_eq!(wrote, Err(BoxError::NoTenant));
+    assert_eq!(read, Err(BoxError::NoTenant));
 }

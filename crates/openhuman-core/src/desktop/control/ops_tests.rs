@@ -74,14 +74,17 @@ async fn disabled_status_reports_local_setting_without_contacting_module() {
         .contains("loopback core listener"));
 }
 
-#[cfg(target_os = "linux")]
+// Windows included: its desktop backend has no surfaces yet (#7164).
+#[cfg(not(target_os = "macos"))]
 #[tokio::test]
 async fn enable_request_fails_closed_on_unsupported_platform_without_persisting() {
+    let _loopback = test_loopback_guard();
     let dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.workspace_dir = dir.path().to_path_buf();
     let error = set_enabled(&config, true).await.unwrap_err();
-    assert!(error.contains("macOS or Windows"));
+    assert!(error.contains("requires macOS"));
+    assert!(!error.contains("Windows"));
     assert!(!enabled(&config));
 }
 

@@ -7,20 +7,11 @@
     "silence the gate: `expect` pins the exact `git describe --tags` output, so a",
     "record already exempt cannot drift FURTHER without failing. Widening the drift",
     "is a deliberate edit to this file, which is a reviewable diff.",
+    "A `sourceParity` proof binds one exact candidate commit to a release tree",
+    "except for its explicitly named test file(s); it does not accept descendants.",
     "",
     "Delete an entry the moment the pins are reconciled. An exemption that has",
     "stopped being true fails the gate too — `expect` must still match."
   ],
-  "exemptions": [
-    {
-      "id": "tinyconnectors",
-      "expect": "v0.19.3-76-gcb297ef1",
-      "reason": "The pinned TinyConnectors workspace package is still 0.19.3, matching the registry artifact; the gitlink sits 50 commits past that tag at the additive contract 1.22 (opt-in direct-route Composio triggers, off by default). Re-pin both once a release carrying it is cut. (Gitlink now at the merged upstream cb297ef1, storage schema v2.)"
-    },
-    {
-      "id": "tinyflows",
-      "expect": "v0.8.23-92-gcad43f97",
-      "reason": "Storage schema v2 (epic #7973): the gitlink sits past the registry's released tag on the merged upstream commit carrying the uniform storage schema. Re-pin both once a release carrying it is cut; retire this entry then."
-    }
-  ]
+  "exemptions": []
 }

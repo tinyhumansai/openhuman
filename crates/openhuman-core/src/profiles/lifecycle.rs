@@ -37,6 +37,43 @@ use crate::config::Config;
 use crate::core::runtime::CoreContext;
 use crate::storage::lease::{LeaseError, LeaseGrant};
 
+/// Adopt or clear the schedule store's operator cap for an explicit profile
+/// scope. Clearing is skipped only when the backend cannot support a policy
+/// at all; the module refuses writes if a policy ledger already exists.
+pub(super) async fn reconcile_cron_admission(
+    config: &Config,
+    id: &ProfileId,
+    backend: Option<&Arc<dyn crate::storage::StorageBackend>>,
+) -> Result<(), String> {
+    let profile_scope = crate::storage::scope_for_profile(id.as_str());
+    let scope = match backend {
+        Some(backend) => crate::cron::documents_port::DocScope::on_backend(
+            config,
+            Arc::clone(backend),
+            profile_scope,
+        ),
+        None => crate::cron::documents_port::DocScope::for_scope(config, profile_scope),
+    };
+    let limit = if config.cron.agent_jobs_only {
+        Some(config.cron.max_active_jobs as usize)
+    } else {
+        if !scope
+            .supports_transactions()
+            .map_err(|error| format!("checking profile cron store capabilities: {error}"))?
+        {
+            return Ok(());
+        }
+        None
+    };
+    crate::cron::client::store_in::<()>(
+        config,
+        &scope,
+        tinyflows_bus::schedule::StoreOperation::SetMaxActiveJobs { limit },
+    )
+    .await
+    .map_err(|error| format!("reconciling the profile's cron job cap: {error}"))
+}
+
 /// One async lock per profile id. See the module docs.
 #[derive(Default)]
 pub struct ProfileLocks {
@@ -95,19 +132,34 @@ impl ProfileHost {
             return Ok(false);
         }
         let grant = self.acquire_for_lifecycle(id, "provision").await?;
-        let created = self.provision_leased(id).await;
+        let created = self.provision_leased(id, &grant).await;
         profile_lease::release_all(self, vec![(id.clone(), grant)]).await;
         let created = created?;
         log::info!("[profiles] provisioned profile={id} created={created}");
         Ok(created)
     }
 
-    async fn provision_leased(&self, id: &ProfileId) -> Result<bool, String> {
+    async fn provision_leased(&self, id: &ProfileId, grant: &LeaseGrant) -> Result<bool, String> {
         // Again under the lease: another node may have provisioned it since.
         if self.registry.get(id).await?.is_some() {
             return Ok(false);
         }
-        create_dirs(&self.layout_of(id))?;
+        let layout = self.layout_of(id);
+        create_dirs(&layout)?;
+        let config = self.forced_config(&layout, id);
+        let fence = super::fence::for_grant(
+            Arc::clone(&self.leases),
+            &self.node,
+            id,
+            grant,
+            self.saas.lease_ttl(),
+        );
+        let anchor: Arc<dyn std::any::Any + Send + Sync> = Arc::new(());
+        fence.anchor_to(Arc::downgrade(&anchor));
+        self.fences.register(Arc::clone(&fence));
+        let reconciled = reconcile_cron_admission(&config, id, self.cron_backend.as_ref()).await;
+        self.fences.retire(id.as_str(), grant.epoch);
+        reconciled?;
         let meta = ProfileMeta {
             profile_id: id.clone(),
             created_at: unix_now(),
@@ -167,7 +219,7 @@ impl ProfileHost {
         // would let a re-provisioned profile pick the old credential back up.
         let config = layout::profile_config(layout, id);
         let cleared = CoreContext::scope(self.records_context(id), async {
-            super::credentials::clear(&config)
+            super::credentials::clear(&config).await
         })
         .await;
         if let Err(e) = cleared {
@@ -214,11 +266,12 @@ impl ProfileHost {
     pub(crate) async fn with_records<T>(
         &self,
         id: &ProfileId,
-        change: impl FnOnce(&Config) -> Result<T, String> + Send,
+        change: impl for<'a> FnOnce(&'a Config) -> futures::future::BoxFuture<'a, Result<T, String>>
+            + Send,
     ) -> Result<T, String> {
         let _profile = self.lifecycle.lock(id).await;
         let config = self.provisioned_config(id).await?;
-        CoreContext::scope(self.records_context(id), async move { change(&config) }).await
+        CoreContext::scope(self.records_context(id), change(&config)).await
     }
 
     /// Take `id`'s lease for a lifecycle change, refusing when another node

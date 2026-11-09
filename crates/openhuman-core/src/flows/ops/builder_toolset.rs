@@ -133,10 +133,9 @@ pub(super) fn restrict_builder_toolset_for_copilot(agent: &mut crate::agent::Ope
     tracing::info!(
         target: "flows",
         hidden = ?FLOWS_BUILD_COPILOT_HIDDEN_TOOLS,
-        "[flows] flows_build: streaming copilot turn — run_flow/resume_flow_run/cancel_flow_run \
-         stay visible (all three gated behind the WebChat approval surface; cancel_flow_run also \
-         ownership-checks the target run's flow_id — T-M3 fix); only the unrelated legacy \
-         run_workflow is hidden"
+        "[flows] flows_build: streaming copilot turn — run_flow/resume_flow_run stay visible \
+         behind the WebChat approval surface; cancel_flow_run and the unrelated legacy \
+         run_workflow are hidden"
     );
     agent.hide_tools(FLOWS_BUILD_COPILOT_HIDDEN_TOOLS);
 }

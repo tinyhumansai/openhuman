@@ -17,7 +17,7 @@ Sharing one process is where the density comes from. The bootstrap cost is paid 
 
 ## Prerequisites
 
-You need Rust 1.96.1 or newer, the version pinned in [`rust-toolchain.toml`](https://github.com/tinyhumansai/openhuman/blob/main/rust-toolchain.toml). You also need an API key for any OpenAI-compatible endpoint, or a TinyHumans API key (see step 6).
+You need Rust 1.99.1 or newer, the version pinned in [`rust-toolchain.toml`](https://github.com/tinyhumansai/openhuman/blob/main/rust-toolchain.toml). You also need an API key for any OpenAI-compatible endpoint, or a TinyHumans API key (see step 6).
 
 If you depend on OpenHuman through Cargo as shown below, Cargo fetches the vendored submodules for you. If you build from a clone, initialize them first:
 

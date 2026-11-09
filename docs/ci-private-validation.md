@@ -4,20 +4,20 @@ This inventory records the test selections before changing execution for #8063.
 Coverage replaces equivalent executions inside the private job. Feature sets are
 not treated as equivalent merely because they select the same crate.
 
-| Selection                                                          | Earlier execution                       | Private execution                                 |
-| ------------------------------------------------------------------ | --------------------------------------- | ------------------------------------------------- |
-| `openhuman` product `--lib --bins`                                 | coverage nextest, background unit build | coverage nextest, sequential                      |
-| `openhuman-cli` product integration targets                        | coverage nextest `kind(test)`           | same, fails empty selection                       |
-| `openhuman-embed`, `openhuman-tinyhumans` product, all targets     | coverage libtest                        | coverage nextest                                  |
-| `openhuman-embed`, `openhuman-tinyhumans` default, all targets     | omitted as presumed duplicates          | separate coverage nextest configurations          |
-| `openhuman-rpc`, `openhuman-tui` default, all targets              | coverage libtest                        | coverage nextest                                  |
-| core no-default lib, existing gate filters                         | plain libtest                           | coverage nextest with equivalent substring unions |
-| core no-default plus `modules,mcp,e2e-test-support`, gate filters  | serial plain libtest                    | serial coverage nextest                           |
-| Tauri own manifest/default features                                | coverage libtest                        | coverage nextest                                  |
-| CLI ten storage E2E targets, `storage-sqlite,storage-file`         | plain libtest                           | coverage nextest, same targets and driver matrix  |
-| core storage domain filters excluding cron module tests            | plain libtest                           | coverage nextest, same inclusions/exclusions      |
-| core storage cron bus/documents tests                              | serial plain libtest                    | serial coverage nextest                           |
-| RPC `session-store,storage-sqlite,storage-file`, `session_store::` | plain libtest                           | coverage nextest                                  |
+| Selection                                                         | Earlier execution                       | Private execution                                 |
+| ----------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------- |
+| `openhuman` product `--lib --bins`                                | coverage nextest, background unit build | coverage nextest, sequential                      |
+| `openhuman-cli` product integration targets                       | coverage nextest `kind(test)`           | same, fails empty selection                       |
+| `openhuman-embed`, `openhuman-tinyhumans` product, all targets    | coverage libtest                        | coverage nextest                                  |
+| `openhuman-embed`, `openhuman-tinyhumans` default, all targets    | omitted as presumed duplicates          | separate coverage nextest configurations          |
+| `openhuman-rpc`, `openhuman-tui` default, all targets             | coverage libtest                        | coverage nextest                                  |
+| core no-default lib, existing gate filters                        | plain libtest                           | coverage nextest with equivalent substring unions |
+| core no-default plus `modules,mcp,e2e-test-support`, gate filters | serial plain libtest                    | serial coverage nextest                           |
+| Tauri own manifest/default features                               | coverage libtest                        | coverage nextest                                  |
+| CLI storage E2E targets, SQLite only                              | plain libtest                           | coverage nextest, same targets                    |
+| core storage domain filters excluding cron module tests           | plain libtest                           | coverage nextest, same inclusions/exclusions      |
+| core storage cron bus/documents tests                             | serial plain libtest                    | serial coverage nextest                           |
+| RPC `session-store,storage-sqlite`, `session_store::`             | plain libtest                           | coverage nextest                                  |
 
 The storage E2E list and domain filter list remain declared in `lanes-plan.mjs`.
 Product features remain in `scripts/ci/product-features.txt`; they are resolved
@@ -49,7 +49,7 @@ that their test selections are distinct.
 | `mcp_registry_e2e`                                                                     | The E2E runner explicitly adds `--ignored --test-threads=1`; ordinary integration execution skips these ignored cases.                                                                                                                                                                                                                                                           | Preserve this distinct test mode.                                                                                  |
 | `tinymcp_storage_smoke_e2e`                                                            | The E2E runner adds `e2e-test-support` and serial execution.                                                                                                                                                                                                                                                                                                                     | Preserve this distinct feature configuration.                                                                      |
 | `tinydocs_linked_e2e`                                                                  | The E2E runner adds non-product `linked-modules`.                                                                                                                                                                                                                                                                                                                                | Preserve this distinct feature configuration.                                                                      |
-| Browser/desktop E2E, Windows secrets and MongoDB validation                            | These exercise frontend or native host flows, Windows-specific code, or a separate storage feature and external-service configuration.                                                                                                                                                                                                                                           | Preserve these distinct contexts.                                                                                  |
+| Browser/desktop E2E and Windows secrets validation                                     | These exercise frontend or native host flows, Windows-specific code, or external-service configuration.                                                                                                                                                                                                                                                                          | Preserve these distinct contexts.                                                                                  |
 
 These full/reusable workflows do not invoke the private coverage lane. No
 execution above is removed on the assumption that private coverage replaces an

@@ -1,0 +1,9 @@
+api_url = "__MOCK_BACKEND_URL__"
+default_model = "e2e-mock-model"
+default_temperature = 0.2
+
+[secrets]
+encrypt = false
+
+[storage]
+url = "mongodb://127.0.0.1/doctor"

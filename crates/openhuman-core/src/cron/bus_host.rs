@@ -25,12 +25,13 @@
 //! thread that delivered the callback: an agent turn is deep and long, and the
 //! bus runtime is for serving. The binding's context is re-entered around it.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::sync::{Arc, RwLock, Weak};
 
 use tinybus::Result as BusResult;
 use tinyflows_bus::schedule::types::{CronJob, DeliveryStatus, JobType};
-use tinyflows_bus::schedule::{Attempt, CallbackAddress};
+use tinyflows_bus::schedule::{Attempt, CallbackAddress, DeliveryProjection};
 
 use super::scheduler::executor::HostExecutor;
 use super::scheduler::run_delivery;
@@ -39,11 +40,6 @@ use crate::core::runtime::{CoreContext, DispatchCtx};
 use crate::modules::tinyflows as module;
 use crate::security::SecurityPolicy;
 
-/// The claim namespace every host scheduler and every manual run shares: job
-/// ids are unique across agents, so Run Now, the run tool and the poll loop of
-/// any agent refuse to start a job another of them is running.
-pub(crate) const CLAIM_SCOPE: &str = "openhuman";
-
 /// What every callback of one scheduler shares: the config it acts on, the
 /// security policy, and the context it was built in.
 #[derive(Clone)]
@@ -51,12 +47,13 @@ pub(crate) struct Binding {
     config: Arc<RwLock<Config>>,
     pub(crate) security: Arc<SecurityPolicy>,
     context: Option<Weak<CoreContext>>,
-    /// Only agent jobs run (the hosted-profile sweep): shell and flow rows are
-    /// refused whatever the config says.
+    /// The hosted-profile sweep runs agent jobs plus trusted memory system
+    /// jobs; shell and user-owned flow rows are refused.
     agent_only: bool,
     runtime: Option<tokio::runtime::Handle>,
     #[cfg(feature = "flows")]
     flows: Arc<std::sync::OnceLock<crate::flows::bus::FlowTriggerSubscriber>>,
+    triggered_runs: Arc<std::sync::Mutex<HashSet<String>>>,
 }
 
 impl Binding {
@@ -70,6 +67,7 @@ impl Binding {
             runtime: tokio::runtime::Handle::try_current().ok(),
             #[cfg(feature = "flows")]
             flows: Arc::new(std::sync::OnceLock::new()),
+            triggered_runs: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }
     }
 
@@ -100,10 +98,55 @@ impl Binding {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = config.clone();
     }
 
+    /// Publish the start event once per logical scheduler run, across Execute
+    /// retries and the separate ScheduleTrigger callback path.
+    pub(crate) fn publish_triggered_once(&self, job: &CronJob, run_id: &str) {
+        let mut runs = self
+            .triggered_runs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if runs.contains(run_id) {
+            return;
+        }
+        runs.insert(run_id.to_string());
+        crate::core::bus::BUS.publish(crate::core::events::DomainEvent::CronJobTriggered {
+            job_id: job.id.clone(),
+            job_name: job.name.clone().unwrap_or_default(),
+            job_type: format!("{:?}", job.job_type),
+        });
+    }
+
+    pub(crate) fn finish_triggered_run(&self, run_id: &str) {
+        self.triggered_runs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(run_id);
+    }
+
     /// The dispatch context the bound context stands for: the bound one, or
     /// (when it has since been dropped, or none was bound) the calling task's.
     pub(crate) fn dispatch_ctx(&self) -> DispatchCtx {
         DispatchCtx::from_weak(self.context.as_ref())
+    }
+
+    /// Pin the bound context for a finite module lifecycle handoff. The host
+    /// registration itself keeps only the weak reference, avoiding a cycle
+    /// through long-lived scheduler state.
+    pub(crate) fn pin_context(&self) -> Option<Arc<CoreContext>> {
+        self.context.as_ref().and_then(Weak::upgrade)
+    }
+
+    /// Acquire the bound context for one callback. A missing weak reference is
+    /// an intentional unbound test/pre-boot context; an expired bound context
+    /// fails closed instead of borrowing the callback runtime's ambient one.
+    fn callback_context(&self) -> Result<Option<Arc<CoreContext>>, String> {
+        match &self.context {
+            Some(context) => context
+                .upgrade()
+                .map(Some)
+                .ok_or_else(|| "the schedule callback's bound context has expired".to_string()),
+            None => Ok(None),
+        }
     }
 
     /// Runs `fut` under the bound context. A context that has since been
@@ -139,8 +182,9 @@ impl Binding {
     /// holds the per-flow in-flight dedupe across ticks.
     #[cfg(feature = "flows")]
     pub(crate) fn flows(&self) -> &crate::flows::bus::FlowTriggerSubscriber {
-        self.flows
-            .get_or_init(|| crate::flows::bus::FlowTriggerSubscriber::new(Arc::new(self.config())))
+        self.flows.get_or_init(|| {
+            crate::flows::bus::FlowTriggerSubscriber::with_config_source(Arc::clone(&self.config))
+        })
     }
 }
 
@@ -160,9 +204,16 @@ impl ScheduleHost {
     /// One attempt of a shell or agent job, classified `retryable` or permanent.
     async fn execute(&self, job: CronJob, run_id: String) -> BusResult<Attempt> {
         tracing::debug!(job_id = %job.id, %run_id, "[cron:bus] Execute");
+        let context_pin = self
+            .binding
+            .callback_context()
+            .map_err(|error| bus_error("Execute", error))?;
         let executor = Arc::clone(&self.executor);
         self.binding
-            .offload(async move { executor.execute(&job, &run_id).await })
+            .offload(async move {
+                let _context_pin = context_pin;
+                executor.execute(&job, &run_id).await
+            })
             .await
             .map_err(|e| bus_error("Execute", e))
     }
@@ -170,37 +221,74 @@ impl ScheduleHost {
     /// The final failure of a run: reported once.
     async fn failed(&self, job: CronJob, run_id: String, attempt: Attempt) -> BusResult<()> {
         tracing::debug!(job_id = %job.id, %run_id, "[cron:bus] Failed");
+        let context_pin = self
+            .binding
+            .callback_context()
+            .map_err(|error| bus_error("Failed", error))?;
         let executor = Arc::clone(&self.executor);
         self.binding
-            .offload(async move { executor.failed(&job, &run_id, &attempt).await })
+            .offload(async move {
+                let _context_pin = context_pin;
+                executor.failed(&job, &run_id, &attempt).await
+            })
             .await
             .map_err(|e| bus_error("Failed", e))
     }
 
-    /// Delivery of a finished run's output; the reply is the delivery status.
-    async fn deliver(&self, job: CronJob, run_id: String, attempt: Attempt) -> BusResult<String> {
-        tracing::debug!(job_id = %job.id, %run_id, "[cron:bus] Deliver");
+    /// Send a finished run's output exactly once; the reply is its status.
+    async fn send(&self, job: CronJob, run_id: String, attempt: Attempt) -> BusResult<String> {
+        tracing::debug!(job_id = %job.id, %run_id, "[cron:bus] Send");
+        let context_pin = self
+            .binding
+            .callback_context()
+            .map_err(|error| bus_error("Send", error))?;
         let binding = self.binding.clone();
         let status: Result<DeliveryStatus, String> = self
             .binding
             .offload(async move {
-                run_delivery::deliver(&binding, &job, &run_id, &attempt)
+                let _context_pin = context_pin;
+                run_delivery::send(&binding, &job, &run_id, &attempt)
                     .await
                     .map_err(|error| error.to_string())
             })
             .await
-            .map_err(|e| bus_error("Deliver", e))?;
+            .map_err(|e| bus_error("Send", e))?;
         status
             .map(|status| status.as_str().to_string())
-            .map_err(|e| bus_error("Deliver", e))
+            .map_err(|e| bus_error("Send", e))
+    }
+
+    /// Project the module's terminal decision without sending a second time.
+    async fn deliver(&self, projection: DeliveryProjection) -> BusResult<()> {
+        tracing::debug!(job_id = %projection.job.id, run_id = %projection.run_id, "[cron:bus] Deliver");
+        let context_pin = self
+            .binding
+            .callback_context()
+            .map_err(|error| bus_error("Deliver", error))?;
+        let binding = self.binding.clone();
+        self.binding
+            .offload(async move {
+                let _context_pin = context_pin;
+                run_delivery::deliver(&binding, &projection).await
+            })
+            .await
+            .map_err(|e| bus_error("Deliver", e))?;
+        Ok(())
     }
 
     /// A flow row's schedule tick (or a `system:<name>` job).
-    async fn schedule_trigger(&self, flow_id: String, run_id: String) -> BusResult<Attempt> {
-        tracing::debug!(%flow_id, %run_id, "[cron:bus] ScheduleTrigger");
+    async fn schedule_trigger(&self, job: CronJob, run_id: String) -> BusResult<Attempt> {
+        tracing::debug!(job_id = %job.id, %run_id, "[cron:bus] ScheduleTrigger");
+        let context_pin = self
+            .binding
+            .callback_context()
+            .map_err(|error| bus_error("ScheduleTrigger", error))?;
         let binding = self.binding.clone();
         self.binding
-            .offload(async move { run_delivery::trigger(&binding, &flow_id, &run_id).await })
+            .offload(async move {
+                let _context_pin = context_pin;
+                run_delivery::trigger(&binding, &job, &run_id).await
+            })
             .await
             .map_err(|e| bus_error("ScheduleTrigger", e))
     }
@@ -251,15 +339,29 @@ pub(crate) async fn register(binding: Binding) -> Result<HostRegistration, Strin
     })
 }
 
-/// Whether a job of `job_type` may run under `binding`, and the refusal text
+/// Whether a job may run under `binding`, and the refusal text
 /// if not.
-pub(crate) fn kind_refusal(binding: &Binding, job_type: &JobType) -> Option<String> {
-    (binding.is_agent_only() && !matches!(job_type, JobType::Agent)).then(|| {
-        "blocked by hosting policy: only agent cron jobs run here; shell and flow jobs are disabled"
+pub(crate) fn kind_refusal(binding: &Binding, job: &CronJob) -> Option<String> {
+    let trusted_memory_job = crate::cron::system_jobs::trusted_system_job_owner(job).is_some();
+    (binding.is_agent_only()
+        && !matches!(job.job_type, JobType::Agent)
+        && !trusted_memory_job)
+        .then(|| {
+        "blocked by hosting policy: only agent cron jobs and trusted memory maintenance run here; shell and user flow jobs are disabled"
             .to_string()
-    })
+        })
 }
 
 #[cfg(all(test, feature = "modules"))]
 #[path = "bus_host_tests.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "modules"))]
+#[path = "bus_host_context_tests.rs"]
+mod context_tests;
+
+// Boots the module runtime (`crate::modules::runtime`), which only exists
+// with the `modules` feature.
+#[cfg(all(test, feature = "modules"))]
+#[path = "bus_host_trusted_system_tests.rs"]
+mod trusted_system_tests;

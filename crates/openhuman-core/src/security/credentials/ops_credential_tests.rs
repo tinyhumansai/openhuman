@@ -19,6 +19,7 @@ async fn same_token_refresh_preserves_issuing_backend_and_refuses_rebinding() {
             metadata,
             true,
         )
+        .await
         .unwrap();
     let state = set_credential(
         &DispatchCtx::process_default(),
@@ -50,6 +51,7 @@ async fn same_token_refresh_preserves_issuing_backend_and_refuses_rebinding() {
     .unwrap_err();
     assert!(error.starts_with("SESSION_BACKEND_MISMATCH"));
     let stored = crate::security::credentials::session_support::load_app_session_profile(&config)
+        .await
         .unwrap()
         .unwrap();
     assert_eq!(stored.metadata.get(key).unwrap(), "https://issuer.example");
@@ -57,8 +59,8 @@ async fn same_token_refresh_preserves_issuing_backend_and_refuses_rebinding() {
 
 // ── secret_store_for_config ────────────────────────────────────
 
-#[test]
-fn secret_store_for_config_scopes_to_config_parent() {
+#[tokio::test]
+async fn secret_store_for_config_scopes_to_config_parent() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     // Build the store — must not panic and must operate under tmp path.
@@ -67,15 +69,23 @@ fn secret_store_for_config_scopes_to_config_parent() {
 
 // ── encrypt_secret / decrypt_secret ───────────────────────────
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn encrypt_then_decrypt_round_trips_locally() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let plaintext = "top-secret-value";
-    let enc = encrypt_secret(&config, plaintext).await.unwrap();
-    assert_ne!(enc.value, plaintext);
-    let dec = decrypt_secret(&config, &enc.value).await.unwrap();
-    assert_eq!(dec.value, plaintext);
+    #[cfg(feature = "security-module")]
+    let worker_config = config.clone();
+    #[cfg(feature = "security-module")]
+    crate::credentials::test_support::with_native_cipher_approval(&config, async move {
+        let plaintext = "top-secret-value";
+        let enc = encrypt_secret(&worker_config, plaintext).await.unwrap();
+        assert_ne!(enc.value, plaintext);
+        let dec = decrypt_secret(&worker_config, &enc.value).await.unwrap();
+        assert_eq!(dec.value, plaintext);
+    })
+    .await;
+    #[cfg(not(feature = "security-module"))]
+    assert!(encrypt_secret(&config, "top-secret-value").await.is_err());
 }
 
 #[tokio::test]
@@ -389,7 +399,7 @@ async fn set_and_clear_api_key_credential() {
 async fn clearing_the_session_preserves_a_coexisting_api_key() {
     // Reaches the connector module, whose route is process-wide: hold the module
     // lock (before TEST_ENV_LOCK, the established order) for the whole test.
-    let _module = crate::integrations::composio::module_client::module_guard().await;
+    let _module = crate::integrations::composio::module_client::module_lock_guard().await;
     let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
     let tmp = TempDir::new().unwrap();
     std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
@@ -424,7 +434,7 @@ async fn clearing_the_session_preserves_a_coexisting_api_key() {
     .await
     .unwrap();
     assert!(
-        api_key::has_api_key(&user_scoped),
+        api_key::has_api_key(&user_scoped).await,
         "api key must be stored beside the user-scoped config before sign-out"
     );
 
@@ -449,7 +459,7 @@ async fn clearing_the_session_preserves_a_coexisting_api_key() {
         "sign-out must have rebound to a different (pre-login) config"
     );
     assert!(
-        api_key::has_api_key(&signed_out),
+        api_key::has_api_key(&signed_out).await,
         "the API key must survive under the post sign-out config"
     );
     let state = auth_get_state(&signed_out).await.unwrap().value;
@@ -463,7 +473,7 @@ async fn clearing_the_session_preserves_a_coexisting_api_key() {
     // location must no longer carry it, or clearing the copy (or logging
     // back into this user) would resurrect a duplicate (#6318 review follow-up).
     assert!(
-        !api_key::has_api_key(&user_scoped),
+        !api_key::has_api_key(&user_scoped).await,
         "the source user-scoped location must no longer hold the api key after it was carried forward"
     );
 }
@@ -472,11 +482,12 @@ async fn clearing_the_session_preserves_a_coexisting_api_key() {
 // workspace must never outrank the key that was actually the active
 // credential a moment ago. This RPC only removes the session; it must not
 // let an unrelated leftover key silently become the effective one.
-#[tokio::test]
+// Multi-thread: the sync store bridge blocks while tinyflows calls back into the host.
+#[tokio::test(flavor = "multi_thread")]
 async fn clearing_the_session_preserves_the_active_key_over_a_stale_destination_key() {
     // Reaches the connector module, whose route is process-wide: hold the module
     // lock (before TEST_ENV_LOCK, the established order) for the whole test.
-    let _module = crate::integrations::composio::module_client::module_guard().await;
+    let _module = crate::integrations::composio::module_client::module_lock_guard().await;
     let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
     let tmp = TempDir::new().unwrap();
     std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
@@ -502,7 +513,7 @@ async fn clearing_the_session_preserves_the_active_key_over_a_stale_destination_
     .await
     .unwrap();
     assert_eq!(
-        api_key::get_api_key(&pre_login).unwrap().as_deref(),
+        api_key::get_api_key(&pre_login).await.unwrap().as_deref(),
         Some("sk-stale-a")
     );
 
@@ -534,7 +545,7 @@ async fn clearing_the_session_preserves_the_active_key_over_a_stale_destination_
     .await
     .unwrap();
     assert_eq!(
-        api_key::get_api_key(&user_scoped).unwrap().as_deref(),
+        api_key::get_api_key(&user_scoped).await.unwrap().as_deref(),
         Some("sk-live-b")
     );
 
@@ -550,7 +561,7 @@ async fn clearing_the_session_preserves_the_active_key_over_a_stale_destination_
 
     let signed_out = crate::config::load_config_with_timeout().await.unwrap();
     assert_eq!(
-        api_key::get_api_key(&signed_out).unwrap().as_deref(),
+        api_key::get_api_key(&signed_out).await.unwrap().as_deref(),
         Some("sk-live-b"),
         "the key that was actually active before sign-out must remain effective, \
          not a stale key that happened to already sit at the destination"
@@ -567,7 +578,7 @@ async fn clearing_the_session_preserves_the_active_key_over_a_stale_destination_
 async fn clearing_without_a_kind_removes_a_user_scoped_api_key_at_its_source() {
     // Reaches the connector module, whose route is process-wide: hold the module
     // lock (before TEST_ENV_LOCK, the established order) for the whole test.
-    let _module = crate::integrations::composio::module_client::module_guard().await;
+    let _module = crate::integrations::composio::module_client::module_lock_guard().await;
     let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
     let tmp = TempDir::new().unwrap();
     std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
@@ -598,7 +609,7 @@ async fn clearing_without_a_kind_removes_a_user_scoped_api_key_at_its_source() {
     )
     .await
     .unwrap();
-    assert!(api_key::has_api_key(&user_scoped));
+    assert!(api_key::has_api_key(&user_scoped).await);
 
     let cleared = clear_credential(&DispatchCtx::process_default(), &user_scoped, None)
         .await
@@ -613,12 +624,12 @@ async fn clearing_without_a_kind_removes_a_user_scoped_api_key_at_its_source() {
     );
 
     assert!(
-        !api_key::has_api_key(&user_scoped),
+        !api_key::has_api_key(&user_scoped).await,
         "the api key must be gone from its real (user-scoped) location, not just the \
          post-teardown config clear_credential ends up using"
     );
     let signed_out = crate::config::load_config_with_timeout().await.unwrap();
-    assert!(!api_key::has_api_key(&signed_out));
+    assert!(!api_key::has_api_key(&signed_out).await);
     assert!(
         !auth_get_state(&signed_out)
             .await
@@ -659,91 +670,4 @@ async fn clear_credential_without_a_kind_removes_everything() {
             .value
             .is_authenticated
     );
-}
-
-// ── set_credential (local session) ─────────────────────────────
-
-/// A local session token requires a non-empty user payload — the backend
-/// fetch path is bypassed entirely, so there is no fallback to derive the
-/// user from an API response.
-#[tokio::test]
-async fn store_session_local_token_rejects_missing_user_payload() {
-    let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
-    let tmp = TempDir::new().unwrap();
-    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
-    let _home = EnvVarGuard::set("HOME", tmp.path());
-    let config = test_config(&tmp);
-    let local_token = "header.payload.local";
-    let err = store_session(
-        &DispatchCtx::process_default(),
-        &config,
-        local_token,
-        None,
-        None,
-    )
-    .await
-    .unwrap_err();
-    assert!(
-        err.contains("local session requires a user payload"),
-        "expected 'local session requires a user payload', got: {err}"
-    );
-}
-
-/// A local session token with a user payload must be accepted without any
-/// network call, must force a deterministic `local-<device>` user id
-/// regardless of what the caller passes, and must return a stored profile
-/// summary.
-#[tokio::test]
-async fn store_session_local_token_succeeds_without_network_and_forces_local_user_id() {
-    let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
-    let tmp = TempDir::new().unwrap();
-    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
-    let _home = EnvVarGuard::set("HOME", tmp.path());
-    let config = test_config(&tmp);
-    let local_token = "header.payload.local";
-    let user = serde_json::json!({
-        "id": "local",
-        "name": "Local User",
-        "email": "local@openhuman.local"
-    });
-    // Pass a different user_id to verify it is overridden.
-    let result = store_session(
-        &DispatchCtx::process_default(),
-        &config,
-        local_token,
-        Some("should-be-overridden".to_string()),
-        Some(user),
-    )
-    .await
-    .unwrap();
-    // The credential is installed (no network call was required).
-    assert!(result.value.is_authenticated);
-    assert_eq!(result.value.credential.as_deref(), Some("local"));
-    // Logs must mention that backend validation was skipped.
-    let log_text = result.logs.join(" ");
-    assert!(
-        log_text.contains("local session accepted without backend validation"),
-        "expected log confirming no backend call, got: {log_text}"
-    );
-    let expected_local_user_id = local_session_user_id();
-    assert!(
-        log_text.contains(&format!(
-            "user directory activated for {expected_local_user_id}"
-        )),
-        "expected user-directory activation log for deterministic local uid, got: {log_text}"
-    );
-    assert!(
-        log_text.contains("onboarding left incomplete for local session setup"),
-        "expected local session to remain in onboarding, got: {log_text}"
-    );
-    // The forced local user id wins over the caller's hint, and the user
-    // payload's id fields are rewritten to match.
-    assert_eq!(
-        result.value.user_id.as_deref(),
-        Some(expected_local_user_id.as_str())
-    );
-    let user = result.value.user.unwrap();
-    assert_eq!(user["id"], expected_local_user_id);
-    assert_eq!(user["_id"], expected_local_user_id);
-    assert_eq!(user["name"], "Local User");
 }

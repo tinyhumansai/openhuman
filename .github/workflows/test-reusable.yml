@@ -105,6 +105,13 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git submodule update --init vendor/tinychannels
+      # The i18n scanner and frontend RPC drift guard read schemas and source
+      # from TinyInference and TinyAgents during tests. Initialize only those
+      # nested inputs rather than checking out every nested vendor dependency.
+      - name: Init TinyAgents inference sources (frontend test scanners read them)
+        run: |
+          git submodule update --init vendor/tinyagents
+          git -C vendor/tinyagents submodule update --init vendor/tinyinference
       - name: Cache pnpm store
         uses: actions/cache@v6
         with:
@@ -114,6 +121,8 @@ jobs:
             pnpm-store-${{ runner.os }}-
       - name: Install dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+      - name: Verify generated chat wire types are current
+        run: bash scripts/ci-cancel-aware.sh pnpm chat-wire:check
       - name: Run tests with coverage
         run: bash scripts/ci-cancel-aware.sh pnpm test:coverage
         env:
@@ -221,10 +230,10 @@ jobs:
           #
           # The same silent-skip trap the bin-tools note below describes (for openhuman-fleet) applies
           # here, and harder: four tests/*.rs targets carry `required-features`
-          # (observability_smoke, x402_twit_sh_live, json_rpc_e2e,
+          # (observability_smoke, x402_twit_sh_live, json_rpc_*_e2e,
           # raw_coverage_all — see Cargo.toml). Without these features
-          # `cargo test --test json_rpc_e2e` matches NOTHING and exits 0, and
-          # json_rpc_e2e alone is >12k lines of RPC contract coverage.
+          # `cargo test --tests` skips them without the product feature set.
+          # Each JSON-RPC namespace is a separately registered test target.
           # `bin-tools` is a gate of the CLI crate (not the core library), so
           # it is added only on the `openhuman-cli` invocations below. Bare
           # `--features` names resolve against the package a command selects;
@@ -233,6 +242,19 @@ jobs:
           CORE_FEATURES="$(bash scripts/ci/product-features.sh --core)"
           CLI_FEATURES="${FEATURES},bin-tools"
           MODULE_TESTS=(
+            inbound::ops::tests::a_burst_over_max_batch_runs_in_turns_of_at_most_max_batch
+            inbound::ops::tests::the_operations_reach_the_module
+            inbound::ops::tests::three_offers_within_the_window_run_one_turn_with_one_result_and_one_event
+            inbound::route::tests::an_accepted_event_is_queued_and_a_redelivery_ends_at_ingress
+            integrations::composio::bus::trigger_subscriber::tests::a_deferred_composio_trigger_is_retried_at_its_defer_time_instead_of_dropped
+            integrations::composio::bus::trigger_subscriber::tests::a_redelivered_composio_trigger_produces_one_turn
+            integrations::composio::bus::trigger_subscriber::tests::without_a_config_a_trigger_is_triaged_directly
+            integrations::composio::bus::trigger_subscriber::tests::with_the_queues_off_a_trigger_is_triaged_directly
+            modules::channel_runtime::tests::released_runtime_scopes_callbacks_and_replays_one_final_send
+            modules::event_queues::tests::every_member_is_reachable
+            skills::webhooks::bus::tests::inbound::with_the_component_off_an_agent_webhook_is_triaged_directly
+            skills::webhooks::bus::tests::inbound::a_redelivered_agent_webhook_produces_one_turn
+            skills::webhooks::bus::tests::inbound::a_deferred_agent_webhook_is_retried_at_its_defer_time_instead_of_dropped
             inference::tokenjuice::repl_module_tests::a_large_result_becomes_a_handle_the_repl_tools_can_query
             inference::tokenjuice::tests::the_module_defers_a_summary_until_requested
             inference::tokenjuice::tests::released_queries_keep_cached_originals_in_the_module_and_accept_artifact_content
@@ -327,12 +349,16 @@ jobs:
                       --features "${CLI_FEATURES}" --test "${target}" \
                       "${test_name}" -- --exact --test-threads=1
                   done
+                elif [[ "${module}" =~ ^(config|auth|app_state|connectivity)_e2e$ ]]; then
+                  bash scripts/ci-cancel-aware.sh cargo test -p openhuman-cli \
+                    --features "${CLI_FEATURES}" --test "${target}" -- \
+                    "${module}::" --test-threads=1
                 else
                   bash scripts/ci-cancel-aware.sh cargo test -p openhuman-cli \
                     --features "${CLI_FEATURES}" --test "${target}" -- "${module}::"
                 fi
               done < <(in_process_modules)
-            elif [ "${target}" = "json_rpc_e2e" ]; then
+            elif [[ "${target}" =~ ^json_rpc_.*_e2e$ ]]; then
               # JSON-RPC E2E cases change process-global provider routes and
               # environment. A single parallel libtest process lets one case
               # leak its route into another; run each case in a fresh process,

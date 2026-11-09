@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
-use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolExposure, ToolResult};
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 
 pub struct CronRunTool {
     config: Arc<Config>,
@@ -18,14 +18,6 @@ impl CronRunTool {
 
 #[async_trait]
 impl Tool for CronRunTool {
-    /// Superseded by the `cron` tool, which dispatches every scheduler
-    /// operation on one `action` field. Kept registered and dispatchable so a
-    /// replayed transcript or a saved skill naming `cron_*` keeps working;
-    /// hidden from the wire so six schemas do not ship where one does.
-    fn exposure(&self) -> ToolExposure {
-        ToolExposure::Hidden
-    }
-
     fn name(&self) -> &str {
         "cron_run"
     }
@@ -93,38 +85,39 @@ impl Tool for CronRunTool {
         if let Err(e) = cron::limits::check_run(&self.config, &job) {
             return Ok(ToolResult::error(e.to_string()));
         }
-
-        // Claim the job so this run cannot overlap a scheduled tick or a Run Now.
-        let Some(_run_guard) = cron::ops::try_acquire_run(&job.id) else {
-            return Ok(ToolResult::error(format!(
-                "cron job '{}' is already running",
-                job.id
-            )));
-        };
-
         let started_at = Utc::now();
         let run_id = uuid::Uuid::new_v4().to_string();
-        let (success, output) =
-            cron::scheduler::execute_job_now(&dispatch, &self.config, &job, &run_id).await;
-        let finished_at = Utc::now();
-        let duration_ms = (finished_at - started_at).num_milliseconds();
-        let status = if success { "ok" } else { "error" };
-
-        // The output is returned to the calling agent below, so nothing is
-        // delivered here: an origin delivery would append to the transcript
-        // of the very session this tool call is running inside, and wait on
-        // that session's own turn lock.
-        let _ = cron::record_run_with_delivery(
+        let reply = match cron::scheduler::run_job_now(
+            &dispatch,
             &self.config,
-            &job.id,
-            started_at,
-            finished_at,
-            status,
-            Some(&output),
-            duration_ms,
-            Some(cron::DeliveryStatus::NotRequested),
-        );
-        let _ = cron::record_last_run(&self.config, &job.id, finished_at, success, &output);
+            job.clone(),
+            run_id,
+            true,
+            tinyflows_bus::schedule::ManualDelivery::NotRequested,
+        )
+        .await
+        {
+            Ok(reply) => reply,
+            Err(error) => return Ok(ToolResult::error(error.to_string())),
+        };
+        let (success, output) = match reply {
+            tinyflows_bus::schedule::RunJobReply::Completed {
+                success, attempt, ..
+            } => (success, attempt.output),
+            tinyflows_bus::schedule::RunJobReply::Refused { reason } => {
+                return Ok(ToolResult::error(format!(
+                    "cron job '{}' was not admitted: {reason:?}",
+                    job.id
+                )));
+            }
+            tinyflows_bus::schedule::RunJobReply::Accepted { .. } => {
+                return Ok(ToolResult::error(
+                    "cron module accepted a synchronous run without completing it".to_string(),
+                ));
+            }
+        };
+        let duration_ms = (Utc::now() - started_at).num_milliseconds();
+        let status = if success { "ok" } else { "error" };
 
         let payload = json!({
             "job_id": job.id,

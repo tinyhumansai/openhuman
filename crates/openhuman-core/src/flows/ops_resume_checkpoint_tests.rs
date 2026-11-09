@@ -1,5 +1,96 @@
 use super::*;
 
+/// Rewrite a module-created run document only for the migration fixture below.
+/// All normal run setup and execution still go through the TinyFlows bus.
+pub(super) fn update_parked_run_document_for_test(
+    config: &Config,
+    run_id: &str,
+    update: impl FnOnce(&mut Value),
+) {
+    use tinyflows_bus::catalog::{
+        self as catalog, CatalogDocumentPrecondition, CatalogStorageReply,
+        CatalogVersionedDocument, DocGetRequest, DocPutRequest,
+    };
+
+    let reply = crate::flows::catalog_storage::call_test_storage::<CatalogStorageReply, _>(
+        config,
+        catalog::storage::GET,
+        (DocGetRequest {
+            collection: "flows.runs".into(),
+            id: run_id.to_owned(),
+        },),
+    )
+    .expect("read the module-created parked run document");
+    let value = match reply {
+        CatalogStorageReply::Value { value } => value,
+        CatalogStorageReply::Error { error } => panic!("run fixture read failed: {error:?}"),
+    };
+    let stored: Option<CatalogVersionedDocument> =
+        serde_json::from_value(value).expect("decode the module-created parked run document");
+    let mut stored = stored.expect("the parked run document must exist");
+    update(&mut stored.doc);
+
+    let reply = crate::flows::catalog_storage::call_test_storage::<CatalogStorageReply, _>(
+        config,
+        catalog::storage::PUT,
+        (DocPutRequest {
+            collection: "flows.runs".into(),
+            id: run_id.to_owned(),
+            doc: stored.doc,
+            precondition: CatalogDocumentPrecondition::Version(stored.version),
+            schema: stored.meta.schema,
+            expires_ms: stored.meta.expires_ms,
+            created_ms: Some(stored.meta.created_ms),
+        },),
+    )
+    .expect("write the scoped migration fixture");
+    assert!(matches!(reply, CatalogStorageReply::Value { .. }));
+}
+
+/// Corrupt a stored flow graph through the host's owner-scoped document port.
+/// The malformed record is used to verify that one broken definition does not
+/// block reconciliation of its valid siblings.
+pub(super) fn corrupt_saved_flow_graph_for_test(config: &Config, flow_id: &str, graph: &str) {
+    use tinyflows_bus::catalog::{
+        self as catalog, CatalogDocumentPrecondition, CatalogStorageReply,
+        CatalogVersionedDocument, DocGetRequest, DocPutRequest,
+    };
+
+    let reply = crate::flows::catalog_storage::call_test_storage::<CatalogStorageReply, _>(
+        config,
+        catalog::storage::GET,
+        (DocGetRequest {
+            collection: "flows.definitions".into(),
+            id: flow_id.to_owned(),
+        },),
+    )
+    .expect("read the module-created flow document");
+    let value = match reply {
+        CatalogStorageReply::Value { value } => value,
+        CatalogStorageReply::Error { error } => panic!("flow fixture read failed: {error:?}"),
+    };
+    let stored: Option<CatalogVersionedDocument> =
+        serde_json::from_value(value).expect("decode the module-created flow document");
+    let mut stored = stored.expect("the flow document must exist");
+    stored.doc["graph"] = Value::String(graph.to_owned());
+
+    let reply = crate::flows::catalog_storage::call_test_storage::<CatalogStorageReply, _>(
+        config,
+        catalog::storage::PUT,
+        (DocPutRequest {
+            collection: "flows.definitions".into(),
+            id: flow_id.to_owned(),
+            doc: stored.doc,
+            precondition: CatalogDocumentPrecondition::Version(stored.version),
+            schema: stored.meta.schema,
+            expires_ms: stored.meta.expires_ms,
+            created_ms: Some(stored.meta.created_ms),
+        },),
+    )
+    .expect("write the corrupt flow fixture through its owner-scoped port");
+    assert!(matches!(reply, CatalogStorageReply::Value { .. }));
+}
+
 /// The success-path mirror of the refusal test above: when nothing rewrites
 /// the flow between park and resume, the recomputed hash matches the pinned
 /// one and the resume proceeds exactly as it did before this guard existed.
@@ -7,6 +98,8 @@ use super::*;
 async fn flows_resume_succeeds_when_the_graph_is_unchanged() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
+    // This graph contains no inference node. Resuming a parked non-LLM flow
+    // must not gain a provider-readiness dependency from the StartRun path.
     let created = flows_create(&config, "gated".to_string(), approval_gated_graph(), false)
         .await
         .unwrap();
@@ -41,6 +134,20 @@ async fn flows_resume_succeeds_when_the_graph_is_unchanged() {
     )
     .await
     .expect("resume must succeed when the pinned graph still matches the current one");
+    let response_keys: std::collections::BTreeSet<_> = resumed
+        .value
+        .as_object()
+        .expect("resume keeps the established object response")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        response_keys,
+        ["output", "pending_approvals", "thread_id"]
+            .into_iter()
+            .collect(),
+        "ResumeRun's internal admission acknowledgement must not change the public RPC shape"
+    );
     assert_eq!(resumed.value["pending_approvals"], json!([]));
     assert!(
         !resumed.value["output"]["nodes"]["downstream"]["items"].is_null(),
@@ -55,13 +162,154 @@ async fn flows_resume_succeeds_when_the_graph_is_unchanged() {
     );
 }
 
+fn profile_dispatch(config: &Config, profile: &str) -> crate::core::runtime::DispatchCtx {
+    use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
+
+    let root = CoreContext::for_test_with_config(DomainSet::full(), config.clone());
+    crate::core::runtime::DispatchCtx::new(
+        root.derive_with(
+            ContextOverlay::new(
+                config.clone(),
+                DomainSet::full(),
+                crate::tools::toolpacks::ToolGroups::default(),
+            )
+            .profile(profile),
+        ),
+    )
+}
+
+async fn scoped_run_status(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    run_id: &str,
+) -> String {
+    use tinyflows_bus::catalog::{self, FlowRun, RunIdRequest};
+
+    let storage = crate::flows::catalog_storage::register(ctx, config)
+        .await
+        .unwrap()
+        .storage();
+    let proxy = crate::modules::tinyflows::catalog_proxy(config)
+        .await
+        .unwrap();
+    let run: Option<FlowRun> = proxy
+        .call(
+            catalog::members::GET_RUN,
+            (RunIdRequest {
+                storage,
+                id: run_id.to_owned(),
+            },),
+        )
+        .await
+        .unwrap();
+    run.expect("run exists in this scoped Catalog").status
+}
+
+#[tokio::test]
+async fn resume_uses_the_captured_profile_scope_for_identical_run_ids() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let ctx_a = profile_dispatch(&config, "resume-owner-a");
+    let ctx_b = profile_dispatch(&config, "resume-owner-b");
+    let flow_a = crate::flows::ops::flows_create_with_context(
+        &ctx_a,
+        &config,
+        "owner-a".to_string(),
+        approval_gated_graph(),
+        false,
+    )
+    .await
+    .unwrap()
+    .value;
+    let flow_b = crate::flows::ops::flows_create_with_context(
+        &ctx_b,
+        &config,
+        "owner-b".to_string(),
+        approval_gated_graph(),
+        false,
+    )
+    .await
+    .unwrap()
+    .value;
+    let run_id = "same-opaque-run-id";
+
+    for (ctx, flow, owner) in [(&ctx_a, &flow_a, "owner-a"), (&ctx_b, &flow_b, "owner-b")] {
+        let (_session, mut events) = crate::flows::runs_adapter::start_run(
+            ctx,
+            &config,
+            flow,
+            run_id,
+            json!({ "owner": owner }),
+            serde_json::Map::new(),
+            FlowRunTrigger::Rpc,
+        )
+        .await
+        .unwrap();
+        let parked = crate::flows::runs_adapter::wait_for_outcome(&mut events, run_id, 0)
+            .await
+            .unwrap();
+        assert_eq!(parked.status, "pending_approval");
+    }
+
+    let resumed_a = flows_resume(
+        &ctx_a,
+        &config,
+        &flow_a.id,
+        run_id,
+        vec!["gate".to_string()],
+        vec![],
+    )
+    .await
+    .expect("the resume is resolved in owner A's Catalog and callback scope");
+    assert_eq!(
+        resumed_a.value["output"]["run"]["trigger"]["owner"],
+        json!("owner-a")
+    );
+    assert_eq!(
+        scoped_run_status(&ctx_a, &config, run_id).await,
+        "completed"
+    );
+    assert_eq!(
+        scoped_run_status(&ctx_b, &config, run_id).await,
+        "pending_approval",
+        "resuming the same opaque run id in profile A must not settle profile B's run"
+    );
+
+    let resumed_b = flows_resume(
+        &ctx_b,
+        &config,
+        &flow_b.id,
+        run_id,
+        vec!["gate".to_string()],
+        vec![],
+    )
+    .await
+    .expect("owner B retains its independently parked run");
+    assert_eq!(
+        resumed_b.value["output"]["run"]["trigger"]["owner"],
+        json!("owner-b")
+    );
+    assert_eq!(
+        scoped_run_status(&ctx_b, &config, run_id).await,
+        "completed"
+    );
+}
+
 /// Migration safety (T-M1 requirement #4): a `flow_runs` row written before
 /// this guard existed reads back with `graph_hash IS NULL`. That must be
 /// treated as "unknown — allow, with a warning", never as a hard refusal, so
 /// upgrading mid-park can never strand an otherwise-valid in-flight approval
 /// — even if the flow's graph was *also* edited in the meantime, since there
 /// is nothing recorded to compare it against.
-#[tokio::test]
+///
+/// Multi-thread on purpose: this test calls the synchronous store bridge
+/// (`update_parked_run_document_for_test`, `store::update_flow_graph`) between
+/// async calls. The bridge blocks the calling thread while the TinyFlows
+/// module calls back into the host's document port, and a current-thread
+/// runtime has no other thread left to make progress on the work that call
+/// depends on (the resumed run's poller task lives on that runtime). The
+/// production runtime is multi-thread, where the bridge uses `block_in_place`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn flows_resume_allows_a_legacy_row_with_null_graph_hash() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
@@ -86,18 +334,12 @@ async fn flows_resume_allows_a_legacy_row_with_null_graph_hash() {
     // Simulate a row written before the T-M1 migration: still `pending_approval`,
     // but with no graph hash pinned — exactly what `add_column_if_missing`
     // leaves behind for every row that existed before this feature shipped.
-    let now = Utc::now().to_rfc3339();
-    store::finish_flow_run(
-        &config,
-        &thread_id,
-        "pending_approval",
-        &now,
-        &[],
-        &pending,
-        None,
-        None,
-    )
-    .unwrap();
+    update_parked_run_document_for_test(&config, &thread_id, |document| {
+        document
+            .as_object_mut()
+            .expect("run document is an object")
+            .remove("graph_hash");
+    });
     let staged = flows_get_run(&config, &thread_id).await.unwrap().value;
     assert!(
         staged.graph_hash.is_none(),
@@ -132,531 +374,4 @@ async fn flows_resume_allows_a_legacy_row_with_null_graph_hash() {
     .await
     .expect("a legacy row with no graph_hash must still resume (unknown treated as allow)");
     assert_eq!(resumed.value["pending_approvals"], json!([]));
-}
-
-/// The stale-approval pin is a persisted format. The algorithm and its
-/// key-order / `require_approval` properties are tested in `tinyflows-catalog`;
-/// this pins the same digests in the host build, where `serde_json` has
-/// `preserve_order` active, so a feature-unification change cannot silently
-/// invalidate every parked run's pin.
-#[test]
-fn graph_hash_matches_the_persisted_vector_under_preserve_order() {
-    let graph = structurally_valid_graph(json!({
-        "name": "order-test",
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Trigger" },
-            {
-                "id": "n",
-                "kind": "output_parser",
-                "name": "N",
-                "config": { "nested": { "y": 2, "x": 1 }, "b": 2, "a": 1 }
-            }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "n" } ]
-    }));
-    assert_eq!(
-        compute_graph_hash(&graph, false).as_deref(),
-        Some("33ff2f572641fba1b81c6726161314f8a9e725a6b8c33a0a119cbe0564b57ad2")
-    );
-    assert_eq!(
-        compute_graph_hash(&graph, true).as_deref(),
-        Some("a13666dfbcff29a5509b0ee4d0bc50199b47eb11cb32f5ba2b00c7ae626cd179")
-    );
-}
-
-#[tokio::test]
-async fn flows_resume_marks_an_incompatible_legacy_checkpoint_failed() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let created = flows_create(&config, "gated".to_string(), approval_gated_graph(), false)
-        .await
-        .unwrap();
-    let run = flows_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        json!({ "x": 1 }),
-        serde_json::Map::new(),
-        FlowRunTrigger::Rpc,
-    )
-    .await
-    .unwrap();
-    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
-    let pending: Vec<String> =
-        serde_json::from_value(run.value["pending_approvals"].clone()).unwrap();
-
-    // Simulate a graph persisted before the host compatibility gate existed.
-    // The store layer intentionally trusts its typed caller; authoring paths
-    // own validation.
-    let legacy_graph = structurally_valid_graph(nested_conditional_fan_in_graph());
-    store::update_flow_graph(
-        &config,
-        &created.value.id,
-        created.value.name.clone(),
-        legacy_graph.clone(),
-        created.value.require_approval,
-        None,
-        false,
-        None,
-    )
-    .unwrap();
-    // T-M1: re-pin the parked row's graph_hash to this same (legacy,
-    // incompatible) graph. Without this the fixture reads as "the graph
-    // changed after park" (a DIFFERENT bug class this same PR now catches
-    // earlier and refuses with a distinct message) rather than "the
-    // checkpoint has always been incompatible" — the scenario this test
-    // means to pin. A real legacy row predating T-M1 would carry
-    // `graph_hash: NULL` and fall through the same way (see the
-    // `flows_resume_allows_a_legacy_row_with_null_graph_hash` test above).
-    let run_row_before = flows_get_run(&config, &thread_id).await.unwrap().value;
-    let legacy_hash = compute_graph_hash(&legacy_graph, created.value.require_approval)
-        .expect("fixture graph should hash");
-    store::finish_flow_run(
-        &config,
-        &thread_id,
-        "pending_approval",
-        &run_row_before.finished_at.unwrap_or_default(),
-        &run_row_before.steps,
-        &run_row_before.pending_approvals,
-        None,
-        Some(&legacy_hash),
-    )
-    .unwrap();
-
-    let error = flows_resume(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        &thread_id,
-        pending,
-        vec![],
-    )
-    .await
-    .expect_err("an incompatible checkpoint cannot be resumed safely");
-    assert!(
-        error.contains(UNSUPPORTED_NESTED_CONDITIONAL_FAN_IN),
-        "{error}"
-    );
-
-    let run_row = flows_get_run(&config, &thread_id).await.unwrap().value;
-    assert_eq!(run_row.status, "failed");
-    assert!(run_row.pending_approvals.is_empty());
-    assert!(
-        run_row
-            .error
-            .as_deref()
-            .is_some_and(|value| value.contains(UNSUPPORTED_NESTED_CONDITIONAL_FAN_IN)),
-        "the terminal run row should retain the rejection reason: {run_row:?}"
-    );
-    let flow = flows_get(&config, &created.value.id).await.unwrap().value;
-    assert_eq!(flow.last_status.as_deref(), Some("failed"));
-}
-
-#[tokio::test]
-async fn flows_resume_marks_a_checkpoint_with_an_incompatible_saved_child_failed() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let created = flows_create(&config, "gated".to_string(), approval_gated_graph(), false)
-        .await
-        .unwrap();
-    let run = flows_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        json!({ "x": 1 }),
-        serde_json::Map::new(),
-        FlowRunTrigger::Rpc,
-    )
-    .await
-    .unwrap();
-    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
-    let pending: Vec<String> =
-        serde_json::from_value(run.value["pending_approvals"].clone()).unwrap();
-    let child = store::create_flow(
-        &config,
-        "legacy unsafe child".to_string(),
-        structurally_valid_graph(nested_conditional_fan_in_graph()),
-        false,
-        false,
-    )
-    .unwrap();
-    let legacy_graph = structurally_valid_graph(referenced_child_graph(&child.id));
-    store::update_flow_graph(
-        &config,
-        &created.value.id,
-        created.value.name.clone(),
-        legacy_graph.clone(),
-        created.value.require_approval,
-        None,
-        false,
-        None,
-    )
-    .unwrap();
-    // T-M1: re-pin the parked row's hash to this same graph — see the sibling
-    // legacy-checkpoint test above for why this fixture needs it now that a
-    // graph swap is independently caught by the stale-approval guard.
-    let run_row_before = flows_get_run(&config, &thread_id).await.unwrap().value;
-    let legacy_hash = compute_graph_hash(&legacy_graph, created.value.require_approval)
-        .expect("fixture graph should hash");
-    store::finish_flow_run(
-        &config,
-        &thread_id,
-        "pending_approval",
-        &run_row_before.finished_at.unwrap_or_default(),
-        &run_row_before.steps,
-        &run_row_before.pending_approvals,
-        None,
-        Some(&legacy_hash),
-    )
-    .unwrap();
-
-    let error = flows_resume(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        &thread_id,
-        pending,
-        vec![],
-    )
-    .await
-    .expect_err("an incompatible saved child cannot be resumed safely");
-    assert!(
-        error.contains(UNSUPPORTED_NESTED_CONDITIONAL_FAN_IN),
-        "{error}"
-    );
-    assert!(error.contains(&child.id), "{error}");
-
-    let run_row = flows_get_run(&config, &thread_id).await.unwrap().value;
-    assert_eq!(run_row.status, "failed");
-    assert!(run_row.pending_approvals.is_empty());
-    assert!(run_row
-        .error
-        .as_deref()
-        .is_some_and(|value| value.contains(UNSUPPORTED_NESTED_CONDITIONAL_FAN_IN)));
-    let flow = flows_get(&config, &created.value.id).await.unwrap().value;
-    assert_eq!(flow.last_status.as_deref(), Some("failed"));
-}
-
-#[tokio::test]
-async fn flows_resume_missing_flow_errors() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let err = flows_resume(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        "missing",
-        "thread-1",
-        vec![],
-        vec![],
-    )
-    .await
-    .expect_err("must error");
-    assert!(err.contains("not found"));
-}
-
-// ── flows_resume host-side approval guard (issue B2 finding #3) ──────────
-//
-// tinyflows 0.2's `resume_with_checkpointer` treats the resume call itself
-// as approval of whatever gate paused the run — its `approvals` argument is
-// advisory, not enforced by the crate. Live testing confirmed
-// `flows_resume(..., approvals: [])` on a paused run still completed it.
-// These tests exercise the host-side guard added in `flows::ops::flows_resume`
-// that requires `approvals` to actually name a currently-pending gate,
-// straight from the persisted `flow_runs` row, before ever calling into the
-// engine.
-
-#[tokio::test]
-async fn flows_resume_with_empty_approvals_is_rejected_and_does_not_complete_the_run() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let created = flows_create(&config, "gated".to_string(), approval_gated_graph(), false)
-        .await
-        .unwrap();
-
-    let run = flows_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        json!({ "x": 1 }),
-        serde_json::Map::new(),
-        FlowRunTrigger::Rpc,
-    )
-    .await
-    .unwrap();
-    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
-
-    let err = flows_resume(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        &thread_id,
-        vec![],
-        vec![],
-    )
-    .await
-    .expect_err("an empty approvals list must not silently approve the pending gate");
-    assert!(
-        err.contains("no pending approval matches"),
-        "expected a clear approval-mismatch error, got: {err}"
-    );
-
-    // The run must still be sitting at pending_approval, not completed.
-    let run_row = flows_get_run(&config, &thread_id).await.unwrap();
-    assert_eq!(run_row.value.status, "pending_approval");
-    assert_eq!(run_row.value.pending_approvals, vec!["gate".to_string()]);
-
-    let reloaded = flows_get(&config, &created.value.id).await.unwrap();
-    assert_eq!(
-        reloaded.value.last_status.as_deref(),
-        Some("pending_approval"),
-        "a rejected resume attempt must not overwrite the flow's last_status as completed"
-    );
-}
-
-#[tokio::test]
-async fn flows_resume_with_mismatched_approvals_is_rejected() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let created = flows_create(&config, "gated".to_string(), approval_gated_graph(), false)
-        .await
-        .unwrap();
-
-    let run = flows_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        json!({ "x": 1 }),
-        serde_json::Map::new(),
-        FlowRunTrigger::Rpc,
-    )
-    .await
-    .unwrap();
-    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
-
-    // Names a node id that is not actually pending for this run.
-    let err = flows_resume(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        &thread_id,
-        vec!["not-a-real-gate".to_string()],
-        vec![],
-    )
-    .await
-    .expect_err("approvals naming no actually-pending gate must be rejected");
-    assert!(err.contains("no pending approval matches"));
-}
-
-#[tokio::test]
-async fn flows_resume_with_the_correct_gate_completes_and_runs_downstream() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let created = flows_create(&config, "gated".to_string(), approval_gated_graph(), false)
-        .await
-        .unwrap();
-
-    let run = flows_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        json!({ "x": 1 }),
-        serde_json::Map::new(),
-        FlowRunTrigger::Rpc,
-    )
-    .await
-    .unwrap();
-    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
-
-    let resumed = flows_resume(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        &thread_id,
-        vec!["gate".to_string()],
-        vec![],
-    )
-    .await
-    .unwrap();
-    assert_eq!(resumed.value["pending_approvals"], json!([]));
-    assert!(
-        !resumed.value["output"]["nodes"]["downstream"]["items"].is_null(),
-        "downstream should run once the correct gate is named in approvals"
-    );
-
-    let reloaded = flows_get(&config, &created.value.id).await.unwrap();
-    assert_eq!(reloaded.value.last_status.as_deref(), Some("completed"));
-}
-
-#[tokio::test]
-async fn flows_resume_denying_a_gate_routes_to_its_error_port() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let created = flows_create(
-        &config,
-        "gated-deny".to_string(),
-        approval_gated_graph_with_error_port(),
-        false,
-    )
-    .await
-    .unwrap();
-
-    let run = flows_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        json!({ "x": 1 }),
-        serde_json::Map::new(),
-        FlowRunTrigger::Rpc,
-    )
-    .await
-    .unwrap();
-    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
-
-    // Deny the gate: no approvals, `gate` in rejections.
-    let resumed = flows_resume(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        &thread_id,
-        vec![],
-        vec!["gate".to_string()],
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(resumed.value["pending_approvals"], json!([]));
-    assert_eq!(
-        resumed.value["output"]["nodes"]["recover"]["items"][0]["json"]["error"]["node"],
-        json!("gate"),
-        "a denied gate must route its error item to the `error`-port recovery node"
-    );
-    assert!(
-        resumed.value["output"]["nodes"]["downstream"].is_null(),
-        "the main branch must not run when the gate is denied"
-    );
-
-    let reloaded = flows_get(&config, &created.value.id).await.unwrap();
-    assert_eq!(reloaded.value.last_status.as_deref(), Some("completed"));
-
-    let run_row = flows_get_run(&config, &thread_id).await.unwrap();
-    assert_eq!(run_row.value.status, "completed");
-    assert!(run_row.value.pending_approvals.is_empty());
-}
-
-#[tokio::test]
-async fn flows_resume_denying_a_gate_with_no_error_port_fails_the_run() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    // `approval_gated_graph()` has only a `main` edge out of the gate — no
-    // `error` port to route a denial to, so the whole run must fail.
-    let created = flows_create(&config, "gated".to_string(), approval_gated_graph(), false)
-        .await
-        .unwrap();
-
-    let run = flows_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        json!({ "x": 1 }),
-        serde_json::Map::new(),
-        FlowRunTrigger::Rpc,
-    )
-    .await
-    .unwrap();
-    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
-
-    let err = flows_resume(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        &thread_id,
-        vec![],
-        vec!["gate".to_string()],
-    )
-    .await
-    .expect_err("denying a gate with no error port must fail the run");
-    assert!(
-        err.contains("denied"),
-        "expected a denial error, got: {err}"
-    );
-
-    let reloaded = flows_get(&config, &created.value.id).await.unwrap();
-    assert_eq!(reloaded.value.last_status.as_deref(), Some("failed"));
-    let run_row = flows_get_run(&config, &thread_id).await.unwrap();
-    assert_eq!(run_row.value.status, "failed");
-}
-
-#[tokio::test]
-async fn flows_resume_rejects_a_gate_named_in_both_approvals_and_rejections() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let created = flows_create(&config, "gated".to_string(), approval_gated_graph(), false)
-        .await
-        .unwrap();
-
-    let run = flows_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        json!({}),
-        serde_json::Map::new(),
-        FlowRunTrigger::Rpc,
-    )
-    .await
-    .unwrap();
-    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
-
-    let err = flows_resume(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        &thread_id,
-        vec!["gate".to_string()],
-        vec!["gate".to_string()],
-    )
-    .await
-    .expect_err("a gate cannot be both approved and rejected");
-    assert!(err.contains("cannot be both approved and rejected"));
-
-    // The run must be untouched (still pending), never half-resumed.
-    let run_row = flows_get_run(&config, &thread_id).await.unwrap();
-    assert_eq!(run_row.value.status, "pending_approval");
-}
-
-#[tokio::test]
-async fn flows_resume_of_a_non_paused_run_errors_clearly() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let created = flows_create(&config, "demo".to_string(), trigger_only_graph(), false)
-        .await
-        .unwrap();
-
-    // This run completes outright (no approval gate) — its recorded status
-    // is "completed", not "pending_approval".
-    let run = flows_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        json!({}),
-        serde_json::Map::new(),
-        FlowRunTrigger::Rpc,
-    )
-    .await
-    .unwrap();
-    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
-
-    let err = flows_resume(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &created.value.id,
-        &thread_id,
-        vec![],
-        vec![],
-    )
-    .await
-    .expect_err("resuming an already-completed run must be a clear error, not a silent no-op");
-    assert!(
-        err.contains("not pending approval") || err.contains("no paused run"),
-        "expected a clear non-paused-run error, got: {err}"
-    );
 }

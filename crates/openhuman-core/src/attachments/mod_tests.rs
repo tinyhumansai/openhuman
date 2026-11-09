@@ -58,6 +58,7 @@ async fn legacy_migration_does_not_grant_private_file_or_disabled_image_access()
     let external_scope = AttachmentAccessScope {
         external_channel: true,
         workspace: None,
+        ..Default::default()
     };
     assert!(
         legacy::migrate_from(&cfg, source.to_str().unwrap(), &stash, &external_scope)
@@ -189,6 +190,9 @@ fn config(root: &Path) -> Config {
     }
 }
 
+// Refusing the unrelated file is enforced security: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn ready_media_artifact_in_files_folder_can_be_attached() {
     let temp = tempfile::tempdir().unwrap();
@@ -412,6 +416,7 @@ async fn explicit_workspace_wins_over_config_action_dir() {
     let scope = AttachmentAccessScope {
         external_channel: false,
         workspace: Some(scoped.clone()),
+        ..Default::default()
     };
     let attachment = save(&config, "thread", "file", "text/plain", b"original", &scope)
         .await

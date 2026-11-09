@@ -23,7 +23,7 @@ fn start_hashed(d: &Deployment, name: &str) -> (Server, String, PathBuf) {
     std::fs::write(
         &d.config,
         format!(
-            "root = {:?}\nprofile_ids = \"hashed\"\n",
+            "root = {:?}\nprofile_ids = \"hashed\"\nnode_id = \"hashed-profile-test\"\n",
             d.root.display().to_string()
         ),
     )

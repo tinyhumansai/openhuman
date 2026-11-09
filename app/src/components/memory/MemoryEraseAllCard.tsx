@@ -45,6 +45,8 @@ export function eraseErrorKey(err: unknown): string {
       return 'memoryPage.settings.eraseError.unsupported';
     case 'INSUFFICIENT_CREDITS':
       return 'memoryPage.settings.eraseError.insufficientCredits';
+    case 'PLAN_REQUIRED':
+      return 'memory.error.planRequired';
     case 'MEMORY_OFF':
       return 'memoryPage.settings.eraseError.memoryOff';
     case 'UNAVAILABLE':

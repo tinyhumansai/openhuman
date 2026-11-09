@@ -1,4 +1,100 @@
 use super::*;
+use crate::core::runtime::{ContextOverlay, CoreContext, DispatchCtx, DomainSet};
+use std::sync::Arc;
+use tinymemory_api::conformance::ReferenceEngine;
+use tinymemory_api::{MemoryEngine, MemoryMeta, Role, SourceKind, StoreItem, Turn};
+
+async fn use_linked_channel_module(config: &mut Config) {
+    config.modules.source = crate::config::schema::ModuleSourceMode::Linked;
+    config.modules.allow_download = false;
+    let _client = crate::channels::module_fixture::client().await;
+}
+
+fn channel_memory_item(thread_id: &str, channel: &str) -> StoreItem {
+    StoreItem::Conversation {
+        turns: vec![Turn::new(Role::User, format!("hello from {channel}"))],
+        meta: MemoryMeta {
+            thread_id: Some(thread_id.into()),
+            channel: Some(channel.into()),
+            source: tinymemory_api::SourceRef {
+                kind: SourceKind::Conversation,
+                id: Some(thread_id.into()),
+            },
+            ..MemoryMeta::default()
+        },
+    }
+}
+
+fn account_context(config: &Config, profile: &str) -> DispatchCtx {
+    DispatchCtx::new(
+        CoreContext::for_test(DomainSet::none(), Some(config.workspace_dir.clone())).derive_with(
+            ContextOverlay::new(config.clone(), DomainSet::full(), Default::default())
+                .profile(profile),
+        ),
+    )
+}
+
+async fn store_channel_thread(
+    ctx: DispatchCtx,
+    config: &Config,
+    channel: &str,
+    id: &str,
+) -> String {
+    use crate::threads::store::{ConversationMessage, CreateConversationThread};
+    use serde_json::json;
+
+    let params = crate::channels::providers::relay::RelayInboundParams::new(
+        channel,
+        format!("chat-{id}"),
+        format!("sender-{id}"),
+        id,
+        "hello",
+    );
+    let identity = crate::modules::channel_controller::prepare_identity(
+        &crate::channels::module_fixture::client().await,
+        tinychannels_bus::module_inbound::PrepareChannelIdentityRequest {
+            channel: channel.to_string(),
+            sender: Some(format!("sender-{id}")),
+            reply_target: Some(format!("chat-{id}")),
+            thread_ts: None,
+        },
+    )
+    .await
+    .expect("TinyChannels module should prepare the canonical thread id");
+    let thread_id = identity.thread_id;
+    let now = chrono::Utc::now().to_rfc3339();
+    crate::threads::store::blocking::ensure_thread(
+        ctx.clone(),
+        config.workspace_dir.clone(),
+        CreateConversationThread {
+            id: thread_id.clone(),
+            title: params.thread_title(),
+            created_at: now.clone(),
+            parent_thread_id: None,
+            labels: None,
+            personality_id: None,
+            working_dir: None,
+        },
+    )
+    .await
+    .unwrap();
+    crate::threads::store::blocking::append_message(
+        ctx,
+        config.workspace_dir.clone(),
+        thread_id.clone(),
+        ConversationMessage {
+            id: format!("user:{id}"),
+            content: "hello".into(),
+            message_type: "text".into(),
+            extra_metadata: json!({"scope": "channel", "channel": channel}),
+            sender: "user".into(),
+            created_at: now,
+        },
+    )
+    .await
+    .unwrap();
+    thread_id
+}
 
 #[tokio::test]
 async fn persist_prepared_discord_configuration_and_encrypted_token() {
@@ -292,7 +388,7 @@ async fn channel_status_reports_managed_dm_credential_as_connected() {
     // Simulate the post-link state: `telegram_login_check` stored a
     // credential marker under `channel:telegram:managed_dm` with no
     // corresponding `channels_config.telegram` block.
-    crate::security::credentials::ops::store_provider_credentials(
+    crate::credentials::ops::store_provider_credentials(
         &config,
         "channel:telegram:managed_dm",
         None,
@@ -497,7 +593,7 @@ async fn connected_channel_slugs_merges_credentials_and_config() {
     });
 
     // Layer 2: credential-only channel (telegram managed_dm).
-    crate::security::credentials::ops::store_provider_credentials(
+    crate::credentials::ops::store_provider_credentials(
         &config,
         "channel:telegram:managed_dm",
         None,
@@ -530,7 +626,7 @@ async fn connected_channel_slugs_dedupes_when_both_layers_present() {
     });
 
     // Same slug appears in both layers — should collapse to one entry.
-    crate::security::credentials::ops::store_provider_credentials(
+    crate::credentials::ops::store_provider_credentials(
         &config,
         "channel:discord:managed_dm",
         None,
@@ -595,3 +691,6 @@ async fn unavailable_module_cannot_persist_yuanbao_credentials() {
         }
     }
 }
+
+#[path = "ops_connect_memory_tests.rs"]
+mod memory_tests;

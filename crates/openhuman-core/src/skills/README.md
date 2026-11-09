@@ -121,12 +121,22 @@ session for a match is not implemented.
 ### Bundled skills
 
 [`bundled/mod.rs`](./bundled/mod.rs) holds the compiled-in `BUNDLED` table: `desktop-control`
-(behind `modules`) and the flows `FLOW_AUTHORING` manual (behind `flows`).
-`install_bundled_skills` materializes them under
-`<workspace>/.openhuman/builtin-skills/`, and discovery accepts a directory
-there only while its bytes still match the binary
-(`is_current_materialization`). Nothing on the boot path calls
-`install_bundled_skills` today; only tests do.
+(behind `modules`). `install_bundled_skills` materializes those static entries
+under `<workspace>/.openhuman/builtin-skills/`, and discovery accepts a
+directory there only while its bytes still match the binary
+(`is_current_materialization`).
+
+The `flow-authoring` skill is owned by TinyFlows Copilot. When `skills`,
+`flows`, `tinyflows`, and the relevant domains are enabled, core and channel
+startup schedule its bounded preflight in the background, outside ordinary
+chat startup. Direct prompt inspection awaits the same bounded preflight.
+Session discovery schedules a retry when no current snapshot is ready. The
+preflight requests its files through the Copilot bus contract and materializes
+them under a separate, tenant/config-scoped
+`<workspace>/.openhuman/builtin-flow-skills/` root with `tinyskills`' atomic
+writer. Synchronous discovery includes it only while the current snapshot,
+module lifecycle, and TinySkills-validated files agree. Missing modules leave
+the optional skill hidden and ordinary chat available.
 
 ## Layout
 
@@ -212,12 +222,13 @@ rather than re-implementing it:
 | `remove_bundle` | Root search order, error wording, the `WorkflowsChanged` publish |
 | Install URL normalization, the guarded `fetch_skill_document` (HTTPS only, non-public addresses refused, pinned connections, re-validated redirects, size cap, timeout), document validation, `write_installed_document`, `redact_url` | `Retry-After` and rate-limit messages, Sentry reporting |
 | `TriggerPattern` grammar and matching | `TriggeredWorkflowIndex` and the bus subscriber |
-| Bundled-skill validate, digest, install, `is_current_materialization` | The `BUNDLED` table and the builtin root |
+| Bundled-skill validate, digest, install, `is_current_materialization` | The static `BUNDLED` table and its builtin root |
+| TinyFlows Copilot `ListResources` | The scoped flow-authoring snapshot, separate materialization root, and cache/read verification |
 
 Other owners: the orchestrator prompt renders the catalog
 (`agent_registry/agents/orchestrator/prompt.rs`), channel turns render their
 own skills list (`agent/context/channels_prompt.rs`), fork context carries the
-parent's skill list to sub-agents (`agent/harness/fork_context.rs`), and the
+parent's skill list to sub-agents (`agent/subagent_host/fork_context.rs`), and the
 flows domain contributes `Flow`-scope entries (`flows/catalogue.rs`).
 
 ## Gotchas

@@ -8,11 +8,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tinytools_std::filesystem::FsGate;
+use tinyagents_harness_tools::fs::filesystem::FsGate;
 
 use crate::security::policy::{TrustedAccess, TrustedRoot};
-use crate::security::{AutonomyLevel, GateDecision, SecurityPolicy};
-use tinybox_bus::CommandClass;
+use crate::security::{GateDecision, SecurityPolicy};
 
 /// Clone `security` and scope it to `root`, a run's workspace descriptor root.
 ///
@@ -20,21 +19,24 @@ use tinybox_bus::CommandClass;
 /// **and** a `ReadWrite` trusted root. The grant is the load-bearing half:
 /// `action_dir` only decides where a relative path lands, while the allow/deny
 /// decision reads `workspace_dir` + `trusted_roots`
-/// (`SecurityPolicy::is_resolved_path_allowed_for`). Without the grant a
+/// (TinySecurity's scoped path authorization). Without the grant a
 /// descriptor rooted outside `workspace_dir` moved the cwd but refused every
 /// read and write in it.
 ///
 /// The grant is *additive and per-call*: it is pushed onto a clone, so nothing
 /// process-global is mutated and concurrent turns cannot race each other. It
-/// also cannot widen the hard invariants: `is_always_forbidden` (credential
-/// stores, core OS dirs) and `is_workspace_internal_path` (core-managed state
-/// under `workspace_dir`) are both evaluated *before* any trusted-root
+/// also cannot widen the hard invariants: TinySecurity's protected-path floor
+/// (credential stores, core OS dirs) and internal-state reservations (core-managed
+/// state under `workspace_dir`) are both evaluated *before* any trusted-root
 /// shortcut, so a granted root can never expose them.
 ///
 /// The root always originates from trusted in-process code (the session
 /// builder, the sub-agent runner, or the `cwd` RPC parameter), never from
 /// model-supplied text.
-pub(super) fn security_scoped_to_root(security: &SecurityPolicy, root: &Path) -> SecurityPolicy {
+pub(in crate::tools::implementations) fn security_scoped_to_root(
+    security: &SecurityPolicy,
+    root: &Path,
+) -> SecurityPolicy {
     let mut scoped = security.clone();
     scoped.action_dir = root.to_path_buf();
     scoped.trusted_roots.push(TrustedRoot {
@@ -53,7 +55,8 @@ impl FsGate for SecurityPolicy {
     fn is_read_only(&self) -> bool {
         // Deliberately the raw tier, not `can_act()`: `git_operations` asks
         // this in addition to `can_act()` and always has.
-        self.autonomy == AutonomyLevel::ReadOnly
+        self.gate_decision(crate::security::policy::CommandClass::Write)
+            == crate::security::GateDecision::Block
     }
 
     fn is_rate_limited(&self) -> bool {
@@ -65,7 +68,7 @@ impl FsGate for SecurityPolicy {
     }
 
     fn write_needs_approval(&self) -> bool {
-        self.gate_decision(CommandClass::Write) == GateDecision::Prompt
+        self.gate_decision(crate::security::policy::CommandClass::Write) == GateDecision::Prompt
     }
 
     fn action_dir(&self) -> &Path {

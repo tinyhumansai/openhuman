@@ -43,8 +43,6 @@ impl CostRoute {
 /// by its real model id (`minimax/minimax-m3`, `llama3:8b`), never by a slug.
 /// Current managed ids are `openrouter/...` passthrough ids, classified by
 /// [`is_managed_passthrough_id`].
-const MANAGED_MODEL_SLUGS: &[&str] = &crate::config::LEGACY_TIER_MODELS;
-
 /// Classify a recorded model id into its billing route.
 ///
 /// Unknown ids classify as [`CostRoute::Byok`], which is the safe direction:
@@ -54,7 +52,10 @@ const MANAGED_MODEL_SLUGS: &[&str] = &crate::config::LEGACY_TIER_MODELS;
 /// path is untouched by this classification.
 pub fn route_for_model(model: &str) -> CostRoute {
     let normalized = normalize_model_id(model);
-    if MANAGED_MODEL_SLUGS.contains(&normalized.as_str()) || is_managed_passthrough_id(&normalized)
+    if crate::inference::registry::provider_model_is_alias(
+        crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+        &normalized,
+    ) || is_managed_passthrough_id(&normalized)
     {
         CostRoute::Managed
     } else {

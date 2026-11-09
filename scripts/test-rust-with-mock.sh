@@ -174,6 +174,23 @@ if [ ! -f "$tinybox_dir/libtinybox.$module_ext" ]; then
 fi
 export OPENHUMAN_MODULE_PATH="$tinybox_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
 
+if [ "$module_ext" = "dll" ]; then
+  tinychannels_artifact="$tinychannels_dir/tinychannels_module.dll"
+elif [ "$module_ext" = "dylib" ]; then
+  tinychannels_artifact="$tinychannels_dir/libtinychannels_module.dylib"
+else
+  tinychannels_artifact="$tinychannels_dir/libtinychannels_module.so"
+fi
+export OPENHUMAN_CHANNELS_TEST_ARTIFACT="$tinychannels_artifact"
+
+# The native Telegram voice-note E2E loads the released TinyVoice by file, as
+# the CI installer exports it. It stays off OPENHUMAN_MODULE_PATH so no other
+# suite starts loading it.
+if [ -z "${OPENHUMAN_VOICE_TEST_ARTIFACT:-}" ]; then
+  OPENHUMAN_VOICE_TEST_ARTIFACT="$(stage_release_artifact tinyvoice "$wallet_platform" "$module_ext")"
+  export OPENHUMAN_VOICE_TEST_ARTIFACT
+fi
+
 # The MCP registry E2E targets exercise real TinyMCP lifecycle calls through
 # the host's module adapter, so they load the released, checksum-pinned module
 # just as the self-hosted CI installer does (source mode builds it instead).
@@ -240,10 +257,9 @@ run_raw_coverage_modules() {
     # Most Composio raw-coverage modules explicitly exercise the absent-module
     # path. These groups verify the host-to-module round trip, so inject the
     # pinned connector only for their processes.
-    if { [ "$module" = "composio_credentials_state_raw_coverage_e2e" ] ||
-         [ "$module" = "composio_tools_direct_raw_coverage_e2e" ] ||
-         [ "$module" = "tools_composio_large_round25_raw_coverage_e2e" ]; } &&
-       true; then
+    if [ "$module" = "composio_direct_client_e2e" ] ||
+       [ "$module" = "composio_direct_tools_e2e" ] ||
+       [ "$module" = "composio_host_helpers_e2e" ]; then
       OPENHUMAN_MODULE_PATH="$connectors_module_path" \
         cargo_test --test raw_coverage_all -- "${module}::" --test-threads=1 "$@"
     elif [ "$module" = "automation_scheduling_e2e" ]; then
@@ -270,7 +286,7 @@ run_in_process_modules() {
   while IFS= read -r module; do
     [ -n "$module" ] || continue
     echo "[test-rust-with-mock] in-process module: ${module}"
-    if [ "$module" = "config_auth_app_state_connectivity_e2e" ]; then
+    if [[ "$module" =~ ^(config|auth|app_state|connectivity)_e2e$ ]]; then
       # RPC fixtures in this module bind ephemeral listeners and mutate
       # process-wide credential state; parallel tests can tear down a peer's
       # listener before its final auth call.
@@ -287,21 +303,40 @@ run_json_rpc_e2e() {
   # The JSON-RPC E2E binary intentionally changes process-global environment
   # and runtime configuration. Run each case in a fresh test process so a
   # provider route persisted by one scenario cannot affect another one.
-  local listing test_names test_name
-  if ! listing="$(cargo_test --test json_rpc_e2e -- --list)"; then
-    echo "[test-rust-with-mock] ERROR: could not enumerate json_rpc_e2e tests; refusing an empty or partial list." >&2
+  local target listing test_names test_name matched_count=0
+  local -a targets=(json_rpc_threads_e2e json_rpc_wallet_e2e json_rpc_flows_e2e
+    json_rpc_flows_builder_chat_e2e
+    json_rpc_mcp_e2e json_rpc_inference_e2e json_rpc_auth_security_e2e
+    json_rpc_config_e2e json_rpc_agent_team_e2e json_rpc_web_chat_e2e
+    json_rpc_misc_e2e)
+  if [[ "${1:-}" =~ ^json_rpc_.*_e2e$ ]]; then
+    targets=("$1")
+    shift
+  fi
+  for target in "${targets[@]}"; do
+    if ! listing="$(cargo_test --test "$target" -- --list)"; then
+      echo "[test-rust-with-mock] ERROR: could not enumerate ${target}; refusing an empty or partial list." >&2
+      return 1
+    fi
+    test_names="$(printf '%s\n' "$listing" | sed -n 's/: test$//p')"
+    if [ -z "$test_names" ]; then
+      echo "[test-rust-with-mock] ERROR: ${target} enumeration returned no tests." >&2
+      return 1
+    fi
+    if [ -n "${JSON_RPC_E2E_FILTER:-}" ]; then test_names="$(printf "%s\n" "$test_names" | grep -- "$JSON_RPC_E2E_FILTER" || true)"; fi
+    if [ -z "$test_names" ]; then
+      continue
+    fi
+    while IFS= read -r test_name; do
+      echo "[test-rust-with-mock] JSON-RPC E2E test: ${test_name} (${target})"
+      cargo_test --test "$target" "$test_name" -- --exact --test-threads=1 "$@"
+      matched_count=$((matched_count + 1))
+    done <<<"$test_names"
+  done
+  if [ -n "${JSON_RPC_E2E_FILTER:-}" ] && [ "$matched_count" -eq 0 ]; then
+    echo "[test-rust-with-mock] ERROR: JSON_RPC_E2E_FILTER matched no tests: ${JSON_RPC_E2E_FILTER}" >&2
     return 1
   fi
-  test_names="$(printf '%s\n' "$listing" | sed -n 's/: test$//p')"
-  if [ -n "${JSON_RPC_E2E_FILTER:-}" ]; then test_names="$(printf "%s\n" "$test_names" | grep -- "$JSON_RPC_E2E_FILTER" || true)"; fi
-  if [ -z "$test_names" ]; then
-    echo "[test-rust-with-mock] ERROR: json_rpc_e2e enumeration returned no tests." >&2
-    return 1
-  fi
-  while IFS= read -r test_name; do
-    echo "[test-rust-with-mock] JSON-RPC E2E test: ${test_name}"
-    cargo_test --test json_rpc_e2e "$test_name" -- --exact --test-threads=1 "$@"
-  done <<<"$test_names"
 }
 
 run_build_only_reaper_test() {
@@ -357,16 +392,18 @@ run_full_suite() {
       run_raw_coverage_modules "$@"
     elif [ "$target" = "in_process_all" ]; then
       run_in_process_modules "$@"
-    elif [ "$target" = "json_rpc_e2e" ]; then
-      run_json_rpc_e2e "$@"
+    elif [[ "$target" =~ ^json_rpc_.*_e2e$ ]]; then
+      run_json_rpc_e2e "$target" "$@"
     elif [ "$target" = "tinymcp_storage_smoke_e2e" ]; then
       OPENHUMAN_MODULE_PATH="$tinymcp_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}" \
         cargo_test --features e2e-test-support --test "$target" -- "$@"
     elif [ "$target" = "mcp_registry_e2e" ]; then
       # The TinyMCP module owns process-level directory transitions; this
       # binary exercises several workspaces against that shared module object.
+      # Run the cases supported on this platform; Linux-only sandbox cases
+      # carry their own conditional ignore until TinyBox supports their jail.
       OPENHUMAN_MODULE_PATH="$connectors_module_path" \
-        cargo_test --test "$target" -- --ignored --test-threads=1 "$@"
+        cargo_test --test "$target" -- --test-threads=1 "$@"
     elif [ "$target" = "mcp_registry_multi_server" ]; then
       # The host opens multiple per-workspace clients to one TinyMCP module.
       # Keep this integration target serial so those module-backed transitions
@@ -410,13 +447,20 @@ elif [ "$#" -ge 2 ] && [ "$1" = "--test" ] && [ "$2" = "json_rpc_e2e" ]; then
     shift
   fi
   run_json_rpc_e2e "$@"
+elif [ "$#" -ge 2 ] && [ "$1" = "--test" ] && [[ "$2" =~ ^json_rpc_.*_e2e$ ]]; then
+  target="$2"
+  shift 2
+  if [ "${1:-}" = "--" ]; then
+    shift
+  fi
+  run_json_rpc_e2e "$target" "$@"
 elif [ "$#" -ge 2 ] && [ "$1" = "--test" ] && [ "$2" = "mcp_registry_e2e" ]; then
   shift 2
   if [ "${1:-}" = "--" ]; then
     shift
   fi
   OPENHUMAN_MODULE_PATH="$connectors_module_path" \
-    cargo_test --test mcp_registry_e2e -- --ignored --test-threads=1 "$@"
+    cargo_test --test mcp_registry_e2e -- --test-threads=1 "$@"
 elif [ "$#" -ge 2 ] && [ "$1" = "--test" ] && [ "$2" = "tinymcp_storage_smoke_e2e" ]; then
   shift 2
   if [ "${1:-}" = "--" ]; then

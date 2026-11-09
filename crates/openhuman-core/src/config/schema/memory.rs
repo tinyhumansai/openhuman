@@ -5,6 +5,8 @@
 //! engine = "tinyhumans"            # "tinyhumans" | "cortexdb"
 //! # agent_id = "writer-7"          # host binding: every agent on this config is this memory agent
 //! # root = "team:acme"             # host binding: the layout root (one per tenant)
+//! # recall_each_turn_ms = 1500     # host binding: recall the current message, waiting this long
+//! # memory_block_deadline_ms = 300 # host binding: render the memory block for at most this long
 //!
 //! [memory.engines.cortexdb]
 //! endpoint = "https://api-v1.cortexdb.ai"   # key in the keychain as "memory-cortexdb"
@@ -61,6 +63,8 @@ use std::fmt;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
+pub use tinymemory_integrations::sources::{MemorySourceConfig, MemorySourceKind};
+pub use tinymemory_tools::RecallSettings;
 
 /// Keychain entry name of the CortexDB API key.
 pub const MEMORY_CORTEXDB_KEY_NAME: &str = "memory-cortexdb";
@@ -70,7 +74,7 @@ pub const DEFAULT_MEMORY_ENGINE: &str = "tinyhumans";
 
 /// A legacy backend is retained only long enough to recognize migration input;
 /// its debug representation must not expose user-provided configuration text.
-#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, PartialEq, Eq, Hash)]
 pub(crate) struct LegacyBackend(String);
 
 impl fmt::Debug for LegacyBackend {
@@ -86,7 +90,7 @@ fn is_true(value: &bool) -> bool {
 }
 
 /// The `[memory]` section.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(default)]
 pub struct MemoryConfig {
     /// The selected engine id (`tinyhumans` or `cortexdb`), or `none` when memory is disabled.
@@ -112,6 +116,21 @@ pub struct MemoryConfig {
     /// Unset is the default root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root: Option<String>,
+    /// Host binding: recall memory for the user's current message on every
+    /// turn and wait at most this many milliseconds for it before the first
+    /// model call. A late or failed recall leaves the turn without a memory
+    /// note. Unset (the default), a turn only reads the pack completed in the
+    /// background for an earlier turn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recall_each_turn_ms: Option<u64>,
+    /// Host binding: wait at most this many milliseconds for the memory block
+    /// a new transcript generation renders before the first model call. When
+    /// the deadline lapses the turn keeps the block its thread recorded (a
+    /// cold thread sends none), and the render finishes in the background
+    /// for the next generation's start. Unset (the default), a generation
+    /// start waits for the render however long it takes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_block_deadline_ms: Option<u64>,
     /// Where memory sits on the engine: `legacy` (the shared
     /// `app:tinymemory` tree, the default) or `v3` (the signed-in person's
     /// own `org:<id>` subtree, chats pooled at `ws:main`). Switched by the
@@ -121,7 +140,7 @@ pub struct MemoryConfig {
     /// Turn logging.
     pub conversations: MemoryConversationsConfig,
     /// The per-turn context pack and the lifecycle's timings.
-    pub recall: MemoryRecallConfig,
+    pub recall: RecallSettings,
     /// Document sources that feed the brain.
     #[serde(
         deserialize_with = "deserialize_sources",
@@ -165,7 +184,7 @@ pub struct MemoryConfig {
 }
 
 /// `[memory] layout`: where memory sits on the engine.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum MemoryLayoutMode {
     /// The shared `app:tinymemory` tree, as before layout v3.
@@ -185,7 +204,7 @@ impl MemoryLayoutMode {
 }
 
 /// `[memory.agents.<definition>]`: one agent definition's memory.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(default)]
 pub struct MemoryAgentConfig {
     /// The memory agent id this definition acts as; unset is the definition
@@ -205,10 +224,10 @@ pub struct MemoryAgentConfig {
 /// Default `embedding_provider`: the OpenHuman backend (Voyage-backed).
 pub const DEFAULT_EMBEDDING_PROVIDER: &str = "cloud";
 /// Default `embedding_model`; keep in sync with
-/// `embeddings::cloud::DEFAULT_CLOUD_EMBEDDING_MODEL`.
+/// `tinyinference_embeddings::DEFAULT_CLOUD_MODEL`.
 pub const DEFAULT_EMBEDDING_MODEL: &str = "embedding-v1";
 /// Default `embedding_dimensions`; keep in sync with
-/// `embeddings::cloud::DEFAULT_CLOUD_EMBEDDING_DIMENSIONS`.
+/// `tinyinference_embeddings::DEFAULT_CLOUD_DIMENSIONS`.
 pub const DEFAULT_EMBEDDING_DIMENSIONS: usize = 1024;
 /// Default `embedding_rate_limit_per_min` (cloud backends cap ~60/min).
 pub const DEFAULT_EMBEDDING_RATE_LIMIT_PER_MIN: u32 = 60;
@@ -222,9 +241,11 @@ impl Default for MemoryConfig {
             engines: BTreeMap::new(),
             agent_id: None,
             root: None,
+            recall_each_turn_ms: None,
+            memory_block_deadline_ms: None,
             layout: MemoryLayoutMode::Legacy,
             conversations: MemoryConversationsConfig::default(),
-            recall: MemoryRecallConfig::default(),
+            recall: RecallSettings::default(),
             sources: Vec::new(),
             embedding_provider: DEFAULT_EMBEDDING_PROVIDER.to_string(),
             embedding_model: DEFAULT_EMBEDDING_MODEL.to_string(),
@@ -252,7 +273,7 @@ impl MemoryConfig {
 }
 
 /// `[memory.engines.<id>]`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(default)]
 pub struct MemoryEngineSettings {
     /// Base URL of the engine; unset uses the engine's default.
@@ -261,7 +282,7 @@ pub struct MemoryEngineSettings {
 }
 
 /// `[memory.conversations]`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(default)]
 pub struct MemoryConversationsConfig {
     /// Whether every turn is logged to the acting agent's conversations.
@@ -282,132 +303,6 @@ pub const DEFAULT_PRE_TURN_TIMEOUT_MS: u64 = 10000;
 pub const DEFAULT_COMPACTION_TIMEOUT_MS: u64 = 8000;
 /// Default `[memory.recall] build_delay_secs`.
 pub const DEFAULT_BUILD_DELAY_SECS: u64 = 300;
-
-/// `[memory.recall]`: the context pack injected before every turn, and the
-/// lifecycle's budgets. Mirrors `tinymemory_tools::RecallPolicy`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct MemoryRecallConfig {
-    /// Whether a pack is recalled and injected before every turn.
-    pub enabled: bool,
-    /// The pack's size in tokens.
-    pub budget_tokens: u32,
-    /// Learnings and built beliefs, together.
-    pub learnings_limit: u32,
-    /// Brain documents.
-    pub brain_limit: u32,
-    /// This agent's earlier turns.
-    pub history_limit: u32,
-    /// Other agents' turns under the same root; `0` leaves the section out.
-    /// With pooled chats, this reads the shared conversation node while
-    /// excluding this agent's own turns.
-    pub team_limit: u32,
-    /// Turns between belief builds of an agent's conversations; `0` turns
-    /// them off.
-    pub build_beliefs_every: u32,
-    /// How long a turn waits for its pack before running without one.
-    pub pre_turn_timeout_ms: u64,
-    /// Whether a small model call, beside the recall, works out which days
-    /// the turn is about so the pack leads with memories from them. Off by
-    /// default: it costs a model call per turn and often misses the
-    /// pre-turn deadline.
-    pub date_hint: bool,
-    /// How long a compaction waits for its recalled context.
-    pub compaction_timeout_ms: u64,
-    /// How long a queued belief build waits before it runs, so the engine's
-    /// fact extraction can catch up with the writes it builds from.
-    pub build_delay_secs: u64,
-}
-
-impl Default for MemoryRecallConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            budget_tokens: DEFAULT_RECALL_BUDGET_TOKENS,
-            learnings_limit: 8,
-            brain_limit: 6,
-            history_limit: 6,
-            team_limit: 3,
-            build_beliefs_every: 10,
-            pre_turn_timeout_ms: DEFAULT_PRE_TURN_TIMEOUT_MS,
-            date_hint: false,
-            compaction_timeout_ms: DEFAULT_COMPACTION_TIMEOUT_MS,
-            build_delay_secs: DEFAULT_BUILD_DELAY_SECS,
-        }
-    }
-}
-
-/// What a document source reads. The `composio` kind was removed: a saved
-/// entry of that kind is dropped at load.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum MemorySourceKind {
-    /// A local directory, walked recursively.
-    Folder,
-    /// One local file.
-    File,
-    /// One web page.
-    Link,
-    /// A GitHub repository (`owner/repo` or URL).
-    Github,
-    /// An RSS or Atom feed.
-    Rss,
-}
-
-impl MemorySourceKind {
-    /// Every kind, in display order.
-    pub const ALL: [Self; 5] = [
-        Self::Folder,
-        Self::File,
-        Self::Link,
-        Self::Github,
-        Self::Rss,
-    ];
-
-    /// Wire name.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Folder => "folder",
-            Self::File => "file",
-            Self::Link => "link",
-            Self::Github => "github",
-            Self::Rss => "rss",
-        }
-    }
-
-    /// Parses a wire name.
-    #[must_use]
-    pub fn parse(raw: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|kind| kind.as_str().eq_ignore_ascii_case(raw.trim()))
-    }
-}
-
-/// One `[[memory.sources]]` entry: what to read and how often. Sync state
-/// (last run, status, item count) is runtime state kept in the workspace,
-/// not here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct MemorySourceConfig {
-    /// Stable id.
-    pub id: String,
-    /// What the source reads.
-    pub kind: MemorySourceKind,
-    /// Path, URL, `owner/repo` or feed URL.
-    pub target: String,
-    /// Display label.
-    #[serde(default)]
-    pub label: String,
-    /// Minutes between scheduled syncs; unset means on demand only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub schedule_mins: Option<u32>,
-    /// The layout root the source's documents are filed under
-    /// (`team:acme`); unset files them under the configured root, shared by
-    /// every agent there.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
-}
 
 /// Decodes `[[memory.sources]]` one entry at a time, dropping (and logging)
 /// any entry this build cannot read rather than failing the whole config.

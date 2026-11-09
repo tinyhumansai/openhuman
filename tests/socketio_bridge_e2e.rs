@@ -17,7 +17,7 @@ use futures::{SinkExt, StreamExt};
 use openhuman_core::config::Config;
 use openhuman_core::core::bus::BUS;
 use openhuman_core::core::events::DomainEvent;
-use openhuman_core::core::runtime::{CoreBuilder, DomainSet, ServiceSet, TokenSource};
+use openhuman_core::core::runtime::{CoreBuilder, DispatchCtx, DomainSet, ServiceSet, TokenSource};
 use openhuman_core::desktop::notifications::{
     publish_core_notification, CoreNotificationCategory, CoreNotificationEvent,
 };
@@ -126,15 +126,16 @@ fn count(seen: &[String], name: &str) -> usize {
     seen.iter().filter(|n| *n == name).count()
 }
 
-/// A web-channel event addressed to `client_id`, on `thread_id` when it is
-/// not empty.
+/// A web-channel event named `name` (its wire tag) addressed to `client_id`,
+/// on `thread_id` when it is not empty.
 fn web_event(name: &str, client_id: &str, thread_id: &str) -> WebChannelEvent {
-    WebChannelEvent {
-        event: name.to_string(),
-        client_id: client_id.to_string(),
-        thread_id: thread_id.to_string(),
-        ..WebChannelEvent::default()
-    }
+    serde_json::from_value(json!({
+        "event": name,
+        "client_id": client_id,
+        "thread_id": thread_id,
+        "request_id": "",
+    }))
+    .expect("a web event name with no required fields")
 }
 
 /// Runs [`run`] on a large-stack runtime, as the other core-booting suites do.
@@ -181,8 +182,10 @@ async fn run() {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let server =
-        tokio::spawn(async move { axum::serve(listener, build_core_http_router(true)).await });
+    // The connect handler refuses a socket whose request carries no
+    // DispatchCtx, so the bare router gets one, as the rpc socket tests do.
+    let router = build_core_http_router(true).layer(axum::Extension(DispatchCtx::host_default()));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await });
 
     let mut ws = connect(addr).await;
 
@@ -218,8 +221,8 @@ async fn run() {
 
     // Web channel: once the bridge is listening, a frame addressed to a
     // client that is also in the thread room arrives once under each name.
-    publish_until(&mut ws, "warmup", || {
-        publish_web_channel_event(web_event("warmup", &sid, ""))
+    publish_until(&mut ws, "chat_cancelled", || {
+        publish_web_channel_event(web_event("chat_cancelled", &sid, ""))
     })
     .await;
     publish_web_channel_event(web_event("chat_message", &sid, "t1"));
@@ -230,11 +233,11 @@ async fn run() {
 
     // A frame for another client's turn on the same thread reaches this
     // socket through the thread room alone.
-    publish_web_channel_event(web_event("thread_reply", "another-client", "t1"));
-    publish_web_channel_event(web_event("thread_done", "another-client", "t1"));
-    let seen = events_until(&mut ws, "thread_done").await;
-    assert_eq!(count(&seen, "thread_reply"), 1, "{seen:?}");
-    assert_eq!(count(&seen, "thread:reply"), 1, "{seen:?}");
+    publish_web_channel_event(web_event("chat_segment", "another-client", "t1"));
+    publish_web_channel_event(web_event("chat_error", "another-client", "t1"));
+    let seen = events_until(&mut ws, "chat_error").await;
+    assert_eq!(count(&seen, "chat_segment"), 1, "{seen:?}");
+    assert_eq!(count(&seen, "chat:segment"), 1, "{seen:?}");
 
     let companion = publish_until(&mut ws, "companion:state_changed", || {
         publish_companion_state_changed(json!({ "state": "listening" }));
@@ -265,6 +268,9 @@ async fn run() {
         bus.publish(DomainEvent::SessionExpired {
             source: "e2e".into(),
             reason: "test".into(),
+            // The bridge only relays an expiry that names the credential it
+            // came from; this core has no session token to mismatch.
+            credential_fingerprint: Some("e2e".into()),
         });
     })
     .await;

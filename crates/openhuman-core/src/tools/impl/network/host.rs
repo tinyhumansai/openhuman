@@ -1,4 +1,4 @@
-//! Host wiring for the network tools that live in `tinytools_std::network`.
+//! Host wiring for the network tools that live in `tinyagents_harness_tools::net::network`.
 //!
 //! The tools take their limits' fallbacks, their HTML engine and their 402
 //! handler from the host. This file is where OpenHuman supplies them: the
@@ -8,17 +8,20 @@
 use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
 
-#[cfg(feature = "web3")]
-use tinytools::{PermissionLevel, Tool, ToolResult};
-use tinytools_std::network::{
+use tinyagents_harness_tools::net::network::{
     AsyncHtmlExtractor, CurlTool, HttpLimits, HttpRequestTool, NetGate, WebFetchTool,
 };
+use tinytools::Tool;
+#[cfg(feature = "web3")]
+use tinytools::{PermissionLevel, ToolResult};
 
 use super::gate::RoutedGate;
 use crate::config::HttpRequestConfig;
 use crate::security::approval::ApprovalChatContext;
 use crate::security::SecurityPolicy;
-use crate::tools::per_call::PerCallTool;
+#[cfg(feature = "web3")]
+use crate::tools::per_call::PerCallContext;
+use crate::tools::per_call::{context as per_call_context, PerCallTool};
 use {tinyjuice_bus::tools::summary_focus_property, tinyjuice_bus::tools::SUMMARY_FOCUS_ARG};
 
 /// The fallbacks for a `0` limit, from the `[http_request]` schema defaults, so
@@ -34,7 +37,9 @@ fn http_limits() -> HttpLimits {
 /// HTML detection and extraction execute in the lazily loaded TinyJuice module.
 #[derive(Debug)]
 struct TinyJuiceHtml {
-    ctx: DispatchCtx,
+    /// Weak: the tool lives in a cached session, and a strong context here
+    /// would pin its tenant (`CoreContext::tenant_in_use`) after the turn.
+    core: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
 }
 
 #[async_trait::async_trait]
@@ -50,9 +55,12 @@ impl AsyncHtmlExtractor for TinyJuiceHtml {
     }
 
     async fn to_markdown(&self, html: &str) -> anyhow::Result<String> {
-        crate::inference::tokenjuice::extract_html(&self.ctx, html.to_string())
-            .await
-            .map_err(anyhow::Error::msg)
+        crate::inference::tokenjuice::extract_html(
+            &DispatchCtx::from_weak(self.core.as_ref()),
+            html.to_string(),
+        )
+        .await
+        .map_err(anyhow::Error::msg)
     }
 }
 
@@ -108,10 +116,11 @@ pub fn routed_http_request_tool(
     allowed_domains: Vec<String>,
     max_response_size: usize,
     timeout_secs: u64,
-) -> PerCallTool<HttpRequestTool> {
-    PerCallTool::new(move |chat, ctx| {
+) -> impl Tool {
+    PerCallTool::new(per_call_context, move |context| {
+        let chat = context.chat.as_ref();
         http_request_tool_for(
-            ctx,
+            &context.dispatch,
             Arc::new(RoutedGate::new(Arc::clone(&policy), chat)),
             chat,
             allowed_domains.clone(),
@@ -130,13 +139,14 @@ pub(crate) fn x402_request_tool(
     allowed_domains: Vec<String>,
     max_response_size: usize,
     timeout_secs: u64,
-) -> PerCallTool<impl Tool> {
-    PerCallTool::new(move |chat, ctx| {
+) -> PerCallTool<impl Tool, PerCallContext> {
+    PerCallTool::new(per_call_context, move |context| {
+        let chat = context.chat.as_ref();
         let gate: Arc<dyn NetGate> = Arc::new(RoutedGate::new(Arc::clone(&policy), chat));
         X402RequestTool {
             gate: Arc::clone(&gate),
             inner: http_request_tool_for(
-                ctx,
+                &context.dispatch,
                 gate,
                 chat,
                 allowed_domains.clone(),
@@ -193,10 +203,10 @@ pub fn routed_curl_tool(
     dest_subdir: String,
     max_download_bytes: u64,
     timeout_secs: u64,
-) -> PerCallTool<CurlTool> {
-    PerCallTool::new(move |chat, _ctx| {
+) -> impl Tool {
+    PerCallTool::new(per_call_context, move |context| {
         CurlTool::new(
-            Arc::new(RoutedGate::new(Arc::clone(&policy), chat)),
+            Arc::new(RoutedGate::new(Arc::clone(&policy), context.chat.as_ref())),
             allowed_domains.clone(),
             action_dir.clone(),
             dest_subdir.clone(),
@@ -213,11 +223,11 @@ pub fn routed_web_fetch_tool(
     allowed_domains: Vec<String>,
     max_bytes: Option<usize>,
     timeout_secs: Option<u64>,
-) -> PerCallTool<WebFetchTool> {
-    PerCallTool::new(move |chat, ctx| {
+) -> impl Tool {
+    PerCallTool::new(per_call_context, move |context| {
         web_fetch_tool(
-            ctx,
-            Arc::new(RoutedGate::new(Arc::clone(&policy), chat)),
+            &context.dispatch,
+            Arc::new(RoutedGate::new(Arc::clone(&policy), context.chat.as_ref())),
             allowed_domains.clone(),
             max_bytes,
             timeout_secs,
@@ -240,7 +250,9 @@ pub fn web_fetch_tool(
         max_bytes,
         timeout_secs,
         http_limits(),
-        Arc::new(TinyJuiceHtml { ctx: ctx.clone() }),
+        Arc::new(TinyJuiceHtml {
+            core: ctx.downgrade(),
+        }),
     )
     // Opts into a caller-steered summary; see `tokenjuice::focus`.
     .with_schema_property(SUMMARY_FOCUS_ARG, summary_focus_property())
@@ -251,7 +263,7 @@ mod x402 {
     //! x402 machine payment for `http_request`'s `402 Payment Required` retry.
 
     use async_trait::async_trait;
-    use tinytools_std::network::{PaymentAttempt, PaymentHook};
+    use tinyagents_harness_tools::net::network::{PaymentAttempt, PaymentHook};
 
     use super::{ApprovalChatContext, DispatchCtx};
     use crate::modules::x402_service;

@@ -7,7 +7,7 @@ icon: database
 
 # Storage
 
-OpenHuman keeps durable state on the ports of [`tinystoragedrivers`](https://github.com/tinyhumansai/tinystoragedrivers), vendored at `vendor/tinystoragedrivers` (v1.0.0). The host and every module declare it by git tag, and the root and app `[patch."https://github.com/tinyhumansai/tinystoragedrivers"]` tables redirect each of them onto that one checkout, so the build holds one copy. The vendored commit must stay semver-compatible with the tag modules declare; `scripts/ci/check-storage-owner.mjs` fails when any `tinystoragedrivers*` package resolves outside `vendor/tinystoragedrivers/`. One URL picks the backend for the whole process. The host adapter is `crates/openhuman-core/src/storage/`. It resolves the URL, opens the backend, holds it in a process slot and decides which scope a call runs in. The ports, the drivers and their conformance suites belong to `tinystoragedrivers`, and the typed records stay with the domain that owns them.
+OpenHuman keeps durable state on the ports of [`tinystoragedrivers`](https://github.com/tinyhumansai/tinystoragedrivers), vendored at `vendor/tinystoragedrivers`. The submodule ships a curated surface — types, API traits, bus contracts and the memory engine — plus separate engine crates enabled by feature flag. The root and app `[patch."https://github.com/tinyhumansai/tinystoragedrivers"]` tables redirect every declaration onto the one submodule checkout, so the build holds one copy. The vendored commit must stay semver-compatible with the tag modules declare; `scripts/ci/check-storage-owner.mjs` enforces two rules: (1) every `tinystoragedrivers*` package in the resolved graph is a path under `vendor/tinystoragedrivers/`, and (2) no non-root first-party crate reaches an engine crate (`rusqlite`, `mongodb`, `bson`, `aws-sdk-s3`, `aws-smithy-*`, `lapin`, `amq-protocol`, `object_store`, `sqlx`, `redb`, `sled`, `rocksdb`, `fs2`) through any normal or build dependency. The reasoned allowlist covers composition roots only (`openhuman`, `openhuman-app`, `openhuman-cli`, `openhuman-tui`, `openhuman-rpc`, `tinychannels`, `tinybox-cli`, `tinyjuice`). One URL picks the backend for the whole process. The host adapter is `crates/openhuman-core/src/storage/`. It resolves the URL, opens the backend, holds it in a process slot and decides which scope a call runs in. The ports, the drivers and their conformance suites belong to `tinystoragedrivers`, and the typed records stay with the domain that owns them.
 
 With no URL configured, which is the desktop default, the host opens `sqlite:<workspace>/storage` and installs it. The URL decides where the whole process keeps its state, and there is no second layout: older installs' per-domain databases, transcripts and turn-state files are imported once, read-only, when the backend is installed. The files that remain outside the ports are listed under "What is not on the ports yet" below.
 
@@ -17,11 +17,12 @@ A backend is a `StorageBackend`. It hands out a `ScopedStorage` for each `Scope`
 
 | Port            | Holds                                                                                                                                                      | Used for                                                                                                                    |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `DocumentStore` | Versioned JSON documents in named collections, with filters, paging, unique indexes, compare-and-swap (`Precondition`), atomic `claim` and optional expiry | Approvals, devices, notifications, task sources, cron jobs and runs, the flow catalog, graph checkpoints, encrypted secrets |
+| `DocumentStore` | Versioned JSON documents in named collections, with filters, paging, unique indexes, compare-and-swap (`Precondition`), atomic `claim` and optional expiry | Approvals, devices, notifications, task sources, cron jobs and runs, the flow catalog, graph checkpoints                    |
 | `StreamStore`   | Append-only logs with dense offsets                                                                                                                        | Transcripts, journals                                                                                                       |
-| `BlobStore`     | Opaque bytes by key                                                                                                                                        | Attachments, artifacts                                                                                                      |
-| `SearchIndex`   | Full-text membership                                                                                                                                       | Where the driver supports it                                                                                                |
-| `SecretStore`   | Encrypted values (`enc2:` envelope)                                                                                                                        | Keyring user secrets and the credential stores                                                                              |
+| `KvStore`       | JSON values addressed by key                                                                                                                               | Small owner-managed values                                                                                                  |
+| `BlobStore`     | Opaque bytes and trees by key                                                                                                                              | Attachments, artifacts and other large objects                                                                              |
+| `QueueStore`    | Leased, acknowledged queue deliveries                                                                                                                      | Durable work queues                                                                                                         |
+| `SecretStore`   | Scoped secret values, with optional conditional writes                                                                                                    | Secrets when the selected backend has a configured secret engine and key provider                                          |
 
 The core's stores are mostly synchronous, so `storage::block_on` runs a storage future on one shared runtime thread. It never uses `block_in_place`, which panics on a current-thread runtime. `storage::documents::Repo` is the base the domain stores build on. It declares a domain's collections once per process and runs each call.
 
@@ -97,6 +98,10 @@ Background work runs under the process default context, which names no agent, an
 
 On a shared backend (MongoDB) other processes may write the same records, so boot-time recovery such as the orphaned-run sweep is skipped (`storage::installed_is_shared`).
 
+### The storage runtime
+
+`storage::open` connects the driver on a process-wide tokio runtime of its own (two `openhuman-storage` worker threads, never shut down). MongoDB's connection-time pool and server-monitor tasks live there and not on the host's runtime. Cleanup tasks registered by later object drops can run on the internal `storage::block_on` runtime instead. Synchronous stores reach the ports through `storage::block_on`, which parks the calling thread; with the backend on the storage runtime, any number of parked callers cannot leave the host runtime without the threads the backend needs to answer them. An embedder that wants this isolation passes its storage as a URL (`StorageSource::Url`) rather than a backend it opened on its own runtime.
+
 ## Drivers and on-disk layout
 
 | Driver             | Where the data lives                                                                                                                                                                                                 |
@@ -144,56 +149,38 @@ The tinyflows stores are imported the same way with TinyFlows' own reader (`tiny
 
 TinyFlows has no storage backend of its own any more, so these stores are on the ports whatever the URL says, and the legacy files are never modified or written again.
 
-Sessions are imported through TinyAgents' `legacy` reader, which owns those formats (`storage::import::sessions`): `session_db/sessions.db` (copied with `VACUUM INTO` first, because the reader refuses a database with a WAL sidecar) fills the run ledger of the default agent, each `session_raw` transcript lands in the scope of the agent its stem names (matched against the known agent definitions, else the default agent), and the turn-state JSON goes to the default agent. The marker is `sessions`; a run that skipped records leaves no marker and is retried.
+The host owns the legacy session sources and their lifecycle (`storage::import::sessions`). It snapshots `session_db/sessions.db` with `VACUUM INTO`, decodes its rows and the `session_raw` JSONL transcripts, resolves transcript agents from their stems, and maps the old rows into TinyAgents' typed import ports. The default agent receives the legacy database's run history and turn-state JSON; each transcript is written to the resolved agent's scope, falling back to the default agent when its identity is unknown. TinyAgents owns destination writes and its owner-local in-storage migrations, but does not open these source files. The marker is `sessions`; a run that skipped records leaves no marker and is retried.
 
 Secrets with a backend installed are encrypted documents in the current storage scope: the acting agent's scope on a desktop or CLI host, and the profile's scope under SaaS, where every agent in one profile shares the profile's credentials and data key. Each scope's data key is derived with HKDF-SHA256 from the keyring master key (`OPENHUMAN_KEYRING_MASTER_KEY` or `_FILE`, else the OS keychain), and with no master key they fail closed. The config encryption key stays on the process keyring because `config.toml` is loaded before any agent acts.
 
 ## Tests and CI
 
-Every storage test target runs the same body once per driver, and each run is a separate test case named after the driver (`memory::…`, `sqlite::…`, `file::…`, `mongodb::…`), so a failure says which driver broke. The shared helper is `tests/support/storage_drivers.rs`.
+The host's storage tests run on SQLite only. They test the host's wiring on a configured backend (which domain stores land in it, which scope they use, what a second process reads back), not the drivers. The shared helper is `tests/support/storage_case.rs`: it opens a SQLite backend on a temp directory and takes a lock on the process-wide storage slot, so the tests of one binary take turns.
 
-| Driver           | Runs                                                                                                    |
-| ---------------- | ------------------------------------------------------------------------------------------------------- |
-| `memory`         | Always                                                                                                  |
-| `sqlite`, `file` | When `storage-sqlite` or `storage-file` is compiled in, on temp directories                             |
-| `mongodb`        | When `storage-mongodb` is compiled in and `TSD_MONGO_URL` is set. Each case uses a database of its own. |
+Whether each driver honours the storage ports is proven upstream, in `tinystoragedrivers`. Its `conformance` module runs the same checks against every driver (nested scope isolation, compare-and-swap and leases across processes via `run_shared` for drivers that claim `Capability::SharedAcrossProcesses`, fencing, document secrets and migrations), and its CI runs them against a MongoDB replica set as well. The host asks a backend for `Capability::SharedAcrossProcesses` rather than hardcoding driver names where it can (`storage::backend_has_cross_process_cas`); the boot guard judges a URL before anything is opened, so it keeps a name check that a test pins to the real drivers.
 
-The targets are `storage_approvals_e2e`, `storage_domains_e2e`, `storage_flows_e2e`, `storage_secrets_e2e`, `storage_scope_e2e`, `storage_agent_scopes_e2e`, `storage_delegation_e2e` and `cli_storage_url_e2e`. Run one locally with the drivers you want:
+The targets are `storage_approvals_e2e`, `storage_domains_e2e`, `storage_flows_e2e`, `storage_secrets_e2e`, `storage_scope_e2e`, `storage_agent_scopes_e2e`, `storage_desktop_upgrade_e2e` and `cli_storage_url_e2e`. Run one locally:
 
 ```bash
-cargo test -p openhuman-cli --features storage-sqlite,storage-file --test storage_approvals_e2e
+cargo test -p openhuman-cli --features storage-sqlite --test storage_approvals_e2e
 ```
 
-For MongoDB, start a single-node replica set and set the URL (a replica set is what lets the driver report and exercise transactions):
-
-```bash
-# the script lives in the tinystoragedrivers repo (tag v0.11.0); fetch the pinned copy first
-curl -fsSL -o start-mongo-replset.sh \
-  https://raw.githubusercontent.com/tinyhumansai/tinystoragedrivers/9eeef54aea403ac07461a612189bdf4982782823/.github/scripts/start-mongo-replset.sh
-bash start-mongo-replset.sh 27017
-export TSD_MONGO_URL='mongodb://127.0.0.1:27017/tsd_test?directConnection=true'
-cargo test -p openhuman-cli --features storage-mongodb --test storage_approvals_e2e
-```
-
-CI has two lanes for this:
-
-- The `storage-drivers` lane in `scripts/ci/self-hosted/lanes-plan.mjs` builds with `storage-sqlite,storage-file`. It runs every storage target plus the lib tests of the domains on the ports. The `storage` area in `.github/ci-paths-filter.yml` arms it when storage, cron, flows, approvals, devices, notifications, task sources, keyring or credentials, orchestration, the cost tracker, app and desktop-control state or the rpc session store change.
-- `.github/workflows/storage-mongodb.yml` builds with `storage-mongodb` against a real replica set. It runs on pull requests that touch the same paths, nightly on `main` and on demand.
+CI runs these targets, with the lib tests of the domains on the ports, in the core coverage suite (`scripts/ci/rust-coverage.sh`). The `storage` area in `.github/ci-paths-filter.yml` arms it when storage, cron, flows, approvals, devices, notifications, task sources, keyring or credentials, orchestration, the cost tracker, app and desktop-control state or the rpc session store change. There is no separate driver lane and no MongoDB workflow in this repository. The `storage-mongodb` and `storage-file` features still ship in the product.
 
 ## Where to read next
 
 - `crates/openhuman-core/src/storage/README.md` for the entry points and the consumers.
-- The `tinystoragedrivers` specs: `docs/specs/storage-ports.md` and `docs/plans/storage-rollout.md` in the tinystoragedrivers repository (tag `v0.11.0`).
+- The `tinystoragedrivers` specs: `docs/specs/storage-ports.md` and `docs/plans/storage-rollout.md` in the tinystoragedrivers repository (tag `v2.1.0`).
 - [Security](security.md) for the keyring and credential stores.
 
 ## Schema, boot and migration
 
-Every crate that stores records exports `storage_schema()` (collections named `<owner>.<entity>`, streams, blob and secret prefixes, each with a scope class and the v1 to v2 steps that bring older data forward). The host composes them in `storage::schema` (`Registry::compose`: harness, session, graph, tasks, flows and cron, skills, and with `modules` the mcp, channels, connectors, box and juice owners, with `web3` the wallet, with `tinymemes` the memes owner). The composed result is documented in [`docs/storage-schema.md`](../../../../storage-schema.md), generated by `scripts/ci/check-storage-schema.mjs` (`pnpm docs:generate`), which also lints names, casing, `*_ms` time fields and single ownership in `pnpm rust:layout`.
+Storage crates expose pure v2 `CollectionSpec` values. The host validates and preserves those declarations by crate in `storage::schema::collection_owners`, then calls `ensure_collection` for each declaration in its shared scopes and when an owner opens a scope. The generated [`docs/storage-schema.md`](../../../../storage-schema.md) lists each crate's collection names, indexes, expiry fields and search fields; `scripts/ci/check-storage-schema.mjs` checks their names and millisecond timestamp fields. Record shapes, legacy conversion and migration rules remain with the owning domains.
 
 `storage::open` runs `storage::boot::prepare_and_migrate` on the raw backend before the lease fence wraps it:
 
-1. `Registry::prepare` declares every collection.
-2. **Scope move** (`storage::scope_move`): every v1 scope is copied (documents with their schema, creation time and expiry; streams and their sealed state; blobs) into the v2 scope it maps to and then removed. v1 raw agent ids and `default` become `local/agent:<id>`, `<profile>~<agent>` becomes `u:<profile>/agent:<agent>`, `profile:<id>` becomes `u:<id>`, `module:<id>@<base>` and `<profile>~module:<id>` become `<tenant>/module:<id>`. A hashed v1 scope (`sha256:`, `profile-sha256:`, `module-sha256:`) maps only when a recorded agent, a provisioned profile or a registry module hashes to it; others stay in place and are logged. The move is resumable and recorded in the target scope's `tsd.migrations` (owner `host`, step `scope_move:<source>`).
-3. Per scope: the pre-migrate importer (`import_legacy_ledger`), `Registry::migrate` (each owner's steps), then the post-migrate importers that move key-value state and counters into `tsd.kv` and `tsd.counters` (`import_legacy_kv`, `import_legacy_leases`, `import_legacy_task_cache`, the flows importers). A failing piece is logged and retried at the next boot.
+1. `collection_owners` validates each crate's declarations without combining owners.
+2. The host ensures every crate's collections in its local and cluster scopes. Profile, agent and module scopes are prepared by their owners when opened; no driver-wide schema registry or scope enumeration is used.
+3. Historical workspace and per-domain files are read by the separately gated `legacy-import` path. Its source formats and typed owner conversions are kept separate from normal backend opening.
 
-A module's storage grant is generated from the module-scoped items of its owner's schema (`modules::storage_grant_schemas`), so it cannot drift from what the module declares. The module's legacy-file importers still write the v1 shapes; the owner's steps carry them forward.
+A module's storage grant is generated from its owner's declared collections (`modules::storage_grant_schemas`), so it cannot drift from what the module declares.

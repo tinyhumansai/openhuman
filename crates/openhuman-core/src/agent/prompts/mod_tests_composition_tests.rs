@@ -33,6 +33,7 @@ fn composed_prompt_keeps_context_and_volatile_system_message_boundaries() {
         personality_roster: vec![],
         agents_md_global: None,
         agents_md_local: None,
+        flow_archetype_text: None,
     };
 
     RENDERS.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -91,6 +92,7 @@ fn unmarked_dynamic_body_stays_volatile_after_stable_and_context_messages() {
         personality_roster: vec![],
         agents_md_global: None,
         agents_md_local: None,
+        flow_archetype_text: None,
     };
     let rendered = SystemPromptBuilder::from_dynamic(dynamic_prompt)
         .build_tiered(&ctx)

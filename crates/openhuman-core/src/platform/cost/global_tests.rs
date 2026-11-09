@@ -103,6 +103,115 @@ fn record_provider_usage_persists_through_the_global_tracker() {
 }
 
 #[test]
+fn native_usage_round_trip_preserves_submicro_usd_and_charge_state_in_cost_rows() {
+    let _lock = tracker_test_lock();
+    let tracker = global_tracker();
+    const REPORTED_MODEL: &str = "test-model/submicro-reported";
+    const FREE_MODEL: &str = "test-model/submicro-free";
+    const UNKNOWN_MODEL: &str = "test-model/submicro-unknown";
+    const ESTIMATED_MODEL: &str = "test-model/submicro-estimated";
+    const LEGACY_MODEL: &str = "test-model/submicro-legacy-micros";
+
+    let billed = BilledUsage::from_counts(4, 2).with_charged_usd(0.00000042);
+    let response = tinyinference_llm::model::response_to_model_response(
+        &tinyinference_llm::model::ChatResponse::<
+            tinyinference_llm::usage::BilledUsage,
+            tinytools_agent::dialect::NativeToolCall,
+        > {
+            usage: Some(billed),
+            ..Default::default()
+        },
+        &tinyinference_llm::model::ModelRequest::default(),
+    );
+    let recovered = tinyinference_llm::usage::usage_info_from_response(&response)
+        .expect("provider usage survives response conversion");
+    assert_eq!(
+        recovered.charged_amount_usd.to_bits(),
+        billed.charged_amount_usd.to_bits()
+    );
+    assert!(recovered.charge_reported);
+    assert!(!recovered.cost_is_estimate);
+    record_provider_usage(&DispatchCtx::ambient(), REPORTED_MODEL, &recovered);
+
+    let free = tinyinference_llm::usage::usage_info_from_response(
+        &tinyinference_llm::model::response_to_model_response(
+            &tinyinference_llm::model::ChatResponse::<
+                tinyinference_llm::usage::BilledUsage,
+                tinytools_agent::dialect::NativeToolCall,
+            > {
+                usage: Some(BilledUsage::from_counts(4, 2).with_charged_usd(0.0)),
+                ..Default::default()
+            },
+            &tinyinference_llm::model::ModelRequest::default(),
+        ),
+    )
+    .expect("reported free usage survives conversion");
+    assert_eq!(free.charged_amount_usd, 0.0);
+    assert!(free.charge_reported);
+    record_provider_usage(&DispatchCtx::ambient(), FREE_MODEL, &free);
+
+    let unknown = tinyinference_llm::usage::usage_info_from_response(
+        &tinyinference_llm::model::response_to_model_response(
+            &tinyinference_llm::model::ChatResponse::<
+                tinyinference_llm::usage::BilledUsage,
+                tinytools_agent::dialect::NativeToolCall,
+            > {
+                usage: Some(BilledUsage::from_counts(4, 2)),
+                ..Default::default()
+            },
+            &tinyinference_llm::model::ModelRequest::default(),
+        ),
+    )
+    .expect("token usage survives conversion");
+    assert!(!unknown.charge_reported);
+    assert!(!unknown.cost_is_estimate);
+    record_provider_usage(&DispatchCtx::ambient(), UNKNOWN_MODEL, &unknown);
+
+    let legacy = tinyinference_llm::model::ModelResponse {
+        usage: Some(tinyinference_llm::usage::Usage {
+            charged_amount: Some(tinyinference_llm::usage::ChargedAmount::usd_micros(42)),
+            ..tinyinference_llm::usage::Usage::new(4, 2)
+        }),
+        ..tinyinference_llm::model::ModelResponse::assistant("legacy usage")
+    };
+    let legacy = tinyinference_llm::usage::usage_info_from_response(&legacy)
+        .expect("legacy micros usage is recovered");
+    assert_eq!(legacy.charged_amount_usd.to_bits(), 0.000042_f64.to_bits());
+    assert!(legacy.charge_reported);
+    assert!(!legacy.cost_is_estimate);
+    record_provider_usage(&DispatchCtx::ambient(), LEGACY_MODEL, &legacy);
+
+    record_provider_usage(
+        &DispatchCtx::ambient(),
+        ESTIMATED_MODEL,
+        &BilledUsage::from_counts(4, 2).with_estimated_usd(0.00000037),
+    );
+
+    let row = |model: &str| {
+        records_for_model(&tracker, model)
+            .into_iter()
+            .next()
+            .expect("cost row persisted")
+            .usage
+    };
+    let reported_row = row(REPORTED_MODEL);
+    assert_eq!(reported_row.cost_usd.to_bits(), 0.00000042_f64.to_bits());
+    assert_eq!(reported_row.cost_source, CostSource::ProviderCharged);
+    let free_row = row(FREE_MODEL);
+    assert_eq!(free_row.cost_usd, 0.0);
+    assert_eq!(free_row.cost_source, CostSource::ProviderCharged);
+    let unknown_row = row(UNKNOWN_MODEL);
+    assert_eq!(unknown_row.cost_usd, 0.0);
+    assert_eq!(unknown_row.cost_source, CostSource::Unknown);
+    let estimated_row = row(ESTIMATED_MODEL);
+    assert_eq!(estimated_row.cost_usd.to_bits(), 0.00000037_f64.to_bits());
+    assert_eq!(estimated_row.cost_source, CostSource::Estimated);
+    let legacy_row = row(LEGACY_MODEL);
+    assert_eq!(legacy_row.cost_usd.to_bits(), 0.000042_f64.to_bits());
+    assert_eq!(legacy_row.cost_source, CostSource::ProviderCharged);
+}
+
+#[test]
 fn record_provider_usage_skips_all_zero_payload() {
     // Serialised against every other test that touches the process-global
     // tracker; see `tracker_test_lock`.

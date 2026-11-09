@@ -33,7 +33,12 @@ function runCoreStep(mode) {
       "modules",
     ])
       mkdirSync(join(root, directory), { recursive: true });
-    writeFileSync(join(root, "tests/json_rpc_e2e.rs"), "fixture");
+    for (const target of [
+      "threads", "wallet", "flows", "mcp", "inference",
+      "auth_security", "config", "agent_team", "web_chat", "misc",
+    ]) {
+      writeFileSync(join(root, `tests/json_rpc_${target}_e2e.rs`), "fixture");
+    }
     writeFileSync(join(root, "tests/in_process_all.rs"), "fixture");
     writeFileSync(join(root, "tests/in_process/domain_modules_e2e.rs"), "fixture");
     writeFileSync(join(root, "scripts/ci/product-features.sh"), "echo voice\n");
@@ -42,7 +47,7 @@ function runCoreStep(mode) {
     writeFileSync(
       join(root, "bin/cargo"),
       `#!/bin/bash
-if [[ "$*" == *"--test json_rpc_e2e"* ]]; then
+if [[ "$*" == *"--test json_rpc_"*"_e2e"* ]]; then
   [[ "$*" == *"--features voice,bin-tools"* ]] || exit 0
   if [[ "$*" == *"--list"* ]]; then
     case "$FIXTURE_MODE" in
@@ -84,7 +89,11 @@ if [[ "$*" == *"test -p openhuman --lib"* ]]; then
   echo PRIVATE-XDG-CACHE
 fi
 if [[ "$*" == *"--test in_process_all"* ]]; then
-  if [[ "$*" == *"--skip domain_modules_e2e::cron_update_applies_a_partial_patch_without_clobbering_unset_fields"* &&
+  if [[ "$*" == *"config_e2e::"* || "$*" == *"auth_e2e::"* ||
+        "$*" == *"app_state_e2e::"* || "$*" == *"connectivity_e2e::"* ]] &&
+     [[ "$*" == *"--test-threads=1"* ]]; then
+    echo SERIAL-SPLIT-IN-PROCESS-MODULE
+  elif [[ "$*" == *"--skip domain_modules_e2e::cron_update_applies_a_partial_patch_without_clobbering_unset_fields"* &&
         "$*" == *"--skip domain_modules_e2e::mcp_audit_list_dispatches_internally_and_stays_out_of_the_schema_dump"* &&
         "$*" == *"--skip domain_modules_e2e::mcp_clients_read_paths_validate_before_reaching_outward"* &&
         "$*" == *"--skip domain_modules_e2e::mcp_tool_description_scan_flags_injection_and_spares_ordinary_prose"* ]]; then

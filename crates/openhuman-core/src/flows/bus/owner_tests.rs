@@ -27,12 +27,12 @@ fn a_forgotten_owner_is_resolved_again() {
     assert!(!OWNERS.lock().unwrap().contains_key("owner-test-flow"));
 }
 
-fn local_flow(id: &str) -> tinyflows_catalog::Flow {
-    tinyflows_catalog::Flow {
+fn local_flow(id: &str) -> tinyflows_bus::catalog::Workflow {
+    tinyflows_bus::catalog::Workflow {
         id: id.to_string(),
         name: id.to_string(),
         enabled: true,
-        graph: tinyflows::model::WorkflowGraph::default(),
+        graph: serde_json::json!({"nodes": [], "edges": []}),
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
         last_run_at: None,
@@ -51,7 +51,7 @@ async fn a_cached_owner_is_dropped_once_its_scope_loses_the_flow() {
         workspace_dir: dir.path().to_path_buf(),
         ..Config::default()
     };
-    crate::flows::store::upsert_flow(&config, &local_flow("owner-test-revalidate")).unwrap();
+    crate::flows::test_support::seed_flow(&config, &local_flow("owner-test-revalidate")).unwrap();
 
     // Found in `local`, and remembered there.
     assert_eq!(

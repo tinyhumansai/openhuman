@@ -31,6 +31,16 @@ pub(super) async fn map_turn_run_error(
     if let Some(journal) = turn_journal {
         journal.finish_failed(&e.to_string()).await;
     }
+    // A host admission refusal is a terminal policy result, not a provider
+    // failure. Preserve its typed source before consulting the provider error
+    // slot, which may still contain an earlier successful route's stale error.
+    if let tinyagents_harness::TinyAgentsError::PhysicalDispatchAdmission(refusal) = &e {
+        error_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        return anyhow::Error::new(*refusal);
+    }
     // The harness owns the ordering-sensitive classification; the host only
     // maps each kind onto its typed error.
     match classify_run_failure(&e) {

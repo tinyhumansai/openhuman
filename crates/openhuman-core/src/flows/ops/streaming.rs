@@ -98,6 +98,7 @@ pub(super) async fn finalize_flow_stream(
     target: &FlowStreamTarget,
     result: &Result<String, String>,
     prompt: &str,
+    config: &Config,
 ) {
     match result {
         Ok(text) => {
@@ -127,15 +128,25 @@ pub(super) async fn finalize_flow_stream(
             .await;
         }
         Err(err) => {
-            crate::web_chat::publish_web_channel_event(crate::web_chat::WebChannelEvent {
-                event: "chat_error".to_string(),
-                client_id: "system".to_string(),
-                thread_id: target.thread_id.clone(),
-                request_id: target.request_id.clone(),
-                message: Some(err.clone()),
-                error_type: Some("agent_error".to_string()),
-                ..Default::default()
-            });
+            crate::web_chat::publish_web_channel_event(
+                crate::web_chat::WebChannelEvent::ChatError {
+                    context: crate::web_chat::event_context(
+                        "system",
+                        target.thread_id.clone(),
+                        target.request_id.clone(),
+                    ),
+                    message: Some(err.clone()),
+                    error_type: Some("agent_error".to_string()),
+                    error_source: None,
+                    error_retryable: None,
+                    error_retry_after_ms: None,
+                    error_provider: None,
+                    error_fallback_available: None,
+                    copy_key: None,
+                    copy_params: None,
+                    guardrail: None,
+                },
+            );
         }
     }
     // Settle this turn's snapshot now the turn is over. `attach_flow_progress_bridge`
@@ -145,24 +156,25 @@ pub(super) async fn finalize_flow_stream(
     // left non-terminal makes `threads_turn_state_get` report the turn as still
     // running, so re-entering the thread paints a permanent "Thinking..."
     // indicator under a reply that already landed.
-    if let Ok(config) = ctx.load_config().await {
-        let lifecycle = if result.is_ok() {
-            tinyagents_session::turn_state::TurnLifecycle::Completed
-        } else {
-            tinyagents_session::turn_state::TurnLifecycle::Interrupted
-        };
-        let now = chrono::Utc::now().to_rfc3339();
-        if let Err(err) = crate::storage::sessions::turn_states_for(&config.workspace_dir)
-            .settle_turn(&target.thread_id, &target.request_id, lifecycle, &now)
-        {
-            tracing::warn!(
-                target: "flows",
-                thread_id = %target.thread_id,
-                request_id = %target.request_id,
-                error = %err,
-                "[flows] failed to settle turn snapshot"
-            );
-        }
+    let lifecycle = if result.is_ok() {
+        tinyagents_session::turn_state::TurnLifecycle::Completed
+    } else {
+        tinyagents_session::turn_state::TurnLifecycle::Interrupted
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    if let Err(err) = crate::storage::sessions::turn_states_for(&config.workspace_dir).settle_turn(
+        &target.thread_id,
+        &target.request_id,
+        lifecycle,
+        &now,
+    ) {
+        tracing::warn!(
+            target: "flows",
+            thread_id = %target.thread_id,
+            request_id = %target.request_id,
+            error = %err,
+            "[flows] failed to settle turn snapshot"
+        );
     }
     tracing::info!(
         target: "flows",

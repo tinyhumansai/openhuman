@@ -289,12 +289,8 @@ jobs:
         shard:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
-          - { name: providers, suites: "providers,notifications" }
-          - { name: provider-web, suites: "provider-web" }
-          - { name: webhooks, suites: "webhooks" }
-          - { name: connectors, suites: "connectors" }
-          - { name: payments, suites: "payments" }
-          - { name: settings, suites: "settings" }
+          - { name: connections, suites: "providers,provider-web,connectors" }
+          - { name: settings, suites: "settings,notifications" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -493,7 +489,7 @@ jobs:
           cache: pnpm
 
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.96.1
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
           # macos-latest is arm64, but the vendored tauri-cli's build.rs
           # compiles a CEF helper for x86_64-apple-darwin (universal binary),
@@ -502,7 +498,7 @@ jobs:
 
       - name: Verify cargo resolves to real toolchain
         run: |
-          rustup default 1.96.1 || true
+          rustup default 1.99.1 || true
           which cargo
           # `cargo --version` in the repo root materializes the
           # rust-toolchain.toml override toolchain. The action pin and
@@ -613,7 +609,7 @@ jobs:
           cache: pnpm
 
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.96.1
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -710,7 +706,7 @@ jobs:
           cache: pnpm
 
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.96.1
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
           # macos-latest is arm64, but the vendored tauri-cli's build.rs
           # compiles a CEF helper for x86_64-apple-darwin (universal binary),
@@ -720,7 +716,7 @@ jobs:
 
       - name: Verify cargo resolves to real toolchain
         run: |
-          rustup default 1.96.1 || true
+          rustup default 1.99.1 || true
           which cargo
           # `cargo --version` in the repo root materializes the
           # rust-toolchain.toml override toolchain. The action pin and
@@ -799,12 +795,8 @@ jobs:
         shard:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
-          - { name: providers, suites: "providers,notifications" }
-          - { name: provider-web, suites: "provider-web" }
-          - { name: webhooks, suites: "webhooks" }
-          - { name: connectors, suites: "connectors" }
-          - { name: payments, suites: "payments" }
-          - { name: settings, suites: "settings" }
+          - { name: connections, suites: "providers,provider-web,connectors" }
+          - { name: settings, suites: "settings,notifications" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -945,7 +937,7 @@ jobs:
           cache: pnpm
 
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.96.1
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -1002,12 +994,8 @@ jobs:
         shard:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
-          - { name: providers, suites: "providers,notifications" }
-          - { name: provider-web, suites: "provider-web" }
-          - { name: webhooks, suites: "webhooks" }
-          - { name: connectors, suites: "connectors" }
-          - { name: payments, suites: "payments" }
-          - { name: settings, suites: "settings" }
+          - { name: connections, suites: "providers,provider-web,connectors" }
+          - { name: settings, suites: "settings,notifications" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

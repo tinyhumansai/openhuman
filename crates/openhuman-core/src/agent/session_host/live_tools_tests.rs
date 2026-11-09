@@ -8,6 +8,7 @@ fn exposes_durable_visible_tools_and_policy() {
     ]));
     let chat_model: Arc<dyn tinyinference_llm::model::ChatModel<()>> = model;
     let mut host = crate::agent::SessionHostBuilder::new()
+        .model_name("test-model".to_string())
         .chat_model(chat_model)
         .tools(Vec::new())
         .workspace_dir(root.path().join("workspace"))

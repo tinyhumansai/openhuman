@@ -37,16 +37,24 @@ fn publish_cron_user_error_broadcasts_metadata_only_for_each_kind() {
         publish_cron_user_error(kind);
         let ev = next_user_error(&mut rx, kind);
         // Broadcast to the "system" room every connected socket auto-joins.
-        assert_eq!(ev.client_id, "system");
-        // Stable kind token mirrors the frontend `UserErrorKind` discriminator.
-        assert_eq!(ev.error_type.as_deref(), Some(kind));
-        assert_eq!(ev.error_source.as_deref(), Some("cron"));
-        // Metadata-only: a `user_error` NEVER carries the raw provider body
-        // (CLAUDE.md) and is thread-less (no chat context).
-        assert!(ev.message.is_none(), "user_error must not carry a raw body");
-        assert!(ev.full_response.is_none());
-        assert!(ev.thread_id.is_empty(), "cron user_error is thread-less");
-        assert!(ev.request_id.is_empty());
+        assert_eq!(ev.context().client_id, "system");
+        assert!(
+            ev.context().thread_id.is_empty(),
+            "cron user_error is thread-less"
+        );
+        assert!(ev.context().request_id.is_empty());
+        match ev.wire_event() {
+            crate::web_chat::WebChannelEvent::UserError {
+                error_type,
+                error_source,
+                ..
+            } => {
+                // Stable kind token mirrors the frontend `UserErrorKind` discriminator.
+                assert_eq!(error_type.as_deref(), Some(kind));
+                assert_eq!(error_source.as_deref(), Some("cron"));
+            }
+            other => panic!("expected user_error, got {}", other.event_name()),
+        }
     }
 }
 

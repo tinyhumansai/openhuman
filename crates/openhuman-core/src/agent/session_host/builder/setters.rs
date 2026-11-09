@@ -12,7 +12,9 @@ impl SessionHostBuilder {
         Self {
             turn_model_source: None,
             runtime_config: None,
+            security_policy: None,
             tools: None,
+            pack_registry_handle: None,
             synthesized_tools: None,
             visible_tool_names: None,
             withheld_tool_names: std::collections::HashSet::new(),
@@ -70,10 +72,10 @@ impl SessionHostBuilder {
         self
     }
 
-    /// Sets the AI provider as a **crate-native** turn-model source (Phase 3 P3-B):
-    /// `build`/`build_summarizer` construct crate `ChatModel`s from `(role, config)`
-    /// via `create_turn_chat_model` (managed → `OpenHumanBackendModel`, local/cloud →
-    /// crate `OpenAiModel`) instead of wrapping `provider` in `native model adapters.
+    /// Sets the AI provider as a **crate-native** turn-model source:
+    /// `build`/`build_summarizer` use TinyAgents' `TurnModelSet` to construct
+    /// the primary, workload routes, and summarizer through the host model factory,
+    /// rather than wrapping `provider` in generic model adapters.
     /// Used by the production session factory; the plain
     /// [`provider`](Self::provider) setter (Provider path) stays for tests that
     /// inject a mock they observe.
@@ -89,9 +91,34 @@ impl SessionHostBuilder {
         self
     }
 
+    pub(crate) fn turn_model_source(
+        mut self,
+        source: crate::agent::tinyagents::TurnModelSource,
+    ) -> Self {
+        self.turn_model_source = Some(source);
+        self
+    }
+
+    /// Sets the policy the hosted base carries: the same instance the session's
+    /// tools were built with, so `build` makes no stand-in from a default config.
+    pub(crate) fn security_policy(mut self, policy: Arc<crate::security::SecurityPolicy>) -> Self {
+        self.security_policy = Some(policy);
+        self
+    }
+
     /// Sets the available tools for the agent.
     pub fn tools(mut self, tools: Vec<Box<dyn Tool>>) -> Self {
         self.tools = Some(tools);
+        self
+    }
+
+    /// Retains the host-owned pack handle used by the session's `use_skill`
+    /// tool so registry refreshes can rebind its durable and synthesized views.
+    pub fn pack_registry_handle(
+        mut self,
+        handle: Option<tinyagents_harness_tools::skills::PackRegistryHandle>,
+    ) -> Self {
+        self.pack_registry_handle = handle;
         self
     }
 

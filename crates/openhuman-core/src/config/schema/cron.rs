@@ -11,11 +11,12 @@ pub struct CronConfig {
     pub enabled: bool,
     #[serde(default = "default_cron_max_run_history")]
     pub max_run_history: usize,
-    /// Operator-owned mode for hosted deployments: only agent jobs bound to
-    /// the conversation that created them. Shell and flow jobs are refused
-    /// at add, update, run and dispatch; delivery is limited to `origin` and
-    /// `none`; recurring jobs must keep to [`Self::min_interval_secs`] and
-    /// the number of enabled jobs to [`Self::max_active_jobs`].
+    /// Operator-owned mode for hosted deployments: agent jobs bound to the
+    /// conversation that created them, plus the memory domain's two
+    /// code-owned maintenance jobs. Shell and user-owned flow jobs are refused
+    /// at add, update, run and dispatch; memory jobs are seeded internally and
+    /// count toward [`Self::max_active_jobs`]. Delivery is limited to `origin`
+    /// and `none`; recurring jobs must keep to [`Self::min_interval_secs`].
     #[serde(default)]
     pub agent_jobs_only: bool,
     /// With `agent_jobs_only`: the shortest gap allowed between runs of a

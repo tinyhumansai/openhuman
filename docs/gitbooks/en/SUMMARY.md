@@ -19,6 +19,7 @@
   - [Move OpenHuman to a new PC](guides/move-to-new-pc.md)
   - [Organize my project folders](guides/organize-project-folders.md)
   - [Create a doctor-specific assistant](guides/doctor-assistant.md)
+  - [Run health diagnostics](guides/doctor.md)
   - [Create a safe companion for a child](guides/child-safe-companion.md)
 
 ## Features
@@ -76,7 +77,7 @@
   - [Deep Architecture Reference](developing/architecture.md)
   - [Agent Harness](developing/architecture/agent-harness.md)
   - [Storage](developing/architecture/storage.md)
-  - [Flows on TinyAgents](developing/architecture/flows-on-tinyagents.md)
+  - [Flows on TinyFlows](developing/architecture/flows-on-tinyflows.md)
   - [Memory](developing/architecture/memory.md)
   - [Storage](developing/architecture/storage.md)
   - [Process state in shared cores](developing/architecture/process-state.md)

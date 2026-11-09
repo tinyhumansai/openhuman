@@ -1,7 +1,10 @@
 //! Versioned, credential-safe runtime capability metadata.
 use super::{LearningSettings, ModelDefaults, Runtime, RuntimeBuilder};
 use openhuman_core::config::{
-    schema::{AutonomyConfig, CronConfig, PrivacyConfig, SecretsConfig},
+    schema::{
+        AutonomyConfig, CronConfig, PrivacyConfig, PromptScreenConfig, SecretsConfig,
+        SecurityJudgeRoute, SecurityModeConfig,
+    },
     Config,
 };
 use std::collections::BTreeMap;
@@ -11,6 +14,12 @@ pub(super) struct ConfigKnobs {
     pub autonomy: Option<AutonomyConfig>,
     /// Data egress policy name.
     pub privacy: Option<PrivacyConfig>,
+    /// Whether untrusted input is screened for prompt injection.
+    pub prompt_screen: Option<PromptScreenConfig>,
+    /// Whether TinySecurity-delegated checks run.
+    pub security: Option<SecurityModeConfig>,
+    /// The host's own route to the Jev judge.
+    pub security_judge: Option<SecurityJudgeRoute>,
     pub secrets: Option<SecretsConfig>,
     pub cron: Option<CronConfig>,
     /// Background memory learning policy.
@@ -21,6 +30,9 @@ impl ConfigKnobs {
     pub fn is_set(&self) -> bool {
         self.autonomy.is_some()
             || self.privacy.is_some()
+            || self.prompt_screen.is_some()
+            || self.security.is_some()
+            || self.security_judge.is_some()
             || self.secrets.is_some()
             || self.cron.is_some()
             || self.learning.is_some()
@@ -32,6 +44,15 @@ impl ConfigKnobs {
         }
         if let Some(v) = &self.privacy {
             config.privacy = *v;
+        }
+        if let Some(v) = &self.prompt_screen {
+            config.prompt_screen = *v;
+        }
+        if let Some(v) = &self.security {
+            config.security = *v;
+        }
+        if let Some(v) = &self.security_judge {
+            config.security_judge = Some(v.clone());
         }
         if let Some(v) = &self.secrets {
             config.secrets = v.clone();
@@ -89,13 +110,13 @@ pub struct StorageInfo {
     pub configured: bool,
 }
 impl StorageInfo {
-    pub(super) fn describe(source: Option<&super::StorageSource>, config: &Config) -> Self {
+    pub(super) fn describe(
+        source: Option<&super::StorageSource>,
+        config: &Config,
+        retained_driver: Option<&str>,
+    ) -> Self {
         match source {
-            Some(super::StorageSource::Backend(backend)) => Self {
-                source: "backend".into(),
-                driver: Some(backend.driver().into()),
-                configured: true,
-            },
+            Some(super::StorageSource::Backend(_)) => Self::backend_driver(retained_driver),
             Some(super::StorageSource::Url(url)) => Self::url("explicit", url),
             None => match openhuman_core::storage::explicit_url(config) {
                 Some(url) => Self::url("configuration", &url),
@@ -107,7 +128,7 @@ impl StorageInfo {
             },
         }
     }
-    fn url(source: &str, url: &str) -> Self {
+    pub(super) fn url(source: &str, url: &str) -> Self {
         let driver = openhuman_core::storage::StorageUrl::parse(url)
             .ok()
             .map(|u| u.driver().to_string());
@@ -116,6 +137,27 @@ impl StorageInfo {
             driver,
             configured: true,
         }
+    }
+
+    pub(super) fn backend(installed_url: Option<&str>) -> Self {
+        match installed_url {
+            Some(url) => Self::url("backend", url),
+            None => Self::backend_driver(None),
+        }
+    }
+
+    fn backend_driver(driver: Option<&str>) -> Self {
+        Self {
+            source: "backend".into(),
+            driver: driver.map(str::to_owned),
+            configured: true,
+        }
+    }
+
+    pub(super) fn recover_sessions_on_open(&self) -> bool {
+        self.driver
+            .as_deref()
+            .is_some_and(|driver| !openhuman_core::storage::driver_is_shared(driver))
     }
 }
 
@@ -148,6 +190,17 @@ pub struct ConfigurationInfo {
     pub autonomy_enabled: bool,
     /// Data egress policy name.
     pub privacy: String,
+    /// Whether untrusted input is screened for prompt injection; false when
+    /// the host turned the screen off, or security is off (see
+    /// `security_enforced`). Absent in older metadata → true.
+    #[serde(default = "prompt_screen_enforced_by_default")]
+    pub prompt_screen_enforced: bool,
+    /// Whether the checks OpenHuman delegates to TinySecurity run and fail
+    /// closed; false when the host turned them off (`[security] mode = "off"`)
+    /// or the build has no `security-module` feature, and they then allow.
+    /// Absent in older metadata → true.
+    #[serde(default = "security_enforced_by_default")]
+    pub security_enforced: bool,
     /// Whether stored credentials are encrypted.
     pub secrets_encrypted: bool,
     /// Whether configured cron scheduling is enabled.
@@ -156,6 +209,12 @@ pub struct ConfigurationInfo {
     pub learning: LearningSettings,
     /// Whether global tool rules constrain tools through rules or a deny default.
     pub has_tool_rules: bool,
+}
+fn prompt_screen_enforced_by_default() -> bool {
+    true
+}
+fn security_enforced_by_default() -> bool {
+    true
 }
 impl RuntimeBuilder {
     /// Describe this builder without booting a core or discovering operator files.
@@ -186,7 +245,18 @@ impl RuntimeBuilder {
             self.selection.as_ref(),
         );
         info.configuration_resolved = self.config_source == super::ConfigSource::Resolved;
-        info.storage = StorageInfo::describe(self.seams.storage.as_ref(), &config);
+        // This builder's own mode, not the mode a runtime already running in
+        // this process booted with.
+        let security_enforced =
+            openhuman_core::security::switch::disabled_by_config(&config).is_none();
+        info.configuration.security_enforced = security_enforced;
+        info.configuration.prompt_screen_enforced =
+            config.prompt_screen.enforces() && security_enforced;
+        info.storage = StorageInfo::describe(
+            self.seams.storage.as_ref(),
+            &config,
+            self.seams.storage_driver.as_deref(),
+        );
         // `build` gives a stateless workspace with no storage source an
         // in-memory backend; report what it will install.
         if !info.storage.configured && matches!(self.workspace, crate::Workspace::Stateless) {
@@ -242,6 +312,7 @@ fn make_info(
         ("integrations", services.integrations),
         ("memory_sync", services.memory_sync),
     ];
+    let security_enforced = openhuman_core::security::switch::disabled_for(Some(config)).is_none();
     RuntimeInfo {
         schema_version: 1,
         configuration_resolved: true,
@@ -285,6 +356,8 @@ fn make_info(
         configuration: ConfigurationInfo {
             autonomy_enabled: config.autonomy.enabled,
             privacy: format!("{:?}", config.privacy.mode),
+            prompt_screen_enforced: config.prompt_screen.enforces() && security_enforced,
+            security_enforced,
             secrets_encrypted: config.secrets.encrypt,
             cron_enabled: config.cron.enabled,
             learning: LearningSettings {
@@ -294,7 +367,7 @@ fn make_info(
             has_tool_rules: config.tool_rules.default != tinytools::DefaultEffect::Allow
                 || !config.tool_rules.rules.is_empty(),
         },
-        storage: StorageInfo::describe(None, config),
+        storage: StorageInfo::describe(None, config, None),
         modules: selection.map(|s| s.modules.clone()).unwrap_or_default(),
         weight: selection
             .map(|s| s.weight)

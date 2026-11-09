@@ -30,7 +30,7 @@ mod schemas;
 pub mod service;
 
 pub use core::*;
-pub use ops as rpc;
+
 pub use ops::*;
 pub use schemas::{
     all_controller_schemas as all_local_inference_controller_schemas,

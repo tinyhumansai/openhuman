@@ -82,8 +82,12 @@ async fn the_gate_off_switch_still_refuses_an_unlabelled_origin() {
     );
 }
 
+/// A legacy `auto_approve` entry is imported once as a module tool grant, as
+/// the native engine does. Once that grant is revoked, the stale list entry
+/// does not bring it back, and another agent never inherits it.
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
-async fn each_agent_answers_from_its_own_auto_approve_list() {
+async fn legacy_auto_approve_lists_are_not_replayed_as_module_grants() {
     let (gate, _dir) = test_gate();
     let listed = SecurityPolicy {
         auto_approve: vec!["shell".into()],
@@ -96,7 +100,23 @@ async fn each_agent_answers_from_its_own_auto_approve_list() {
         ..SecurityPolicy::default()
     };
 
-    let allowed = gated_call(
+    let imported = gated_call(
+        &gate,
+        agent_ctx("listed", Some(listed.clone()), false),
+        web_origin(),
+        "shell",
+    )
+    .await;
+    assert!(
+        matches!(imported, Some(GateOutcome::Allow)),
+        "the first sight of a listed tool imports it as a grant: {imported:?}"
+    );
+    let seen = stub_of(&gate).seen();
+    assert!(seen[0].posture.auto_approve_all == false);
+    assert_eq!(seen[0].legacy_tool_grants, ["shell"]);
+
+    stub_of(&gate).revoke_tool_grant(&seen[0].tenant, seen[0].variant, "shell");
+    let configured = gated_call(
         &gate,
         agent_ctx("listed", Some(listed), false),
         web_origin(),
@@ -104,18 +124,51 @@ async fn each_agent_answers_from_its_own_auto_approve_list() {
     )
     .await;
     assert!(
-        matches!(allowed, Some(GateOutcome::Allow)),
-        "got {allowed:?}"
+        !matches!(configured, Some(GateOutcome::Allow)),
+        "legacy config must not resurrect a revoked durable grant: {configured:?}"
     );
 
-    let parked = gated_call(
+    let unconfigured = gated_call(
         &gate,
         agent_ctx("unlisted", Some(unlisted), false),
         web_origin(),
         "shell",
     )
     .await;
-    assert!(parked.is_none(), "an agent without the grant must park");
+    assert!(
+        !matches!(unconfigured, Some(GateOutcome::Allow)),
+        "an agent without a durable grant must not be auto-approved: {unconfigured:?}"
+    );
+}
+
+/// The native importer skips an `auto_approve` entry the module would not
+/// accept as a tool name (`is_host_tool_name2`), so such an entry never becomes
+/// a grant, as in production. `path_check` reads like a tool but is one of the
+/// module's effect classes.
+#[cfg(feature = "legacy-import")]
+#[tokio::test]
+async fn a_legacy_entry_that_is_not_a_tool_name_is_not_imported() {
+    let (gate, _dir) = test_gate();
+    let invalid = "path_check";
+    assert!(!tinysecurity_bus::is_host_tool_name2(invalid));
+    let listed = SecurityPolicy {
+        auto_approve: vec![invalid.into()],
+        auto_approve_all: false,
+        ..SecurityPolicy::default()
+    };
+
+    let outcome = gated_call(
+        &gate,
+        agent_ctx("invalid-entry", Some(listed), false),
+        web_origin(),
+        invalid,
+    )
+    .await;
+
+    assert!(
+        !matches!(outcome, Some(GateOutcome::Allow)),
+        "an entry that is not a tool name must not be trusted: {outcome:?}"
+    );
 }
 
 #[tokio::test]

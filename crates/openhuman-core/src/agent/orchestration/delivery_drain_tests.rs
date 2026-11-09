@@ -6,7 +6,7 @@ use crate::agent::orchestration::busy_guard::TurnBusy;
 use crate::core::runtime::DispatchCtx;
 use crate::storage::fence::{system_now_ms, ScopeMatch};
 use crate::storage::lease::{DocumentLeases, LeaseStore};
-use crate::storage::MemoryStorage;
+use crate::storage::test_support::memory_backend;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 const TTL: Duration = Duration::from_secs(30);
@@ -15,9 +15,9 @@ const SHORT: Duration = Duration::from_millis(20);
 /// A profile's fence for a grant that is good for the TTL, plus the lease
 /// store it verifies against (kept alive by the caller).
 fn live_fence() -> (Arc<dyn LeaseStore>, Arc<LeaseFence>) {
-    let backend = MemoryStorage::new();
+    let backend = memory_backend();
     let leases: Arc<dyn LeaseStore> =
-        Arc::new(DocumentLeases::cluster(&backend, "node-a", None, TTL).unwrap());
+        Arc::new(DocumentLeases::cluster(backend.as_ref(), "node-a", None, TTL).unwrap());
     let fence = Arc::new(LeaseFence::new(
         Arc::clone(&leases),
         "alice",
@@ -100,9 +100,9 @@ async fn losing_the_lease_during_the_delay_cuts_the_drain_short() {
 
 #[tokio::test]
 async fn an_expired_grant_fences_the_drain_without_a_latch() {
-    let backend = MemoryStorage::new();
+    let backend = memory_backend();
     let leases: Arc<dyn LeaseStore> =
-        Arc::new(DocumentLeases::cluster(&backend, "node-a", None, TTL).unwrap());
+        Arc::new(DocumentLeases::cluster(backend.as_ref(), "node-a", None, TTL).unwrap());
     // Renewals stopped landing: the grant ran out by this node's clock.
     let fence = Arc::new(LeaseFence::new(
         Arc::clone(&leases),

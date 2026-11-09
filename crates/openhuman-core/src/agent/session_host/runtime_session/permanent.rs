@@ -3,6 +3,9 @@
 use super::OpenHumanTurnPrelude;
 use tinyagents_runtime::{PrefixSnapshot, TurnPreparation};
 
+/// Opens the system message that carries the permanent-tool catalogue.
+pub(super) const PERMANENT_TOOLS_MARKER: &str = "<openhuman-permanent-tools>\n";
+
 impl OpenHumanTurnPrelude {
     pub(super) fn refresh_permanent_prefix(
         &self,
@@ -17,7 +20,7 @@ impl OpenHumanTurnPrelude {
             preparation.prefix.as_ref().unwrap_or(current),
             &surface.visible_tool_specs,
             &surface.permanent_tool_names,
-            "<openhuman-permanent-tools>\n",
+            PERMANENT_TOOLS_MARKER,
             "</openhuman-permanent-tools>",
         )
         .or(preparation.prefix.take());

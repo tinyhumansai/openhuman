@@ -1,11 +1,6 @@
 /**
- * ⚠️ STILL SKIPPED — the seeding was restructured but has NOT been executed.
- *
- * Local test execution is currently forbidden by a standing fleet rule, so the
- * fix below is reasoned from source and verified by reading only. It is left
- * skipped rather than un-skipped-and-hoped: shipping an unrun spec as active is
- * how a red lane gets blamed on the wrong change. Un-skip on the first run that
- * can actually execute it.
+ * The feed is seeded through redux-persist before the app mounts so these tests
+ * exercise the same state path as a returning user's browser.
  *
  * What is established, from three earlier runs against a live lane:
  *  - The persist blob format here is CORRECT. redux-persist stores each
@@ -47,13 +42,9 @@ import {
  * from the Rust core and live in a redux-persist slice, so no core RPC can put
  * one on screen.
  *
- * Seeding therefore goes through the app's own persistence, not a mock: the
- * slice is persisted under `${activeUserId}:persist:notifications`
- * (`store/index.ts:144-149`, `store/userScopedStorage.ts:177-180`), and
- * `OPENHUMAN_ACTIVE_USER_ID` selects the namespace. Writing those two keys
- * before navigation is exactly what a returning user's browser already holds —
- * the real reducer rehydrates them, the real page renders them, and every
- * assertion below is on what the user can see and click.
+ * Seed through the same Redux action dispatched by the socket bridge. This
+ * exercises the real reducer and UI without coupling the fixture to persistence
+ * internals; the reload test separately covers persistence.
  *
  * What this pins is the part that is invisible to a component test: that the
  * chips are a single-select tablist over the categories actually present, that
@@ -76,106 +67,28 @@ function item(id: string, category: string, title: string, read = false): SeedIt
   return { id, category, title, body: `${title} body`, timestamp: Date.now(), read };
 }
 
-/**
- * Learn the namespace the app actually persists under.
- *
- * `activeUserId` is the signed-in identity the app resolves, NOT the bypass id
- * handed to `bootAuthenticatedPage` — in this lane the mock backend answers
- * `user-123`. Seeding under the bypass id writes a key nothing ever reads and
- * every assertion then times out against an empty feed, which is exactly what
- * the first run of this spec did.
- *
- * Polled rather than read once: the app writes the key during boot, so a single
- * `page.evaluate` immediately after navigation can race that write and return
- * `null` — or, worse, a stale value that sends the seed to a key nobody reads.
- */
-async function resolveActiveUserId(page: Page): Promise<string> {
-  await expect
-    .poll(async () => page.evaluate(() => localStorage.getItem('OPENHUMAN_ACTIVE_USER_ID')), {
-      timeout: 20_000,
-      message: 'the app never wrote OPENHUMAN_ACTIVE_USER_ID',
-    })
-    .not.toBeNull();
-
-  const user = await page.evaluate(() => localStorage.getItem('OPENHUMAN_ACTIVE_USER_ID'));
-  if (!user) throw new Error('no active user id after polling');
-  return user;
-}
-
-/**
- * Open the feed with `items` already persisted BEFORE the app mounts.
- *
- * This is deliberately a two-navigation sequence, and the reason is the whole
- * design of this file:
- *
- *   1. Boot once, only to learn the namespace (see `resolveActiveUserId`). The
- *      feed is empty on this pass and nothing is asserted against it.
- *   2. Register the seed as an `addInitScript`, which runs on every subsequent
- *      document BEFORE any application code, then navigate again. The second
- *      document therefore mounts with the blob already in `localStorage`.
- *
- * Writing the blob after the app has mounted does not work: redux-persist
- * rehydrates once per page context, so a post-boot write is simply never read.
- * `addInitScript` is what makes the seed visible to rehydration — a plain
- * `page.evaluate` + `goto` is not equivalent, because the app has already
- * mounted and read its initial state by then.
- *
- * The blob shape is redux-persist's: each whitelisted field is its own JSON
- * string inside the outer object (`store/index.ts:144-149`).
- */
 async function openFeedWith(page: Page, items: SeedItem[]): Promise<void> {
-  await bootAuthenticatedPage(page, USER, '/notifications');
-  await waitForAppReady(page);
-  const user = await resolveActiveUserId(page);
-
-  // One-shot. `addInitScript` runs before EVERY new document, `page.reload()`
-  // included, so without the marker the reload in "read state survives a reload"
-  // would re-apply the original payload — restoring `read: false` over the state
-  // that test just marked read, and destroying the very thing it asserts. The
-  // marker lives in localStorage, so it survives the reload alongside the
-  // persisted blob and the seed applies to the first seeded navigation only.
-  await page.addInitScript(
-    ({ key, marker, payload }) => {
-      if (window.localStorage.getItem(marker)) return;
-      window.localStorage.setItem(marker, '1');
-      const raw = window.localStorage.getItem(key);
-      // Merge onto whatever the first boot wrote. When the key does not exist
-      // yet, a blob carrying only `items` is not what redux-persist writes —
-      // the real one also has `preferences` and `_persist`, and a missing
-      // `_persist` is what tells it the blob is not rehydratable. Supply both
-      // defaults so a fresh namespace behaves like a returning user's.
-      const blob: Record<string, string> = raw
-        ? (JSON.parse(raw) as Record<string, string>)
-        : {
-            preferences: JSON.stringify({
-              messages: true,
-              agents: true,
-              skills: true,
-              system: true,
-              meetings: true,
-              reminders: true,
-              important: true,
-            }),
-            _persist: JSON.stringify({ version: -1, rehydrated: true }),
-          };
-      blob.items = JSON.stringify(payload);
-      window.localStorage.setItem(key, JSON.stringify(blob));
-    },
-    { key: `${user}:persist:notifications`, marker: 'pw:notif-seed-applied', payload: items }
-  );
-
-  // A fresh document: the init script above runs first, so the store rehydrates
-  // with the seed instead of the empty blob the previous boot left behind.
-  await page.goto('/#/notifications');
+  await bootAuthenticatedPage(page, USER, '/notifications?view=main');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
+  const welcomeCta = page.getByTestId('notifications-welcome-cta-view');
+  if (await welcomeCta.isVisible().catch(() => false)) await welcomeCta.click();
+  await page.evaluate(payload => {
+    const store = (
+      window as typeof window & { __OPENHUMAN_STORE__?: { dispatch(action: unknown): void } }
+    ).__OPENHUMAN_STORE__;
+    if (!store) throw new Error('application store is not available');
+    for (const notification of payload) {
+      store.dispatch({ type: 'notifications/notificationReceived', payload: notification });
+    }
+  }, items);
   await expect(page.getByTestId('system-events-section')).toBeVisible({ timeout: 20_000 });
 }
 
 const feed = (page: Page) => page.getByTestId('system-events-section');
 const rows = (page: Page) => feed(page).getByTestId('notification-item');
 
-test.describe.skip('Notifications — the system-events feed renders what was stored', () => {
+test.describe('Notifications — the system-events feed renders what was stored', () => {
   test('shows every seeded item', async ({ page }) => {
     await openFeedWith(page, [
       item('n-agents-1', 'agents', 'Agent finished a task'),
@@ -198,7 +111,7 @@ test.describe.skip('Notifications — the system-events feed renders what was st
   });
 });
 
-test.describe.skip('Notifications — filtering is single-select and actually filters', () => {
+test.describe('Notifications — filtering is single-select and actually filters', () => {
   test('narrows the feed to one category and back', async ({ page }) => {
     await openFeedWith(page, [
       item('n-agents-1', 'agents', 'Agent finished a task'),
@@ -235,10 +148,10 @@ test.describe.skip('Notifications — filtering is single-select and actually fi
   });
 });
 
-test.describe.skip('Notifications — read state', () => {
+test.describe('Notifications — read state', () => {
   test('clicking an unread item marks it read and drops the unread count', async ({ page }) => {
     await openFeedWith(page, [
-      item('n-agents-1', 'agents', 'Agent finished a task'),
+      item('n-meeting-1', 'meetings', 'Meeting starts soon'),
       item('n-system-1', 'system', 'Core restarted'),
     ]);
     await expect(rows(page)).toHaveCount(2, { timeout: 20_000 });
@@ -247,7 +160,7 @@ test.describe.skip('Notifications — read state', () => {
     // the click did anything.
     await expect(page.getByText(/2 unread/i)).toBeVisible();
 
-    await rows(page).first().click();
+    await rows(page).filter({ hasText: 'Meeting starts soon' }).locator('[role="button"]').click();
 
     await expect(page.getByText(/1 unread/i)).toBeVisible({ timeout: 10_000 });
   });
@@ -258,7 +171,7 @@ test.describe.skip('Notifications — read state', () => {
       item('n-system-1', 'system', 'Core restarted'),
     ]);
 
-    const markAll = page.getByRole('button', { name: /mark all read/i });
+    const markAll = page.getByRole('button', { name: /mark all as read/i });
     await expect(markAll).toBeEnabled({ timeout: 20_000 });
 
     await markAll.click();
@@ -268,19 +181,19 @@ test.describe.skip('Notifications — read state', () => {
   });
 
   test('Mark all read is already disabled when nothing is unread', async ({ page }) => {
-    await openFeedWith(page, [item('n-agents-1', 'agents', 'Agent finished a task', true)]);
+    await openFeedWith(page, [item('n-meeting-1', 'meetings', 'Meeting starts soon', true)]);
 
     await expect(rows(page)).toHaveCount(1, { timeout: 20_000 });
-    await expect(page.getByRole('button', { name: /mark all read/i })).toBeDisabled();
+    await expect(page.getByRole('button', { name: /mark all as read/i })).toBeDisabled();
   });
 
   test('read state survives a reload', async ({ page }) => {
     // The slice is persisted, so marking read must outlive the page. If it does
     // not, the feed re-accuses the user of everything they just dismissed.
-    await openFeedWith(page, [item('n-agents-1', 'agents', 'Agent finished a task')]);
+    await openFeedWith(page, [item('n-meeting-1', 'meetings', 'Meeting starts soon')]);
 
-    await page.getByRole('button', { name: /mark all read/i }).click();
-    await expect(page.getByRole('button', { name: /mark all read/i })).toBeDisabled({
+    await page.getByRole('button', { name: /mark all as read/i }).click();
+    await expect(page.getByRole('button', { name: /mark all as read/i })).toBeDisabled({
       timeout: 10_000,
     });
 
@@ -312,8 +225,10 @@ test.describe.skip('Notifications — read state', () => {
     await page.reload();
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
+    await page.goto('/#/notifications?view=main');
+    await waitForAppReady(page);
 
-    await expect(page.getByRole('button', { name: /mark all read/i })).toBeDisabled({
+    await expect(page.getByRole('button', { name: /mark all as read/i })).toBeDisabled({
       timeout: 20_000,
     });
   });

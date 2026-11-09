@@ -13,7 +13,7 @@ fn enabled_config() -> CostConfig {
 
 /// A managed-backend tier slug — spend on this route is billed to OpenHuman
 /// credits and so is the only kind the local budget may gate (#5016).
-const MANAGED_MODEL: &str = "chat-v1";
+const MANAGED_MODEL: &str = "openrouter/test/managed-model";
 
 /// A bring-your-own-key model id, as reported in #5016 (OpenRouter). Spend
 /// here is billed by the user's own provider and must never gate a request.
@@ -573,8 +573,8 @@ fn empty_ledger_sums_are_not_negative_zero() {
 
 #[test]
 fn the_ledger_dispatches_to_documents_when_a_backend_is_pinned() {
-    use crate::storage::{MemoryStorage, Scope, StorageBackend};
-    let storage = MemoryStorage::new();
+    use crate::storage::Scope;
+    let storage = crate::storage::test_support::memory_backend();
     let docs_for = |scope: &str| {
         super::super::tracker_documents::CostDocs::over(
             &storage.for_scope(&Scope::new(scope).unwrap()).unwrap(),

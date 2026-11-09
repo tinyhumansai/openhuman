@@ -10,7 +10,7 @@
 //! below in the order they are declared (module declarations are kept
 //! alphabetical, with the `rpc` re-export sitting between `platform` and
 //! `runtime` — keep new modules sorted the same way): `agent`, `agent_registry`, `api`, `artifacts`, `attachments`,
-//! `channels`, `config`, `core`, `cron`, `desktop`, `flows` (feature
+//! `channels`, `config`, `core`, `cron`, `desktop`, `doctor`, `flows` (feature
 //! `flows`), `hooks`, `hosting` (feature `hosting`),
 //! `inference`, `integrations`,
 //! `mcp`, `media` (feature `media`), `memory`, `modules` (feature
@@ -57,17 +57,30 @@ pub mod agent_registry;
 pub mod agent_runs;
 pub mod artifacts;
 pub mod attachments;
+// These host adapters still call TinyChannels' v21 compatibility surface.
+// Keep the deprecation exception scoped here while the v22 adapter migration
+// is handled separately.
+#[allow(deprecated)]
 pub mod channels;
 pub mod commands;
 pub mod config;
 pub mod core;
+pub mod credentials;
+// These host adapters still call TinyChannels' v21 compatibility surface.
+// Keep the deprecation exception scoped here while the v22 adapter migration
+// is handled separately.
+#[allow(deprecated)]
 pub mod cron;
 pub mod desktop;
+pub mod doctor;
 #[cfg(feature = "flows")]
 pub mod flows;
 pub mod hooks;
 #[cfg(feature = "hosting")]
 pub mod hosting;
+#[cfg(feature = "inbound-queues")]
+pub mod inbound;
+pub mod inbound_debounce;
 pub mod inference;
 pub mod integrations;
 pub mod mcp;
@@ -88,9 +101,11 @@ pub mod skills;
 pub mod storage;
 #[cfg(feature = "e2e-test-support")]
 pub mod test_support;
+// These host adapters still call TinyChannels' v21 compatibility surface.
+// Keep the deprecation exception scoped here while the v22 adapter migration
+// is handled separately.
+#[allow(deprecated)]
 pub mod threads;
-#[cfg(feature = "tinymemes")]
-pub mod tinymemes;
 pub mod tools;
 pub mod triage;
 pub mod util;
@@ -104,7 +119,9 @@ pub use config::DaemonConfig;
 /// the Tauri shell, a CLI, a stdio MCP server, or a cloud/team server — via
 /// [`CoreBuilder`] → [`CoreRuntime`]. See `crates/openhuman-embed/README.md`
 /// and [`crate::core::runtime`] for the composition this builds on.
-pub use core::runtime::{CoreBuilder, CoreRuntime, DomainSet, ServiceSet, TokenSource};
+pub use core::runtime::{
+    CoreBootMode, CoreBuilder, CoreRuntime, DomainSet, ServiceSet, TokenSource,
+};
 pub use core::types::HostKind;
 
 /// Runs the core logic based on the provided command-line arguments.

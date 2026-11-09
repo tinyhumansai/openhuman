@@ -4,7 +4,8 @@
 //! sentinel strings `core::observability` classifies.
 
 use openhuman_embed::__host::core::observability::{
-    API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX,
+    API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX, INSUFFICIENT_CREDITS_PREFIX,
+    PAID_PLAN_REQUIRED_PREFIX,
 };
 
 /// Typed errors surfaced by `BackendClient::authed_json` for expected backend
@@ -68,6 +69,39 @@ pub enum HostedApiError {
         /// Request path that could not be sent (no query string).
         path: String,
     },
+    /// The backend refused a gated feature because the account balance is
+    /// below what it reserves (`errorCode: USER_INSUFFICIENT_CREDITS`, or a
+    /// 403 asking to add credits). Billing user state, not a bug; flattens onto
+    /// the `INSUFFICIENT_CREDITS:` sentinel (TAURI-RUST-13BR / -11G3).
+    ///
+    /// Displays in the generic non-2xx failure's shape
+    /// (`<METHOD> <path> failed (<status>): <body>`), so callers that read the
+    /// message keep working.
+    #[error("{method} {path} failed ({status}): {body}")]
+    InsufficientCredits {
+        /// HTTP method (`"GET"`, `"POST"`, ...).
+        method: String,
+        /// Request path (no query string).
+        path: String,
+        /// HTTP status the backend answered with.
+        status: u16,
+        /// Response body, truncated.
+        body: String,
+    },
+    /// The backend refused a feature that needs a paid plan (a 403). Billing
+    /// user state; flattens onto the `PAID_PLAN_REQUIRED:` sentinel
+    /// (TAURI-RUST-11G3). Displays like [`Self::InsufficientCredits`].
+    #[error("{method} {path} failed ({status}): {body}")]
+    PaidPlanRequired {
+        /// HTTP method (`"GET"`, `"POST"`, ...).
+        method: String,
+        /// Request path (no query string).
+        path: String,
+        /// HTTP status the backend answered with.
+        status: u16,
+        /// Response body, truncated.
+        body: String,
+    },
 }
 
 /// Flatten an `authed_json` error onto the JSON-RPC `String` channel.
@@ -89,6 +123,12 @@ pub fn flatten_authed_error(err: anyhow::Error) -> String {
             format!(
                 "{BACKEND_UNAVAILABLE_PREFIX}backend transport not available for {method} {path}"
             )
+        }
+        Some(refusal @ HostedApiError::InsufficientCredits { .. }) => {
+            format!("{INSUFFICIENT_CREDITS_PREFIX}{refusal}")
+        }
+        Some(refusal @ HostedApiError::PaidPlanRequired { .. }) => {
+            format!("{PAID_PLAN_REQUIRED_PREFIX}{refusal}")
         }
         _ => format!("{err:#}"),
     }

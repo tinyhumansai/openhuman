@@ -103,6 +103,7 @@ fn cron_notification_id_contains_job_id() {
         job_id: "daily-report".into(),
         success: true,
         output: "ok".into(),
+        tenant: None,
     };
     let n = event_to_notification(&ev).unwrap();
     assert!(
@@ -121,6 +122,7 @@ fn cron_deep_link_points_to_cron_jobs_settings() {
         job_id: "j1".into(),
         success: false,
         output: String::new(),
+        tenant: None,
     };
     let n = event_to_notification(&ev).unwrap();
     assert_eq!(
@@ -299,6 +301,7 @@ async fn subscriber_persists_core_notification_so_it_survives_disconnect() {
             job_id: "daily-digest".into(),
             success: true,
             output: "ok".into(),
+            tenant: None,
         })
         .await;
 
@@ -319,6 +322,7 @@ async fn subscriber_without_config_does_not_persist_but_still_translates() {
             job_id: "j".into(),
             success: false,
             output: String::new(),
+            tenant: None,
         })
         .await;
     // Nothing to assert beyond "did not panic / persist" — the translation is
@@ -401,6 +405,7 @@ fn a_process_wide_notification_names_no_workspace() {
         job_id: "daily-digest".into(),
         success: true,
         output: String::new(),
+        tenant: None,
     })
     .expect("a completed cron job notifies");
 

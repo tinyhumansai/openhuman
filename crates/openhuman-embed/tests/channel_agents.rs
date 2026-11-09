@@ -3,7 +3,9 @@
 //! prompt and host tools under the `ExternalChannel` origin, its write tool is
 //! refused at once, and the reply is posted back to the chat.
 
-#![cfg(feature = "channels")]
+// The agent's turn persists its transcript in the ephemeral workspace's
+// default store, which is SQLite: without that driver the turn cannot run.
+#![cfg(all(feature = "channels", feature = "storage-sqlite"))]
 
 mod common;
 
@@ -142,18 +144,33 @@ async fn sent_texts(server: &MockServer) -> Vec<String> {
 
 #[test]
 fn a_telegram_message_is_answered_by_the_bound_runtime_agent() {
+    let _ = env_logger::builder().is_test(true).try_init();
     runtime().block_on(async {
         tokio::spawn(async {
             let backend = stub_backend().await;
             let bot_api = telegram().await;
             let provider = provider().await;
+            // `start_channels` resolves the managed provider up front, and the
+            // core carries none of its own; supply it as the TinyHumans layer
+            // would, pointed at the mock backend.
+            common::PointedInference::install(&format!("{}/openai/v1", backend.uri()));
             // The Bot API base is read when the channel is built.
             std::env::set_var("OPENHUMAN_TELEGRAM_BOT_API_BASE", bot_api.uri());
 
+            let mut config = offline_config();
+            if let Some(artifact) = openhuman_core::modules::local_artifact("tinychannels") {
+                config.modules.overrides = vec![
+                    openhuman_core::config::schema::ModuleOverride::with_path(
+                        "tinychannels",
+                        artifact.to_string_lossy(),
+                    ),
+                ];
+            }
             let runtime = Runtime::builder()
-                .config(offline_config())
+                .config(config)
                 .workspace(Workspace::Ephemeral)
                 .backend_url(backend.uri())
+                .api_key("sk-managed-fixture")
                 .build()
                 .await
                 .expect("runtime builds");
@@ -184,20 +201,27 @@ fn a_telegram_message_is_answered_by_the_bound_runtime_agent() {
                                 ])),
                         )
                         .tools(move |_| {
-                            HostTurnTools::advertised(vec![
-                                Box::new(Probe {
-                                    name: "teeny_read",
-                                    level: PermissionLevel::ReadOnly,
-                                    runs: Arc::clone(&belt_reads),
-                                    origins: Arc::clone(&belt_origins),
-                                }),
-                                Box::new(Probe {
-                                    name: "teeny_write",
-                                    level: PermissionLevel::Write,
-                                    runs: Arc::clone(&belt_writes),
-                                    origins: Arc::clone(&belt_origins),
-                                }),
-                            ])
+                            let (belt_reads, belt_writes, belt_origins) = (
+                                Arc::clone(&belt_reads),
+                                Arc::clone(&belt_writes),
+                                Arc::clone(&belt_origins),
+                            );
+                            Box::pin(async move {
+                                HostTurnTools::advertised(vec![
+                                    Box::new(Probe {
+                                        name: "teeny_read",
+                                        level: PermissionLevel::ReadOnly,
+                                        runs: belt_reads,
+                                        origins: Arc::clone(&belt_origins),
+                                    }),
+                                    Box::new(Probe {
+                                        name: "teeny_write",
+                                        level: PermissionLevel::Write,
+                                        runs: belt_writes,
+                                        origins: belt_origins,
+                                    }),
+                                ])
+                            })
                         }),
                 )
                 .expect("agent instantiates");
@@ -218,16 +242,25 @@ fn a_telegram_message_is_answered_by_the_bound_runtime_agent() {
             assert_eq!(listener.agent_id(), "teeny-chat");
 
             let mut sent = Vec::new();
-            for _ in 0..240 {
+            for _ in 0..80 {
                 sent = sent_texts(&bot_api).await;
                 if sent.iter().any(|text| text.contains("teeny says hi")) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
+            if !sent.iter().any(|text| text.contains("teeny says hi")) {
+                eprintln!(
+                    "Telegram diagnostics: sent={sent:?}; Bot API requests={:#?}; model requests={:#?}",
+                    bot_api.received_requests().await.unwrap_or_default(),
+                    chat_requests(&provider).await
+                );
+            }
             assert!(
                 sent.iter().any(|text| text.contains("teeny says hi")),
-                "the agent's reply was posted to the chat: {sent:?}"
+                "the agent's reply was posted to the chat: {sent:?}; Bot API requests: {:#?}; model requests: {:#?}",
+                bot_api.received_requests().await.unwrap_or_default(),
+                chat_requests(&provider).await
             );
             assert!(listener.is_running());
             listener.stop();
@@ -238,8 +271,11 @@ fn a_telegram_message_is_answered_by_the_bound_runtime_agent() {
             assert!(
                 matches!(
                     origins.as_slice(),
-                    [Some(AgentTurnOrigin::ExternalChannel { channel, sender: Some(sender), .. })]
-                        if channel == "telegram" && sender == "alice"
+                    [Some(AgentTurnOrigin::ExternalChannel { channel, sender: Some(sender), sender_name, .. })]
+                        // The origin carries the stable Telegram user id (the
+                        // envelope's `sender.id`), with the username as its name.
+                        if channel == "telegram" && sender == "99"
+                            && sender_name.as_deref() == Some("alice")
                 ),
                 "{origins:?}"
             );

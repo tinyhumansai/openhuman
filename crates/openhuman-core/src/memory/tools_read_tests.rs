@@ -2,15 +2,105 @@
 //! and fetch leave the calling thread out.
 
 use super::*;
-use crate::memory::scope::MemoryIdentity;
+use crate::memory::ops;
 use crate::memory::test_fixtures::{bind_reference, config_in};
-use tinymemory_api::MemoryEngine;
+use crate::memory::types::RecallParams;
+use std::sync::Arc;
+use tinymemory_api::conformance::ReferenceEngine;
+use tinymemory_api::{EngineDescriptor, MemoryEngine};
+
+const EVIDENCE_TOKEN_BUDGET: usize = 2_500;
+
+struct FixedRecallEngine {
+    inner: ReferenceEngine,
+    answer: String,
+}
+
+#[async_trait::async_trait]
+impl MemoryEngine for FixedRecallEngine {
+    fn descriptor(&self) -> &EngineDescriptor {
+        self.inner.descriptor()
+    }
+
+    async fn health(&self) -> tinymemory_api::EngineHealth {
+        self.inner.health().await
+    }
+
+    async fn recall(
+        &self,
+        _request: tinymemory_api::RecallRequest,
+    ) -> tinymemory_api::Result<tinymemory_api::RecallAnswer> {
+        Ok(tinymemory_api::RecallAnswer {
+            answer: self.answer.clone(),
+            citations: Vec::new(),
+            model: None,
+        })
+    }
+
+    async fn fetch(
+        &self,
+        request: tinymemory_api::FetchRequest,
+    ) -> tinymemory_api::Result<tinymemory_api::FetchPage> {
+        self.inner.fetch(request).await
+    }
+
+    async fn store(
+        &self,
+        item: tinymemory_api::StoreItem,
+    ) -> tinymemory_api::Result<tinymemory_api::StoreReceipt> {
+        self.inner.store(item).await
+    }
+
+    async fn forget(
+        &self,
+        target: tinymemory_api::ForgetTarget,
+    ) -> tinymemory_api::Result<tinymemory_api::ForgetReport> {
+        self.inner.forget(target).await
+    }
+
+    async fn list(
+        &self,
+        request: tinymemory_api::ListRequest,
+    ) -> tinymemory_api::Result<tinymemory_api::ListPage> {
+        self.inner.list(request).await
+    }
+}
+
+fn native_capped_evidence(evidence: &str) -> String {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    crate::memory::engine::install_test_engine(
+        &config.workspace_dir,
+        Arc::new(FixedRecallEngine {
+            inner: ReferenceEngine::new(),
+            answer: evidence.to_string(),
+        }),
+    );
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let result = MemoryTool::new(Arc::new(config))
+                .execute(json!({"action":"recall","question":"evidence"}))
+                .await
+                .unwrap();
+            assert!(!result.is_error, "{}", result.text());
+            serde_json::from_str::<Value>(&result.text()).unwrap()["evidence"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+}
 
 fn facts() -> CallFacts {
     CallFacts {
         thread_id: Some("thread-tool-1".into()),
         agent_id: Some("orchestrator".into()),
-        ..CallFacts::of(&Config::default(), &MemoryIdentity::agent("orchestrator"))
+        ..CallFacts::of(
+            &Config::default(),
+            &tinymemory_tools::layout::identity::Identity::agent("orchestrator"),
+        )
     }
 }
 
@@ -119,7 +209,7 @@ async fn recall_returns_evidence_and_leaves_the_calling_thread_out() {
         out.get("answer").is_none(),
         "recall writes no answer of its own"
     );
-    let cites = take_turn_citations(&DispatchCtx::ambient(), &live);
+    let cites = crate::web_chat::citations::take_turn_citations(&DispatchCtx::ambient(), &live);
     assert_eq!(cites.len(), 1, "{cites:?}");
 }
 
@@ -400,17 +490,17 @@ fn assert_whole_lines(evidence: &str, capped: &str) {
 #[test]
 fn short_evidence_is_left_as_it_is() {
     let evidence = evidence_of(3, 2, 80);
-    assert_eq!(capped_evidence(&evidence), evidence);
+    assert_eq!(native_capped_evidence(&evidence), evidence);
 }
 
 #[test]
 fn long_evidence_keeps_whole_entries_then_whole_lines_and_says_what_was_left_out() {
     // 30 entries of 4 lines of 200 characters: about 6,000 tokens.
     let evidence = evidence_of(30, 4, 200);
-    let capped = capped_evidence(&evidence);
+    let capped = native_capped_evidence(&evidence);
     let note = capped.rfind("\n\n(").unwrap();
     assert!(
-        note <= EVIDENCE_TOKENS * 4,
+        note <= EVIDENCE_TOKEN_BUDGET * 4,
         "the evidence stays within the budget"
     );
     assert_whole_lines(&evidence, &capped);
@@ -434,8 +524,8 @@ fn long_evidence_keeps_whole_entries_then_whole_lines_and_says_what_was_left_out
 
 #[test]
 fn a_first_line_longer_than_the_budget_is_kept_whole_never_split() {
-    let evidence = evidence_of(2, 1, EVIDENCE_TOKENS * 4 + 500);
-    let capped = capped_evidence(&evidence);
+    let evidence = evidence_of(2, 1, EVIDENCE_TOKEN_BUDGET * 4 + 500);
+    let capped = native_capped_evidence(&evidence);
     assert_whole_lines(&evidence, &capped);
     assert!(capped.starts_with(evidence.lines().next().unwrap()));
     assert!(!capped.contains("[…]"), "the first entry was kept whole");
@@ -451,7 +541,7 @@ fn the_partly_searched_note_survives_the_cap() {
         "{}\n\n(Memory was only partly searched: one scope did not answer in time.)",
         evidence_of(30, 4, 200)
     );
-    let capped = capped_evidence(&evidence);
+    let capped = native_capped_evidence(&evidence);
     assert!(
         capped.ends_with("(Memory was only partly searched: one scope did not answer in time.)")
     );

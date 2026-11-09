@@ -23,7 +23,7 @@ If you want the full desktop app (`pnpm dev`, Tauri, frontend tooling), use [Get
 
 The repository pins Rust in [`rust-toolchain.toml`](https://github.com/tinyhumansai/openhuman/blob/main/rust-toolchain.toml):
 
-- Channel: `1.96.1`
+- Channel: `1.99.1`
 - Components: `rustfmt`, `clippy`
 
 The pin exists because `rusqlite` 0.40 and `libsqlite3-sys` 0.38 use the
@@ -32,8 +32,8 @@ The pin exists because `rusqlite` 0.40 and `libsqlite3-sys` 0.38 use the
 Recommended install:
 
 ```bash
-rustup toolchain install 1.96.1 --component rustfmt --component clippy
-rustup default 1.96.1
+rustup toolchain install 1.99.1 --component rustfmt --component clippy
+rustup default 1.99.1
 ```
 
 You can also let `cargo` auto-install from `rust-toolchain.toml` after `rustup` itself is installed.
@@ -253,7 +253,7 @@ Install:
 Recommended commands after the Microsoft toolchain is installed:
 
 ```powershell
-rustup toolchain install 1.96.1 --component rustfmt --component clippy
+rustup toolchain install 1.99.1 --component rustfmt --component clippy
 rustup target add x86_64-pc-windows-msvc
 cargo build --manifest-path Cargo.toml -p openhuman-cli --bin openhuman-core
 ```

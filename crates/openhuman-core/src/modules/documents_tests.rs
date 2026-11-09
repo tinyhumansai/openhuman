@@ -154,7 +154,31 @@ async fn a_disabled_host_reports_unavailable_without_starting_a_broker() {
 }
 
 #[tokio::test]
-#[ignore = "needs a built TinyDocs module and its own process; set OPENHUMAN_MODULE_PATH"]
+async fn spreadsheet_markdown_conversion_is_unavailable_before_loading_the_document_module() {
+    let mut config = offline_config();
+    config.modules.enabled = false;
+    let expected = "spreadsheet imports are temporarily unavailable";
+
+    assert!(matches!(
+        super::convert_markdown(&config, tinydocs_bus::DocumentFormat::Xlsx, b"workbook")
+            .await,
+        Err(DocumentCallError::Unavailable(message)) if message == expected
+    ));
+}
+
+#[tokio::test]
+async fn spreadsheet_structured_extraction_is_unavailable_before_loading_the_document_module() {
+    let mut config = offline_config();
+    config.modules.enabled = false;
+    let expected = "spreadsheet imports are temporarily unavailable";
+    let extraction = tinydocs_bus::ExtractDocumentSpec::new(tinydocs_bus::DocumentFormat::Xlsx);
+    assert!(matches!(
+        super::extract_document(&config, b"workbook", &extraction).await,
+        Err(DocumentCallError::Unavailable(message)) if message == expected
+    ));
+}
+
+#[tokio::test]
 async fn held_outputs_are_released_after_success_read_failure_and_cancellation() {
     async fn held_docx(config: &Config) -> (tinybus::Proxy, OutputRef) {
         let (runtime, record) = ready(config).await.expect("module should be ready");
@@ -204,6 +228,28 @@ async fn held_outputs_are_released_after_success_read_failure_and_cancellation()
         collect(&proxy, handle).await,
         Err(DocumentCallError::Failed(_))
     ));
+    assert_output_is_gone(&proxy, &output_id).await;
+
+    // A declared length over the cap is refused before any read.
+    let (proxy, mut handle) = held_docx(&config).await;
+    handle.total_bytes = MAX_DOCUMENT_BYTES + 1;
+    let output_id = handle.output_id.clone();
+    let result = collect(&proxy, handle).await;
+    assert!(
+        matches!(&result, Err(DocumentCallError::Failed(m)) if m.contains("-byte limit")),
+        "{result:?}"
+    );
+    assert_output_is_gone(&proxy, &output_id).await;
+
+    // A declared length past the real end is a failure, not an endless loop.
+    let (proxy, mut handle) = held_docx(&config).await;
+    handle.total_bytes += 1;
+    let output_id = handle.output_id.clone();
+    let result = collect(&proxy, handle).await;
+    assert!(
+        matches!(&result, Err(DocumentCallError::Failed(m)) if m.contains("ended before")),
+        "{result:?}"
+    );
     assert_output_is_gone(&proxy, &output_id).await;
 
     let (proxy, handle) = held_docx(&config).await;
@@ -273,6 +319,6 @@ fn every_member_this_client_calls_is_one_the_contract_declares() {
 
 #[test]
 fn pinned_release_exposes_intake_without_loading() {
-    assert_eq!(registry::find(MODULE_ID).unwrap().version, "0.2.4");
+    assert_eq!(registry::find(MODULE_ID).unwrap().version, "0.2.8");
     assert!(intake_available().is_ok());
 }

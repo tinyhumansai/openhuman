@@ -2,7 +2,7 @@
 # Changed-area filters shared by every PR CI workflow (dorny/paths-filter).
 #
 # Read by ci-lite.yml's `changes` job and by the lane runner behind
-# ci-fast.yml / ci-fast-hosted.yml (ci-lanes.yml). One copy, so the two flows
+# ci-fast-hosted.yml (ci-lanes.yml). One copy, so the two flows
 # cannot disagree about which areas a PR touches.
 #
 # An area switches a WHOLE suite on or off. Nothing downstream may narrow a
@@ -27,6 +27,9 @@ frontend:
   # job exists to check them, so a PR that touches only a spec has to
   # match this filter or the job skips and the check reads as green.
   - 'app/test/**'
+  # The skip policy checker is part of browser-test validation; changing it
+  # must also arm the frontend lane that invokes it.
+  - 'scripts/ci/check-browser-test-skips.mjs'
   - 'app/tsconfig*.json'
   - 'app/vite.config.*'
   - 'app/tailwind.config.*'
@@ -154,6 +157,7 @@ scripts:
   - 'scripts/ci/nextest-coverage.sh'
   - 'scripts/ci/nextest-report.mjs'
   - 'scripts/ci/check-module-boundaries.mjs'
+  - 'scripts/ci/check-browser-test-skips.mjs'
   - 'scripts/ci/module-boundaries.json'
   - 'scripts/ci/check-storage-bypass.mjs'
   - 'scripts/ci/storage-bypass-debt.mjs'
@@ -186,6 +190,10 @@ scripts:
   - 'app/scripts/e2e-ports.sh'
   - 'app/scripts/e2e-web-build.sh'
   - 'app/scripts/e2e-web-session.sh'
+  # The native E2E runners, whose schedule and shard lists
+  # scripts/__tests__/e2e-run-shards.test.mjs cross-checks.
+  - 'app/scripts/e2e-run-all-flows.sh'
+  - 'app/scripts/e2e-run-shards.sh'
   # Shared logic behind the gate CLIs, and the module-pin gate's own
   # files. Without these a change to the checking logic would skip
   # the lane that tests it — the gate would stop watching itself.
@@ -204,12 +212,11 @@ scripts:
   - 'app/scripts/e2e-web-session.sh'
   - 'app/vite.config.*'
   # The storage-target parity test in self-hosted-lanes.test.mjs checks that
-  # every registered `tests/storage_*_e2e.rs` target is in the storage lane
-  # and the MongoDB workflow; adding a target must run it.
+  # every registered `tests/storage_*_e2e.rs` target is in the storage lane;
+  # adding a target must run it.
   - 'tests/storage_*.rs'
   - 'tests/cli_storage_url_e2e.rs'
   - 'crates/openhuman-cli/Cargo.toml'
-  - '.github/workflows/storage-mongodb.yml'
 # Test-wiring surface: a change here can orphan a test or add an
 # untested controller domain → run the inventory guard.
 inventory:
@@ -234,15 +241,14 @@ install_ps1:
   - 'scripts/ci/self-hosted/**'
   - 'scripts/install.ps1'
   - 'scripts/tests/OpenHumanWindowsInstall.Tests.ps1'
-# The storage ports and the domains that sit on them (storage-sqlite /
-# storage-file lane in the lane plan; MongoDB runs nightly in its own workflow,
-# storage-mongodb.yml, not on pull requests). The vendor tree is covered whole,
+# The storage ports and the domains that sit on them (the host runs on SQLite;
+# per-driver conformance, MongoDB included, runs in tinystoragedrivers' own
+# CI). The vendor tree is covered whole,
 # like `rust-core`: the ports and drivers are vendored, and a pointer bump
 # anywhere can change what the driver features compile.
 storage:
   - '.config/nextest.toml'
   - '.github/workflows/ci-*.yml'
-  - '.github/workflows/storage-mongodb.yml'
   - '.github/ci-paths-filter.yml'
   - 'scripts/ci/self-hosted/**'
   - 'scripts/ci/nextest-coverage.sh'
@@ -256,7 +262,7 @@ storage:
   - 'crates/openhuman-core/src/security/approval/**'
   - 'crates/openhuman-core/src/security/devices/**'
   - 'crates/openhuman-core/src/security/secret_storage/**'
-  - 'crates/openhuman-core/src/security/credentials/**'
+  - 'crates/openhuman-core/src/credentials/**'
   - 'crates/openhuman-core/src/desktop/notifications/**'
   - 'crates/openhuman-core/src/integrations/task_sources/**'
   - 'crates/openhuman-core/src/agent/orchestration/**'
@@ -277,7 +283,7 @@ storage:
   - 'crates/openhuman-*/Cargo.toml'
   - 'tests/storage_*.rs'
   - 'tests/cli_storage_url_e2e.rs'
-  - 'tests/support/storage_drivers.rs'
+  - 'tests/support/storage_case.rs'
   - '.cargo/config.toml'
   - 'rust-toolchain.toml'
   - '.gitmodules'

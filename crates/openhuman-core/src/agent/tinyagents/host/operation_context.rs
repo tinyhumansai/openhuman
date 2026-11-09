@@ -1,7 +1,7 @@
 //! The immutable authority view the run exposes to shared tools through the
 //! harness's typed state-view seam, and the readers tools use on it.
 
-use crate::security::turn_origin::AgentTurnOrigin;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use tinyagents_definition::SandboxMode;
 
 use std::{sync::Arc, time::Duration};
@@ -18,6 +18,8 @@ pub struct OpenHumanRunExt {
     pub task_recency_window: Option<Duration>,
     /// Explicit child-process environment supplied by the embedding host.
     pub command_environment: Option<Arc<std::collections::BTreeMap<String, String>>>,
+    /// The run's shell commands left running past their yield point.
+    pub(crate) shell_processes: Option<Arc<crate::sandbox::shell_processes::ShellProcesses>>,
 }
 
 impl std::fmt::Debug for OpenHumanRunExt {
@@ -34,8 +36,24 @@ impl OpenHumanRunExt {
         Self {
             task_recency_window: context.task_recency_window,
             command_environment: context.command_environment.clone(),
+            shell_processes: Some(context.shell_processes.clone()),
         }
     }
+}
+
+/// The run's registry of shell commands left running past their yield
+/// point. Direct tool dispatch (CLI, JSON-RPC, tests) has none, so its shell
+/// calls always wait for the command to end.
+pub(crate) fn shell_processes_for_tool(
+    context: Option<&dyn tinytools::ToolRunContext>,
+) -> Option<Arc<crate::sandbox::shell_processes::ShellProcesses>> {
+    context
+        .and_then(tinytools::ToolRunContext::host_extension)
+        .and_then(|extension| {
+            extension.downcast_ref::<tinyagents_harness::tool::ToolExecutionContext>()
+        })
+        .and_then(|context| context.host::<OpenHumanRunExt>())
+        .and_then(|ext| ext.shell_processes.clone())
 }
 
 /// Reads the explicit command environment from a tool's run context.
@@ -85,7 +103,7 @@ pub(crate) struct HostOperationContext {
     pub(crate) parent_agent_id: Option<String>,
     /// Who the run acts as on memory; see
     /// [`OpenHumanRunContext::memory_identity`](super::OpenHumanRunContext::memory_identity).
-    pub(crate) memory_identity: Option<crate::memory::scope::MemoryIdentity>,
+    pub(crate) memory_identity: Option<tinymemory_tools::layout::identity::Identity>,
     /// The turn's memory, read live for the thread's turns still verbatim in
     /// the run's prompt (see [`MemoryTurn::in_prompt`](crate::memory::lifecycle::hooks::MemoryTurn::in_prompt)).
     /// `None` when the turn has no memory, as a sub-agent's run does.
@@ -146,7 +164,7 @@ pub(crate) fn parent_agent_id_for_tool(
 /// dispatch has none.
 pub(crate) fn memory_identity_for_tool(
     context: Option<&dyn tinytools::ToolRunContext>,
-) -> Option<crate::memory::scope::MemoryIdentity> {
+) -> Option<tinymemory_tools::layout::identity::Identity> {
     context
         .and_then(tinytools::ToolRunContext::host_extension)
         .and_then(|extension| {
@@ -215,4 +233,13 @@ pub(crate) fn tool_context_with_approval(
         &run,
         tinyagents_harness::ids::CallId::new("approval-test-call"),
     )
+}
+
+/// One turn's run, for tests that make several tool calls in the same turn:
+/// each `ToolExecutionContext::from_run_context(&run, …)` shares its state.
+#[cfg(test)]
+pub(crate) fn test_turn_run() -> tinyagents_harness::context::RunContext<super::OpenHumanRunContext>
+{
+    super::OpenHumanRunContext::new()
+        .into_tinyagents(tinyagents_harness::context::RunConfig::new("turn-test"))
 }

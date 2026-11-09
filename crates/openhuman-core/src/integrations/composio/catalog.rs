@@ -19,6 +19,60 @@ use tinyconnectors_bus::{
 pub use tinyconnectors_bus::ComposioProbedOutputSample as ProbedOutputSample;
 pub use tinyconnectors_bus::ComposioToolContract as ToolContract;
 
+/// Shared authoring lookup failure, kept distinct so callers can preserve
+/// their established user-facing error messages.
+pub(crate) enum ContractLookupError {
+    InvalidSlug { slug: String },
+    CatalogUnavailable { toolkit: String },
+    ActionNotFound { slug: String, toolkit: String },
+}
+
+/// Warning shared by both flow authoring surfaces when an action exists but
+/// the runtime's curated allowlist will reject it.
+pub(crate) const RUNTIME_GATE_WARNING: &str = "This action will be REJECTED on every real run — the runtime tool gate only allows curated actions for this toolkit. Pick a `featured: true` result from search_tool_catalog instead.";
+
+/// Resolves the live contract and runtime-curation warning for a flow action.
+pub(crate) async fn lookup_contract(
+    config: &Config,
+    slug: &str,
+) -> Result<(ToolContract, Option<&'static str>), ContractLookupError> {
+    let trimmed = slug.trim();
+    let Some(toolkit) = toolkit_for_contract_slug(trimmed) else {
+        return Err(ContractLookupError::InvalidSlug {
+            slug: slug.to_string(),
+        });
+    };
+    let Some(catalog) = fetch_live_toolkit_catalog(config, &toolkit).await else {
+        return Err(ContractLookupError::CatalogUnavailable { toolkit });
+    };
+    let Some(contract) = catalog.iter().find(|contract| {
+        crate::integrations::composio::contract::action_slug_matches(&contract.slug, trimmed)
+    }) else {
+        return Err(ContractLookupError::ActionNotFound {
+            slug: trimmed.to_string(),
+            toolkit,
+        });
+    };
+    let warning =
+        (!contract.is_curated && has_curated_catalog(&toolkit)).then_some(RUNTIME_GATE_WARNING);
+    Ok((contract.clone(), warning))
+}
+
+/// Strictly extracts the toolkit from an action-shaped slug.
+pub(crate) fn toolkit_for_contract_slug(slug: &str) -> Option<String> {
+    let trimmed = slug.trim();
+    let (toolkit_segment, action_segment) = trimmed.split_once('_')?;
+    if toolkit_segment.is_empty() || action_segment.is_empty() {
+        return None;
+    }
+    crate::integrations::composio::contract::toolkit_from_slug(trimmed)
+}
+
+/// Whether the toolkit has a product-curated catalog.
+pub(crate) fn has_curated_catalog(toolkit: &str) -> bool {
+    crate::integrations::composio::contract::catalog_for_toolkit(toolkit).is_some()
+}
+
 #[cfg(test)]
 #[path = "catalog_seed.rs"]
 mod seed;

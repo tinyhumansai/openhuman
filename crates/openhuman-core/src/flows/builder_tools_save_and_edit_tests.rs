@@ -153,13 +153,9 @@ async fn dry_run_no_routing_divergence_warning_when_every_node_executes() {
     );
 }
 
-/// (systemic tool-contract fix, Part 2b) A missing required Composio arg is
-/// now a HARD REJECT at `revise_workflow` — `validate_tool_contracts` runs
-/// ahead of the older advisory `graph_wiring_warnings` check and catches the
-/// exact same condition first, so the graph never gets far enough to merely
-/// warn about it. `graph_wiring_warnings`'s own required-arg warning (still
-/// exercised directly in `ops_tests.rs`) stays as a defense-in-depth
-/// fallback for any caller that doesn't also run `validate_tool_contracts`.
+/// A missing required Composio arg is a HARD REJECT at `revise_workflow` via
+/// `validate_tool_contracts`; TinyFlows wiring warnings cover output bindings
+/// and split paths, not required input arguments.
 #[tokio::test]
 async fn revise_workflow_rejects_a_missing_required_composio_arg() {
     seed_live_catalog_cache("gmail", vec![seeded_gmail_send_contract()]);
@@ -252,7 +248,7 @@ async fn save_workflow_persists_graph_and_name_onto_existing_flow() {
     // The graph + name really persisted.
     let saved = ops::flows_get(&config, &flow_id).await.unwrap().value;
     assert_eq!(saved.name, "AI News Digest");
-    assert_eq!(saved.graph.nodes.len(), 2);
+    assert_eq!(saved.graph["nodes"].as_array().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -275,7 +271,7 @@ async fn save_workflow_rejects_invalid_graph_and_leaves_flow_intact() {
     let saved = ops::flows_get(&config, &flow_id).await.unwrap().value;
     assert_eq!(saved.name, "Blank flow");
     assert_eq!(
-        saved.graph.nodes.len(),
+        saved.graph["nodes"].as_array().unwrap().len(),
         1,
         "original graph must be untouched"
     );
@@ -360,7 +356,7 @@ async fn save_workflow_rejects_agent_binding_missing_declared_field() {
     let saved = ops::flows_get(&config, &flow_id).await.unwrap().value;
     assert_eq!(saved.name, "Blank flow");
     assert_eq!(
-        saved.graph.nodes.len(),
+        saved.graph["nodes"].as_array().unwrap().len(),
         1,
         "original graph must be untouched"
     );
@@ -377,13 +373,19 @@ async fn save_workflow_accepts_correctly_schemad_graph() {
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
             { "id": "summarize", "kind": "agent", "name": "Summarize",
-              "config": { "agent_ref": "planner", "prompt": "summarize",
+              "config": { "agent_ref": "workflow_builder", "prompt": "summarize",
                 "output_parser": { "schema": { "type": "object",
-                    "required": ["channel"],
-                    "properties": { "channel": { "type": "string" } } } } } },
+                        "required": ["channel", "text"],
+                        "properties": {
+                            "channel": { "type": "string" },
+                            "text": { "type": "string" }
+                        } } } } },
             { "id": "notify", "kind": "tool_call", "name": "Notify",
               "config": { "slug": "SLACK_SEND_MESSAGE",
-                "args": { "channel": "=nodes.summarize.item.json.channel" } } }
+                "args": {
+                    "channel": "=nodes.summarize.item.json.channel",
+                    "text": "=nodes.summarize.item.json.text"
+                } } }
         ],
         "edges": [
             { "from_node": "t", "to_node": "summarize" },
@@ -396,6 +398,12 @@ async fn save_workflow_accepts_correctly_schemad_graph() {
         .await
         .unwrap();
 
+    if result.is_error {
+        eprintln!(
+            "save_workflow rejected the fixture graph: {}",
+            result.output()
+        );
+    }
     assert!(!result.is_error, "{}", result.output());
     let parsed: Value = serde_json::from_str(&result.output()).unwrap();
     assert_eq!(parsed["type"], "workflow_saved");
@@ -403,21 +411,21 @@ async fn save_workflow_accepts_correctly_schemad_graph() {
 
     let saved = ops::flows_get(&config, &flow_id).await.unwrap().value;
     assert_eq!(saved.name, "Summarize and notify");
-    assert_eq!(saved.graph.nodes.len(), 3);
+    assert_eq!(saved.graph["nodes"].as_array().unwrap().len(), 3);
 }
 
 #[tokio::test]
 async fn list_node_kinds_tool_returns_every_kind() {
-    let tool = list_node_kinds_tool();
+    let tool = list_node_kinds_tool(Arc::new(Config::default()));
     let result = tool.execute(json!({})).await.unwrap();
     assert!(!result.is_error, "{}", result.output());
     let parsed: Value = serde_json::from_str(&result.output()).unwrap();
     let kinds = parsed["node_kinds"].as_array().unwrap();
-    assert_eq!(kinds.len(), tinyflows::catalog::NODE_KINDS.len());
+    assert_eq!(kinds.len(), tinyflows_bus::node_kinds::NODE_KINDS.len());
     // The tool must advertise the whole catalog, not a subset that happens to
     // include the kinds someone remembered to name here — a kind the engine
     // knows but this tool omits is a kind the builder agent cannot reach.
-    for kind in tinyflows::catalog::NODE_KINDS {
+    for kind in tinyflows_bus::node_kinds::NODE_KINDS {
         assert!(
             kinds.iter().any(|k| k["kind"] == kind),
             "list_node_kinds omits `{kind}`"
@@ -429,7 +437,7 @@ async fn list_node_kinds_tool_returns_every_kind() {
 
 #[tokio::test]
 async fn get_node_kind_contract_tool_returns_contract_and_rejects_unknown() {
-    let tool = get_node_kind_contract_tool();
+    let tool = get_node_kind_contract_tool(Arc::new(Config::default()));
 
     let ok = tool.execute(json!({ "kind": "tool_call" })).await.unwrap();
     assert!(!ok.is_error, "{}", ok.output());
@@ -452,7 +460,7 @@ async fn get_node_kind_contract_tool_returns_contract_and_rejects_unknown() {
     assert!(bad.output().contains("list_node_kinds"));
     assert!(bad.output().contains(&format!(
         "{} valid kinds",
-        tinyflows::catalog::NODE_KINDS.len()
+        tinyflows_bus::node_kinds::NODE_KINDS.len()
     )));
 
     let missing = tool.execute(json!({})).await.unwrap();

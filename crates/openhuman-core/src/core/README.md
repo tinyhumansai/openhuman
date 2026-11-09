@@ -155,7 +155,7 @@ and the host is the one that knows `E`. [`events.rs`](./events.rs) is the event 
 `DomainEvent`, a `#[non_exhaustive]` enum whose `domain()` value is appended
 to `EVENTS_ROOT` (`/ai/tinyhumans/openhuman/events`) as the routing key.
 The catalog is published under `EVENTS_INTERFACE`
-(`ai.tinyhumans.openhuman.Events`) at `EVENTS_VERSION`, currently `2.0.0`.
+(`ai.tinyhumans.openhuman.Events`) at `EVENTS_VERSION`, currently `2.1.0`.
 
 `bus::init()` starts the in-process broker and announces a peer manifest
 (advisory; failure only logs). Every accessor is safe before `init`:
@@ -211,7 +211,7 @@ default (30 minutes at most). The store caps at 4096 live tokens.
 
 This is the RPC transport bearer only. User credentials (session JWT, API
 key, offline local token) arrive through `auth.set_credential` in
-`security::credentials`, not here.
+`credentials`, not here.
 
 ### CLI
 
@@ -313,7 +313,7 @@ Dispatch and auth:
 | [`invoke.rs`](./invoke.rs) | `invoke_method` and `default_state`: the in-process entry point and the session-expiry hook. |
 | [`dispatch.rs`](./dispatch.rs) | `dispatch`: legacy rewrite, `core.*` methods, registry fallback, unknown-method handling, `KNOWN_PROBE_METHODS`. |
 | [`legacy_aliases.rs`](./legacy_aliases.rs) | `resolve_legacy`: retired method names to canonical ones; mirrors `LEGACY_METHOD_ALIASES` in [`app/src/services/rpcMethods.ts`](../../../../app/src/services/rpcMethods.ts). |
-| `session_expiry.rs` | `is_session_expired_error` and `is_unconfirmed_unauthorized_error`. |
+| `session_expiry.rs` | `is_session_expired_error`, `is_unconfirmed_unauthorized_error`, and `backend_status_means_session_expired` (the one status rule: only a session-credential 401 expires the session). |
 | `auth.rs` | The per-process RPC bearer: init paths, `get_rpc_token`, `verify_bearer_token`, `bearer_matches`. |
 | `event_bind_tokens.rs` | Single-shot bind tokens for the `/events` SSE stream (`issue`, `consume`). |
 | `server_launcher.rs` | `ServerLauncher` port that `run` / `serve` start a server through. |
@@ -396,7 +396,7 @@ surface.
   [`crates/openhuman-tinyhumans`](../../../openhuman-tinyhumans/) as an extension, not built into the core.
 - Login, token exchange and `/auth/me` belong to the host's session owner
   (`openhuman_tinyhumans::session`, `openhuman_embed::Auth`). Credential
-  storage and `auth.set_credential` are in `security::credentials`.
+  storage and `auth.set_credential` are in `credentials`.
 - The CLI binary itself and its developer bins are in `crates/openhuman-cli`;
   this folder only provides the argument handling it calls.
 
@@ -415,9 +415,10 @@ surface.
 - `openhuman.auth_clear_session` is a legacy alias whose params get
   `kind: "session"` filled in during dispatch, preserving its session-only
   contract while the canonical method clears every kind by default.
-- Registry lookups for validation and CLI routing search the full,
-  unfiltered registry; only dispatch applies the `DomainSet` gate. A gated
-  method therefore passes validation and then reports as unknown.
+- CLI routing (`rpc_method_from_parts`) searches the full registry minus the
+  SaaS surface filter; the `DomainSet` gate applies at dispatch. Parameter
+  validation (`schema_for_rpc_method`) applies the same `visible` gate as
+  dispatch, so a gated method is unknown before its params are checked.
 - The log-dependent response shape from `apply_log_envelope` is deliberate.
   Adding a log line to a handler that had none changes its wire shape.
 - `http_server_status::HTTP_SERVER_COMPILED_IN` is ungated on purpose: the

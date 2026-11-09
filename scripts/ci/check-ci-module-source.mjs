@@ -21,6 +21,12 @@ import { join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const SELF = "scripts/ci/check-ci-module-source.mjs";
+// check-module-boundaries.mjs only asks `cargo tree` for the dependency graph
+// of the isolated `linked-modules` feature to prove the graph is rooted at
+// openhuman-cli and keeps the feature out of every shipped host. It never
+// builds, runs or selects a linked module source, so the name is the subject
+// of the audit, not a CI override.
+const EXEMPT = new Set(["scripts/ci/check-module-boundaries.mjs"]);
 
 export const RULES = [
   {
@@ -91,7 +97,7 @@ export function ciFiles(root) {
   ];
   return files
     .map((path) => relative(root, path).split(sep).join("/"))
-    .filter((file) => file !== SELF);
+    .filter((file) => file !== SELF && !EXEMPT.has(file));
 }
 
 export function check(root) {

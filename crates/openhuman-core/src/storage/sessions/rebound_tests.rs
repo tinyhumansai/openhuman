@@ -1,5 +1,6 @@
 use super::*;
-use tinystoragedrivers::{MemoryStorage, Scope};
+use crate::storage::test_support::memory_backend;
+use crate::storage::Scope;
 
 fn put_marker(stores: &ReboundSessionStores, backend: &Arc<dyn StorageBackend>) {
     // Opening an agent's stores declares its collections in the backend.
@@ -9,8 +10,8 @@ fn put_marker(stores: &ReboundSessionStores, backend: &Arc<dyn StorageBackend>) 
 
 #[test]
 fn a_rebind_moves_new_agents_to_the_new_backend() {
-    let first: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
-    let second: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let first: Arc<dyn StorageBackend> = memory_backend();
+    let second: Arc<dyn StorageBackend> = memory_backend();
     let registry = StoreRegistry::default();
     let stores = ReboundSessionStores::new_in(&registry, Arc::clone(&first), true).unwrap();
     put_marker(&stores, &first);
@@ -27,8 +28,8 @@ fn a_rebind_moves_new_agents_to_the_new_backend() {
 
 #[test]
 fn handles_opened_before_a_rebind_keep_their_backend() {
-    let first: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
-    let second: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let first: Arc<dyn StorageBackend> = memory_backend();
+    let second: Arc<dyn StorageBackend> = memory_backend();
     let registry = StoreRegistry::default();
     let stores = ReboundSessionStores::new_in(&registry, Arc::clone(&first), false).unwrap();
     let old = stores.try_for_agent("agent").unwrap();
@@ -50,7 +51,7 @@ fn handles_opened_before_a_rebind_keep_their_backend() {
 
 #[test]
 fn dropped_stores_are_not_rebound() {
-    let backend: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let backend: Arc<dyn StorageBackend> = memory_backend();
     let registry = StoreRegistry::default();
     let kept = ReboundSessionStores::new_in(&registry, Arc::clone(&backend), false).unwrap();
     let dropped = ReboundSessionStores::new_in(&registry, Arc::clone(&backend), false).unwrap();
@@ -62,8 +63,8 @@ fn dropped_stores_are_not_rebound() {
 
 #[test]
 fn a_registry_rebind_leaves_other_registries_alone() {
-    let first: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
-    let second: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let first: Arc<dyn StorageBackend> = memory_backend();
+    let second: Arc<dyn StorageBackend> = memory_backend();
     let (mine, theirs) = (StoreRegistry::default(), StoreRegistry::default());
     let moved = ReboundSessionStores::new_in(&mine, Arc::clone(&first), false).unwrap();
     let untouched = ReboundSessionStores::new_in(&theirs, Arc::clone(&first), false).unwrap();
@@ -79,7 +80,7 @@ fn a_registry_rebind_leaves_other_registries_alone() {
 fn the_provider_surface_forwards_to_the_current_backend() {
     use tinyagents_harness::store::SchemaAdmission;
 
-    let backend: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let backend: Arc<dyn StorageBackend> = memory_backend();
     let registry = StoreRegistry::default();
     let stores = ReboundSessionStores::new_in(&registry, Arc::clone(&backend), false).unwrap();
 
@@ -118,10 +119,19 @@ fn the_provider_surface_forwards_to_the_current_backend() {
 
     // Binding an actor goes through the inner provider, with and without an
     // explicit schema admission mode; both agree on whether it binds.
-    let other: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
-    let plain = stores.bind_actor(Arc::clone(&other)).unwrap().is_some();
+    let other: Arc<dyn StorageBackend> = memory_backend();
+    let factory_backend = Arc::clone(&other);
+    let factory: tinyagents_session::port::AgentStorageFactory = Arc::new(move |agent_id| {
+        let scope = crate::storage::Scope::local().agent(agent_id)?;
+        let port_scope = tinyagents_storage_kit::Scope::new(scope.as_str())?;
+        Ok(tinyagents_storage_kit::ScopedStorage::new(
+            factory_backend.for_scope(&scope)?,
+            port_scope,
+        ))
+    });
+    let plain = stores.bind_actor(Arc::clone(&factory)).unwrap().is_some();
     let admitted = stores
-        .bind_actor_with_schema_admission(other, SchemaAdmission::Declare)
+        .bind_actor_with_schema_admission(factory, SchemaAdmission::Declare)
         .unwrap()
         .is_some();
     assert_eq!(plain, admitted);

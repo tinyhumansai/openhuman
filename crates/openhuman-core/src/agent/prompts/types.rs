@@ -288,6 +288,11 @@ pub struct PromptContext<'a> {
     pub model_name: &'a str,
     /// Id of the agent this prompt is being built for.
     pub agent_id: &'a str,
+    /// Archetype text fetched by the caller for a TinyFlows-backed builtin.
+    ///
+    /// Flow prompt builders remain synchronous; async host entrypoints fetch
+    /// this value from the scoped TinyFlows Copilot bus before rendering.
+    pub flow_archetype_text: Option<&'a str>,
     pub tools: &'a [PromptTool<'a>],
     pub workflows: &'a [Workflow],
     pub dispatcher_instructions: &'a str,
@@ -316,8 +321,8 @@ pub struct PromptContext<'a> {
     /// turn) so the frozen system-prompt prefix / KV-cache contract holds.
     pub agents_md_global: Option<String>,
     /// Pre-loaded project-layer `AGENTS.md` content — `<action_dir>/AGENTS.md`,
-    /// or a sub-agent's `worktree_action_dir` override. `None` when the file is
-    /// absent/empty, deduplicated against the global layer (same dir), or the
+    /// `None` when the file is absent/empty, deduplicated against the global
+    /// layer (same dir), or the
     /// gate is off. Rendered after the global layer.
     pub agents_md_local: Option<String>,
 }

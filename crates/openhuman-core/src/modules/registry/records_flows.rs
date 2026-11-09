@@ -1,73 +1,80 @@
-//! TinyFlows module: the scheduler runtime, the cron job and run store, and the
-//! schedule maths behind `tinyflows_bus::schedule` (contract v3), plus workflow
-//! authoring. Published digests are added only from its release manifest.
+//! TinyFlows module: scheduled job runtime and workflow authoring through its bus contract.
 use crate::modules::types::{LoadPolicy, ModuleRecord, PlatformAsset, SourceSpec};
 
 pub(crate) const TINYFLOWS: ModuleRecord = ModuleRecord {
     id: "tinyflows",
-    description:
-        "Scheduled jobs (runtime, job store, schedule maths) and workflow authoring through TinyFlows",
+    description: "Scheduled jobs, workflow Catalog/Runs execution, and authoring through TinyFlows",
     bus_name: tinyflows_bus::BUS_NAME,
     object_path: tinyflows_bus::OBJECT_PATH,
-    version: "0.8.23",
-    release_url: "https://github.com/tinyhumansai/tinyflows/releases/tag/v0.8.23",
-    // Verbatim from the published v0.8.23 checksum.toml; the same host set as
-    // the other native modules (macOS, Ubuntu, Windows).
+    version: "0.9.5",
+    release_url: "https://github.com/tinyhumansai/tinyflows/releases/tag/v0.9.5",
+    // Verbatim from the published v0.9.5 checksum.toml.
     assets: &[
         PlatformAsset {
             host_key: "macos-26-arm64",
-            archive: "tinyflows-module-0.8.23-macos-26-arm64.tar.gz",
-            sha256: "1ea581047502dca7e99cc701342b118f5684db44083a5dcbaeb3a924c3fe9f8f",
+            archive: "tinyflows-module-0.9.5-macos-26-arm64.tar.gz",
+            sha256: "c6e31c3c8654c28b8d0b6dfe91ca1971a00f19dae14bf9903242e769225ef9d1",
+            library_sha256: None,
         },
         PlatformAsset {
             host_key: "macos-26-x86_64",
-            archive: "tinyflows-module-0.8.23-macos-26-x86_64.tar.gz",
-            sha256: "d7a9ca4fee0b331652dd0ec5e7dc51bde59674fcf225d5102691e8d5b1b03927",
+            archive: "tinyflows-module-0.9.5-macos-26-x86_64.tar.gz",
+            sha256: "6531b27fddc55f8febee2113086b80ad12227aad4beeb48e0f47143da24271ed",
+            library_sha256: None,
         },
         PlatformAsset {
             host_key: "macos-15-arm64",
-            archive: "tinyflows-module-0.8.23-macos-15-arm64.tar.gz",
-            sha256: "cd1811acc26c928a96e962b9b042dc4c2d60a318b7cb08837773812d04ce7973",
+            archive: "tinyflows-module-0.9.5-macos-15-arm64.tar.gz",
+            sha256: "2b98c6b44ed84a430d071592805f05891b1475653df4dacd96ff3f524a29a99f",
+            library_sha256: None,
         },
         PlatformAsset {
             host_key: "macos-15-x86_64",
-            archive: "tinyflows-module-0.8.23-macos-15-x86_64.tar.gz",
-            sha256: "084c9255dddaef3be06e0c6e733ed7cc408e5338df624ea79fbdbb304f04571c",
+            archive: "tinyflows-module-0.9.5-macos-15-x86_64.tar.gz",
+            sha256: "d5fcafcaa1885276921d26a0e65fa0d60991ea7964a7007641de21b555dfb343",
+            library_sha256: None,
         },
         PlatformAsset {
             host_key: "ubuntu-24.04-x86_64",
-            archive: "tinyflows-module-0.8.23-ubuntu-24.04-x86_64.tar.gz",
-            sha256: "990870ba9e942eee481f3b4252ec840cd3ed304ad981d9d6fb9032aa4bbfdab1",
+            archive: "tinyflows-module-0.9.5-ubuntu-24.04-x86_64.tar.gz",
+            sha256: "f7c5e7438c64ce76c0249f81a75669b25f430250abfeff1d6831a782a2539a8b",
+            library_sha256: None,
         },
         PlatformAsset {
             host_key: "ubuntu-24.04-arm64",
-            archive: "tinyflows-module-0.8.23-ubuntu-24.04-arm64.tar.gz",
-            sha256: "867b2176f0b7e0f40b18a1f95dbfb81a876b831ccd918da2db77a893d00556d2",
+            archive: "tinyflows-module-0.9.5-ubuntu-24.04-arm64.tar.gz",
+            sha256: "55779f03a89cd3c5d76bd5bb26e6d9837b2f5e3153c83f3aa11656222a4f4582",
+            library_sha256: None,
         },
         PlatformAsset {
             host_key: "ubuntu-22.04-x86_64",
-            archive: "tinyflows-module-0.8.23-ubuntu-22.04-x86_64.tar.gz",
-            sha256: "d53a8f278e738e3beba2282462c55af4640ea9e2d101e5bb3143e654d6915189",
+            archive: "tinyflows-module-0.9.5-ubuntu-22.04-x86_64.tar.gz",
+            sha256: "e6f96edfbab60421e3dc6db5d51fb49fb0da36d049cc359a5db5091b3b9861b6",
+            library_sha256: None,
         },
         PlatformAsset {
             host_key: "ubuntu-22.04-arm64",
-            archive: "tinyflows-module-0.8.23-ubuntu-22.04-arm64.tar.gz",
-            sha256: "b9dfbb484a7a9beab55227e82d12855842cb65d82f5c0372bc7dd0ac971aab22",
+            archive: "tinyflows-module-0.9.5-ubuntu-22.04-arm64.tar.gz",
+            sha256: "f09c8f4104cd17d00c5eb5f577c8048ba7b76a985e894146df5cc6b552b3e97a",
+            library_sha256: None,
         },
         PlatformAsset {
             host_key: "windows-2025-x86_64",
-            archive: "tinyflows-module-0.8.23-windows-2025-x86_64.zip",
-            sha256: "114f5da7b480afba89bf21478e5e196a6490b3869dc253b51e99fcf76d0b1978",
+            archive: "tinyflows-module-0.9.5-windows-2025-x86_64.zip",
+            sha256: "6221186d10e28a56ab8d5881e8d525f0db70cc4ccb0d5681f5893b11c7950920",
+            library_sha256: None,
         },
         PlatformAsset {
             host_key: "windows-2022-x86_64",
-            archive: "tinyflows-module-0.8.23-windows-2022-x86_64.zip",
-            sha256: "21d90646ce5b7abaa3c1cba1c19d0cc8784753a7d07c302a377d07fcd8c31a97",
+            archive: "tinyflows-module-0.9.5-windows-2022-x86_64.zip",
+            sha256: "b8eec6404312c71286650132a41d33758af2efa49c611a131befd383b1c77aca",
+            library_sha256: None,
         },
         PlatformAsset {
             host_key: "windows-11-arm64",
-            archive: "tinyflows-module-0.8.23-windows-11-arm64.zip",
-            sha256: "73f0aa5f15a8ee876e744027ac9f0c68d41e243872d15c4735ab6bbf54e7d51d",
+            archive: "tinyflows-module-0.9.5-windows-11-arm64.zip",
+            sha256: "67d4b8c8ad87c4a7c416ddaff4c96c79bde0fc2e43624306b219e85c8c332587",
+            library_sha256: None,
         },
     ],
     load: LoadPolicy::Lazy,

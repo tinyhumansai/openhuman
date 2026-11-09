@@ -70,7 +70,7 @@ async fn document_route(
     }
     let blocked = state
         .blocked_documents
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
             left.checked_sub(1)
         })
         .is_ok();

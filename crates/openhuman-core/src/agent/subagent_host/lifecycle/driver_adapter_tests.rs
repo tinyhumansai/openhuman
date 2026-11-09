@@ -1,4 +1,5 @@
 use super::*;
+use tinyagents_orchestration::subagent::SubagentPersistenceDisposition;
 
 fn key() -> SubagentTaskKey {
     SubagentTaskKey {
@@ -110,6 +111,7 @@ fn a_losing_cached_cause_cannot_replace_the_durable_winner_cause() {
         Some(cause("permission", "shell", "loser was denied")),
         SubagentRunStatus::Incomplete {
             reason: "loser was denied".into(),
+            failure_cause: None,
         },
     );
 
@@ -137,6 +139,7 @@ fn ordinary_host_projection_keeps_the_winning_cause() {
         Some(winner_cause.clone()),
         SubagentRunStatus::Incomplete {
             reason: "permission denied".into(),
+            failure_cause: None,
         },
     );
 

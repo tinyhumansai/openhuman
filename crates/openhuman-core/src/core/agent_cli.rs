@@ -11,14 +11,11 @@
 //!   openhuman agent prompt-size [--agent <id>] [--workspace <path>] [--json] [-v]
 //!   openhuman agent list [--json] [-v]
 //!
-//! `dump-prompt` is the main tool: it renders the exact system prompt the
-//! context engine would hand to the LLM when that agent is spawned. The
-//! dump routes through [`OpenHumanSessionHost::from_config_for_agent`] and calls
-//! [`OpenHumanSessionHost::build_system_prompt`] on the live session, so the output is
-//! byte-identical to what the LLM sees on turn 1. Pass
+//! `dump-prompt` is the main tool: it renders the current-turn system prompt
+//! through the same prelude builder the runtime uses for a cold model request.
+//! Pass
 //! `--agent orchestrator` for the orchestrator prompt; otherwise pass
-//! any built-in or workspace-custom agent id (e.g. `planner`,
-//! `critic`).
+//! any built-in or workspace-custom agent id (e.g. `orchestrator`, `researcher`).
 
 use anyhow::{anyhow, Result};
 use std::path::PathBuf;
@@ -427,9 +424,10 @@ fn parse_dump_flags(args: &[String]) -> Result<DumpFlags> {
 
 fn run_dump_prompt(args: &[String]) -> Result<()> {
     let flags = parse_dump_flags(args)?;
-    let agent = flags.agent.clone().ok_or_else(|| {
-        anyhow!("--agent <id> is required (e.g. `orchestrator`, `planner`, `critic`)")
-    })?;
+    let agent = flags
+        .agent
+        .clone()
+        .ok_or_else(|| anyhow!("--agent <id> is required (e.g. `orchestrator`, `researcher`)"))?;
 
     init_quiet_logging(flags.verbose);
 
@@ -686,7 +684,7 @@ fn print_dump_prompt_help() {
     println!();
     println!("Required:");
     println!("  --agent, -a <id>     Target agent id — any built-in or workspace-custom id");
-    println!("                       (e.g. `orchestrator`, `planner`, `critic`).");
+    println!("                       (e.g. `orchestrator`, `researcher`).");
     println!();
     println!("Options:");
     println!("  --workspace, -w <p>  Override the workspace directory (defaults to");
@@ -708,8 +706,8 @@ fn print_dump_prompt_help() {
     println!("  # Orchestrator prompt, JSON for scripting.");
     println!("  openhuman agent dump-prompt --agent orchestrator --json");
     println!();
-    println!("  # Planner prompt with its tool list.");
-    println!("  openhuman agent dump-prompt --agent planner --with-tools");
+    println!("  # Orchestrator prompt with its tool list.");
+    println!("  openhuman agent dump-prompt --agent orchestrator --with-tools");
 }
 
 fn is_help(value: &str) -> bool {

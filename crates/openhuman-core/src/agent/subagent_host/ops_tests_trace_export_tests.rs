@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::subagent_host::{spawn_async_via_driver_tool_with_jobs, SubagentRunStatus};
 
 /// The native journal tree must preserve the exact run identity handed to the
 /// prepared child by Tiny's driver, including the host lifecycle link and the
@@ -66,14 +67,31 @@ async fn prepared_child_run_is_exported_from_its_native_journal_lineage() {
     options.checkpoint_dir = Some(scratch.path().join("checkpoints"));
     options.thread_id = Some("native-trace-thread".into());
     options.model_override = Some("claude-opus-4-8".into());
-    let (outcome, _job_id) = run_subagent_via_driver_tool(
+    let (completion_tx, completion_rx) = tokio::sync::oneshot::channel();
+    let completion_tx = Arc::new(std::sync::Mutex::new(Some(completion_tx)));
+    spawn_async_via_driver_tool_with_jobs(
         &parent,
         make_def_named_tools(&[]),
         "answer without exposing the private sentinel".into(),
         options,
+        tinyagents_orchestration::subagent::SubAgentJobRegistry::new(),
+        move |_target, result, effects| {
+            let completion_tx = Arc::clone(&completion_tx);
+            Box::pin(async move {
+                if let Some(sender) = completion_tx.lock().unwrap().take() {
+                    let _ = sender.send((result, effects));
+                }
+            })
+        },
     )
     .await
-    .expect("driver-backed child run completes");
+    .expect("detached driver child registers");
+    let (outcome, _effects) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), completion_rx)
+            .await
+            .expect("detached child completes")
+            .expect("completion callback sends the host outcome");
+    let outcome = outcome.expect("driver-backed child run completes");
     assert!(matches!(outcome.status, SubagentRunStatus::Completed));
     assert_eq!(provider.captured.lock().len(), 1);
 

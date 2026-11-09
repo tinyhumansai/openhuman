@@ -49,8 +49,9 @@ pub fn memory_root(id: &ProfileId) -> String {
 ///   so a definition pin or a team root cannot move it onto another user's
 ///   tree (a host binding wins over both);
 /// - the memory layout is pinned to the legacy tree, confined to that root
-///   (`memory::user_scope`). Layout v3 would ignore `root` and bind the engine
-///   below `memory::scope::user_root`, which reads the person from the config
+///   by `tinymemory_tools::confine::Policy::Clamp`, selected by
+///   `memory::ops`. Layout v3 would ignore `root` and bind the engine below
+///   `memory::scope::user_root`, which reads the person from the config
 ///   path (`users/<id>/config.toml`): `org:<id>` for an id that looks like a
 ///   TinyHumans account, a freshly minted `org:local-…` otherwise. Either
 ///   disagrees with `user:<id>`, so a profile never runs v3;

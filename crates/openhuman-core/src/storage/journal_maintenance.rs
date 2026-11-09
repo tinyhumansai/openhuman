@@ -1,201 +1,398 @@
-//! Run-journal sealing and periodic storage maintenance (epic #7973, #7995).
+//! Host scheduling and per-scope backfill state for harness journal maintenance.
 //!
-//! A turn seals its journal stream (`harness.journal/<run_id>`) when it ends
-//! (`agent::tinyagents::journal`). This module owns the rest of the lifecycle:
-//!
-//! - a **sweep** on a fixed tick: `Registry::maintain_all` applies every
-//!   owner's seal and retention policy (deleting journals sealed longer ago
-//!   than `[storage] journal_retention_days`), then `StorageBackend::maintain`
-//!   returns the freed space;
-//! - a **one-shot backfill** per scope that seals the unsealed journal of
-//!   every run that is no longer active. It is recorded in that scope's
-//!   `tsd.migrations` (`harness` / [`BACKFILL_STEP`]); sealing is idempotent,
-//!   so a crash part-way simply re-runs the pass at the next sweep.
-//!
-//! Best-effort: a failure is logged and retried on the next tick.
+//! Journal lifecycle rules belong to TinyAgents. This module supplies the
+//! host's retention setting and clock, visits scopes the host knows about,
+//! and records a durable per-scope marker after the owner's one-shot inactive
+//! journal backfill succeeds.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tinyagents_harness::observability::DriverStatusStore;
-use tinyagents_harness::HarnessStatusStore;
-use tinystoragedrivers::schema::{Item, Migrations, Registry};
-use tinystoragedrivers::{
-    Capability, CollectionSpec, MaintenanceBudget, Scope, StorageBackend, StorageError,
-    MIGRATIONS_COLLECTION,
-};
+use tinyagents_harness::observability::{is_active, DriverStatusStore, HarnessStatusStore};
+use tinyagents_harness::store::DriverAppendStore;
+use tinystoragedrivers::{CollectionSpec, ErrorKind, Precondition, StorageBackend};
 
-/// The journal stream family the harness declares.
-pub const JOURNAL_STREAM: &str = "harness.journal";
-
-/// Owner and step of the backfill's `tsd.migrations` record.
-pub const BACKFILL_OWNER: &str = "harness";
-/// Step id of the backfill's `tsd.migrations` record.
-pub const BACKFILL_STEP: &str = "journal_seal_backfill_v1";
+use crate::storage::Scope;
 
 /// How often the sweep wakes.
 pub const SWEEP_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
-/// Delay before the first sweep, after the boot reaper and migrations.
+/// Delay before the first sweep, after boot preparation and migrations.
 pub const FIRST_SWEEP_DELAY: Duration = Duration::from_secs(10 * 60);
 
+/// Host-owned durable marker collection for the one-shot journal backfill.
+pub const BACKFILL_COLLECTION: &str = "openhuman.journal_backfill";
+
+const BACKFILL_VERSION: u64 = 1;
 const LOG: &str = "[storage::journal_maintenance]";
 const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 
-/// The composed registry with the journal retention set to `days` (`0` keeps
-/// sealed journals forever).
-///
-/// # Errors
-///
-/// The composition error, as [`super::schema::registry`].
-pub fn registry_with_retention(days: u32) -> Result<Registry, StorageError> {
-    let mut schemas = super::schema::owner_schemas();
-    for schema in &mut schemas {
-        for item in &mut schema.items {
-            if let Item::Stream { name, seal, .. } = item {
-                if name == JOURNAL_STREAM {
-                    seal.retain_ms = (days > 0).then(|| u64::from(days) * DAY_MS);
-                }
-            }
-        }
-    }
-    Registry::compose(schemas).map_err(|error| StorageError::invalid_input(error.to_string()))
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct JournalMaintenanceReport {
+    backfilled: usize,
+    deleted: usize,
+    conflicts: usize,
 }
 
-/// What one maintenance pass did.
+/// Host collection storing the successful one-shot backfill marker per scope.
+pub(crate) fn collection_specs() -> Vec<CollectionSpec> {
+    vec![CollectionSpec::new(BACKFILL_COLLECTION)]
+}
+
+/// One pass over the scopes known to this host.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct MaintenanceSummary {
-    /// Journals sealed by the backfill in this pass.
+    /// Journals sealed by the inactive-run backfill.
     pub backfilled: u64,
-    /// Streams the policies deleted (retention passed).
+    /// Expired sealed journals removed by TinyAgents.
     pub deleted: u64,
-    /// Streams the policies sealed.
-    pub sealed: u64,
+    /// Eligible journals that changed before conditional deletion.
+    pub conflicts: u64,
+    /// Scopes whose maintenance pass completed.
+    pub scopes: u64,
 }
 
-/// One pass at `now_ms`: backfill, policies, then the backend's own
-/// maintenance.
+/// Runs owner journal maintenance once in every scope known to the host.
 ///
-/// # Errors
-///
-/// The policy or backend error; the backfill logs its own failures.
+/// Owner policy stays in TinyAgents; OpenHuman supplies a retention duration,
+/// timestamp, and a per-scope one-shot backfill decision. A failed owner pass
+/// does not write the marker, so it is retried on the next sweep.
 pub async fn maintain_once(
     backend: &Arc<dyn StorageBackend>,
     retention_days: u32,
     now_ms: i64,
-) -> Result<MaintenanceSummary, StorageError> {
+) -> Result<MaintenanceSummary, crate::storage::StorageError> {
+    let retention_ms = u64::from(retention_days).saturating_mul(DAY_MS);
+    let work = known_scope_work(backend)?;
+    maintain_work_items(work, retention_ms, now_ms).await
+}
+
+struct ScopeWorkItem {
+    backend: Arc<dyn StorageBackend>,
+    scope: Scope,
+    // Retains the open host slot. The captured backend separately pins the
+    // exact lease epoch and carries its condition on every mutation.
+    _profile: Option<Arc<crate::profiles::Profile>>,
+}
+
+fn known_scope_work(
+    backend: &Arc<dyn StorageBackend>,
+) -> Result<Vec<ScopeWorkItem>, crate::storage::StorageError> {
+    let mut base_scopes = BTreeSet::new();
+    if !crate::core::runtime::mode::is_saas() {
+        base_scopes.insert(Scope::local());
+    }
+
+    for (agent, context) in crate::storage::agents::contexts() {
+        let dispatch = crate::core::runtime::DispatchCtx::new(context);
+        if let Ok(tenant) = dispatch.tenant() {
+            if tenant.profile.is_none() {
+                if let Some(agent) = tenant.agent.or(Some(agent)) {
+                    base_scopes.insert(crate::storage::scope_for_agent(&agent));
+                }
+            }
+        }
+    }
+
+    if !crate::core::runtime::mode::is_saas() {
+        for module in crate::modules::registry::ALL {
+            if let Ok(scope) = Scope::local().module(module.id) {
+                base_scopes.insert(scope);
+            }
+        }
+    }
+
+    let mut work = base_scopes
+        .into_iter()
+        .map(|scope| ScopeWorkItem {
+            backend: Arc::clone(backend),
+            scope,
+            _profile: None,
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(host) = crate::profiles::host::host() {
+        work.extend(captured_profile_work(
+            host.as_ref(),
+            host.hosted_profiles(),
+            super::fence::system_now_ms(),
+        )?);
+    }
+    Ok(work)
+}
+
+fn captured_profile_work(
+    host: &crate::profiles::ProfileHost,
+    profiles: Vec<Arc<crate::profiles::Profile>>,
+    now_ms: u64,
+) -> Result<Vec<ScopeWorkItem>, crate::storage::StorageError> {
+    let mut work = Vec::new();
+    for profile in profiles {
+        if profile.lease_fence().check_local(now_ms).is_err() {
+            continue;
+        }
+        let Some(profile_backend) = host.storage_backend_for(&profile)? else {
+            // File leases have no shared storage backend to maintain.
+            continue;
+        };
+        let base = crate::storage::scope_for_profile(profile.id.as_str());
+        let mut profile_scopes = BTreeSet::from([base.clone()]);
+        for module in crate::modules::registry::ALL {
+            if let Ok(scope) = base.module(module.id) {
+                profile_scopes.insert(scope);
+            }
+        }
+        work.extend(profile_scopes.into_iter().map(|scope| ScopeWorkItem {
+            backend: Arc::clone(&profile_backend),
+            scope,
+            _profile: Some(Arc::clone(&profile)),
+        }));
+    }
+    Ok(work)
+}
+
+async fn maintain_work_items(
+    work: Vec<ScopeWorkItem>,
+    retention_ms: u64,
+    now_ms: i64,
+) -> Result<MaintenanceSummary, crate::storage::StorageError> {
     let mut summary = MaintenanceSummary::default();
-    for scope in scopes(backend).await {
-        match backfill_scope(backend.as_ref(), &scope).await {
-            Ok(sealed) => summary.backfilled += sealed,
+    for item in work {
+        match maintain_scope(&item.backend, &item.scope, retention_ms, now_ms).await {
+            Ok(report) => {
+                summary.scopes += 1;
+                summary.backfilled += report.backfilled as u64;
+                summary.deleted += report.deleted as u64;
+                summary.conflicts += report.conflicts as u64;
+            }
             Err(error) => tracing::warn!(
-                scope = scope.as_str(),
+                scope = item.scope.as_str(),
                 %error,
-                "{LOG} journal seal backfill failed; retrying on the next sweep"
+                "{LOG} owner journal maintenance failed; retrying on the next sweep"
             ),
         }
     }
-    let registry = registry_with_retention(retention_days)?;
-    let budget = MaintenanceBudget::unlimited();
-    let report = if backend
-        .capabilities()
-        .contains(Capability::ScopeEnumeration)
-    {
-        registry
-            .maintain_all(backend.as_ref(), now_ms, budget)
-            .await?
-    } else {
-        registry
-            .maintain(&backend.for_scope(&Scope::local())?, now_ms, budget)
-            .await?
-    };
-    summary.deleted = report.deleted;
-    summary.sealed = report.sealed;
-    backend.maintain(budget).await?;
     tracing::debug!(
+        scopes = summary.scopes,
         backfilled = summary.backfilled,
-        sealed = summary.sealed,
         deleted = summary.deleted,
+        conflicts = summary.conflicts,
         "{LOG} pass complete"
     );
     Ok(summary)
 }
 
-/// `local` plus every scope the backend can list.
-async fn scopes(backend: &Arc<dyn StorageBackend>) -> Vec<Scope> {
-    let mut scopes = vec![Scope::local()];
-    if backend
-        .capabilities()
-        .contains(Capability::ScopeEnumeration)
-    {
-        if let Ok(found) = backend.scopes("").await {
-            for scope in found {
-                if scope.parsed().is_ok() && !scope.is_cluster() && !scopes.contains(&scope) {
-                    scopes.push(scope);
+#[cfg(test)]
+async fn maintain_scopes(
+    backend: &Arc<dyn StorageBackend>,
+    scopes: Vec<Scope>,
+    retention_ms: u64,
+    now_ms: i64,
+) -> Result<MaintenanceSummary, crate::storage::StorageError> {
+    let mut summary = MaintenanceSummary::default();
+    for scope in scopes {
+        match maintain_scope(backend, &scope, retention_ms, now_ms).await {
+            Ok(report) => {
+                summary.scopes += 1;
+                summary.backfilled += report.backfilled as u64;
+                summary.deleted += report.deleted as u64;
+                summary.conflicts += report.conflicts as u64;
+            }
+            Err(error) => tracing::warn!(
+                scope = scope.as_str(),
+                %error,
+                "{LOG} owner journal maintenance failed; retrying on the next sweep"
+            ),
+        }
+    }
+    tracing::debug!(
+        scopes = summary.scopes,
+        backfilled = summary.backfilled,
+        deleted = summary.deleted,
+        conflicts = summary.conflicts,
+        "{LOG} pass complete"
+    );
+    Ok(summary)
+}
+
+async fn maintain_scope(
+    backend: &Arc<dyn StorageBackend>,
+    scope: &Scope,
+    retention_ms: u64,
+    now_ms: i64,
+) -> Result<JournalMaintenanceReport, crate::storage::StorageError> {
+    let storage = backend.for_scope(scope)?;
+    let docs = Arc::clone(storage.documents());
+    docs.ensure_collection(&CollectionSpec::new(BACKFILL_COLLECTION))
+        .await?;
+    let key = crate::storage::schema_support::key_of("inactive-journal-backfill-v1")?;
+    let backfill_done = match docs.get(BACKFILL_COLLECTION, &key).await? {
+        None => false,
+        Some(record) => {
+            let version = record
+                .doc
+                .get("version")
+                .and_then(serde_json::Value::as_u64);
+            if version != Some(BACKFILL_VERSION) {
+                return Err(crate::storage::StorageError::invalid_input(format!(
+                    "invalid journal backfill marker in scope {}",
+                    scope.as_str()
+                )));
+            }
+            true
+        }
+    };
+
+    let report = maintain_run_journals(
+        &DriverStatusStore::new(docs),
+        storage.streams().as_ref(),
+        retention_ms,
+        now_ms,
+        !backfill_done,
+    )
+    .await?;
+
+    if !backfill_done {
+        match storage
+            .documents()
+            .put_with(
+                BACKFILL_COLLECTION,
+                &key,
+                serde_json::json!({ "version": BACKFILL_VERSION }),
+                Precondition::Absent,
+                Default::default(),
+            )
+            .await
+        {
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::Conflict => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(report)
+}
+
+/// Host-owned retention and one-time sealing for harness event journals.
+/// TinyAgents owns the event format; OpenHuman owns the lifecycle schedule.
+async fn maintain_run_journals(
+    statuses: &dyn HarnessStatusStore,
+    streams: &dyn tinystoragedrivers::api::StreamStore,
+    retention_ms: u64,
+    now_ms: i64,
+    backfill: bool,
+) -> Result<JournalMaintenanceReport, crate::storage::StorageError> {
+    let mut report = JournalMaintenanceReport::default();
+    for name in streams.streams(DriverAppendStore::JOURNAL_PREFIX).await? {
+        let Some(run_id) = name.strip_prefix(DriverAppendStore::JOURNAL_PREFIX) else {
+            continue;
+        };
+        let status = statuses
+            .get_status(run_id)
+            .await
+            .map_err(|error| crate::storage::StorageError::backend(error.to_string()))?;
+        if backfill && !status.as_ref().is_some_and(is_active) {
+            let already_sealed = streams
+                .info(&name)
+                .await?
+                .is_some_and(|info| info.sealed_ms.is_some());
+            if !already_sealed {
+                streams.seal(&name).await?;
+                report.backfilled += 1;
+            }
+        }
+        if retention_ms == 0 {
+            continue;
+        }
+        let Some(info) = streams.info(&name).await? else {
+            continue;
+        };
+        let Some(sealed_ms) = info.sealed_ms else {
+            continue;
+        };
+        if i128::from(now_ms) - i128::from(sealed_ms) < i128::from(retention_ms) {
+            continue;
+        }
+        if streams.delete_sealed_stream(&name, sealed_ms).await? {
+            report.deleted += 1;
+        } else {
+            report.conflicts += 1;
+        }
+    }
+    Ok(report)
+}
+
+/// Scopes this process can safely maintain, plus the profile handles that
+/// keep their lease fences alive for the duration of a pass.
+///
+/// This does not ask the backend to enumerate arbitrary scopes. In SaaS mode,
+/// profile scopes are included only when this process currently holds their
+/// profile handle and lease. Dormant profiles are maintained after this host
+/// opens them; sweeping their scopes directly could mutate a profile leased
+/// by another host. Cluster scope is intentionally excluded: harness run
+/// journals have historically been tenant/local data, not cluster data.
+#[cfg(test)]
+fn known_scopes(
+) -> Result<(Vec<Arc<crate::profiles::Profile>>, Vec<Scope>), crate::storage::StorageError> {
+    let mut scopes = BTreeSet::new();
+    if !crate::core::runtime::mode::is_saas() {
+        scopes.insert(Scope::local());
+    }
+
+    let now_ms = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(u64::MAX);
+    let profiles = crate::profiles::host::host()
+        .map(|host| host.hosted_profiles())
+        .unwrap_or_default();
+    let (hosted_profiles, profile_scopes) = profile_scope_snapshot(profiles, now_ms);
+    scopes.extend(profile_scopes);
+
+    for (agent, context) in crate::storage::agents::contexts() {
+        let dispatch = crate::core::runtime::DispatchCtx::new(context);
+        if let Ok(tenant) = dispatch.tenant() {
+            if tenant.profile.is_none() {
+                if let Some(agent) = tenant.agent.or(Some(agent)) {
+                    scopes.insert(crate::storage::scope_for_agent(&agent));
                 }
             }
         }
     }
-    scopes
-}
 
-/// Seals every unsealed run journal in `scope` whose run is not active, once:
-/// the pass is recorded in the scope's `tsd.migrations`. Returns how many
-/// journals it sealed (0 when already done).
-///
-/// # Errors
-///
-/// A storage error; the record is written only after the whole pass, so the
-/// next call resumes by skipping what is already sealed.
-pub async fn backfill_scope(
-    backend: &dyn StorageBackend,
-    scope: &Scope,
-) -> Result<u64, StorageError> {
-    let storage = backend.for_scope(scope)?;
-    storage
-        .documents()
-        .ensure_collection(&CollectionSpec::new(MIGRATIONS_COLLECTION))
-        .await?;
-    let migrations = Migrations::new(&storage);
-    if migrations.done(BACKFILL_OWNER, BACKFILL_STEP).await? {
-        return Ok(0);
-    }
-    let active: HashSet<String> = DriverStatusStore::new(Arc::clone(storage.documents()))
-        .list_active()
-        .await
-        .map_err(|error| StorageError::invalid_input(error.to_string()))?
-        .into_iter()
-        .map(|status| status.run_id.as_str().to_string())
-        .collect();
-    let streams = storage.streams();
-    let family = format!("{JOURNAL_STREAM}/");
-    let mut sealed = 0;
-    for name in streams.streams(JOURNAL_STREAM).await? {
-        let Some(run) = name.strip_prefix(&family) else {
-            continue;
-        };
-        if active.contains(run) {
-            continue;
-        }
-        match streams.info(&name).await? {
-            Some(info) if info.sealed_ms.is_none() => {
-                streams.seal(&name).await?;
-                sealed += 1;
+    if !crate::core::runtime::mode::is_saas() {
+        for module in crate::modules::registry::ALL {
+            if let Ok(scope) = Scope::local().module(module.id) {
+                scopes.insert(scope);
             }
-            _ => {}
         }
     }
-    migrations.mark_done(BACKFILL_OWNER, BACKFILL_STEP).await?;
-    tracing::info!(
-        scope = scope.as_str(),
-        sealed,
-        "{LOG} journal seal backfill done"
-    );
-    Ok(sealed)
+    Ok((hosted_profiles, scopes.into_iter().collect()))
 }
 
-/// Retention days from the current config; the default when it cannot load.
+/// Retain only profile handles whose lease is still live and enumerate their
+/// tenant/module scopes. Keeping the handles alive prevents release while the
+/// caller is using those scopes.
+#[cfg(test)]
+fn profile_scope_snapshot(
+    profiles: Vec<Arc<crate::profiles::Profile>>,
+    now_ms: u64,
+) -> (Vec<Arc<crate::profiles::Profile>>, Vec<Scope>) {
+    let live = profiles
+        .into_iter()
+        .filter(|profile| profile.lease_fence().check_local(now_ms).is_ok())
+        .collect::<Vec<_>>();
+    let mut scopes = BTreeSet::new();
+    for profile in &live {
+        let base = crate::storage::scope_for_profile(profile.id.as_str());
+        scopes.insert(base.clone());
+        for module in crate::modules::registry::ALL {
+            if let Ok(scope) = base.module(module.id) {
+                scopes.insert(scope);
+            }
+        }
+    }
+    (live, scopes.into_iter().collect())
+}
+
+/// Retention days from the current config; default when it cannot load.
 async fn configured_retention_days(ctx: &crate::core::runtime::DispatchCtx) -> u32 {
     match crate::config::ops::load_current_or_init(ctx).await {
         Ok(config) => config.storage.journal_retention_days,

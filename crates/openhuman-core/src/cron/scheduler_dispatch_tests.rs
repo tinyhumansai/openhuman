@@ -59,7 +59,7 @@ fn due_system_job(config: &Config, name: &str) -> CronJob {
 }
 
 fn force_due(config: &Config, job_id: &str) {
-    crate::cron::store::force_next_run_for_test(
+    crate::cron::store::tests::force_next_run_for_test(
         config,
         job_id,
         Utc::now() - ChronoDuration::seconds(1),
@@ -188,17 +188,84 @@ async fn a_system_job_without_a_handler_is_still_ok_on_dispatch() {
     assert!(output.contains("dispatched"), "{output}");
 }
 
-#[test]
-fn only_one_scheduler_loop_holds_the_slot() {
-    let first = LoopSlot::acquire().expect("the slot is free");
-    assert!(is_running());
-    assert!(LoopSlot::acquire().is_none(), "a second loop is refused");
-    drop(first);
-    assert!(!is_running());
-    let again = LoopSlot::acquire();
-    assert!(again.is_some());
+#[tokio::test]
+async fn module_scheduler_slot_is_per_store_scope_and_refuses_a_duplicate() {
+    let first_tmp = TempDir::new().unwrap();
+    let first_config = test_config(&first_tmp).await;
+    let mut first = JobDispatcher::new(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &first_config,
+        &security(&first_config),
+    );
+    assert_eq!(first.tick(&first_config).await.unwrap(), 0);
+
+    let mut duplicate = JobDispatcher::new(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &first_config,
+        &security(&first_config),
+    );
+    let error = duplicate
+        .tick(&first_config)
+        .await
+        .expect_err("the same document scope has one module scheduler");
+    assert!(
+        error
+            .to_string()
+            .contains("scheduler already owns this scope"),
+        "unexpected duplicate-scope refusal: {error}"
+    );
+
+    let second_tmp = TempDir::new().unwrap();
+    let second_config = test_config(&second_tmp).await;
+    let mut second = JobDispatcher::new(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &second_config,
+        &security(&second_config),
+    );
+    assert_eq!(
+        second.tick(&second_config).await.unwrap(),
+        0,
+        "a different document/workspace scope owns an independent module slot"
+    );
+    first.drain().await;
+    second.drain().await;
 }
 
+#[tokio::test]
+async fn started_agent_scheduler_releases_its_context_after_stop_is_confirmed() {
+    use crate::core::runtime::{ContextOverlay, CoreContext, DispatchCtx, DomainSet};
+
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let agent = format!("retire-{}", uuid::Uuid::new_v4().simple());
+    let context = CoreContext::for_test_with_config(DomainSet::full(), config.clone()).derive_with(
+        ContextOverlay::new(
+            config.clone(),
+            DomainSet::full(),
+            crate::tools::toolpacks::ToolGroups::none(),
+        )
+        .session_agent(agent),
+    );
+    let weak = Arc::downgrade(&context);
+    let mut dispatcher = JobDispatcher::new(
+        &DispatchCtx::new(Arc::clone(&context)),
+        &config,
+        &security(&config),
+    );
+    assert_eq!(dispatcher.tick(&config).await.unwrap(), 0);
+
+    drop(dispatcher);
+    drop(context);
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while weak.upgrade().is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the finite StopScheduler owner releases its context after confirmation");
+}
+
+#[cfg(feature = "legacy-import")]
 /// Upgrade regression: a job whose retry budget and single-flight setting lived
 /// in the old `cron_job_policies` side table keeps firing after the upgrade,
 /// with that policy now on the job itself.
@@ -206,7 +273,9 @@ fn only_one_scheduler_loop_holds_the_slot() {
 async fn an_upgraded_job_with_a_side_table_policy_keeps_firing_with_it() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
-    let legacy = crate::cron::store::legacy_db_path(&config);
+    let legacy = crate::storage::import::tinyflows::legacy_jobs_db(
+        &crate::core::runtime::agent_scope_dir(&config),
+    );
     std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
     std::fs::copy(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

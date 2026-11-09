@@ -13,6 +13,11 @@
 
 use crate::core::runtime::is_saas;
 
+/// Diagnostic reports are safe in both the operator plane and a user's own
+/// profile scope. Selection of another profile is authorized in the report
+/// handler before it reads profile state.
+const SHARED_SAAS_METHODS: &[&str] = &["openhuman.doctor_report"];
+
 /// Every RPC method a user may dispatch. Grows as each family's per-user
 /// isolation lands; a method is listed only once nothing it touches is
 /// shared between users.
@@ -26,7 +31,6 @@ use crate::core::runtime::is_saas;
 pub const USER_METHODS: &[&str] = &[
     // Detached-worker controls compare the original worker's captured profile.
     "openhuman.subagent_cancel",
-    "openhuman.subagent_steer",
     // Conversation threads: all state lives under the agent's workspace.
     "openhuman.threads_list",
     "openhuman.threads_upsert",
@@ -47,6 +51,7 @@ pub const USER_METHODS: &[&str] = &[
     "openhuman.threads_transcript_get",
     "openhuman.threads_goal_get",
     "openhuman.threads_todos_get",
+    "openhuman.threads_state_get",
     // Turns on a user's own threads. Their events carry the user's agent and
     // reach only that user's `/events` stream.
     "openhuman.threads_generate_title",
@@ -62,7 +67,7 @@ pub const USER_METHODS: &[&str] = &[
     // onto that user's `channel:` thread; replies reach only their `/events`.
     "openhuman.channel_relay_inbound",
     // Memory: reads and writes confined to the user's own tree
-    // (`memory::user_scope`). Engine and policy changes, sources, imports and
+    // (`tinymemory_tools::confine::Policy::Clamp`). Engine and policy changes, sources, imports and
     // backfills stay closed: they reach the host or change where memory lives.
     "openhuman.memory_recall",
     "openhuman.memory_fetch",
@@ -107,11 +112,12 @@ pub fn current_scope() -> Scope {
 ///
 /// A SaaS task with no scope sees nothing: missing scope fails closed.
 pub fn visible_in(saas: bool, scope: Scope, method: &str, operator_plane: bool) -> bool {
+    let shared = SHARED_SAAS_METHODS.contains(&method);
     match (saas, scope) {
         (false, _) => true,
         (true, Scope::None) => false,
-        (true, Scope::Operator) => operator_plane,
-        (true, Scope::User) => !operator_plane && USER_METHODS.contains(&method),
+        (true, Scope::Operator) => operator_plane || shared,
+        (true, Scope::User) => !operator_plane && (USER_METHODS.contains(&method) || shared),
     }
 }
 

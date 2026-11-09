@@ -156,6 +156,40 @@ test("CI exports the staged TinyMCP library for the multi-server suite", () => {
   );
 });
 
+test("staged module paths stay valid when tests change their working directory", () => {
+  const source = readFileSync(installer, "utf8");
+  assert.match(
+    source,
+    /dest="\$\(cd "\$\{dest\}" && pwd -P\)"/,
+    "the exported module paths must be absolute for subprocesses with a different cwd",
+  );
+});
+
+test("CI exports the staged TinyChannels library for its runtime suite", () => {
+  const source = readFileSync(installer, "utf8");
+  assert.match(
+    source,
+    /echo "OPENHUMAN_CHANNELS_TEST_ARTIFACT=\$\{tinychannels_artifact\}"/,
+    "the released-runtime test loads the verified TinyChannels artifact directly",
+  );
+});
+
+test("CI exports the staged TinyVoice library without putting it on the search path", () => {
+  const source = readFileSync(installer, "utf8");
+  assert.match(
+    source,
+    /echo "OPENHUMAN_VOICE_TEST_ARTIFACT=\$\{tinyvoice_artifact\}"/,
+    "the native Telegram voice-note E2E loads the verified TinyVoice artifact by file",
+  );
+  const searchPath = source.match(/^for id in ([^;]+); do$/m);
+  assert.ok(searchPath, "the installer lists its search-path modules");
+  assert.doesNotMatch(
+    searchPath[1],
+    /\btinyvoice\b/,
+    "staging TinyVoice must not make every other suite load it",
+  );
+});
+
 test("MCP registry Rust integration tests run serially", () => {
   const source = readFileSync(localRustRunner, "utf8");
   assert.match(
@@ -177,9 +211,15 @@ test("config/auth in-process integration tests run serially in both full runners
       start >= 0 && end > start,
       `${runner} has an in-process module runner`,
     );
+    const runnerFunction = source.slice(start, end);
     assert.match(
-      source.slice(start, end),
-      /config_auth_app_state_connectivity_e2e[\s\S]*?--test-threads=1/,
+      runnerFunction,
+      /\(config\|auth\|app_state\|connectivity\)_e2e/,
+      `${runner} isolates the four split config/auth groups`,
+    );
+    assert.match(
+      runnerFunction,
+      /--test-threads=1/,
       `${runner} serializes auth RPC fixtures that share process-wide listeners`,
     );
   }
@@ -287,6 +327,8 @@ for (const id of [
   "tinychannels",
   "tinymcp",
   "tinyhosts",
+  "tinyvoice",
+  "tinysecurity",
 ]) {
   test(`native ${id} regressions receive their pinned release fixture`, () => {
     const assets = resolveTestModuleAssets(
@@ -380,7 +422,7 @@ for (const [runner, archiveVariable, directoryVariable] of [
 }
 
 for (const runner of ["test-rust-with-mock.sh", "test-rust-e2e.sh"]) {
-  test(`${runner} supplies the TinyMCP artifact and executes ignored registry cases`, () => {
+  test(`${runner} supplies the TinyMCP artifact to registry cases`, () => {
     const source = readFileSync(
       new URL(`../${runner}`, import.meta.url),
       "utf8",
@@ -404,6 +446,13 @@ for (const runner of ["test-rust-with-mock.sh", "test-rust-e2e.sh"]) {
       const boxDir = join(root, "target/test-modules/tinybox/test-digest");
       mkdirSync(boxDir, { recursive: true });
       writeFileSync(join(boxDir, "libtinybox.so"), "fixture");
+      // The E2E runner stages these releases too. Cache them as well: staging
+      // stops on a download that fails, so an uncached one fails the runner.
+      for (const id of ["tinyconnectors", "tinyflows", "tinysearch"]) {
+        const dir = join(root, `target/test-modules/${id}/test-digest`);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, `lib${id}_module.so`), "fixture");
+      }
       // Evaluate the real runner branches with only external commands stubbed.
       // A cached fixture avoids downloads while exercising the path export.
       const cargoStub = `cargo_test() {
@@ -483,11 +532,19 @@ for (const runner of ["test-rust-with-mock.sh", "test-rust-e2e.sh"]) {
           run.split("\n")[0].split(":").includes(moduleDir),
           "the pinned TinyMCP release directory is on the module search path",
         );
-        assert.match(
-          run,
-          /^ARG=--ignored$/m,
-          "ignored cases must actually execute",
-        );
+        if (runner === "test-rust-with-mock.sh") {
+          assert.doesNotMatch(
+            run,
+            /^ARG=--ignored$/m,
+            "Linux-supported cases run in the normal test pass",
+          );
+        } else {
+          assert.match(
+            run,
+            /^ARG=--ignored$/m,
+            "the E2E runner explicitly selects the live registry cases",
+          );
+        }
         assert.match(run, /^ARG=--test-threads=1$/m);
       }
       assert.match(
@@ -509,7 +566,7 @@ test("the Rust E2E runner reuses container-staged module paths", () => {
   assert.match(runnerSource, /pre-staged native modules/);
 });
 
-test("the CI installer builds nothing: every module, tinyconnectors included, is a registry release", () => {
+test("the CI installer stages callback modules as registry releases", () => {
   const source = readFileSync(installer, "utf8");
   assert.doesNotMatch(source, /cargo build|cargo-cancel|--target-dir/);
   assert.doesNotMatch(source, /stage-connector-test-module|modules\.toml/);
@@ -518,10 +575,49 @@ test("the CI installer builds nothing: every module, tinyconnectors included, is
     "ubuntu-22.04-x86_64",
   );
   const connectors = assets.find((asset) => asset.id === "tinyconnectors");
+  const eventqueues = assets.find((asset) => asset.id === "tinyeventqueues");
+  const security = assets.find((asset) => asset.id === "tinysecurity");
   assert.ok(
     connectors,
     "the installer resolves tinyconnectors from the registry",
   );
   assert.match(connectors.sha256, /^[a-f0-9]{64}$/);
   assert.match(connectors.url, /\/releases\/download\/v\d+\.\d+\.\d+\//);
+  assert.ok(eventqueues, "the installer stages tinyeventqueues from the registry");
+  assert.match(eventqueues.sha256, /^[a-f0-9]{64}$/);
+  assert.match(eventqueues.url, /\/releases\/download\/v\d+\.\d+\.\d+\//);
+  assert.ok(security, "the installer stages TinySecurity for policy tests");
+  assert.match(security.sha256, /^[a-f0-9]{64}$/);
+  assert.match(source, /tinymcp tinyeventqueues tinyjuice[\s\S]*tinysecurity/);
+});
+
+test("the core workflow isolates tests that need staged callback modules", () => {
+  const workflow = readFileSync(
+    new URL("../../.github/workflows/test-reusable.yml", import.meta.url),
+    "utf8",
+  );
+  const moduleTests = [
+    "inbound::ops::tests::a_burst_over_max_batch_runs_in_turns_of_at_most_max_batch",
+    "inbound::ops::tests::the_operations_reach_the_module",
+    "inbound::ops::tests::three_offers_within_the_window_run_one_turn_with_one_result_and_one_event",
+    "inbound::route::tests::an_accepted_event_is_queued_and_a_redelivery_ends_at_ingress",
+    "integrations::composio::bus::trigger_subscriber::tests::a_deferred_composio_trigger_is_retried_at_its_defer_time_instead_of_dropped",
+    "integrations::composio::bus::trigger_subscriber::tests::a_redelivered_composio_trigger_produces_one_turn",
+    "integrations::composio::bus::trigger_subscriber::tests::without_a_config_a_trigger_is_triaged_directly",
+    "integrations::composio::bus::trigger_subscriber::tests::with_the_queues_off_a_trigger_is_triaged_directly",
+    "modules::channel_runtime::tests::released_runtime_scopes_callbacks_and_replays_one_final_send",
+    "modules::event_queues::tests::every_member_is_reachable",
+    "skills::webhooks::bus::tests::inbound::with_the_component_off_an_agent_webhook_is_triaged_directly",
+    "skills::webhooks::bus::tests::inbound::a_redelivered_agent_webhook_produces_one_turn",
+    "skills::webhooks::bus::tests::inbound::a_deferred_agent_webhook_is_retried_at_its_defer_time_instead_of_dropped",
+  ];
+
+  for (const moduleTest of moduleTests) {
+    assert.ok(
+      workflow.includes(moduleTest),
+      `the CI core suite must run ${moduleTest} with staged module artifacts`,
+    );
+  }
+  assert.match(workflow, /for module_test in "\$\{MODULE_TESTS\[@\]\}"/);
+  assert.match(workflow, /unset OPENHUMAN_MODULE_PATH/);
 });

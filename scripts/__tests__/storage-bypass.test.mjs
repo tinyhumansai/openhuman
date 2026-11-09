@@ -13,6 +13,7 @@ import {
   ALLOW,
   allowed,
   compare,
+  isTestFile,
   scan,
   withoutAllowed,
 } from "../ci/check-storage-bypass.mjs";
@@ -91,6 +92,19 @@ test("ignores comments and doc lines", () => {
   assert.deepEqual(found, []);
 });
 
+test("fixture generator scripts are test data writers, not runtime stores", () => {
+  for (const file of [
+    "vendor/tinyagents/crates/tinyagents-tasks/src/storage/fixtures/generate-31cc.rs",
+    "vendor/tinyagents/crates/tinyagents-session/src/run_ledger/drivers/fixtures/generate-31cc.rs",
+  ]) {
+    assert.equal(isTestFile(file), true, file);
+  }
+  assert.equal(
+    isTestFile("vendor/tinyagents/crates/tinyagents-tasks/src/storage/store.rs"),
+    false,
+  );
+});
+
 test("compare reports added and stale sites", () => {
   const finding = {
     rule: "sqlite-open",
@@ -121,12 +135,7 @@ test("every allowlisted path carries a reason and known rules", () => {
     }
   }
   const state = `${SRC}/config/workspace/state.rs`;
-  const [site] = scan(state, "let conn = Connection::open(db_path)?;");
-  assert.ok(allowed(state, site));
-  assert.ok(!allowed(state, { ...site, rule: "json-write" }));
-  assert.ok(
-    !allowed(state, { ...site, text: "let c = Connection::open(other)?;" }),
-  );
+  assert.equal(ALLOW.has(state), false, "the TSD facade removed the old SQLite opener");
 });
 
 test("a new database open fails the check", () => {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::subagent_host::SubagentRunOutcome;
 use tinyagents_definition::{ModelSpec, ToolScope};
 use tinytools::Tool;
 
@@ -245,6 +246,22 @@ fn tool_response(name: &str, args: &str) -> ModelResponse {
     }
 }
 
+/// Run the direct host adapter against an explicit root context in unit tests.
+async fn run_host_from_test_options(
+    definition: &AgentDefinition,
+    input: &str,
+    options: SubagentRunOptions,
+) -> Result<SubagentRunOutcome, SubagentRunError> {
+    let mut root_data = options.run_context.clone();
+    let root_config = root_data.root_run_config("subagent-host-test");
+    let parent = root_data.into_tinyagents(root_config);
+    Box::pin(
+        crate::agent::subagent_host::OpenHumanSubagentHost::new(definition.clone(), options)
+            .run(&parent, input.to_owned()),
+    )
+    .await
+}
+
 /// Build a minimal `ParentExecutionContext` suitable for runner tests.
 /// Uses a no-op memory backend so we don't have to spin up a real one.
 /// `options` with `parent` bound as the run's explicit parent execution
@@ -277,7 +294,7 @@ fn make_parent(
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),
         temperature: 0.5,
-        workspace_dir: std::env::temp_dir(),
+        workspace_dir: crate::storage::test_support::isolated_workspace(),
         agent_config: crate::config::AgentConfig::default(),
         workflows: Arc::new(vec![]),
         memory_context: Arc::new(None),
@@ -294,7 +311,7 @@ fn make_parent(
 }
 
 // ── Runtime spawn-hierarchy (tier) gate (issue #4098) ───────────────────────
-// `tier_gate_decision` is the pure decision the runtime gate in `run_subagent`
+// `tier_gate_decision` is the pure decision the runtime gate in child execution
 // applies to each delegation hop. Tested directly so the deny/allow/skip
 // table is covered without standing up a global registry or a live spawn.
 
@@ -305,6 +322,8 @@ fn gate(parent: Option<&AgentDefinition>, child: &AgentDefinition) -> Result<(),
 
 #[path = "ops_tests_model_resolution_tests.rs"]
 mod model_resolution_tests;
+#[path = "ops_tests_nested_stack_tests.rs"]
+mod nested_stack_tests;
 #[path = "ops_tests_slug_filter_typed_mode_tests.rs"]
 mod slug_filter_typed_mode_tests;
 #[path = "ops_tests_tier_gate_tests.rs"]

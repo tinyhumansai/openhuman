@@ -1,5 +1,5 @@
 use super::approval::approval_tool_name;
-use super::repeated_failure::{is_body_level_failure, user_actionable_escalation};
+use super::repeated_failure::is_body_level_failure;
 use super::tool_output::{
     is_compaction_exempt, is_truncation_exempt, COMPACTION_EXEMPT_TOOLS, SAMPLING_TOOLS,
 };
@@ -376,7 +376,11 @@ mod loop_guard_tests;
 mod memory_budget_tests;
 #[path = "middleware_stop_cause_tests.rs"]
 mod stop_cause_tests;
+#[path = "middleware_terminal_inference_halt_tests.rs"]
+mod terminal_inference_halt_tests;
 
+#[path = "middleware_approval_unavailable_tests.rs"]
+mod approval_unavailable_tests;
 #[path = "middleware_tool_output_artifact_tests.rs"]
 mod tool_output_artifact_tests;
 #[path = "middleware_tool_output_tests.rs"]

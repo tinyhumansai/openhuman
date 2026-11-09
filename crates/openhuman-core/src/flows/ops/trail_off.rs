@@ -1,22 +1,17 @@
-use tinyflows_copilot::fallback::{self, ToolResult};
+use super::*;
+use tinyflows_bus::copilot::{TextResponse, ToolResultSummary, TrailOffRequest};
 
-// The pure text heuristics (`text_looks_like_question`) and the whole
-// trail-off fallback construction live in `tinyflows-copilot`; what stays here
-// is the host adapter that correlates the harness `TranscriptEntry` history
-// into the module's `ToolResult` shape.
-pub(super) use tinyflows_copilot::fallback::combine_trail_off_fallback;
-pub(super) use tinyflows_copilot::text_looks_like_question;
-
-/// Correlates each `ToolResults` entry's `tool_call_id` back to the
-/// `AssistantToolCalls` message that issued it, in chronological order.
-fn correlate_tool_results(
+/// Correlates transcript results back to their tool calls and asks the module
+/// to construct the product's terminal fallback question.
+pub(super) async fn build_trail_off_fallback(
+    config: &Config,
     history: &[tinytools_agent::dialect::TranscriptEntry],
-) -> Vec<ToolResult> {
+) -> Result<String, String> {
     use tinytools_agent::dialect::TranscriptEntry;
 
     let mut call_names: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
-    let mut out = Vec::new();
+    let mut results = Vec::new();
     for message in history {
         match message {
             TranscriptEntry::AssistantToolCalls { tool_calls, .. } => {
@@ -24,9 +19,9 @@ fn correlate_tool_results(
                     call_names.insert(call.id.clone(), call.name.clone());
                 }
             }
-            TranscriptEntry::ToolResults(results) => {
-                for result in results {
-                    out.push(ToolResult {
+            TranscriptEntry::ToolResults(tool_results) => {
+                for result in tool_results {
+                    results.push(ToolResultSummary {
                         tool_name: call_names.get(&result.tool_call_id).cloned(),
                         content: result.content.clone(),
                     });
@@ -35,13 +30,40 @@ fn correlate_tool_results(
             _ => {}
         }
     }
-    out
+    let response: TextResponse = crate::flows::copilot_bus::call(
+        config,
+        "BuildTrailOffFallback",
+        (TrailOffRequest { history: results },),
+    )
+    .await?;
+    Ok(response.text)
 }
 
-/// Synthesizes the guaranteed user-facing fallback for a trail-off turn from
-/// the run's harness history (construction is `tinyflows-copilot`'s).
-pub(super) fn build_trail_off_fallback(
-    history: &[tinytools_agent::dialect::TranscriptEntry],
-) -> String {
-    fallback::build_trail_off_fallback(&correlate_tool_results(history))
+pub(super) async fn combine_trail_off_fallback(
+    config: &Config,
+    fallback: &str,
+    original: &str,
+) -> Result<String, String> {
+    let response: TextResponse =
+        crate::flows::copilot_bus::call(config, "CombineTrailOffFallback", (fallback, original))
+            .await?;
+    Ok(response.text)
+}
+
+pub(super) async fn text_looks_like_question(config: &Config, text: &str) -> Result<bool, String> {
+    crate::flows::copilot_bus::call(config, "TextLooksLikeQuestion", (text,)).await
+}
+
+pub(super) async fn is_backend_or_infrastructure_failure(
+    config: &Config,
+    error: &str,
+) -> Result<bool, String> {
+    crate::flows::copilot_bus::call(config, "IsBackendOrInfrastructureFailure", (error,)).await
+}
+
+pub(super) async fn backend_repair_message(
+    config: &Config,
+    error: &str,
+) -> Result<Option<String>, String> {
+    crate::flows::copilot_bus::call(config, "BackendRepairMessage", (error,)).await
 }

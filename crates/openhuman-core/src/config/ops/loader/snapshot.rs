@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::core::Outcome;
 
 /// Serializes the current configuration into a JSON snapshot for the UI.
-pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String> {
+pub async fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String> {
     let mut value = serde_json::to_value(config).map_err(|e| e.to_string())?;
     // The full snapshot is sent over RPC. Keep search settings visible while
     // removing credentials, including the legacy Seltz key.
@@ -15,13 +15,18 @@ pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String
         value["search"][provider]["api_key"] = serde_json::Value::Null;
     }
     value["seltz"]["api_key"] = serde_json::Value::Null;
+    // A broker URL may carry credentials too; show it redacted.
+    if let Some(url) = config.inbound.queue_url.as_deref() {
+        value["inbound"]["queue_url"] =
+            serde_json::Value::String(crate::config::schema::storage::redact_url(url));
+    }
     // A storage URL may carry database credentials; show it redacted.
     if let Some(url) = config.storage.url.as_deref() {
         value["storage"]["url"] =
             serde_json::Value::String(crate::config::schema::storage::redact_url(url));
     }
     #[cfg(feature = "modules")]
-    let browser_billing_route = crate::modules::desktop::billing_route(config);
+    let browser_billing_route = crate::modules::desktop::billing_route(config).await;
     #[cfg(not(feature = "modules"))]
     let browser_billing_route = "unavailable";
     Ok(json!({
@@ -33,7 +38,7 @@ pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String
 }
 
 /// Serializes the client-facing AI config slice consumed by the settings UI.
-pub fn client_config_json(config: &Config) -> serde_json::Value {
+pub async fn client_config_json(config: &Config) -> serde_json::Value {
     let app_version =
         std::env::var("OPENHUMAN_APP_VERSION").unwrap_or_else(|_| "unknown".to_string());
     let api_key_set = config
@@ -75,6 +80,11 @@ pub fn client_config_json(config: &Config) -> serde_json::Value {
             })
         })
         .collect();
+    let credits_bypass_chat =
+        crate::inference::provider::factory::role_bypasses_managed_credits("chat", config).await;
+    let credits_bypass_reasoning =
+        crate::inference::provider::factory::role_bypasses_managed_credits("reasoning", config)
+            .await;
 
     serde_json::json!({
         "api_url": config.api_url,
@@ -100,13 +110,8 @@ pub fn client_config_json(config: &Config) -> serde_json::Value {
         // claude-code) with usable creds. Managed tiers that run anyway surface
         // credit errors per-call.
         "credits_bypass": {
-            "chat": crate::inference::provider::factory::role_bypasses_managed_credits(
-                "chat", config,
-            ),
-            "reasoning":
-                crate::inference::provider::factory::role_bypasses_managed_credits(
-                    "reasoning", config,
-                ),
+            "chat": credits_bypass_chat,
+            "reasoning": credits_bypass_reasoning,
         },
         "chat_provider": config.chat_provider,
         "reasoning_provider": config.reasoning_provider,
@@ -139,7 +144,7 @@ pub async fn load_and_get_client_config_snapshot(
     ctx: &DispatchCtx,
 ) -> Result<Outcome<serde_json::Value>, String> {
     let config = ctx.load_config().await?;
-    let snapshot = client_config_json(&config);
+    let snapshot = client_config_json(&config).await;
     Ok(Outcome::new(
         snapshot,
         vec!["client config read".to_string()],
@@ -148,7 +153,7 @@ pub async fn load_and_get_client_config_snapshot(
 
 /// Returns a full configuration snapshot for the UI.
 pub async fn get_config_snapshot(config: &Config) -> Result<Outcome<serde_json::Value>, String> {
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(

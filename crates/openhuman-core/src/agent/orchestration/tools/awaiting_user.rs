@@ -3,12 +3,9 @@
 //! When a delegated sub-agent calls `ask_user_clarification`, the runner
 //! checkpoints its conversation and returns
 //! [`SubagentRunStatus::AwaitingUser`](crate::agent::subagent_host::SubagentRunStatus).
-//! Both the asynchronous [`spawn_subagent`](super::spawn_subagent) path and
-//! the synchronous delegate
-//! [`dispatch_subagent`](super::dispatch::dispatch_subagent) path must surface
-//! that pause to the orchestrator as a structured `[SUBAGENT_AWAITING_USER]`
-//! envelope so it relays the question and resumes via `continue_subagent`
-//! (instead of re-spawning a fresh, stateless sub-agent — the #4291 loop).
+//! The spawn path surfaces the pause to the orchestrator as a structured
+//! `[SUBAGENT_AWAITING_USER]` envelope so it relays the question and resumes
+//! by calling `spawn_subagent` with the original `task_key`.
 //!
 //! The envelope is built here, in one pure, side-effect-free, unit-testable
 //! place, so the two call sites cannot drift.
@@ -19,7 +16,7 @@
 ///
 /// Pure + side-effect-free: callers publish the matching `SubagentAwaitingUser`
 /// domain/progress events separately. The envelope carries the `task_id` and
-/// `agent_id` the orchestrator needs to call `continue_subagent`, plus the
+/// `agent_id` for context, plus the
 /// sub-agent's question, and explicitly instructs the model to resume rather
 /// than re-spawn.
 pub(crate) fn awaiting_user_envelope(
@@ -37,7 +34,7 @@ pub(crate) fn awaiting_user_envelope(
     // the value is clearly bounded — only the real terminator line survives.
     let question_json =
         serde_json::to_string(question).unwrap_or_else(|_| "\"<unserializable question>\"".into());
-    // The pause could not be written to disk, so `continue_subagent` will not
+    // The pause could not be written to disk, so task-key reuse may not
     // find a checkpoint for this `task_id`. It may still succeed via the
     // durable-session store, so this warns rather than forbids — but the
     // orchestrator must not be told the history is safely parked when it is
@@ -46,7 +43,7 @@ pub(crate) fn awaiting_user_envelope(
         ""
     } else {
         " NOTE: this pause could NOT be saved to disk, so resuming may fail. \
-         If continue_subagent reports no checkpoint and no durable session, \
+         If spawn_subagent with the original task_key reports no checkpoint and no durable session, \
          tell the user the sub-agent's progress was lost instead of retrying."
     };
     format!(
@@ -58,10 +55,9 @@ pub(crate) fn awaiting_user_envelope(
          [/SUBAGENT_AWAITING_USER]\n\n\
          The sub-agent needs clarification before it can continue. \
          Surface the above question to the user. When the user responds, \
-         call continue_subagent with the task_id, agent_id, and the \
-         user's answer as the message parameter. Do NOT re-spawn or \
-         re-delegate the sub-agent — that restarts it from scratch and \
-         loses its progress.{resume_caveat}"
+         call spawn_subagent with the original task_key, agent_id, and the \
+         user's answer as the prompt. This resumes the existing child; do not \
+         choose a new task_key.{resume_caveat}"
     )
 }
 

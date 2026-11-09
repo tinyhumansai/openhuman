@@ -365,7 +365,7 @@ println!("{}", reply.reply);
 
 [`CONTRIBUTING.md`](../CONTRIBUTING.md) پڑھیں، یا کسی AI کوڈنگ ایجنٹ سے [اس پرامپٹ](./CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) کے ذریعے رہنمائی لیں۔
 
-1. Git، Node.js 24+، pnpm 10.10.0، Rust 1.96.1 (`rustfmt` اور `clippy` کے ساتھ)، CMake، Ninja، ripgrep، اور اپنے پلیٹ فارم کے ڈیسک ٹاپ بلڈ کے تقاضے انسٹال کریں۔
+1. Git، Node.js 24+، pnpm 10.10.0، Rust 1.99.1 (`rustfmt` اور `clippy` کے ساتھ)، CMake، Ninja، ripgrep، اور اپنے پلیٹ فارم کے ڈیسک ٹاپ بلڈ کے تقاضے انسٹال کریں۔
 2. ریپو کو فورک کر کے کلون کریں۔ `git submodule update --init --recursive` چلائیں، پھر `pnpm install`۔
 3. UI کے کام کے لیے `pnpm dev` یا ڈیسک ٹاپ ایپ کے لیے `pnpm dev:app` چلائیں۔ PR کھولنے سے پہلے `pnpm typecheck`، `pnpm format:check` اور `cargo check --manifest-path Cargo.toml` چلائیں۔
 

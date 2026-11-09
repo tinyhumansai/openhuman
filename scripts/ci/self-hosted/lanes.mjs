@@ -191,6 +191,39 @@ function du(path) {
 }
 
 /**
+ * Where the scratch disk's space goes, for the ex63 profile only: `df -h` of
+ * the scratch mount, then `du -sh` of every top-level entry under `target/` and
+ * of the scratch dir's own top level (the checkout). A lane
+ * that fills the disk (EX63 run 39292268284 ran it to 16 MB free) then shows
+ * which directory grew, lane by lane. Returns null off ex63 or without a
+ * scratch dir. `run` is injectable for tests.
+ */
+export function diskUsageReport({
+  profile,
+  scratch = process.env.CI_SCRATCH_DIR,
+  root = ROOT,
+  run = (cmd) =>
+    spawnSync("sh", ["-c", cmd], { encoding: "utf8", cwd: root }).stdout ?? "",
+} = {}) {
+  if (profile !== "ex63" || !scratch) return null;
+  const q = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
+  const df = run(`df -h ${q(scratch)} 2>&1`).trim();
+  // `du` exits non-zero on an unreadable entry but still prints the rest.
+  const target = run(`du -sh target/* 2>/dev/null | sort -h -r; true`).trim();
+  const top = run(
+    `du -xsh ${q(scratch)}/* 2>/dev/null | sort -h -r | head -15; true`,
+  ).trim();
+  return [
+    `[ci][lanes][disk] df -h ${scratch}`,
+    df,
+    "[ci][lanes][disk] du -sh target/*",
+    target || "(no target dir)",
+    `[ci][lanes][disk] du -sh ${scratch}/* (top 15)`,
+    top || "(nothing readable)",
+  ].join("\n");
+}
+
+/**
  * Counting semaphore with priorities (lower first, then FIFO). Heavy lanes
  * each compile the whole core crate, several GB of rustc apiece, so the VM
  * runs only as many at once as its memory holds.
@@ -292,6 +325,11 @@ export class Runner {
   constructor(plan, { out, maxParallel, maxHeavy = Infinity }) {
     this.plan = plan;
     this.out = out;
+    // ex63 runs lanes one at a time. Overlapping the frontend lanes with the
+    // cargo chain was measured in run 39434038570 on 4 vCPU / 24 GB: vitest
+    // took 2.6x as long and cache restores 5.6x, rust-cov peaked at 19.4 GB,
+    // and nothing finished sooner, since compiles and tests already use every
+    // core.
     this.maxParallel =
       plan.profile === "ex63"
         ? 1
@@ -487,6 +525,10 @@ export class Runner {
         `lane ${lane.name}: ${check.name} ${record.status} in ${record.durationS}s${record.reportOnly ? " (report-only)" : ""}`,
       );
       this.finish(id, record.status);
+    }
+    const disk = diskUsageReport({ profile: this.plan.profile });
+    if (disk) {
+      logStream.write(`\n[ci][lanes] lane ${lane.name} end\n${disk}\n`);
     }
     await new Promise((res) => logStream.end(res));
     // Dump the whole lane log once, folded, so parallel lanes never interleave.

@@ -9,7 +9,7 @@ use crate::core::runtime::{ComponentSet, DispatchCtx};
 /// The `[components]` name backing a capability domain, if one does.
 pub fn component_for_domain(domain: &str) -> Option<&'static str> {
     Some(match domain {
-        "flows" | "workflow_runs" => "flows",
+        "flows" => "flows",
         "memory" => "memory",
         "channels" => "channels",
         "voice" => "voice",
@@ -22,11 +22,11 @@ pub fn component_for_domain(domain: &str) -> Option<&'static str> {
 /// `capability`, marked [`CapabilityStatus::Disabled`] when its component is
 /// off in `components`.
 pub fn apply_components(capability: Capability, components: &ComponentSet) -> Capability {
-    // The sandbox and reply-remix capabilities live in the shared `security`
-    // and `conversation` domains, so they are matched by id.
+    // The sandbox capability lives in the shared `security` domain, so it is
+    // matched by id.
     let component = match capability.id {
         "security.sandbox_backends" => Some("sandbox"),
-        "conversation.reply_remix" => Some("memes"),
+        "automation.inbound_event_queues" => Some("eventqueues"),
         // Scheduled jobs run in the tinyflows module.
         "automation.view_cron_jobs"
         | "automation.set_job_intervals"

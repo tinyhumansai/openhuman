@@ -1,4 +1,5 @@
 use super::*;
+use tinyagents_harness::tool::ToolSnapshot;
 
 pub(crate) struct OpenHumanDriverBundle {
     pub(crate) driver:
@@ -287,6 +288,7 @@ impl SubagentExecutor<crate::agent::tinyagents::host::OpenHumanRunContext> for O
                         } else if tool_result.is_error {
                             SubagentRunStatus::Incomplete {
                                 reason: "configured delegate reported failure".into(),
+                                failure_cause: None,
                             }
                         } else {
                             SubagentRunStatus::Completed
@@ -462,6 +464,7 @@ pub(in crate::agent::subagent_host) fn outcome_to_host(
         },
         SubagentOutcomeKind::Incomplete(incomplete) => SubagentRunStatus::Incomplete {
             reason: incomplete.reason,
+            failure_cause: neutral_failure_cause.clone(),
         },
         SubagentOutcomeKind::Cancelled => SubagentRunStatus::Cancelled,
     };

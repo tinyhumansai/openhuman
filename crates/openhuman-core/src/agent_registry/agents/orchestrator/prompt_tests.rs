@@ -42,6 +42,7 @@ fn ctx_with<'a>(integrations: &'a [ConnectedIntegration]) -> PromptContext<'a> {
         personality_roster: vec![],
         agents_md_global: None,
         agents_md_local: None,
+        flow_archetype_text: None,
     }
 }
 
@@ -451,8 +452,8 @@ fn build_routes_prompt_heavy_domains_to_specialists() {
     // twice per turn. What must survive is the routing *policy* — delegate
     // rather than improvise — and the pointer to the withheld ones.
     assert!(
-        body.contains("- Specialists: delegate tools or `use_skill`."),
-        "the routing must still send specialist work to delegates or packed hand-offs"
+        body.contains("- Specialists: use `spawn_subagent` with the specialist's `agent_id`"),
+        "the routing must direct specialist work through the single spawn tool"
     );
     assert!(
         !body.contains("## Presentation generation"),
@@ -506,6 +507,11 @@ fn build_never_mandates_plan_review_and_allows_a_lead_in() {
     assert!(!body.contains("before doing any of the work"));
     assert!(body.contains("3+ steps: `todo`, then execute."));
     assert!(body.contains("tick each with `todo {\"complete\": N}` as soon as it's done"));
+    assert!(
+        body.contains("`blockers` for what does not work or must be avoided here (with why)")
+            && body.contains("read its `Blockers` before retrying anything"),
+        "the orchestrator is told when to write each kind of note"
+    );
     assert!(body.contains("Make a tool call in the message that announces it"));
 }
 

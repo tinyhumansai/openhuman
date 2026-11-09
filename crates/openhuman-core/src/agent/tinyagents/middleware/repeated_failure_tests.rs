@@ -1,5 +1,77 @@
 use super::*;
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
+#[test]
+fn policy_denial_keeps_its_class_when_error_details_are_withheld() {
+    let policy = HostFailurePolicy::new(
+        SteeringHandle::allow_all(),
+        Arc::new(std::sync::Mutex::new(None)),
+    );
+    let context = RunContext::new(
+        tinyagents_harness::context::RunConfig::new("withheld-policy-error"),
+        OpenHumanRunContext::new(),
+    );
+    let call = TaToolCall::new("denied-call", "delete_artifact", serde_json::json!({}));
+    let invocation = ToolInvocationIdentity::new("denied-call", "delete_artifact");
+    let scope = policy.scope(&context, &call);
+    // An oversized result is deterministically withheld even if another test
+    // has initialized a redactor in this process.
+    let result = TaToolResult::error(format!(
+        "[policy-denied] secret=fixture-private-value{}",
+        " ".repeat(65 * 1024)
+    ));
+    let assessment = policy.assess(&context, &invocation, &call, &scope, &result);
+    let tinyagents_harness::middleware::FailureAssessment::ClassifiedFailure {
+        class,
+        budget,
+        error,
+        ..
+    } = assessment
+    else {
+        panic!("a policy denial must retain its terminal class when details are withheld");
+    };
+    assert_eq!(class, "policy");
+    assert_eq!(budget, 0);
+    assert!(!error.contains("fixture-private-value"));
+}
+
+#[tokio::test]
+async fn classified_stop_cause_survives_the_latch_cleanup_on_agent_finish() {
+    use tinyagents_harness::{context::RunConfig, middleware::AgentRun, steering::SteeringPolicy};
+
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let handle = SteeringHandle::new(SteeringPolicy::new());
+    let middleware = RepeatedToolFailureMiddleware::new(handle, 3, slot);
+    middleware.policy.stop.halt_classified(
+        "classified summary".into(),
+        "uncertain_side_effect",
+        "web_answer_tool",
+        false,
+        String::new,
+    );
+    let mut run = AgentRun::default();
+    let mut context = RunContext::new(
+        RunConfig::new("classified-stop"),
+        crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+    );
+
+    middleware
+        .after_agent(&mut context, &(), &mut run)
+        .await
+        .expect("middleware cleanup succeeds");
+
+    assert_eq!(
+        run.failure_cause,
+        Some(tinyagents_harness::no_progress::ClassifiedStopCause {
+            class: "uncertain_side_effect".into(),
+            operation: "web_answer_tool".into(),
+            summary: "classified summary".into(),
+        })
+    );
+}
+
 #[test]
 fn identical_recoverable_halt_uses_openhuman_copy() {
     let ladder = RecoverableFailureLadder::default();
@@ -11,7 +83,7 @@ fn identical_recoverable_halt_uses_openhuman_copy() {
     let summary = summary.expect("eighth identical failure halts");
     assert_eq!(
         summary,
-        recoverable_identical_halt_summary("web_fetch", 8, "connection reset")
+        "Stopping: the `web_fetch` call was retried 8 times with identical arguments and kept failing — repeating it will not help. Last error:\nconnection reset\n\nThis looked recoverable at first, but the same call exhausted the extended transient-failure headroom. Report this back instead of retrying."
     );
 }
 

@@ -44,4 +44,4 @@ Enable the named Embed `skills` feature for skill setters and registry access. L
 
 The example writes a bundle, registers an agent, checks the copied contents and verifies that the destination is not a symlink. Use the same directory layout for production bundles; do not depend on the fixture's temporary directory lifetime.
 
-A resumed session's prompt is frozen, so adding or editing a bundle does not rewrite an existing conversation's recorded prefix. Start a new session when you want updated instructions to become visible. See [turns and sessions](turns-sessions.md) and the generated [builder setters](../builder-setters.md) for runtime policy knobs.
+A resumed session's prompt is frozen, so adding or editing a bundle does not rewrite an existing conversation's recorded prefix. Start a new session when you want updated instructions to become visible, or build the agent with `AgentDefinitionSpec::refresh_prompt_on_resume(true)` so a resumed session is sent its current prompt. See [turns and sessions](turns-sessions.md) and the generated [builder setters](../builder-setters.md) for runtime policy knobs.

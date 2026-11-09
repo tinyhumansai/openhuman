@@ -46,6 +46,26 @@ describe('MemoryErrorAlert', () => {
     expect(screen.getByTestId('billing-page')).toBeInTheDocument();
   });
 
+  it('turns PLAN_REQUIRED into an upgrade prompt to billing (#8081)', () => {
+    renderAt(
+      coded(
+        'PLAN_REQUIRED',
+        'plan required: [MEMORY_PLAN_REQUIRED] memory API memory/scopes (HTTP 403 Forbidden)'
+      )
+    );
+    const alert = screen.getByTestId('alert');
+    expect(alert).toHaveAttribute('data-kind', 'plan-required');
+    expect(alert).toHaveAttribute('data-variant', 'warning');
+    expect(alert).toHaveTextContent("Memory isn't part of your plan");
+    expect(alert).toHaveTextContent("Your current plan doesn't include memory");
+    expect(alert).toHaveTextContent('See plans');
+    expect(alert).not.toHaveTextContent('MEMORY_PLAN_REQUIRED');
+    expect(alert).not.toHaveTextContent('HTTP 403');
+    expect(screen.queryByTestId('memory-top-up')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('memory-upgrade'));
+    expect(screen.getByTestId('billing-page')).toBeInTheDocument();
+  });
+
   it.each([
     ['UNAVAILABLE', "Memory can't be reached right now"],
     ['ENGINE', 'engine detail'],

@@ -19,7 +19,7 @@ const LOG_PREFIX: &str = "[keyring_consent]";
 
 static CONSENT_EVENT_PUBLISHED: AtomicBool = AtomicBool::new(false);
 
-/// Process-wide cached consent preference. Updated by [`record_consent`] and
+/// Process-wide cached consent preference. Updated by [`apply_consent`] and
 /// [`initialize`]. Read by [`check_secret_access`] and [`current_status`] so
 /// they never touch disk on the hot path.
 static CONSENT_CACHE: RwLock<Option<ConsentPreference>> = RwLock::new(None);
@@ -195,21 +195,6 @@ pub fn apply_consent(pref: &ConsentPreference) {
     );
     *CONSENT_CACHE.write() = Some(pref.clone());
     CONSENT_EVENT_PUBLISHED.store(false, Ordering::SeqCst);
-}
-
-/// Record the user's consent decision: update the in-memory cache and return
-/// the preference for the RPC caller to persist via `update_local_state`.
-///
-/// Prefer the [`build_consent_preference`] + [`apply_consent`] pair when you
-/// need to guarantee persistence happens before the cache is updated.
-pub fn record_consent(mode: &str) -> ConsentPreference {
-    let pref = build_consent_preference(mode);
-    info!(
-        "{LOG_PREFIX} record_consent mode={mode} at_ms={}",
-        pref.consented_at_ms.unwrap_or(0)
-    );
-    apply_consent(&pref);
-    pref
 }
 
 /// Reset the cached keyring probe and re-run it.

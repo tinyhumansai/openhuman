@@ -31,6 +31,7 @@ fn full_product_features_enabled() -> bool {
         ("web3", cfg!(feature = "web3")),
         ("documents", cfg!(feature = "documents")),
         ("modules", cfg!(feature = "modules")),
+        ("security-module", cfg!(feature = "security-module")),
         ("flows", cfg!(feature = "flows")),
         ("skills", cfg!(feature = "skills")),
         ("mcp", cfg!(feature = "mcp")),
@@ -39,8 +40,11 @@ fn full_product_features_enabled() -> bool {
         ("scheduler-gate", cfg!(feature = "scheduler-gate")),
         ("file-logging", cfg!(feature = "file-logging")),
         ("hosting", cfg!(feature = "hosting")),
-        ("tinymemes", cfg!(feature = "tinymemes")),
+        ("inbound-queues", cfg!(feature = "inbound-queues")),
         ("storage-sqlite", cfg!(feature = "storage-sqlite")),
+        ("storage-file", cfg!(feature = "storage-file")),
+        ("secret-file", cfg!(feature = "secret-file")),
+        ("legacy-import", cfg!(feature = "legacy-import")),
     ];
     let declared: std::collections::BTreeSet<_> = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -96,7 +100,7 @@ fn full_product_features_enabled() -> bool {
 /// itself once a turn has deferred tools (see that module's doc comment) —
 /// but it is a model-visible tool name the frontend's tool-call presentation
 /// must recognize exactly like any other.
-fn full_tool_catalog_names() -> Vec<String> {
+async fn full_tool_catalog_names() -> Vec<String> {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let mut cfg = test_config(&tmp);
@@ -122,23 +126,25 @@ fn full_tool_catalog_names() -> Vec<String> {
     let extensions = crate::core::slots::Extensions::new();
     #[cfg(feature = "media")]
     crate::tools::sources::register_tool_source_in(&extensions, "catalog-test-media", |_| {
-        use std::sync::Arc;
-        use tinyagents_harness::tinyinference_image::MockImageGenerator;
-        use tinyagents_harness::tinyinference_video::{MockVideoGenerator, MockVideoScript};
+        Box::pin(async {
+            use std::sync::Arc;
+            use tinyagents_harness::tinyinference_image::MockImageGenerator;
+            use tinyagents_harness::tinyinference_video::{MockVideoGenerator, MockVideoScript};
 
-        crate::media::generation::media_tools_from(
-            crate::media::generation::MediaGenerators::new(
-                Arc::new(MockImageGenerator::new()),
-                Arc::new(MockVideoGenerator::new(MockVideoScript::delivers())),
-            ),
-            std::path::Path::new("."),
-            std::path::Path::new("./workspace"),
-            std::path::Path::new("./Files"),
-            tinyagents_harness::tinyinference_video::WaitPolicy::new(
-                std::time::Duration::from_millis(1),
-                std::time::Duration::from_secs(5),
-            ),
-        )
+            crate::media::generation::media_tools_from(
+                crate::media::generation::MediaGenerators::new(
+                    Arc::new(MockImageGenerator::new()),
+                    Arc::new(MockVideoGenerator::new(MockVideoScript::delivers())),
+                ),
+                std::path::Path::new("."),
+                std::path::Path::new("./workspace"),
+                std::path::Path::new("./Files"),
+                tinyagents_harness::tinyinference_video::WaitPolicy::new(
+                    std::time::Duration::from_millis(1),
+                    std::time::Duration::from_secs(5),
+                ),
+            )
+        })
     });
     let context = crate::core::runtime::CoreContext::for_test_with_extensions(
         crate::core::runtime::DomainSet::full(),
@@ -146,18 +152,19 @@ fn full_tool_catalog_names() -> Vec<String> {
         extensions,
     );
 
-    let tools = crate::core::runtime::CoreContext::sync_scope(context, || {
+    let tools = crate::core::runtime::CoreContext::scope(context, async {
         all_tools(
             Arc::new(cfg.clone()),
             &security,
-            AuditLogger::disabled(),
+            AuditSink::disabled(),
             &browser,
             &http,
             tmp.path(),
-            &HashMap::new(),
             &cfg,
         )
-    });
+        .await
+    })
+    .await;
 
     let mut names: Vec<String> = tools.iter().map(|t| t.name().to_string()).collect();
     names.push(tinyagents_harness::tool::discover::TOOL_SEARCH_NAME.to_string());
@@ -177,19 +184,40 @@ fn full_tool_catalog_names() -> Vec<String> {
     names
 }
 
+/// Tool families the core does not register itself: they come from tool
+/// sources the TinyHumans layer plugs in (`tools::sources`), which a
+/// core-only lib test cannot install. The frontend fixture still lists them
+/// because the shipped product has them, so a core-only run must not read
+/// their absence as drift.
+const HOSTED_TOOL_PREFIXES: &[&str] = &["media_"];
+
+fn is_hosted_tool(name: &str) -> bool {
+    HOSTED_TOOL_PREFIXES.iter().any(|p| name.starts_with(p))
+}
+
 const REGENERATE_COMMAND: &str = "UPDATE_TOOL_CATALOG=1 cargo test -p openhuman --lib \
      --features \"$(bash scripts/ci/product-features.sh)\" \
      tools::ops::tests::catalog_fixture_tests::tool_catalog_matches_frontend_fixture";
 
 /// Regenerates the fixture when `UPDATE_TOOL_CATALOG=1`, otherwise fails with
 /// exactly what was added/removed relative to it.
-#[test]
-fn tool_catalog_matches_frontend_fixture() {
-    let names = full_tool_catalog_names();
+#[tokio::test]
+async fn tool_catalog_matches_frontend_fixture() {
+    let names = full_tool_catalog_names().await;
     let path = fixture_path();
 
     if std::env::var("UPDATE_TOOL_CATALOG").as_deref() == Ok("1") {
         assert!(full_product_features_enabled(), "{REGENERATE_COMMAND}");
+        // Keep the hosted families the fixture already lists: this build
+        // cannot see them, so regenerating must not drop them.
+        let mut names = names;
+        if let Ok(previous) = std::fs::read_to_string(&path) {
+            if let Ok(previous) = serde_json::from_str::<Vec<String>>(&previous) {
+                names.extend(previous.into_iter().filter(|n| is_hosted_tool(n)));
+                names.sort();
+                names.dedup();
+            }
+        }
         let json = serde_json::to_string_pretty(&names).expect("serialize tool catalog");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("create fixture directory");
@@ -223,7 +251,10 @@ fn tool_catalog_matches_frontend_fixture() {
     let full_product = full_product_features_enabled();
     let added: Vec<&String> = names.iter().filter(|n| !expected.contains(n)).collect();
     let removed: Vec<&String> = if full_product {
-        expected.iter().filter(|n| !names.contains(n)).collect()
+        expected
+            .iter()
+            .filter(|n| !names.contains(n) && !is_hosted_tool(n))
+            .collect()
     } else {
         Vec::new()
     };

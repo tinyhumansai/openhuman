@@ -9,8 +9,8 @@
  * its own; OpenHuman's own `task` toolkit entry
  * (`features/conversations/aui/toolkit.tsx`) renders sub-agent delegations
  * through `features/conversations/aui/SubagentTaskCard.tsx` instead, which
- * needs OpenHuman-specific affordances (the awaiting-user reply box, worktree
- * actions) this generic card has no slot for.
+ * needs OpenHuman-specific affordances (the awaiting-user reply box) this
+ * generic card has no slot for.
  *
  * Changes from upstream:
  * - `cn` import path (`@/components/assistant-ui/lib/utils`).

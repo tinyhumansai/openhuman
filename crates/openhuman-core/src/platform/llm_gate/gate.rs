@@ -185,7 +185,7 @@ pub fn current_policy() -> Policy {
 
 /// `true` when the signed-out override is active. Cheap atomic load —
 /// safe to call from hot paths (e.g. per-LLM-call short-circuit in
-/// `OpenHumanBackendModel`).
+/// `TinyHumansModel` through its host adapter).
 ///
 /// Always `false` in SaaS mode: there, signed in is a fact about each user,
 /// checked against that user's own credential when it is used, and one

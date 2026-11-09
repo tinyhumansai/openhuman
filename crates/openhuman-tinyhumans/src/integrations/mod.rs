@@ -47,19 +47,23 @@ pub(crate) fn register(_options: &InstallOptions) {
     register_tool_source_at(
         FILE_STORAGE_SOURCE_ID,
         ToolSourcePlacement::After(ANCHOR_AFTER_SEARCH),
-        |ctx| file_storage::build_file_storage_tools(ctx.root_config, ctx.action_dir),
+        |ctx| {
+            Box::pin(async move {
+                file_storage::build_file_storage_tools(ctx.root_config, ctx.action_dir).await
+            })
+        },
     );
     register_tool_source_at(
         INTEGRATION_TOOLS_SOURCE_ID,
         ToolSourcePlacement::After(ANCHOR_AFTER_DELEGATE),
-        |ctx| tools::build_integration_tools(ctx.root_config),
+        |ctx| Box::pin(async move { tools::build_integration_tools(ctx.root_config).await }),
     );
     #[cfg(feature = "web3")]
     web3::register();
     composio::register();
     openhuman_embed::__host::artifact_publisher::register_artifact_publisher(
         ARTIFACT_PUBLISHER_ID,
-        file_storage::artifact_publisher,
+        |config| Box::pin(file_storage::artifact_publisher(config)),
     );
     log::debug!(
         "[tinyhumans] integrations: tool sources, wallet backend, composio route and artifact publisher registered"

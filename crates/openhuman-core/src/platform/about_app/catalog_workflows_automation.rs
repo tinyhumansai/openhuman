@@ -223,6 +223,21 @@ Capability {
         privacy: None,
     },
 Capability {
+        id: "automation.inbound_event_queues",
+        name: "Inbound Event Queues",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Composio triggers and agent webhooks are queued before \
+                      triage. A redelivered trigger is handled once, a flood is paced and \
+                      folded into one digest, a triage that asks to wait is retried when it \
+                      asked to instead of being dropped, and events that keep failing are \
+                      parked for review rather than lost. Runs in the TinyEventQueues module.",
+        how_to: "Configured with [components] eventqueues and [inbound] in config.toml; \
+                 inspect with the inbound.stats, inbound.dead and inbound.redrive RPC methods",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+Capability {
         id: "automation.task_sources",
         name: "Task Sources",
         domain: "automation",
@@ -272,7 +287,7 @@ Capability {
         domain: "flows",
         category: CapabilityCategory::Automation,
         description: "A `dedup` node inside a saved workflow graph, giving the flow durable \
-                      exactly-once processing per item with no agent turn or extra plumbing \
+                      per-item deduplication with no agent turn or extra plumbing \
                       involved. It drops an item whose per-item key was already committed by a \
                       prior successful run, and otherwise passes it through. Committing happens \
                       automatically: keys the node passes through are marked done only once the \
@@ -315,7 +330,7 @@ Capability {
         name: "View Execution History",
         domain: "automation",
         category: CapabilityCategory::Automation,
-        description: "Inspect past runs and results for scheduled jobs.",
+        description: "Inspect past runs and results for scheduled jobs, including completed work delegated to sub-agents.",
         how_to: "Settings > Cron Jobs",
         status: CapabilityStatus::Beta,
         privacy: None,

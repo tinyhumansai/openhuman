@@ -5,14 +5,14 @@
 
 use crate::config::Config;
 use crate::core::events::DomainEvent;
-use crate::flows::store;
+use crate::flows::catalog_storage;
 use crate::memory::types::{ForgetParams, ItemsListParams, MAX_LIMIT};
-use crate::memory::{MemoryError, MemoryResult};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tinybus::EventHandler;
+use tinymemory_api::{Error, Result};
 use tinymemory_api::{ItemKind, MetaFilter, StoreItem};
-use {crate::flows::flow_meta, crate::flows::flow_tag, tinyflows_catalog::FlowRun};
+use {crate::flows::flow_meta, crate::flows::flow_tag, tinyflows_bus::catalog::FlowRun};
 
 /// Bounds a post-run memory digest to a compact, LLM-cheap size — a single
 /// run's summary must never dominate a later `flow_memory_recall`.
@@ -59,7 +59,7 @@ impl FlowRunDigestSubscriber {
         Self { config }
     }
 
-    async fn handle_finished(
+    pub(super) async fn handle_finished(
         &self,
         ctx: crate::core::runtime::DispatchCtx,
         flow_id: &str,
@@ -72,34 +72,68 @@ impl FlowRunDigestSubscriber {
             tracing::trace!(target: "flows", %flow_id, %run_id, %status, "[flows] digest: ignoring non-success terminal status");
             return;
         }
-        if !crate::memory::memory_is_on(&config) {
+        if !crate::memory::memory_is_on(&config).await {
             tracing::debug!(target: "flows", %flow_id, %run_id, "[flows] digest: memory is off — skipping");
             return;
         }
 
-        let flow_name = match store::get_flow(&config, flow_id) {
-            Ok(Some(flow)) => flow.name,
-            Ok(None) => {
-                tracing::debug!(target: "flows", %flow_id, %run_id, "[flows] digest: flow no longer exists — skipping");
+        let storage = match catalog_storage::register(&ctx, &config).await {
+            Ok(registration) => registration.storage(),
+            Err(error) => {
+                tracing::warn!(target: "flows", %flow_id, %run_id, %error, "[flows] digest: failed to register scoped CatalogStorage");
                 return;
             }
-            Err(e) => {
-                tracing::warn!(target: "flows", %flow_id, %run_id, error = %e, "[flows] digest: failed to load flow — skipping");
+        };
+        let proxy = match crate::modules::tinyflows::catalog_proxy(&config).await {
+            Ok(proxy) => proxy,
+            Err(error) => {
+                tracing::warn!(target: "flows", %flow_id, %run_id, %error, "[flows] digest: Catalog module unavailable");
                 return;
             }
         };
 
-        let run = match store::get_flow_run(&config, run_id) {
-            Ok(Some(run)) => run,
-            Ok(None) => {
-                tracing::warn!(target: "flows", %flow_id, %run_id, "[flows] digest: run row not found — skipping");
-                return;
-            }
-            Err(e) => {
-                tracing::warn!(target: "flows", %flow_id, %run_id, error = %e, "[flows] digest: failed to load run — skipping");
+        let workflow: Option<tinyflows_bus::catalog::Workflow> = match proxy
+            .call(
+                tinyflows_bus::catalog::members::GET_WORKFLOW,
+                (storage.clone(), flow_id.to_owned()),
+            )
+            .await
+        {
+            Ok(workflow) => workflow,
+            Err(error) => {
+                tracing::warn!(target: "flows", %flow_id, %run_id, error = %error, "[flows] digest: failed to load workflow");
                 return;
             }
         };
+        let flow_name = match workflow {
+            Some(flow) => flow.name,
+            None => {
+                tracing::debug!(target: "flows", %flow_id, %run_id, "[flows] digest: flow no longer exists — skipping");
+                return;
+            }
+        };
+
+        let wire_run: Option<tinyflows_bus::catalog::FlowRun> = match proxy
+            .call(
+                tinyflows_bus::catalog::members::GET_RUN,
+                (tinyflows_bus::catalog::RunIdRequest {
+                    storage,
+                    id: run_id.to_owned(),
+                },),
+            )
+            .await
+        {
+            Ok(run) => run,
+            Err(error) => {
+                tracing::warn!(target: "flows", %flow_id, %run_id, error = %error, "[flows] digest: failed to load run — skipping");
+                return;
+            }
+        };
+        let Some(wire_run) = wire_run else {
+            tracing::warn!(target: "flows", %flow_id, %run_id, "[flows] digest: run row not found — skipping");
+            return;
+        };
+        let run: FlowRun = wire_run;
 
         let digest = render_run_digest(&flow_name, &run);
         let mut meta = flow_meta(flow_id, &[FLOW_RUN_DIGEST_TAG.to_string()]);
@@ -111,7 +145,7 @@ impl FlowRunDigestSubscriber {
             Ok(receipt) => {
                 tracing::debug!(target: "flows", %flow_id, %run_id, replayed = receipt.replayed, "[flows] digest: run digest stored");
             }
-            Err(MemoryError::Off(_)) => {
+            Err(Error::Off(_)) => {
                 tracing::debug!(target: "flows", %flow_id, %run_id, "[flows] digest: memory is off — skipping");
                 return;
             }
@@ -139,7 +173,7 @@ pub(super) async fn enforce_retention_cap(
     config: &Config,
     flow_id: &str,
     cap: usize,
-) -> MemoryResult<usize> {
+) -> Result<usize> {
     let mut digests = Vec::new();
     let mut cursor = None;
     loop {
@@ -234,7 +268,11 @@ pub(super) fn render_run_digest(flow_name: &str, run: &FlowRun) -> String {
             break;
         }
         let status = step.status.as_deref().unwrap_or("?");
-        let output = truncate_chars(&step.output.to_string(), 120);
+        // Scrub the complete structured output before serialization and
+        // truncation, so sensitive fields are handled by the host policy
+        // even when their values fall beyond the digest's visible prefix.
+        let sanitized = crate::security::scrub::sanitize_json(&step.output);
+        let output = truncate_chars(&sanitized.value.to_string(), 120);
         let _ = writeln!(out, "- {} [{status}]: {output}", step.node_id);
     }
     truncate_chars(&out, DIGEST_MAX_CHARS)

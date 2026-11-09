@@ -40,11 +40,13 @@ use super::types::{
     NotificationStatus,
 };
 use crate::config::Config;
-use crate::storage::documents::{compare_and_swap, text, Repo};
+use crate::storage::documents::{compare_and_swap, text, update_or_insert, Repo};
 use crate::storage::{DocumentStore, DocumentStoreExt, StorageError};
 
+#[cfg(feature = "legacy-import")]
+use super::storage_schema::legacy_collections;
+use super::storage_schema::specs;
 pub(super) use super::storage_schema::{core_id, CORE, DEDUP, NOTIFICATIONS, SETTINGS};
-use super::storage_schema::{legacy_collections, specs};
 use crate::storage::schema_support::key_of;
 
 /// The `workspace` key of core notifications in the per-workspace default
@@ -62,6 +64,7 @@ const DEDUP_WINDOW_SECS: i64 = 60;
 /// that may serve several workspaces gets them re-filed under the real
 /// workspace's key, exactly as [`current`] does for new records
 /// ([`workspace_key_for`]).
+#[cfg(feature = "legacy-import")]
 pub(crate) fn import_source() -> crate::storage::import::Source {
     crate::storage::import::Source {
         domain: "notifications",
@@ -225,19 +228,17 @@ async fn claim_content(
     skip_recent: bool,
 ) -> Result<Option<Option<i64>>, StorageError> {
     let window_start = now_ms - DEDUP_WINDOW_SECS * 1000;
-    let repo = tinystoragedrivers::Repo::<Value>::new(docs, DEDUP)?;
     let mut previous: Option<Option<i64>> = None;
-    repo.update(id, |current| {
+    update_or_insert(docs, DEDUP, id, |current| {
         let last = current
-            .as_ref()
             .and_then(|doc| doc.get("last_ms"))
             .and_then(Value::as_i64);
         if skip_recent && last.is_some_and(|last| last >= window_start) {
             previous = None;
-            return Ok(None);
+            return None;
         }
         previous = Some(last);
-        Ok(Some(json!({ "last_ms": now_ms })))
+        Some(json!({ "last_ms": now_ms }))
     })
     .await?;
     Ok(previous)
@@ -283,7 +284,7 @@ pub(super) struct Docs(Repo, String);
 
 impl Docs {
     #[cfg(test)]
-    pub(super) fn over(scoped: &crate::storage::ScopedStorage) -> Self {
+    pub(super) fn over(scoped: &crate::storage::Storage) -> Self {
         Self(Repo::over(scoped, DOMAIN, collections), String::new())
     }
 

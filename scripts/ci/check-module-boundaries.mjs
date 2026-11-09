@@ -2,10 +2,24 @@
 // Audit resolved normal/build edges, never Cargo.lock membership or dev edges.
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const CONTRACT_REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index';
+const CONTRACT_GIT_SOURCES = new Map([
+  ['tinystoragedrivers-types', 'https://github.com/tinyhumansai/tinystoragedrivers'],
+]);
+
+function contractSourceAllowed(name, source) {
+  if (source === CONTRACT_REGISTRY) return true;
+  const repository = CONTRACT_GIT_SOURCES.get(name);
+  if (!repository || typeof source !== 'string') return false;
+  const prefix = `git+${repository}?rev=`;
+  if (!source.startsWith(prefix)) return false;
+  const [revision, resolved] = source.slice(prefix.length).split('#');
+  return /^[0-9a-f]{40}$/.test(revision) &&
+    typeof resolved === 'string' && resolved.length >= 8 && revision.startsWith(resolved);
+}
 
 export const CONTRACT_CLOSURE = new Set([
   'serde', 'serde_core', 'serde_derive', 'serde_json', 'itoa', 'memchr', 'zmij',
@@ -14,9 +28,12 @@ export const CONTRACT_CLOSURE = new Set([
   'proc-macro2', 'quote', 'syn', 'unicode-ident',
   // Base64 encoding of serialized binary contract fields; no transport/crypto.
   'base64',
+  // TSD v2's data-only storage contract vocabulary (Scope, specs, errors).
+  'tinystoragedrivers-types',
 ]);
 
 export function isImplementation(name, policy) {
+  if (policy.hostAdapterPackages?.includes(name)) return false;
   return policy.implementationPackages.includes(name) ||
     policy.implementationPrefixes.some(prefix => (name === prefix.replace(/-$/, '') || name.startsWith(prefix)) &&
       !policy.contracts.some(contract => contract.name === name));
@@ -56,6 +73,7 @@ export function auditGraph(metadata, roots, policy, contract = null) {
   const { packages, edges } = graph(metadata);
   const violations = [];
   const exceptions = [];
+  const reportedEdges = new Set();
   for (const root of roots) {
     const candidates = [...packages.values()].filter(pkg => pkg.name === root);
     if (candidates.length !== 1) throw new Error(`expected exactly one root package ${root}`);
@@ -64,8 +82,6 @@ export function auditGraph(metadata, roots, policy, contract = null) {
     for (let at = 0; at < queue.length; at++) {
       const path = queue[at];
       const id = path.at(-1);
-      if (seen.has(id)) continue;
-      seen.add(id);
       const name = packages.get(id).name;
       // The one crate that may link module implementations (local development
       // only). It is a legitimate edge only directly under an allowed host
@@ -80,20 +96,44 @@ export function auditGraph(metadata, roots, policy, contract = null) {
       if (path.length > 1) {
         const sourceMismatch = !contract && policy.contractManifests?.[name] &&
           packages.get(id).manifest_path !== policy.contractManifests[name];
-        const forbidden = contract ? !CONTRACT_CLOSURE.has(name) || packages.get(id).source !== CONTRACT_REGISTRY :
+        const forbidden = contract ? !CONTRACT_CLOSURE.has(name) || !contractSourceAllowed(name, packages.get(id).source) :
           isImplementation(name, policy) || sourceMismatch;
         if (forbidden) {
           const scope = contract ?? 'hosts';
-          const exemption = policy.exceptions.find(item => item.scope === scope && item.package === name);
+          const parent = path.length > 1 ? packages.get(path.at(-2)).name : null;
+          const exemption = policy.exceptions.find(item =>
+            item.scope === scope && item.package === name &&
+            (!item.parent || item.parent === parent));
           const finding = { scope, package: name, path: path.map(id => packages.get(id).name) };
-          (exemption ? exceptions : violations).push(finding);
+          const findings = exemption ? exceptions : violations;
+          const reportKey = `${exemption ? 'exception' : 'violation'}:${scope}:${id}`;
+          if (!reportedEdges.has(reportKey)) {
+            reportedEdges.add(reportKey);
+            findings.push(finding);
+          }
           // Contract exceptions pin the first unsafe dependency. Its implementation
           // closure is deliberately NOT approved vocabulary and must disappear
           // with this edge. Hosts still traverse it to catch indirect implementations.
           if (contract) continue;
         }
       }
-      for (const next of edges(id)) queue.push([...path, next]);
+      // Exceptions apply to incoming edges, not to package identities. A
+      // second path can have a different parent and must be checked even when
+      // this package's descendants have already been traversed.
+      if (seen.has(id)) continue;
+      seen.add(id);
+      for (const next of edges(id)) {
+        if (!contract && packages.get(next).name === policy.linkedHost?.package) {
+          const parent = packages.get(id).name;
+          if (path.length === 1 && policy.linkedHost.allowedParents.includes(parent)) continue;
+          violations.push({
+            scope: 'hosts', package: policy.linkedHost.package,
+            path: [...path, next].map(item => packages.get(item).name),
+          });
+          continue;
+        }
+        queue.push([...path, next]);
+      }
     }
   }
   return { violations, exceptions };
@@ -130,8 +170,73 @@ export function bridgeReach(metadata, roots, policy) {
   return found;
 }
 
+/** Check bridge edges while accounting only for implementation edges in its closure. */
+export function linkedHostAudit(metadata, root, policy) {
+  const target = policy.linkedHost?.package;
+  if (!target) return { violations: [], exceptions: [] };
+  const { packages, edges } = graph(metadata);
+  const candidates = [...packages.values()].filter(pkg => pkg.name === root);
+  if (candidates.length !== 1) throw new Error(`expected exactly one root package ${root}`);
+  const rootId = candidates[0].id;
+  const packageKey = pkg => JSON.stringify([pkg.name, pkg.version, pkg.source, pkg.manifest_path]);
+  const edgeKey = (parent, child) => `${packageKey(packages.get(parent))} -> ${packageKey(packages.get(child))}`;
+  const bridgeRoots = edges(rootId).filter(id => packages.get(id).name === target);
+  if (bridgeRoots.length === 0) throw new Error(`linked-modules graph for ${root} does not contain ${target}`);
+
+  // The bridge subtree is an intentional local implementation link. Its
+  // dependencies may also enable features on packages already in the host
+  // graph, so allow only implementation edges proven to occur in that closure.
+  const bridgeEdges = new Set();
+  const bridgeQueue = [...bridgeRoots];
+  const bridgeSeen = new Set();
+  while (bridgeQueue.length) {
+    const parent = bridgeQueue.pop();
+    if (bridgeSeen.has(parent)) continue;
+    bridgeSeen.add(parent);
+    for (const child of edges(parent)) {
+      bridgeEdges.add(edgeKey(parent, child));
+      bridgeQueue.push(child);
+    }
+  }
+
+  const queue = [[rootId]];
+  const seen = new Set();
+  const violations = [];
+  const exceptions = [];
+  const recorded = new Set();
+  for (let at = 0; at < queue.length; at++) {
+    const path = queue[at];
+    const id = path.at(-1);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const next of edges(id)) {
+      if (packages.get(next).name === target) {
+        if (id !== rootId || !policy.linkedHost.allowedParents.includes(root)) {
+          violations.push({ scope: 'hosts', package: target, path: [...path, next].map(item => packages.get(item).name) });
+        }
+        continue;
+      }
+      const child = packages.get(next);
+      const sourceMismatch = policy.contractManifests?.[child.name] &&
+        child.manifest_path !== policy.contractManifests[child.name];
+      const forbiddenImplementation = isImplementation(child.name, policy) && !bridgeEdges.has(edgeKey(id, next));
+      if (sourceMismatch || forbiddenImplementation) {
+        const key = `${child.name}:${edgeKey(id, next)}`;
+        if (!recorded.has(key)) {
+          recorded.add(key);
+          const finding = { scope: 'hosts', package: child.name, path: [...path, next].map(item => packages.get(item).name) };
+          const exemption = policy.exceptions.find(item => item.scope === 'hosts' && item.package === child.name);
+          (exemption ? exceptions : violations).push(finding);
+        }
+      }
+      queue.push([...path, next]);
+    }
+  }
+  return { violations, exceptions };
+}
+
 export function validatePolicy(policy) {
-  for (const key of ['implementationPackages', 'implementationPrefixes', 'contracts', 'pendingContracts', 'exceptions']) {
+  for (const key of ['implementationPackages', 'implementationPrefixes', 'hostAdapterPackages', 'contracts', 'pendingContracts', 'exceptions']) {
     if (!Array.isArray(policy[key])) throw new Error(`policy.${key} must be an array`);
   }
   if (!policy.contracts.length || !policy.implementationPackages.length || !policy.implementationPrefixes.length) {
@@ -157,7 +262,8 @@ export function validatePolicy(policy) {
   const seen = new Set();
   for (const item of policy.exceptions) {
     const key = `${item.scope}:${item.package}`;
-    if (!item.reason?.trim() || !item.package || !item.scope || seen.has(key)) {
+    if (!item.reason?.trim() || !item.package || !item.scope ||
+        (item.parent !== undefined && !item.parent) || seen.has(key)) {
       throw new Error(`invalid or duplicate exception ${key}`);
     }
     if (item.scope === 'hosts' ? !isImplementation(item.package, policy) :
@@ -168,19 +274,135 @@ export function validatePolicy(policy) {
   }
 }
 
-function cargo(root, args) {
+function cargoText(root, command, args, execute = execFileSync) {
   // All generated manifests and logs stay under the checkout's target/.
-  const stdout = execFileSync('bash', [join(root, 'scripts/ci-cancel-aware.sh'),
-    'cargo', 'metadata', '--format-version', '1', ...args], {
+  const stdout = execute('bash', [join(root, 'scripts/ci-cancel-aware.sh'),
+    'cargo', command, ...args], {
     cwd: root, encoding: 'utf8', maxBuffer: 128 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'],
   });
-  return JSON.parse(stdout);
+  return stdout;
+}
+
+function metadata(root, args, execute = execFileSync) {
+  return JSON.parse(cargoText(root, 'metadata', ['--format-version', '1', ...args], execute));
+}
+
+function parseTreePackage(display) {
+  const match = /^([^\s]+)\s+v([^\s]+)(.*)$/.exec(display);
+  if (!match) throw new Error(`unrecognized Cargo tree package entry: ${display}`);
+  const [, name, version, suffix] = match;
+  const qualifiers = [...suffix.matchAll(/\(([^()]*)\)/g)].map(item => item[1]);
+  const pathQualifier = qualifiers.find(item => isAbsolute(item) || item.startsWith('./') || item.startsWith('../'));
+  const sourceQualifier = qualifiers.find(item => item !== pathQualifier && item !== 'proc-macro');
+  let source = CONTRACT_REGISTRY;
+  let manifestPath;
+  if (pathQualifier) {
+    source = null;
+    manifestPath = join(resolve(pathQualifier), 'Cargo.toml');
+  } else if (sourceQualifier) {
+    source = sourceQualifier.startsWith('git+') || sourceQualifier.startsWith('registry+')
+      ? sourceQualifier
+      : `git+${sourceQualifier}`;
+  }
+  return { id: display, name, version, source, manifest_path: manifestPath };
+}
+
+/** Convert Cargo's package-scoped normal/build tree into the audit graph. */
+export function treeGraph(output) {
+  if (typeof output !== 'string' || !output.trim()) {
+    throw new Error('Cargo dependency tree must be a non-empty string');
+  }
+  const packages = new Map();
+  const nodes = new Map();
+  const byDisplay = new Map();
+  const stack = [];
+  let root;
+  for (const [index, line] of output.trimEnd().split('\n').entries()) {
+    const match = /^(\d+)(.+)$/.exec(line);
+    if (!match) throw new Error(`unrecognized Cargo tree line ${index + 1}`);
+    const depth = Number(match[1]);
+    const raw = match[2];
+    const deduplicated = raw.endsWith(' (*)');
+    const display = deduplicated ? raw.slice(0, -4) : raw;
+    if (depth > stack.length) throw new Error(`Cargo tree skipped a depth at line ${index + 1}`);
+    const parent = depth === 0 ? null : stack[depth - 1];
+    if (depth > 0 && !parent) throw new Error(`Cargo tree has no parent at line ${index + 1}`);
+    if (depth === 0) {
+      if (root !== undefined) throw new Error('Cargo tree contains more than one root');
+      root = display;
+    }
+    stack.length = depth;
+
+    let id = byDisplay.get(display);
+    if (deduplicated) {
+      if (!id) throw new Error(`Cargo tree references an unseen deduplicated package: ${display}`);
+    } else {
+      if (!id) {
+        const pkg = parseTreePackage(display);
+        id = `tree:${index}:${display}`;
+        packages.set(id, { ...pkg, id });
+        nodes.set(id, { id, deps: [] });
+        byDisplay.set(display, id);
+      }
+    }
+    if (parent) {
+      nodes.get(parent).deps.push({
+        pkg: id,
+        dep_kinds: [{ kind: null, target: null }],
+      });
+    }
+    stack[depth] = id;
+  }
+  return { packages: [...packages.values()], resolve: { nodes: [...nodes.values()] }, root };
+}
+
+function hostTree(root, manifest, packageName, features, execute) {
+  const args = [
+    '--manifest-path', join(root, manifest),
+    '--locked',
+    '-p', packageName,
+    '-e', 'normal,build',
+    '--prefix', 'depth',
+    '--format', '{p}',
+  ];
+  if (features === 'all') args.push('--all-features');
+  else if (features === 'default') { /* Cargo's default feature set. */ }
+  else if (Array.isArray(features)) {
+    args.push('--features', features.join(','));
+  } else throw new Error(`unsupported feature selection for ${packageName}`);
+  const tree = treeGraph(cargoText(root, 'tree', args, execute));
+  if (parseTreePackage(tree.root).name !== packageName) {
+    throw new Error(`Cargo tree for ${packageName} was rooted at ${tree.root}`);
+  }
+  return tree;
+}
+
+function cliFeatures(root, execute) {
+  const manifest = resolve(root, 'Cargo.toml');
+  const listing = metadata(root, ['--manifest-path', manifest, '--no-deps'], execute);
+  const pkg = listing.packages.find(item => item.name === 'openhuman-cli');
+  if (!pkg || !pkg.features || !Object.hasOwn(pkg.features, 'linked-modules')) {
+    throw new Error('openhuman-cli must declare its isolated linked-modules feature');
+  }
+  return Object.keys(pkg.features).filter(feature => feature !== 'default' && feature !== 'linked-modules');
+}
+
+function linkedCliTree(root, execute) {
+  const tree = treeGraph(cargoText(root, 'tree', [
+    '--manifest-path', join(root, 'Cargo.toml'), '--locked', '-p', 'openhuman-cli',
+    '-e', 'normal,build', '--prefix', 'depth', '--format', '{p}',
+    '--no-default-features', '--features', 'linked-modules',
+  ], execute));
+  if (parseTreePackage(tree.root).name !== 'openhuman-cli') {
+    throw new Error(`linked-modules probe was not rooted at openhuman-cli: ${tree.root}`);
+  }
+  return tree;
 }
 
 /** Resolve only this contract's selected features, without module/host unification. */
-function contractMetadata(root, contract, allFeatures) {
+function contractMetadata(root, contract, allFeatures, execute = execFileSync) {
   const manifest = resolve(root, contract.manifest);
-  const listing = cargo(root, ['--manifest-path', manifest, '--no-deps']);
+  const listing = metadata(root, ['--manifest-path', manifest, '--no-deps'], execute);
   const pkg = listing.packages.find(pkg => resolve(pkg.manifest_path) === manifest);
   if (!pkg || pkg.name !== contract.name) throw new Error(`missing contract ${contract.name}`);
   const harness = join(root, 'target/module-boundaries', contract.name, allFeatures ? 'all' : 'default');
@@ -188,10 +410,10 @@ function contractMetadata(root, contract, allFeatures) {
   const features = allFeatures ? Object.keys(pkg.features) : [];
   writeFileSync(join(harness, 'Cargo.toml'), `[workspace]\n[package]\nname = "boundary-probe"\nversion = "0.0.0"\nedition = "2024"\n[dependencies]\n${contract.name} = { path = ${JSON.stringify(dirname(manifest))}, features = ${JSON.stringify(features)} }\n`);
   writeFileSync(join(harness, 'src/lib.rs'), '');
-  return cargo(root, ['--manifest-path', join(harness, 'Cargo.toml')]);
+  return metadata(root, ['--manifest-path', join(harness, 'Cargo.toml')], execute);
 }
 
-export function run(root, strict = false) {
+export function run(root, strict = false, execute = execFileSync) {
   const policy = JSON.parse(readFileSync(join(root, 'scripts/ci/module-boundaries.json'), 'utf8'));
   validatePolicy(policy);
   policy.contractManifests = Object.fromEntries(policy.contracts.map(contract =>
@@ -202,22 +424,33 @@ export function run(root, strict = false) {
     }
   }
   const results = [];
-  for (const [manifest, roots] of [
-    ['Cargo.toml', ['openhuman', 'openhuman-cli', 'openhuman-tui']],
-    ['crates/openhuman-app/Cargo.toml', ['openhuman-app']],
+  for (const [manifest, packageName, features] of [
+    ['Cargo.toml', 'openhuman', 'all'],
+    ['Cargo.toml', 'openhuman-cli', cliFeatures(root, execute)],
+    ['Cargo.toml', 'openhuman-tui', 'all'],
+    ['crates/openhuman-app/Cargo.toml', 'openhuman-app', 'all'],
   ]) {
-    const metadata = cargo(root, ['--manifest-path', join(root, manifest), '--locked', '--all-features']);
-    results.push(auditGraph(metadata, roots, policy));
+    const tree = hostTree(root, manifest, packageName, features, execute);
+    results.push(auditGraph(tree, [packageName], policy));
   }
-  // Without `linked-modules` (default features) no host reaches the bridge.
-  results.push({
-    violations: bridgeReach(cargo(root, ['--manifest-path', join(root, 'Cargo.toml'), '--locked']),
-      ['openhuman-cli', 'openhuman-tui', 'openhuman'], policy),
-    exceptions: [],
-  });
+  // The linked-modules CLI feature is local-only, never shipped. Audit its
+  // separately rooted graph for a direct CLI edge; do not let its feature
+  // unification contaminate the CLI's shipping feature graph above.
+  results.push(linkedHostAudit(linkedCliTree(root, execute), 'openhuman-cli', policy));
+  // Default-feature graphs also guard against accidental bridge activation.
+  for (const packageName of ['openhuman-cli', 'openhuman-tui', 'openhuman']) {
+    results.push({
+      violations: bridgeReach(
+        hostTree(root, 'Cargo.toml', packageName, 'default', execute),
+        [packageName],
+        policy,
+      ),
+      exceptions: [],
+    });
+  }
   for (const contract of policy.contracts) {
     for (const all of [false, true]) {
-      results.push(auditGraph(contractMetadata(root, contract, all), [contract.name], policy, contract.name));
+      results.push(auditGraph(contractMetadata(root, contract, all, execute), [contract.name], policy, contract.name));
     }
   }
   const violations = results.flatMap(result => result.violations);

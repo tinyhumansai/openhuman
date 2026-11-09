@@ -102,7 +102,7 @@ The Decision column records the domains needed by the headless library host.
 | `tui`                |   OFF   |    —    | **DROP** | `openhuman tui`/`chat` terminal UI — no terminal in a library host                                  | `ratatui`, `crossterm`, `unicode-width`              |
 
 The historical recipe also left optional `browser-native`/`fantoccini`,
-`whatsapp-web`, `e2e-test-support`, `rss-bench` and `rss-bench-dhat` off.
+`e2e-test-support`, `rss-bench` and `rss-bench-dhat` off.
 Check the selected host crate's current feature list before adding optional
 domains. `rss-bench` and `rss-bench-dhat` remain development profiling features.
 
@@ -193,7 +193,7 @@ build-fact error:
 - **tui:** `openhuman tui` / `chat` returns "tui feature disabled at compile time".
 
 Everything the opencompany use cases need remains: the agent harness + turn
-runner, subagent delegation (`spawn_parallel_agents`), the Memory v2 host
+runner, subagent delegation, the Memory v2 host
 (engine binding, sources, conversations, context + secret/PII scrubbing), threads, config,
 security policy, provider routing/inference, `skills` (SKILL.md discovery/install
 

@@ -13,10 +13,15 @@ fn main() -> anyhow::Result<()> {
 async fn run() -> anyhow::Result<()> {
     let backend = support::stub_backend().await;
     let provider = support::provider("hello from the stub").await;
+    // The channel runtime builds its default chat model from the config's
+    // managed provider before any bound agent runs. The core carries no hosted
+    // provider, so register one that sends inference to the stub.
+    support::PointedInference::install(&format!("{}/v1", provider.uri()));
     let runtime = Runtime::builder()
         .config(support::offline_config())
         .workspace(Workspace::Ephemeral)
         .backend_url(backend.uri())
+        .api_key("sk-fixture")
         .provider(support::route(&provider, "fixture"))
         .build()
         .await?;

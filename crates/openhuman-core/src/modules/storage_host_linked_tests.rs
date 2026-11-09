@@ -1,17 +1,17 @@
 use super::*;
+use crate::storage::{Scope, StorageBackend, StorageError};
 use async_trait::async_trait;
 use serde_json::json;
 use tinybus::broker::Broker;
 use tinybus::transport::memory::MemoryBus;
 use tinybus::{BusName, Connection};
 use tinystoragedrivers::secrets::{DerivedKeys, KeyProvider};
-use tinystoragedrivers::{MemoryStorage, Scope, StorageError};
 use tinystoragedrivers_bus::{SecretNameRequest, SecretValue, SetSecretRequest};
+use tinystoragedrivers_testkit::MemoryBackend as MemoryStorage;
 use zeroize::Zeroizing;
 
 use super::super::storage_grants::StorageGrant;
 use super::super::storage_host::{module_scope, CallerDirectory, Environment, StorageHost};
-use crate::storage::StorageBackend;
 
 use super::TEST_TURN as TURN;
 
@@ -181,7 +181,7 @@ async fn servers_and_env_secrets_survive_a_restart_of_the_bus_and_host() {
     // a core restart does.
     let second = boot(backend).await;
     let server = second.server("io.example/files").await.unwrap();
-    assert_eq!(server["document_id"], "io.example/files");
+    assert_eq!(server["id"], "io.example/files");
     assert_eq!(
         second
             .secret("mcp_client_env/io.example/files")

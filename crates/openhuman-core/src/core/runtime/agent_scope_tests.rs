@@ -41,6 +41,44 @@ fn every_agent_context_owns_its_slots() {
 }
 
 #[test]
+fn autonomy_tier_source_and_ceiling_survive_derived_contexts() {
+    let parent = root("/tmp/autonomy-source-parent");
+    let live_child = parent.derive_with(overlay("/tmp/autonomy-source-live-child"));
+    assert_eq!(
+        live_child.autonomy_tier_source(),
+        crate::core::runtime::AutonomyTierSource::LiveConfig,
+        "an overlay without a source override inherits the live parent binding"
+    );
+
+    let fixed = parent.derive_with(
+        overlay("/tmp/autonomy-source-fixed")
+            .captured_autonomy_tier()
+            .read_only_autonomy_ceiling(),
+    );
+
+    let child = fixed.derive_with(overlay("/tmp/autonomy-source-child"));
+    assert_eq!(
+        child.autonomy_tier_source(),
+        crate::core::runtime::AutonomyTierSource::Captured
+    );
+    assert_eq!(child.autonomy_tier_ceiling(), Some(AutonomyLevel::ReadOnly));
+
+    let mut source_override = overlay("/tmp/autonomy-source-override");
+    source_override.autonomy_tier_source =
+        Some(crate::core::runtime::AutonomyTierSource::LiveConfig);
+    let overridden = fixed.derive_with(source_override);
+    assert_eq!(
+        overridden.autonomy_tier_source(),
+        crate::core::runtime::AutonomyTierSource::LiveConfig
+    );
+    assert_eq!(
+        overridden.autonomy_tier_ceiling(),
+        Some(AutonomyLevel::ReadOnly),
+        "changing the tier source cannot clear a fixed host ceiling"
+    );
+}
+
+#[test]
 fn contexts_derived_without_an_agent_share_the_parent_slots() {
     let parent = root("/tmp/agent-scope-shared");
     let alpha = agent(&parent, "alpha");

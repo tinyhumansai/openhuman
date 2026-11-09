@@ -11,7 +11,10 @@ async fn go(fx: &Fixture, options: &Options) -> Result<Outcome, LayoutError> {
 }
 
 async fn migrated(fx: &Fixture) -> Box<Report> {
-    match go(fx, &opts()).await.unwrap() {
+    match go(fx, &opts()).await.unwrap_or_else(|error| {
+        eprintln!("layout migration failed: {error:#}");
+        panic!("layout migration did not complete")
+    }) {
         Outcome::Migrated(report) => report,
         other => panic!("expected a migration, got {other:?}"),
     }

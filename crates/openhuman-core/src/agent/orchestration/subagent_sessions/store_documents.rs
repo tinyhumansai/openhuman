@@ -27,7 +27,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tinyagents_session::transcript::TranscriptMessage;
-use tinystoragedrivers::{CollectionSpec, Query, Sort};
+use tinystoragedrivers::{CollectionSpec, Filter, Query, Sort};
 
 use super::storage_schema::{spec, SESSIONS};
 use super::types::{DurableSubagentSession, DurableSubagentStatus};
@@ -62,6 +62,8 @@ fn collections() -> Vec<CollectionSpec> {
 struct StoredSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lifecycle_key: Option<tinyagents_orchestration::subagent::SubagentTaskKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_epoch: Option<u64>,
     subagent_session_id: String,
     parent_session: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -101,6 +103,7 @@ impl From<&DurableSubagentSession> for StoredSession {
         let updated_ms = rfc3339_ms(&s.updated_at).unwrap_or(created_ms);
         Self {
             lifecycle_key: s.lifecycle_key.clone(),
+            parent_epoch: s.parent_epoch,
             subagent_session_id: s.subagent_session_id.clone(),
             parent_session: s.parent_session.clone(),
             parent_thread_id: s.parent_thread_id.clone(),
@@ -128,6 +131,7 @@ impl From<StoredSession> for DurableSubagentSession {
     fn from(s: StoredSession) -> Self {
         Self {
             lifecycle_key: s.lifecycle_key,
+            parent_epoch: s.parent_epoch,
             subagent_session_id: s.subagent_session_id,
             parent_session: s.parent_session,
             parent_thread_id: s.parent_thread_id,
@@ -182,7 +186,7 @@ pub(super) struct Docs(Repo);
 
 impl Docs {
     #[cfg(test)]
-    pub(super) fn over(scoped: &crate::storage::ScopedStorage) -> Self {
+    pub(super) fn over(scoped: &crate::storage::Storage) -> Self {
         Self(Repo::over(scoped, DOMAIN, collections))
     }
 
@@ -202,6 +206,80 @@ impl Docs {
             .collect()
     }
 
+    /// Looks up one legacy task row for the TinyAgents import adapter without
+    /// loading or rewriting the host collection. The one-time JSON import is
+    /// performed by the caller before this indexed document query.
+    pub(super) fn find_task(&self, task_id: &str) -> Result<Option<DurableSubagentSession>> {
+        let task_id = task_id.to_owned();
+        let stored = self.0.run(|docs| async move {
+            docs.query_all(
+                SESSIONS,
+                &Query::filter(Filter::eq("current_task_id", task_id)),
+            )
+            .await
+        })?;
+        let sessions = stored
+            .into_iter()
+            .map(|item| {
+                serde_json::from_value::<StoredSession>(item.doc)
+                    .map(DurableSubagentSession::from)
+                    .map_err(Into::into)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(sessions.into_iter().next())
+    }
+
+    /// Atomically mutate one session from its current stored value. Live
+    /// lifecycle changes use this path so millisecond timestamp precision
+    /// cannot discard an equal-millisecond state transition. Whole-list saves
+    /// remain guarded by `write_if_newer` for stale snapshot/import protection.
+    pub(super) fn update_session<F>(
+        &self,
+        subagent_session_id: &str,
+        mut update: F,
+    ) -> Result<Option<DurableSubagentSession>>
+    where
+        F: FnMut(&mut DurableSubagentSession, String) + Send + 'static,
+    {
+        self.update_session_if(subagent_session_id, move |session, now| {
+            update(session, now);
+            true
+        })
+    }
+
+    /// Atomically mutate a session only when `update` accepts its latest
+    /// stored value. A rejected callback performs no write or timestamp bump.
+    pub(super) fn update_session_if<F>(
+        &self,
+        subagent_session_id: &str,
+        mut update: F,
+    ) -> Result<Option<DurableSubagentSession>>
+    where
+        F: FnMut(&mut DurableSubagentSession, String) -> bool + Send + 'static,
+    {
+        let id = key_of(subagent_session_id)?;
+        let updated = self.0.run(|docs| async move {
+            crate::storage::documents::update_document(&docs, SESSIONS, &id, move |current| {
+                let stored: StoredSession = serde_json::from_value(current.clone())
+                    .map_err(|error| crate::storage::StorageError::backend(error.to_string()))?;
+                let mut session = DurableSubagentSession::from(stored);
+                if !update(&mut session, chrono::Utc::now().to_rfc3339()) {
+                    return Ok(None);
+                }
+                let next = serde_json::to_value(StoredSession::from(&session))
+                    .map_err(|error| crate::storage::StorageError::backend(error.to_string()))?;
+                Ok(Some(next))
+            })
+            .await
+            .map(|updated| updated.map(|record| record.doc))
+        })?;
+        Ok(updated
+            .map(|value| {
+                serde_json::from_value::<StoredSession>(value).map(DurableSubagentSession::from)
+            })
+            .transpose()?)
+    }
+
     /// Whether the one-time legacy file import finished in this scope.
     pub(super) fn legacy_imported(&self, source: &std::path::Path) -> Result<bool> {
         import_state::is_done(&self.0, OWNER, &import_step(source))
@@ -215,13 +293,14 @@ impl Docs {
         sessions: &[DurableSubagentSession],
     ) -> Result<()> {
         let step = import_step(source);
-        let claimed = import_state::with_claim(&self.0, OWNER, &step, || {
+        let claimed = import_state::with_claim(&self.0, OWNER, &step, |condition| {
+            let claimed_repo = self.0.conditioned(condition)?;
             // The process that held the claim before us may have finished.
-            if self.legacy_imported(source)? {
+            if import_state::is_done(&claimed_repo, OWNER, &step)? {
                 return Ok(());
             }
-            self.save(sessions)?;
-            import_state::set_done(&self.0, OWNER, &step)
+            Self(claimed_repo.clone()).save(sessions)?;
+            import_state::set_done(&claimed_repo, OWNER, &step)
         })?;
         if claimed.is_none() {
             log::debug!(
@@ -261,17 +340,15 @@ async fn write_if_newer(
 ) -> Result<(), crate::storage::StorageError> {
     // A missing session is inserted; an existing one is replaced only while it
     // is older than ours. Both go through tsd's one retrying compare-and-swap.
-    let repo = tinystoragedrivers::Repo::<Value>::new(docs, SESSIONS)?;
-    repo.update(id, |stored| {
+    crate::storage::documents::update_or_insert(docs, SESSIONS, id, |stored| {
         if stored
-            .as_ref()
             .and_then(|stored| stored.get("updated_ms"))
             .and_then(Value::as_i64)
             .is_some_and(|have| have >= updated_ms)
         {
-            return Ok(None);
+            return None;
         }
-        Ok(Some(doc.clone()))
+        Some(doc.clone())
     })
     .await
     .map(|_| ())

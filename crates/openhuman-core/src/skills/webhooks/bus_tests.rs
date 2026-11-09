@@ -135,3 +135,101 @@ fn build_agent_response_sets_status_and_body() {
     let v: serde_json::Value = serde_json::from_slice(&decoded).expect("valid json");
     assert_eq!(v["result"].as_str(), Some("Triage decision: drop"));
 }
+
+// ── Inbound event queues ────────────────────────────────────────────────
+//
+// Agent webhooks run against the real `tinyeventqueues` module, linked into
+// the test binary on a private bus, with triage scripted. Before the queues,
+// a webhook whose triage was `Deferred` became a "Triage deferred until …"
+// string and was never triaged again.
+
+#[cfg(feature = "inbound-queues")]
+mod inbound {
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use super::super::{route_agent_trigger, triage_agent_directly};
+    use crate::core::runtime::DispatchCtx;
+    use crate::inbound::fixture::{active_config, decision, deferred, Rig, ScriptedTriage};
+    use crate::triage::{TriageAction, TriggerEnvelope};
+
+    const LABEL: &str = "webhook/POST/hooks/deploy";
+
+    fn request() -> TriggerEnvelope {
+        TriggerEnvelope::from_webhook(
+            "tunnel-1",
+            "POST",
+            "hooks/deploy",
+            serde_json::json!({ "status": "deployed", "service": "api" }),
+        )
+    }
+
+    async fn route(rig: &Rig, config: Option<crate::config::Config>, correlation_id: &str) {
+        let envelope = request();
+        let queued =
+            route_agent_trigger(config, &envelope, correlation_id, Some(rig.client.clone())).await;
+        if !queued {
+            triage_agent_directly(
+                DispatchCtx::host_default(),
+                envelope,
+                correlation_id.to_owned(),
+                rig.triage.clone() as Arc<dyn crate::triage::TriageRunner>,
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_deferred_agent_webhook_is_retried_at_its_defer_time_instead_of_dropped() {
+        let triage = ScriptedTriage::new([deferred(400), decision(TriageAction::Escalate)]);
+        let rig = Rig::new(triage.clone()).await;
+        let started = Instant::now();
+
+        route(&rig, Some(active_config()), "corr-deferred").await;
+
+        let applied = triage.until_applied(1, Duration::from_secs(15)).await;
+        assert_eq!(
+            applied,
+            vec![LABEL.to_owned()],
+            "the deferred webhook was dropped"
+        );
+        assert_eq!(triage.runs(), 2, "triaged, deferred, then triaged again");
+        assert!(
+            started.elapsed() >= Duration::from_millis(350),
+            "retried before the deferral ran out: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_redelivered_agent_webhook_produces_one_turn() {
+        let triage = ScriptedTriage::new([decision(TriageAction::React)]);
+        let rig = Rig::new(triage.clone()).await;
+
+        for _ in 0..2 {
+            route(&rig, Some(active_config()), "corr-redelivered").await;
+        }
+
+        let applied = triage.until_applied(1, Duration::from_secs(15)).await;
+        assert_eq!(applied, vec![LABEL.to_owned()]);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(
+            triage.applied().len(),
+            1,
+            "a redelivery produced another turn"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn with_the_component_off_an_agent_webhook_is_triaged_directly() {
+        let triage = ScriptedTriage::new([decision(TriageAction::React)]);
+        let rig = Rig::new(triage.clone()).await;
+        let mut config = active_config();
+        config.components.eventqueues = false;
+
+        route(&rig, Some(config), "corr-direct").await;
+
+        assert_eq!(triage.applied(), vec![LABEL.to_owned()]);
+    }
+}

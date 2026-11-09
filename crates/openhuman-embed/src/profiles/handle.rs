@@ -11,6 +11,7 @@ use openhuman_core::threads::{
     AppendConversationMessageRequest, ConversationMessagesRequest, ConversationMessagesResponse,
     ConversationThreadsListResponse,
 };
+use openhuman_core::web_chat::WebChannelEvent;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -19,7 +20,7 @@ use tokio::sync::broadcast;
 use super::RelayMessage;
 use super::{
     ConversationMessageRecord, ConversationThreadSummary, Inner, ProfileError, ProfileId,
-    WebChannelEvent,
+    ScopedWebEvent,
 };
 use crate::call::call_in;
 use crate::error::CoreError;
@@ -91,13 +92,13 @@ pub struct RelayAccepted {
 /// filter the gateway's `/events` stream applies.
 pub struct ProfileEvents {
     profile: String,
-    rx: broadcast::Receiver<WebChannelEvent>,
+    rx: broadcast::Receiver<ScopedWebEvent>,
 }
 
 impl ProfileEvents {
     /// The next event of this profile, or `None` once the bus is gone.
     /// Events the receiver fell too far behind on are skipped.
-    pub async fn recv(&mut self) -> Option<WebChannelEvent> {
+    pub async fn recv(&mut self) -> Option<ScopedWebEvent> {
         loop {
             match self.rx.recv().await {
                 Ok(event) if event.belongs_to_profile(&self.profile) => return Some(event),
@@ -231,11 +232,12 @@ impl ProfileHandle {
             let Some(event) = events.recv().await else {
                 return Err(ProfileError::EventsClosed);
             };
-            if event.thread_id != thread_id || event.request_id != request_id {
+            let context = event.context();
+            if context.thread_id != thread_id || context.request_id != request_id {
                 continue;
             }
-            match event.event.as_str() {
-                "chat_done" => {
+            match event.wire_event() {
+                WebChannelEvent::ChatDone { full_response, .. } => {
                     log::debug!(
                         "[embed][profiles] chat done profile={} request_id={request_id}",
                         self.profile.id
@@ -243,21 +245,27 @@ impl ProfileHandle {
                     return Ok(ChatReply {
                         thread_id: thread_id.to_string(),
                         request_id,
-                        text: event.full_response.unwrap_or_default(),
+                        text: chat_reply_text(full_response.clone()),
                     });
                 }
-                "chat_error" => {
+                WebChannelEvent::ChatError {
+                    message,
+                    error_type,
+                    ..
+                } => {
                     log::debug!(
                         "[embed][profiles] chat failed profile={} request_id={request_id} error_type={:?}",
                         self.profile.id,
-                        event.error_type
+                        error_type
                     );
                     return Err(ProfileError::Turn {
-                        message: event.message.unwrap_or_default(),
-                        error_type: event.error_type,
+                        message: chat_failure_message(message.clone()),
+                        error_type: error_type.clone(),
                     });
                 }
-                "chat_cancelled" => return Err(ProfileError::Cancelled),
+                WebChannelEvent::ChatCancelled { .. } => {
+                    return Err(ProfileError::Cancelled);
+                }
                 _ => {}
             }
         }
@@ -317,11 +325,13 @@ impl ProfileHandle {
                     message: ConversationMessageRecord {
                         id: format!("msg_{}", uuid::Uuid::new_v4()),
                         content: text.to_string(),
+                        attachments: Vec::new(),
                         message_type: "text".to_string(),
                         extra_metadata: serde_json::json!({}),
                         sender: "user".to_string(),
                         created_at: chrono::Utc::now().to_rfc3339(),
                     },
+                    attachments: Vec::new(),
                 },
             )
             .await?;
@@ -344,3 +354,15 @@ impl ProfileHandle {
         Ok(())
     }
 }
+
+fn chat_reply_text(full_response: Option<String>) -> String {
+    full_response.unwrap_or_default()
+}
+
+fn chat_failure_message(message: Option<String>) -> String {
+    message.unwrap_or_else(|| "The turn failed without an error message.".to_string())
+}
+
+#[cfg(test)]
+#[path = "handle_tests.rs"]
+mod tests;

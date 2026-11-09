@@ -1,7 +1,7 @@
 //! Host source for the harness `MemoryPackMiddleware`.
 //!
 //! The session host recalls one pack per turn before the model runs
-//! (`memory::lifecycle::hooks::pre_turn`) and parks it on the run context
+//! (`memory::lifecycle::prefetch::pre_turn`) and parks it on the run context
 //! (`OpenHumanRunContext::memory_turn`). The harness middleware adds
 //! [`TurnMemoryPack`]'s text to every model request of that turn as an
 //! ephemeral instruction, so the pack is never committed to the thread's

@@ -1,7 +1,7 @@
 //! Top-level sub-agent run entry points.
 //!
-//! [`run_subagent`] is the primary entry point for agent delegation and
-//! dispatches to [`run_typed_mode`] which builds a brand-new system prompt
+//! The registered dispatcher reaches this adapter, which dispatches to
+//! [`run_typed_mode`] to build a brand-new system prompt
 //! and a filtered tool list for the requested archetype, then drives provider
 //! calls and tool execution until the model returns without further tool calls
 //! (or the iteration budget is exhausted).
@@ -9,30 +9,30 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use crate::agent::harness::fork_context::ParentExecutionContext;
 use crate::agent::prompts::render_subagent_system_prompt_with_format;
 use crate::agent::prompts::{PromptContext, SubagentRenderOptions};
-use crate::agent::session_host::dedup_visible_tool_specs;
 use crate::agent::subagent_host::definition_iter_cap;
 use crate::agent::subagent_host::tool_prep::{
-    filter_tool_indices, is_subagent_spawn_tool, load_prompt_source, subagent_prompt_protocol,
+    dedup_owned_tool_specs, filter_definition_tool_indices, subagent_prompt_protocol,
 };
 use crate::agent::subagent_host::types::{
     SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome,
 };
+use crate::agent::subagent_host::ParentExecutionContext;
 use crate::agent::tinyagents::budget::MAX_SPAWN_DEPTH;
 use crate::agent_registry::host_definition::{AgentDefinition, AgentDefinitionRegistry};
-use crate::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
-use tinyagents_definition::{
-    validate_tier_transition, AgentTier, IterationPolicy, PromptSource,
-    SandboxMode as AgentSandboxMode,
-};
+use tinyagents_definition::{validate_tier_transition, AgentTier, IterationPolicy, PromptSource};
 use tinyagents_harness::context::{current_run_depth, with_run_depth, RunConfig, RunDepth};
-use tinytools::{SandboxMode as TinyagentsSandboxMode, ToolSpec, WorkspaceDescriptor};
-use tinytools_std::file_state::with_file_state_agent_id;
+use tinyagents_harness::turn_policy::AGENT_TURN_MAX_OUTPUT_TOKENS;
+use tinyagents_harness_tools::fs::file_state::with_file_state_agent_id;
+use tinytools::{Tool, ToolSpec};
 
 use super::prompt::compose_subagent_system_prompt;
 use super::provider::resolve_subagent_source;
+
+#[path = "runner_prompt.rs"]
+mod runner_prompt;
+use runner_prompt::load_typed_prompt_source;
 
 /// Runtime spawn-hierarchy gate decision for one delegation hop.
 ///
@@ -85,7 +85,7 @@ pub(super) fn tier_gate_decision(
     Ok(())
 }
 
-/// Run a sub-agent based on its definition and a task prompt.
+/// Execute a prepared sub-agent based on its definition and a task prompt.
 ///
 /// Creates a task id, checks the root-turn dispatch budget, reads the parent's
 /// [`ParentExecutionContext`], then dispatches to `run_typed_mode`.
@@ -100,13 +100,13 @@ pub(crate) async fn run_subagent_direct_with_native_context(
     mut options: SubagentRunOptions,
     native: crate::agent::tinyagents::NativeSubagentRunContext,
 ) -> Result<SubagentRunOutcome, SubagentRunError> {
-    // Unconditionally heap-allocate the entire run_subagent body so
+    // Unconditionally heap-allocate the entire child execution body so
     // every caller doesn't have to carry this future's state inline.
     // Tools that delegate run inside the parent agent's already-deep
     // turn poll (the boxed tinyagents harness drive future in
     // `TurnSpec::run`), so the parent's stack would
     // otherwise pile (parent turn state + dispatch_subagent state +
-    // run_subagent's wrapper state + run_typed_mode state + child turn
+    // dispatcher state + run_typed_mode state + child turn
     // state) onto tokio's 2 MiB worker stack and abort with "thread
     // 'tokio-rt-worker' has overflowed its stack, fatal runtime error:
     // stack overflow" — observed at `[subagent_host] dispatching
@@ -199,7 +199,6 @@ pub(crate) async fn run_subagent_direct_with_native_context(
                 });
             }
         }
-
         let parent = options
             .run_context
             .parent
@@ -216,11 +215,12 @@ pub(crate) async fn run_subagent_direct_with_native_context(
                 attempted_depth: parent_depth.saturating_add(1),
                 max_depth,
             })?;
+        let nested_spawn_depth_available =
+            RunConfig::checked_child_depth(attempted_depth, max_depth).is_ok();
         options.run_context.spawn_depth = attempted_depth;
         // Acts on memory as a child of its parent: same team, own definition.
         let acting = options.run_context.memory_identity.take().unwrap_or_default();
         options.run_context.memory_identity = Some(acting.child(&definition.id));
-
         // Runtime spawn-hierarchy (tier) gate — defense-in-depth alongside the
         // depth gate above. The loader validates *declared* `subagents` pairs
         // statically at boot (`validate_tier_hierarchy`), but dynamic, custom,
@@ -233,7 +233,6 @@ pub(crate) async fn run_subagent_direct_with_native_context(
             .as_deref()
             .and_then(|reg| reg.get(&parent.agent_definition_id));
         tier_gate_decision(parent_def, definition, &parent.agent_definition_id, &task_id)?;
-
         // Configured `subagentStart` hooks — the last gate before a spawn costs
         // anything. Placed after the tier gate so a spawn the graph already
         // forbids never reaches a user script, and before config load so a
@@ -282,28 +281,15 @@ pub(crate) async fn run_subagent_direct_with_native_context(
         // The child carrier projects the definition's sandbox mode to every
         // tool through HostOperationContext.
         //
-        // When the worker opted into git-worktree isolation, its isolated
-        // checkout is carried on the `WorkspaceDescriptor` prepared below and
-        // threaded onto the run's tinyagents `RunContext`
-        // (`TurnSpec::run` → `RunContext::with_workspace`).
-        // Every tool call then receives it via
-        // `ToolExecutionContext::from_run_context`, so acting tools (shell, git)
-        // resolve their CWD to that worktree (`effective_action_dir_for_context`)
-        // instead of the shared `Config.action_dir` — no task-local override
-        // needed. When no descriptor is prepared (the default / non-isolated
-        // path), tools fall through to `security.action_dir` and behaviour is
-        // unchanged.
         let mut parent_for_subagent = parent.clone();
-        parent_for_subagent.workspace_descriptor =
-            workspace_descriptor_for_subagent(definition, &options, &parent, &task_id);
-        if let Some(descriptor) = parent_for_subagent.workspace_descriptor.as_ref() {
-            tracing::debug!(
-                agent_id = %definition.id,
-                task_id = %task_id,
-                worktree = %descriptor.root.display(),
-                policy_id = %descriptor.policy_id,
-                "[subagent_host] worktree-isolated worker: descriptor will route acting-tool CWD"
-            );
+        // The direct-child list belongs to the agent now being run. It is not
+        // the originating parent's list: each definition's allowlist governs
+        // only that actor's own children.
+        parent_for_subagent.agent_definition_id = definition.id.clone();
+        parent_for_subagent.allowed_subagent_ids =
+            definition.allowed_subagent_ids().into_iter().collect();
+        if let Some(descriptor) = options.workspace_descriptor.clone() {
+            parent_for_subagent.workspace_descriptor = Some(descriptor);
         }
         let run_result = Box::pin(with_run_depth(RunDepth { depth: attempted_depth, max_depth }, async {
             with_file_state_agent_id(task_id.clone(), async {
@@ -315,6 +301,7 @@ pub(crate) async fn run_subagent_direct_with_native_context(
                     &task_id,
                     &loaded_config,
                     native,
+                    nested_spawn_depth_available,
                 ))
                 .await
             })
@@ -341,7 +328,6 @@ pub(crate) async fn run_subagent_direct_with_native_context(
         if let Some(dispatch) = options.run_context.dispatch.as_deref() {
             dispatch.record_subagent_elapsed(started.elapsed());
         }
-
         let mut outcome = run_result?;
 
         // Commit the completed subtree before the soft, awaited artifact
@@ -384,31 +370,7 @@ pub(crate) async fn run_subagent_direct_with_native_context(
     .await
 }
 
-fn workspace_descriptor_for_subagent(
-    definition: &AgentDefinition,
-    options: &SubagentRunOptions,
-    parent: &ParentExecutionContext,
-    task_id: &str,
-) -> Option<WorkspaceDescriptor> {
-    if let Some(descriptor) = options.workspace_descriptor.clone() {
-        return Some(descriptor);
-    }
-    if let Some(descriptor) = parent.workspace_descriptor.clone() {
-        return Some(descriptor);
-    }
-    let root = options.worktree_action_dir.clone()?;
-    let sandbox = match definition.sandbox_mode {
-        AgentSandboxMode::Sandboxed => TinyagentsSandboxMode::Required,
-        AgentSandboxMode::None | AgentSandboxMode::ReadOnly => TinyagentsSandboxMode::Inherit,
-    };
-    Some(
-        WorkspaceDescriptor::new(root)
-            .with_policy_id(format!("openhuman.worktree:{task_id}"))
-            .with_sandbox(sandbox),
-    )
-}
-
-/// One spawn's snapshot of the host config, loaded once by [`run_subagent`].
+/// One spawn's snapshot of the host config, loaded once by the host adapter.
 ///
 /// `Config::load_or_init()` is **not cached** — it re-resolves the config dirs
 /// and re-reads `config.toml` on every call. `run_typed_mode` needed it in six
@@ -423,7 +385,6 @@ fn workspace_descriptor_for_subagent(
 /// is `docs/specs/plan-agents.md` Phase 3: the sub-agent runner is slated to
 /// move into TinyAgents, and a generic runtime has no config file to load.
 type LoadedConfig = Result<std::sync::Arc<crate::config::Config>, String>;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Typed mode — narrow prompt, filtered tools, cheaper model
 // ─────────────────────────────────────────────────────────────────────────────
@@ -441,12 +402,13 @@ async fn run_typed_mode(
     task_id: &str,
     config: &LoadedConfig,
     native: crate::agent::tinyagents::NativeSubagentRunContext,
+    nested_spawn_depth_available: bool,
 ) -> Result<SubagentRunOutcome, SubagentRunError> {
     let started = Instant::now();
 
     // Resolve model source + model. See `resolve_subagent_source` for the
-    // semantics of each ModelSpec variant; the helper itself is sync and
-    // unit-tested, and takes the config the caller already loaded.
+    // semantics of each ModelSpec variant; the helper resolves any credential
+    // snapshot before returning and takes the config already loaded here.
     let (subagent_source, model) = resolve_subagent_source(
         &definition.model,
         &definition.id,
@@ -456,7 +418,8 @@ async fn run_typed_mode(
         !definition.subagents.is_empty(),
         options.model_override.as_deref(),
         definition.temperature,
-    );
+    )
+    .await;
     let temperature = definition.temperature;
     let max_output_tokens = definition
         .max_turn_output_tokens
@@ -471,11 +434,10 @@ async fn run_typed_mode(
     // returns the fresh list almost for free on the warm path. Fall back
     // to the parent's frozen list when the live fetch returns empty.
     let live_integrations: Vec<crate::integrations::ConnectedIntegration> = {
-        let signed_in = config
-            .as_ref()
-            .ok()
-            .map(|cfg| crate::integrations::composio::user_is_signed_in_to_composio(cfg))
-            .unwrap_or(false);
+        let signed_in = match config.as_ref() {
+            Ok(cfg) => crate::integrations::composio::user_is_signed_in_to_composio(cfg).await,
+            Err(_) => false,
+        };
         if !signed_in {
             parent.connected_integrations.clone()
         } else {
@@ -513,56 +475,19 @@ async fn run_typed_mode(
     };
 
     // ── Filter tools per definition + per-spawn override ───────────────
-    let mut allowed_indices = filter_tool_indices(
+    let filtered_tools = filter_definition_tool_indices(
         &parent.all_tools,
-        &definition.tools,
-        &definition.disallowed_tools,
+        definition,
         options
             .skill_filter_override
             .as_deref()
             .or(definition.skill_filter.as_deref()),
-    );
-
-    // Sub-agents must never spawn their own sub-agents. Strip `spawn_subagent`
-    // and every synthesised `delegate_*` tool regardless of the archetype's
-    // declared scope.
-    let before = allowed_indices.len();
-    allowed_indices.retain(|&i| {
-        let name = parent.all_tools[i].name();
-        !is_subagent_spawn_tool(name) && name != "spawn_worker_thread"
-    });
-    let stripped = before - allowed_indices.len();
-    if stripped > 0 {
-        tracing::debug!(
-            agent_id = %definition.id,
-            stripped,
-            "[subagent_host] removed sub-agent spawn tools from sub-agent's tool surface"
-        );
-    }
-
-    // ── Force-include extra_tools ──────────────────────────────────────
-    if !definition.extra_tools.is_empty() {
-        for (i, tool) in parent.all_tools.iter().enumerate() {
-            let name = tool.name();
-            if definition.extra_tools.iter().any(|n| n == name)
-                && !allowed_indices.contains(&i)
-                && !crate::tools::rules::glob_list_matches(&definition.disallowed_tools, name)
-                && !is_subagent_spawn_tool(name)
-            {
-                allowed_indices.push(i);
-            }
-        }
-    }
-
-    // A child may only narrow an explicit profile/channel ceiling, never widen
-    // it back to `all_tools`. The parent's own role-specific prompt surface is
-    // intentionally not a ceiling: coordinators delegate effectful work to
-    // specialists whose tools they do not advertise directly.
-    super::super::tool_prep::retain_parent_visible_tool_indices(
-        &mut allowed_indices,
-        &parent.all_tools,
+        nested_spawn_depth_available,
         &parent.subagent_tool_ceiling_names,
     );
+    let allowed_indices = filtered_tools.indices;
+    let nested_spawn_ids = filtered_tools.nested_spawn_ids;
+    let can_spawn_subagent = filtered_tools.nested_spawn_tools.contains("spawn_subagent");
 
     // Rule-withheld tools stay callable (`allowed_names`) but off the prompt.
     let child_rules = options
@@ -574,15 +499,30 @@ async fn run_typed_mode(
         &parent.all_tools,
         child_rules.as_deref(),
     );
-    let filtered_specs: Vec<ToolSpec> = listed
+    let mut filtered_specs: Vec<ToolSpec> = listed
         .iter()
         .map(|&i| parent.all_tool_specs[i].as_ref().clone())
         .collect();
+    let nested_spawn_tool = if can_spawn_subagent {
+        Some(
+            crate::agent::orchestration::tools::SpawnSubagentTool::scoped(nested_spawn_ids.clone()),
+        )
+    } else {
+        None
+    };
+    if let Some(tool) = &nested_spawn_tool {
+        if let Some(spec) = filtered_specs
+            .iter_mut()
+            .find(|spec| spec.name == "spawn_subagent")
+        {
+            *spec = tool.spec();
+        }
+    }
     let allowed_names: HashSet<String> = allowed_indices
         .iter()
         .map(|&i| parent.all_tools[i].name().to_string())
         .collect();
-    let filtered_specs = dedup_visible_tool_specs(filtered_specs);
+    let filtered_specs = dedup_owned_tool_specs(filtered_specs);
 
     tracing::debug!(
         agent_id = %definition.id,
@@ -613,14 +553,16 @@ async fn run_typed_mode(
         subagent_prompt_protocol(parent.tool_call_format, &filtered_specs);
     // Load AGENTS.md instruction layers once, at prompt-build time, when the
     // config gate is on. The global layer comes from the workspace dir; the
-    // project layer comes from the sub-agent's `worktree_action_dir` override
-    // when present (git-worktree isolation), otherwise the global config
-    // `action_dir`. Loading here (not per turn) keeps the sub-agent system
+    // project layer prefers an explicitly inherited workspace root and falls
+    // back to the global config `action_dir`. Loading here (not per turn) keeps
+    // the sub-agent system
     // prompt byte-stable for prefix caching.
     let agents_md = if parent.agent_config.agents_md_enabled {
         let local_dir = options
-            .worktree_action_dir
-            .clone()
+            .workspace_descriptor
+            .as_ref()
+            .or(parent.workspace_descriptor.as_ref())
+            .map(|descriptor| descriptor.root.clone())
             .or_else(|| config.as_ref().ok().map(|c| c.action_dir.clone()));
         match local_dir {
             Some(dir) => crate::agent::prompts::load_agents_md_layers(&parent.workspace_dir, &dir),
@@ -640,30 +582,30 @@ async fn run_typed_mode(
         tinyagents_harness::context::AgentsMdContent::default()
     };
 
+    let connected_identities_md = options.run_context.connected_identities_md().await;
     let prompt_ctx = PromptContext {
         workspace_dir: &parent.workspace_dir,
         model_name: &model,
         agent_id: &definition.id,
+        flow_archetype_text: None,
         tools: &prompt_tools,
         workflows: &parent.workflows,
         dispatcher_instructions: &dispatcher_instructions,
         visible_tool_names: &visible_tool_names,
         tool_call_format: prompt_tool_call_format,
         connected_integrations: &connected_integrations_for_prompt,
-        connected_identities_md: options.run_context.connected_identities_md(),
-        user_identity: crate::security::credentials::identity::peek_credential_user_identity(),
+        connected_identities_md,
+        user_identity: crate::credentials::identity::peek_credential_user_identity(),
         personality_roster: vec![],
         agents_md_global: agents_md.global.clone(),
         agents_md_local: agents_md.local.clone(),
     };
 
+    let archetype_prompt_body = load_typed_prompt_source(definition, config, prompt_ctx).await?;
     let system_prompt = match &definition.system_prompt {
         // The whole prompt, with no sub-agent sections around it.
-        PromptSource::Dynamic(_) | PromptSource::Verbatim(_) => {
-            load_prompt_source(definition, &prompt_ctx)?
-        }
+        PromptSource::Dynamic(_) | PromptSource::Verbatim(_) => archetype_prompt_body,
         PromptSource::Inline(_) | PromptSource::File { .. } => {
-            let archetype_prompt_body = load_prompt_source(definition, &prompt_ctx)?;
             render_subagent_system_prompt_with_format(
                 &parent.workspace_dir,
                 &model,
@@ -779,8 +721,10 @@ async fn run_typed_mode(
         };
         format!("{parent_chain}__{child_session_key}")
     };
-    let workspace_descriptor =
-        workspace_descriptor_for_subagent(definition, options, parent, task_id);
+    let workspace_descriptor = options
+        .workspace_descriptor
+        .clone()
+        .or_else(|| parent.workspace_descriptor.clone());
     if let Some(descriptor) = &workspace_descriptor {
         tracing::debug!(
             agent_id = %definition.id,
@@ -791,6 +735,13 @@ async fn run_typed_mode(
         );
     }
 
+    let mut child_run_context = options
+        .run_context
+        .for_subagent(definition, config.as_ref().ok().map(AsRef::as_ref));
+    child_run_context.parent = Some(parent.clone());
+    let dynamic_tools = nested_spawn_tool
+        .map(|tool| vec![Box::new(tool) as Box<dyn Tool>])
+        .unwrap_or_default();
     let (output, iterations, agg_usage, early_exit_tool, hit_cap, breaker_halt, failure_cause) =
         super::graph::run_subagent_via_graph(
             subagent_source.clone(),
@@ -798,7 +749,7 @@ async fn run_typed_mode(
             temperature,
             &mut history,
             parent.all_tools.clone(),
-            Vec::new(),
+            dynamic_tools,
             filtered_specs.clone(),
             allowed_names,
             definition_iter_cap(&options.run_context, definition),
@@ -808,9 +759,7 @@ async fn run_typed_mode(
             task_id,
             definition.iteration_policy == IterationPolicy::Extended,
             options.thread_id.clone(),
-            options
-                .run_context
-                .for_subagent(definition, config.as_ref().ok().map(AsRef::as_ref)),
+            child_run_context,
             options.worker_thread_id.clone(),
             parent.workspace_dir.clone(),
             workspace_descriptor.clone(),
@@ -860,7 +809,10 @@ async fn run_typed_mode(
             reason = %reason,
             "[subagent_host] child halted by circuit breaker; reporting Incomplete (#4466)"
         );
-        crate::agent::subagent_host::types::SubagentRunStatus::Incomplete { reason }
+        crate::agent::subagent_host::types::SubagentRunStatus::Incomplete {
+            reason,
+            failure_cause: failure_cause.clone(),
+        }
     } else if hit_cap {
         // The tinyagents run stopped at the model-call cap with work still
         // pending (graph summarized a resumable checkpoint into `output`).
@@ -869,6 +821,7 @@ async fn run_typed_mode(
         // or re-spinning the identical delegation (#4096).
         crate::agent::subagent_host::types::SubagentRunStatus::Incomplete {
             reason: tinyagents_harness::turn_stop::SUBAGENT_ITERATION_CAP_REASON.into(),
+            failure_cause: None,
         }
     } else {
         // A clean final response. (An `ask_user_clarification` early-exit is
@@ -880,7 +833,7 @@ async fn run_typed_mode(
     // Surface this run's token/cost totals so the parent turn can roll them
     // into the session-level meters and the global cost tracker. The caller's
     // explicit host carrier owns the ledger; no Tokio task scope is involved.
-    let mut usage = crate::agent::subagent_host::types::SubagentUsage {
+    let mut usage = tinyagents_harness::progress::SubagentUsage {
         input_tokens: agg_usage.input_tokens,
         output_tokens: agg_usage.output_tokens,
         cached_input_tokens: agg_usage.cached_input_tokens,
@@ -913,10 +866,13 @@ async fn run_typed_mode(
         failure_cause,
         final_history: history,
         usage,
-        // Filled in by `run_subagent` once the offload step has had its say, so
+        // Filled in by the host adapter once the offload step has had its say, so
         // both the harness-offloaded and worker-authored pointers are counted.
         artifact_paths: Vec::new(),
         persistence_disposition:
             tinyagents_orchestration::subagent::SubagentPersistenceDisposition::TerminalExisting,
     })
 }
+#[cfg(test)]
+#[path = "runner_flow_prompt_tests.rs"]
+mod flow_prompt_tests;

@@ -1,5 +1,108 @@
 use super::*;
 
+async fn create_parked_run(config: &Config, name: &str) -> (Flow, String, Vec<String>) {
+    let flow = flows_create(config, name.to_string(), approval_gated_graph(), false)
+        .await
+        .unwrap()
+        .value;
+    let parked = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        config,
+        &flow.id,
+        json!({ "x": 1 }),
+        serde_json::Map::new(),
+        FlowRunTrigger::Rpc,
+    )
+    .await
+    .unwrap()
+    .value;
+    let run_id = parked["thread_id"].as_str().unwrap().to_owned();
+    let pending: Vec<String> = serde_json::from_value(parked["pending_approvals"].clone()).unwrap();
+    assert!(!pending.is_empty(), "the fixture must park for approval");
+    (flow, run_id, pending)
+}
+
+#[tokio::test]
+async fn flows_resume_rejects_a_stale_graph_and_settles_the_parked_run() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let (flow, run_id, pending) = create_parked_run(&config, "stale-graph").await;
+    let before_run = flows_get_run(&config, &run_id).await.unwrap().value;
+    let before_flow = flows_get(&config, &flow.id).await.unwrap().value;
+
+    flows_update(
+        &config,
+        &flow.id,
+        None,
+        Some(trigger_only_graph()),
+        None,
+        None,
+    )
+    .await
+    .expect("replace the saved graph after the run parks");
+
+    let error = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &flow.id,
+        &run_id,
+        pending,
+        Vec::new(),
+    )
+    .await
+    .expect_err("the module must refuse a resume against a stale graph");
+    assert!(
+        error.contains("graph changed after the run parked"),
+        "{error}"
+    );
+
+    let after_run = flows_get_run(&config, &run_id).await.unwrap().value;
+    assert_eq!(before_run.status, "pending_approval");
+    assert_eq!(after_run.status, "cancelled");
+    assert!(after_run.pending_approvals.is_empty());
+    assert_eq!(
+        after_run.error.as_deref(),
+        Some("workflow graph changed after the run parked; refusing resume")
+    );
+    assert!(
+        !after_run
+            .steps
+            .iter()
+            .any(|step| step.node_id == "downstream"),
+        "the stale approval must not execute the replacement graph: {after_run:?}"
+    );
+    let after_flow = flows_get(&config, &flow.id).await.unwrap().value;
+    assert_eq!(before_flow.last_status.as_deref(), Some("pending_approval"));
+    assert_eq!(after_flow.last_status.as_deref(), Some("cancelled"));
+}
+
+#[tokio::test]
+async fn cancelling_a_parked_run_uses_the_module_terminal_state_before_resume() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let (flow, run_id, pending) = create_parked_run(&config, "cancel-parked").await;
+    let cancellation = flows_cancel_run(&config, &run_id).await.unwrap();
+    assert_eq!(cancellation.value["cancelled"], true);
+    let cancelled = flows_get_run(&config, &run_id).await.unwrap().value;
+    assert_eq!(cancelled.status, "cancelled");
+
+    let error = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &flow.id,
+        &run_id,
+        pending,
+        Vec::new(),
+    )
+    .await
+    .expect_err("a terminal module run must not be resumed");
+    assert!(error.contains("not waiting for approval"), "{error}");
+    assert_eq!(
+        flows_get_run(&config, &run_id).await.unwrap().value.status,
+        "cancelled"
+    );
+}
+
 #[tokio::test]
 async fn flows_duplicate_missing_flow_errors() {
     let tmp = TempDir::new().unwrap();
@@ -51,7 +154,7 @@ async fn flows_update_replaces_name_and_graph() {
     .unwrap();
 
     assert_eq!(updated.value.name, "renamed");
-    assert_eq!(updated.value.graph.name, "renamed-graph");
+    assert_eq!(updated.value.graph["name"], "renamed-graph");
 }
 
 #[tokio::test]
@@ -301,6 +404,11 @@ async fn flows_run_reports_pending_approval_and_blocks_downstream() {
 
     let pending = outcome.value["pending_approvals"].as_array().unwrap();
     assert!(pending.iter().any(|v| v == "gate"));
+    assert_eq!(
+        outcome.value["output"]["run"]["trigger"],
+        json!({ "x": 1 }),
+        "parked runs preserve the engine output already available to the legacy RPC"
+    );
     assert!(outcome.value["output"]["nodes"]["downstream"].is_null());
 
     let reloaded = flows_get(&config, &created.value.id).await.unwrap();

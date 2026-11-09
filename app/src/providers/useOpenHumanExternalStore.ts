@@ -655,15 +655,24 @@ export function useOpenHumanExternalStore(
       if (!messageId) {
         throw new Error('Edit is missing the source message id');
       }
+      const sourceRow = messages.find(row => row.id === messageId);
       const text = `${appendMessageQuote(message)}${appendMessageText(message)}`;
       // Truncate the local cache FIRST: the edit RPC returns no message list,
       // and the socket events that follow (`inference_start` … `chat_done`)
       // only carry the new turn, so a reader would still see the discarded
       // replies until the next full refetch if this waited on the RPC.
       dispatch(truncateMessagesFrom({ threadId, messageId, inclusive: true }));
-      await editMessage({ threadId, messageId, content: text });
+      await editMessage({
+        threadId,
+        messageId,
+        content: text,
+        // Keep the source row's media when editing its text. The core accepts
+        // only these opaque refs, validates them against this exact row, and
+        // stages fresh ownership before truncating history.
+        attachments: sourceRow?.attachments?.length ? sourceRow.attachments : undefined,
+      });
     },
-    [dispatch, threadId]
+    [dispatch, messages, threadId]
   );
 
   /**

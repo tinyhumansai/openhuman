@@ -9,8 +9,8 @@
 //! call. That agreement is this file's job.
 
 use super::*;
-use crate::tools::implementations::document::format::spec::SlideImage;
-use crate::tools::implementations::presentation::types::SlideRequest;
+use crate::tools::implementations::presentation::types::{GeneratePresentationInput, SlideRequest};
+use tinydocs_bus::spec::presentation::{PresentationSpec, SlideImage};
 
 fn slide(title: &str) -> SlideRequest {
     SlideRequest {
@@ -35,16 +35,20 @@ fn input(slides: Vec<SlideRequest>) -> GeneratePresentationInput {
 fn resolved(bytes: &[u8], caption: Option<&str>) -> SlideImage {
     SlideImage {
         bytes: bytes.to_vec(),
-        format: crate::tools::implementations::document::format::spec::ImageFormat::Png,
+        format: tinydocs_bus::spec::image::ImageFormat::Png,
         width_px: 4,
         height_px: 4,
         caption: caption.map(str::to_string),
     }
 }
 
+fn spec(input: GeneratePresentationInput, images: Vec<Vec<SlideImage>>) -> PresentationSpec {
+    super::super::types::to_bus_spec(&input, images).expect("matching slide count")
+}
+
 #[test]
 fn the_wire_deck_carries_every_text_field() {
-    let (deck, payload) = build_request(&input(vec![slide("First")]), &[]);
+    let (deck, payload) = build_request(&spec(input(vec![slide("First")]), vec![vec![]]));
     assert_eq!(deck.title, "Quarterly");
     assert_eq!(deck.author.as_deref(), Some("Alice"));
     assert_eq!(deck.theme.as_deref(), Some("plain"));
@@ -68,7 +72,7 @@ fn declared_lengths_slice_the_payload_back_into_the_original_images() {
         vec![resolved(&first, Some("one")), resolved(&second, None)],
         vec![resolved(&third, Some("three"))],
     ];
-    let (deck, payload) = build_request(&input(vec![slide("A"), slide("B")]), &images);
+    let (deck, payload) = build_request(&spec(input(vec![slide("A"), slide("B")]), images));
 
     assert_eq!(payload.len(), first.len() + second.len() + third.len());
     let mut cursor = 0usize;
@@ -94,7 +98,7 @@ fn captions_survive_onto_the_wire_images() {
         resolved(&[9u8; 3], Some("A chart")),
         resolved(&[8u8; 3], None),
     ]];
-    let (deck, _) = build_request(&input(vec![slide("A")]), &images);
+    let (deck, _) = build_request(&spec(input(vec![slide("A")]), images));
     assert_eq!(deck.slides[0].images[0].caption.as_deref(), Some("A chart"));
     assert_eq!(deck.slides[0].images[1].caption, None);
 }
@@ -105,19 +109,19 @@ fn a_slide_with_no_resolved_images_declares_none() {
     // failing the deck, so a slide can arrive here with fewer images than it
     // asked for — and the deck must declare what is actually being sent.
     let images = vec![vec![]];
-    let (deck, payload) = build_request(&input(vec![slide("A")]), &images);
+    let (deck, payload) = build_request(&spec(input(vec![slide("A")]), images));
     assert!(deck.slides[0].images.is_empty());
     assert!(payload.is_empty());
 }
 
 #[test]
-fn a_short_images_argument_leaves_later_slides_imageless() {
-    // Defensive: `images` is indexed by slide, and a caller that passes a
-    // shorter vector must not panic or shift images onto the wrong slide.
-    let images = vec![vec![resolved(&[5u8; 4], None)]];
-    let (deck, payload) = build_request(&input(vec![slide("A"), slide("B")]), &images);
-    assert_eq!(deck.slides[0].images.len(), 1);
-    assert!(deck.slides[1].images.is_empty());
+fn resolved_images_stay_aligned_with_their_slides() {
+    // A failed image reference can leave a slide empty while later slides
+    // retain their own independently resolved images.
+    let images = vec![vec![], vec![resolved(&[5u8; 4], None)]];
+    let (deck, payload) = build_request(&spec(input(vec![slide("A"), slide("B")]), images));
+    assert!(deck.slides[0].images.is_empty());
+    assert_eq!(deck.slides[1].images.len(), 1);
     assert_eq!(payload.len(), 4);
 }
 

@@ -3,10 +3,13 @@
 //! port. [`SdkBackendTransport`](crate::SdkBackendTransport) implements it.
 
 use async_trait::async_trait;
-use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+use openhuman_embed::__host::config::Config;
+use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
+use openhuman_embed::__host::memory_engines::BearerSource;
 use reqwest::header::HeaderMap;
 use reqwest::Method;
 use serde_json::Value;
+use std::sync::Arc;
 
 /// One `(name, value)` query pair; a `None` value omits the pair.
 pub type QueryParam = (&'static str, Option<String>);
@@ -89,6 +92,17 @@ pub trait BackendTransport: Send + Sync + 'static {
         form: reqwest::multipart::Form,
     ) -> Result<Value, BackendTransportError>;
 
+    /// Optional memory bearer source backed by this host's credential domain.
+    ///
+    /// Hosts that own authenticated backend sessions may adapt that existing
+    /// credential resolver into TinyMemory's per-request bearer interface.
+    /// The default keeps transports without memory support source-compatible;
+    /// OpenHuman core falls back to its safe backend-credential resolver when
+    /// this returns `None`.
+    fn memory_bearer_source(&self, _config: Arc<Config>) -> Option<Arc<dyn BearerSource>> {
+        None
+    }
+
     /// The configured `reqwest::Client` for `profile`, for callers that drive a
     /// non-JSON request shape themselves (multipart STT upload). Carries the
     /// profile's TLS settings and attribution headers, but **no** credential.
@@ -127,6 +141,15 @@ pub enum BaseUrlPurpose {
     ControlPlane,
     /// The OpenAI-compatible inference proxy (chat, embeddings, models).
     Inference,
+}
+
+/// A billing refusal the backend signals on a gated hosted feature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BillingRefusal {
+    /// Balance below the route's reserve.
+    InsufficientCredits,
+    /// The feature needs a paid plan.
+    PaidPlanRequired,
 }
 
 /// Failure of a single backend round-trip, as seen by the core.
@@ -170,6 +193,14 @@ pub enum BackendTransportError {
         /// Provider message id from the path.
         message_id: String,
     },
+    /// A non-2xx billing refusal on a gated hosted feature (see
+    /// [`BillingRefusal`]). `body` as in [`Self::Status`].
+    #[error("http {status}: {body}")]
+    BillingRefusal {
+        refusal: BillingRefusal,
+        status: u16,
+        body: Value,
+    },
     /// The response carried a `{success:false, ...}` envelope on a 2xx status.
     #[error("backend reported failure: {error}")]
     Envelope {
@@ -196,7 +227,7 @@ impl BackendTransportError {
     /// The HTTP status when this error is a [`Self::Status`].
     pub fn status(&self) -> Option<u16> {
         match self {
-            Self::Status { status, .. } => Some(*status),
+            Self::Status { status, .. } | Self::BillingRefusal { status, .. } => Some(*status),
             Self::ChannelMessageNotFound { .. } | Self::ChannelMessageRouteMissing { .. } => {
                 Some(404)
             }

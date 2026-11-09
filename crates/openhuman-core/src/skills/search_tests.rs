@@ -98,28 +98,39 @@ fn a_hit_reports_how_many_were_searched() {
     assert!(value["hint"].is_null(), "a hit carries no miss hint");
 }
 
+#[cfg(all(feature = "flows", feature = "skills"))]
 #[tokio::test]
-async fn the_bundled_skill_is_findable_once_installed() {
-    // End to end over the real pipeline: materialise the compiled-in bundles
-    // into a temp workspace, then search. This is the test that would fail if
-    // discovery stopped scanning the builtin root, if the scope were rejected,
-    // or if the bundle's frontmatter stopped parsing.
+async fn module_owned_flow_skill_is_findable_after_scoped_prewarm() {
+    // Use TinyFlows' linked test module to exercise the same bus-owned
+    // ListResources adapter as the published native-module integration test.
     let tmp = tempfile::tempdir().expect("tempdir");
-    let report = crate::skills::bundled::install(tmp.path());
-    assert!(report.failed.is_empty(), "install failed: {report:?}");
-    if crate::skills::bundled::BUNDLED.is_empty() {
-        return; // nothing ships in this feature configuration
-    }
-
     let config = Config {
         workspace_dir: tmp.path().to_path_buf(),
         ..Default::default()
     };
-    let tool = SkillSearchTool::new(Arc::new(config));
-    let result = tool
-        .execute(json!({ "query": "flow authoring" }))
-        .await
-        .expect("dispatch");
+    let context =
+        crate::core::runtime::CoreContext::for_test(crate::core::runtime::DomainSet::full(), None)
+            .derive_with(
+                crate::core::runtime::ContextOverlay::new(
+                    config.clone(),
+                    crate::core::runtime::DomainSet::full(),
+                    crate::tools::toolpacks::ToolGroups::none(),
+                )
+                .profile("skill-search")
+                .without_user_skill_roots(),
+            );
+    let result = crate::core::runtime::CoreContext::scope(context, async {
+        let ctx = crate::core::runtime::DispatchCtx::ambient();
+        crate::modules::tinyflows::copilot_proxy(&config)
+            .await
+            .expect("linked TinyFlows fixture is admitted and serving");
+        crate::skills::bundled::flow_authoring::prewarm(&ctx, &config, None).await;
+        let tool = SkillSearchTool::new(Arc::new(config));
+        tool.execute(json!({ "query": "flow authoring" }))
+            .await
+            .expect("dispatch")
+    })
+    .await;
     let text = format!("{result:?}");
     assert!(
         text.contains("flow-authoring"),

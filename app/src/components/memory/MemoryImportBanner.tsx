@@ -32,6 +32,7 @@ import {
   memoryMigrationScan,
   memoryMigrationStart,
   memoryMigrationStatus,
+  memoryStatusError,
   type MigrationScan,
   type MigrationStatus,
 } from '../../services/api/memoryApi';
@@ -403,7 +404,7 @@ export default function MemoryImportBanner({ engineLabel }: MemoryImportBannerPr
               )}
               <AlertDescription>
                 {state.phase === 'error' && state.error
-                  ? state.error
+                  ? memoryStatusError(state.error, t)
                   : fill(t('memoryPage.import.progress'), {
                       imported: state.imported,
                       total: state.total,
@@ -414,7 +415,7 @@ export default function MemoryImportBanner({ engineLabel }: MemoryImportBannerPr
                   <span className="text-sm" data-testid="memory-import-failed-items">
                     {fill(t('memoryPage.import.failedItems'), { count: state.failed ?? 0 })}
                     {/* A retry the engine or account stopped says why; Retry again works. */}
-                    {state.error ? ` ${state.error}` : ''}
+                    {state.error ? ` ${memoryStatusError(state.error, t)}` : ''}
                   </span>
                   <Button
                     type="button"
@@ -498,7 +499,9 @@ export default function MemoryImportBanner({ engineLabel }: MemoryImportBannerPr
                     {paused ? t('memoryPage.migrate.paused') : t('memoryPage.migrate.title')}
                   </AlertTitle>
                   <AlertDescription>
-                    {paused && mState?.error ? mState.error : t('memoryPage.migrate.body')}
+                    {paused && mState?.error
+                      ? memoryStatusError(mState.error, t)
+                      : t('memoryPage.migrate.body')}
                   </AlertDescription>
                 </div>
                 <Button

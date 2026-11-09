@@ -103,6 +103,8 @@ fn seed_workspace(workspace: &Path) -> ConversationStore {
 #[tokio::test]
 async fn transcript_search_op_finds_message_in_prior_thread() {
     let _lock = env_lock_async().await;
+    let storage = crate::storage_case::Case::open();
+    storage.install();
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace = tmp.path().join("workspace");
@@ -134,6 +136,8 @@ async fn transcript_search_op_finds_message_in_prior_thread() {
 #[tokio::test]
 async fn transcript_search_op_honours_exclude_thread() {
     let _lock = env_lock_async().await;
+    let storage = crate::storage_case::Case::open();
+    storage.install();
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace = tmp.path().join("workspace");
@@ -155,6 +159,8 @@ async fn transcript_search_op_honours_exclude_thread() {
 #[tokio::test]
 async fn transcript_search_op_returns_empty_on_no_match() {
     let _lock = env_lock_async().await;
+    let storage = crate::storage_case::Case::open();
+    storage.install();
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace = tmp.path().join("workspace");

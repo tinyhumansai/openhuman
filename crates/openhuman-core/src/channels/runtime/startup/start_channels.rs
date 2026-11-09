@@ -30,44 +30,13 @@ async fn start_channels_inner(mut config: Config, session: CancellationToken) ->
     // The listener runs for the host's own tenant (none in SaaS, where hosted
     // channels go through the relay under their profile's context).
     let dispatch = crate::core::runtime::DispatchCtx::host_default();
-    // Initialize the global event bus singleton and register the tracing
-    // subscriber for debug logging of all domain events.
+    // Initialize the global event bus singleton.
     crate::core::bus::init().await.expect("bus init");
     let bus = crate::core::bus::BUS.get().expect("bus initialised");
-    let _tracing_handle = bus.subscribe(Arc::new(crate::core::bus::TracingSubscriber));
-    crate::platform::health::bus::register_health_subscriber();
-    crate::threads::store::register_conversation_persistence_subscriber(
-        config.workspace_dir.clone(),
-    );
-    crate::integrations::composio::register_composio_trigger_subscriber();
-    // Surface parked ApprovalGate requests as chat messages so the user can
-    // answer yes/no in the thread (chat-native approval, issue #1339).
-    crate::web_chat::register_approval_surface_subscriber();
-    // Surface generated-artifact lifecycle events (ArtifactReady /
-    // ArtifactFailed) as `artifact_ready` / `artifact_failed` web-channel
-    // events so the frontend ArtifactCard can render in chat (#2779).
-    crate::web_chat::register_artifact_surface_subscriber();
-    crate::threads::artifact_rows::register_artifact_row_subscriber();
-    // Surface external-egress disclosure events (ExternalTransferPending) as
-    // `external_transfer_pending` web-channel events so the frontend can show a
-    // per-action "what leaves, to where, why" card (privacy epic S2, #4436).
-    crate::web_chat::register_egress_surface_subscriber();
-    // Surface thread-goal / thread-todo / run-queue lifecycle events
-    // (ThreadGoalUpdated/Cleared, ThreadTodosChanged, RunQueue*) as
-    // `thread_goal_updated`/`thread_goal_cleared`/`thread_todos_changed`/
-    // `queue_item_queued`/`queue_item_delivered` web-channel events so the
-    // desktop goal chip, todo drawer, and message-queue UI stay live (C3).
-    crate::web_chat::register_agent_surface_subscriber();
-    // Surface memory store/recall activity (MemoryStored/MemoryRecalled) as
-    // `memory_activity` web-channel events, routed to the turn's own
-    // thread/client only (C5) — never carries memory content or the raw
-    // recall query, only a short clipped preview.
-    crate::web_chat::register_memory_activity_surface_subscriber();
-    // Task-sources: subscribe to Composio connection-created events for
-    // one-shot fetches, and spawn the periodic poll that pulls work from
-    // configured external sources onto the agent's todo board.
-    crate::integrations::task_sources::bus::register_task_sources_subscriber();
-    crate::integrations::task_sources::start_periodic_poll();
+    // Domain subscribers (tracing, health, persistence, web surfaces, composio,
+    // task sources) are registered by `core::runtime::subscribers`
+    // on every core boot, not here: this entry point is skipped when no
+    // channel is configured.
     // Native request handlers. Re-registering is safe (latest wins) so
     // this is idempotent even if `bootstrap_core_runtime` also runs.
     // Must happen before `run_message_dispatch_loop` begins, because
@@ -124,9 +93,11 @@ async fn start_channels_inner(mut config: Config, session: CancellationToken) ->
     // user-configured `[agent].agent_timeout_secs` (#5027).
     // Model, tools and the identity-refreshing system prompt (`turn_parts`),
     // shared with the hosted-channel relay.
-    let parts = build_channel_turn_parts(&dispatch, &config, &security, PromptToolDescs::Fixed)?;
+    #[cfg(all(feature = "flows", feature = "skills"))]
+    crate::skills::schedule_flow_authoring_prewarm(&dispatch, &config, None);
+    let parts =
+        build_channel_turn_parts(&dispatch, &config, &security, PromptToolDescs::Fixed).await?;
     let model = parts.model.clone();
-    let workspace = config.workspace_dir.clone();
     let skills = parts.skills.clone();
 
     // Install the triggered-workflow subscriber now that workflows are
@@ -134,7 +105,7 @@ async fn start_channels_inner(mut config: Config, session: CancellationToken) ->
     // ignored. Idempotent + shares a process-global OnceLock with the
     // `bootstrap_core_runtime` site, so it registers exactly once regardless of
     // which startup path runs first (web-chat-only cores never reach here).
-    crate::skills::bus::ensure_triggered_workflow_subscriber(&workspace);
+    crate::skills::bus::ensure_triggered_workflow_subscriber_for(&dispatch, &config, None);
 
     if !skills.is_empty() {
         println!(
@@ -195,7 +166,7 @@ async fn start_channels_inner(mut config: Config, session: CancellationToken) ->
     println!("  🤖 Model:    {model}");
     println!(
         "  🧠 Memory:   {}",
-        if crate::memory::memory_is_on(&config) {
+        if crate::memory::memory_is_on(&config).await {
             config.memory.engine.as_str()
         } else {
             "off"
@@ -218,19 +189,13 @@ async fn start_channels_inner(mut config: Config, session: CancellationToken) ->
         component: "channels".into(),
     });
 
-    // Register the cron delivery subscriber so cron jobs can deliver output
-    // to channels via events instead of directly constructing channel instances.
-    let _cron_delivery_handle = bus.subscribe(Arc::new(
-        crate::cron::bus::CronDeliverySubscriber::new(Arc::clone(&channels_by_name)),
-    ));
     // NOTE: the flows `FlowTriggerSubscriber` is registered in
     // `runtime/subscribers.rs::register_domain_subscribers` (unconditional core boot), NOT
     // here — `start_channels` is skipped when no channel is configured or
     // `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` is set, which would otherwise leave
     // schedule/app-event workflows undispatched (issue B2 review).
-    // Register the proactive message subscriber so morning briefings,
-    // welcome messages, and other proactive agent output gets routed to
-    // the user's active channel (+ always to web).
+    // Register external proactive delivery to the user's active channel.
+    // Web delivery is registered unconditionally by core subscriber boot.
     let proactive_sub = crate::channels::proactive::ProactiveMessageSubscriber::new(
         Arc::clone(&channels_by_name),
         config.channels_config.active_channel.clone(),
@@ -244,7 +209,13 @@ async fn start_channels_inner(mut config: Config, session: CancellationToken) ->
     // Remote-control turn state (`/status` shows "in progress") for every
     // channel with the `remote_control` capability.
     let _turn_state_handle = bus.subscribe(Arc::new(
-        crate::channels::host::ChannelTurnStateSubscriber::with_config(Arc::new(config.clone())),
+        crate::channels::host::ChannelTurnStateSubscriber::with_objects(
+            config.workspace_dir.clone(),
+            module_runtime
+                .as_ref()
+                .expect("runtime prepared when providers are configured")
+                .module_objects(),
+        ),
     ));
     // In-chat approvals (sub-issue 2 of #3098) for every channel with the
     // `chat_approvals` capability: `Prompt`-class tool calls are gated for the
@@ -273,18 +244,18 @@ async fn start_channels_inner(mut config: Config, session: CancellationToken) ->
         &config,
         parts,
         Arc::clone(&channels_by_name),
+        module_runtime
+            .as_ref()
+            .expect("runtime prepared when providers are configured")
+            .module_objects(),
         message_timeout_secs,
     ));
     context_slot
         .set(Arc::downgrade(&runtime_ctx))
         .map_err(|_| anyhow::anyhow!("channel callback context was already initialized"))?;
-    // Let cron jobs created from a channel chat read that chat's history, send
-    // into it and append their replies to it.
-    crate::cron::channel_bridge::register_channel_bridge(
-        Arc::clone(&runtime_ctx.conversation_histories),
-        Arc::clone(&runtime_ctx.channels_by_name),
-        crate::channels::context::MAX_CHANNEL_HISTORY,
-    );
+    // Cron channel context and replies use the durable agent transcript; this
+    // bridge retains only the live channel transport adapters.
+    crate::cron::channel_bridge::register_channel_bridge(Arc::clone(&runtime_ctx.module_objects));
 
     let startup = module_runtime
         .as_mut()
@@ -299,8 +270,14 @@ async fn start_channels_inner(mut config: Config, session: CancellationToken) ->
     tokio::select! {
         biased;
         _ = session.cancelled() => {},
-        _ = run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages) => {},
+        _ = run_message_dispatch_loop(
+            rx,
+            runtime_ctx,
+            max_in_flight_messages,
+            config.inbound_debounce.clone(),
+        ) => {},
     }
+    crate::cron::channel_bridge::clear_channel_bridge();
     if let Some(runtime) = module_runtime.as_mut() {
         runtime.close().await?;
     }

@@ -339,6 +339,7 @@ async fn turn_errors_on_empty_or_null_text_response() {
             tool_calls: vec![],
             usage: None,
             reasoning_content: None,
+            finish_reason: None,
         };
         let provider = Arc::new(ScriptedProvider::new(vec![empty(), empty()]));
         let script = Arc::clone(&provider);
@@ -378,6 +379,7 @@ async fn turn_preserves_text_alongside_tool_calls() {
             }],
             usage: None,
             reasoning_content: None,
+            finish_reason: None,
         },
         text_response("Here are the results"),
     ]));
@@ -468,6 +470,7 @@ async fn e2e_native_loop_executes_text_fallback_tool_calls_and_persists_history(
             tool_calls: vec![],
             usage: None,
             reasoning_content: None,
+            finish_reason: None,
         },
         text_response("Completed via tool"),
     ]));

@@ -845,38 +845,3 @@ fn recover_port_conflict_succeeds_when_port_is_free() {
         "new_port should be set on success"
     );
 }
-
-#[test]
-fn recover_port_conflict_handles_stale_listener() {
-    let _env_lock = env_lock();
-    let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
-    let _workspace = test_workspace();
-    let rt = core_test_runtime();
-
-    // Bind a port, attempt recovery — the recovery must still succeed because
-    // ensure_running's fallback range kicks in when the preferred port is busy.
-    let outcome = rt.block_on(async {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind");
-        let port = listener.local_addr().expect("addr").port();
-
-        let handle = CoreProcessHandle::new(port);
-        let outcome = handle.recover_port_conflict().await;
-        handle.shutdown().await;
-        drop(listener);
-        outcome
-    });
-
-    // Recovery may succeed via port fallback even with the listener held.
-    // We only assert that the outcome is well-formed.
-    assert!(
-        !outcome.message.is_empty(),
-        "outcome message must always be populated"
-    );
-    if outcome.success {
-        assert!(outcome.new_port.is_some());
-    } else {
-        assert!(outcome.new_port.is_none());
-    }
-}

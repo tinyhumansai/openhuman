@@ -911,14 +911,13 @@ fn after_the_write(calls: &[String]) -> &[String] {
 
 #[tokio::test]
 async fn the_agent_learn_returns_on_accept_and_recall_finds_it() {
+    use std::sync::Arc;
+    use tinytools::Tool;
+
     let f = Fixture::new(true).await;
     let config = openhuman_core::config::load_config_with_timeout()
         .await
         .expect("the signed-in config");
-    let facts = openhuman_core::memory::tools::CallFacts::of(
-        &config,
-        &openhuman_core::memory::scope::MemoryIdentity::agent("orchestrator"),
-    );
 
     // Control: `memory_learn` over RPC returns once the write is readable, so
     // the hosted engine reads the store back after its write.
@@ -936,23 +935,46 @@ async fn the_agent_learn_returns_on_accept_and_recall_finds_it() {
     // The agent's tool returns on accept: nothing follows its one write (the
     // read before it is the engine's replay lookup), and the model is told
     // recall may lag.
+    openhuman_core::core::bus::init().await.expect("bus init");
+    let mut events = openhuman_core::core::bus::BUS
+        .get()
+        .expect("bus initialized")
+        .receiver();
     let before = f.mock.request_rows().await.len();
-    let learned = openhuman_core::memory::tools::run_action(
-        &openhuman_core::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &json!({"action": "learn", "text": "Dave takes his coffee with oat milk"}),
-        &facts,
-    )
-    .await;
+    let tool = openhuman_core::memory::MemoryTool::new(Arc::new(config.clone()));
+    let learned = tool
+        .execute(json!({
+            "action": "learn",
+            "text": "Dave takes his coffee with oat milk"
+        }))
+        .await
+        .expect("memory tool execution");
     assert!(!learned.is_error, "{}", learned.text());
+    let view: Value = serde_json::from_str(&learned.text()).expect("learn result json");
+    let id = view["id"].as_str().expect("learn keeps the receipt id");
+    assert_eq!(view["status"], json!("queued; not yet saved to memory"));
+
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            match events.recv().await {
+                Some(openhuman_core::core::events::DomainEvent::MemoryStored { key, .. })
+                    if key == id =>
+                {
+                    break;
+                }
+                Some(_) => continue,
+                None => panic!("memory event bus closed before the queued write completed"),
+            }
+        }
+    })
+    .await
+    .expect("queued store completed and published MemoryStored");
+
     let tool_calls = memory_requests_since(&f, before).await;
     assert!(
         after_the_write(&tool_calls).is_empty(),
         "the agent learn must return right after its write, with no visibility reads: {tool_calls:?}"
     );
-    let view: Value = serde_json::from_str(&learned.text()).expect("learn result json");
-    let id = view["id"].as_str().expect("learn keeps the receipt id");
-    assert_eq!(view["status"], json!("saved; searchable in recall shortly"));
 
     // Shortly after, the learning is readable like any other.
     let deadline = Instant::now() + Duration::from_secs(30);

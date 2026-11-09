@@ -320,7 +320,7 @@ println!("{}", reply.reply);
 
 请阅读 [`CONTRIBUTING.md`](../CONTRIBUTING.md)，或者用[这段提示词](./CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you)让 AI 编码智能体带你上手。
 
-1. 安装 Git、Node.js 24+、pnpm 10.10.0、Rust 1.96.1（含 `rustfmt` 和 `clippy`）、CMake、Ninja、ripgrep，以及你所用平台的桌面构建依赖。
+1. 安装 Git、Node.js 24+、pnpm 10.10.0、Rust 1.99.1（含 `rustfmt` 和 `clippy`）、CMake、Ninja、ripgrep，以及你所用平台的桌面构建依赖。
 2. Fork 并克隆仓库。运行 `git submodule update --init --recursive`，然后运行 `pnpm install`。
 3. 做界面开发运行 `pnpm dev`，做桌面应用运行 `pnpm dev:app`。提交 PR 之前，请运行 `pnpm typecheck`、`pnpm format:check` 和 `cargo check --manifest-path Cargo.toml`。
 

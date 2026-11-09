@@ -2,15 +2,13 @@
 //! pack a turn would get, the agents with conversations, and the job queue.
 
 use serde::{Deserialize, Serialize};
-use tinymemory_api::{ExploreRequest, Facet};
-use tinymemory_tools::{ContextPack, SessionStart};
+use tinymemory_tools::{ContextPack, PreviewMode, RecallSettings};
 
-use crate::config::schema::MemoryRecallConfig;
 use crate::config::Config;
-use crate::memory::error::{MemoryError, MemoryResult};
-use crate::memory::scope::{self, MemoryIdentity};
+use tinymemory_api::Result;
 
-use super::jobs::{self, JobQueue, JobRun, Selection};
+use super::jobs;
+use tinymemory_tools::queue::{JobRun, QueueState, Selection};
 
 /// `memory_policy_get` / `_set` result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -18,7 +16,7 @@ pub struct PolicyView {
     /// Whether every turn is logged.
     pub log_conversations: bool,
     /// The pack and its budgets.
-    pub recall: MemoryRecallConfig,
+    pub recall: RecallSettings,
     /// The layout root work outside an agent resolves to.
     pub root: String,
     /// The memory agent id work outside an agent resolves to.
@@ -30,7 +28,8 @@ pub struct PolicyView {
 /// `memory_policy_get`.
 #[must_use]
 pub fn policy_view(config: &Config) -> PolicyView {
-    let resolved = scope::MemoryIdentity::root().resolve(config);
+    let resolved = tinymemory_tools::layout::identity::Identity::root()
+        .resolve(&crate::memory::scope::identity_pins(config));
     PolicyView {
         log_conversations: config.memory.conversations.enabled,
         recall: config.memory.recall.clone(),
@@ -71,63 +70,62 @@ pub struct PolicySetParams {
     /// How long a turn waits for its pack, in ms (100–30000).
     #[serde(default)]
     pub pre_turn_timeout_ms: Option<u64>,
-}
-
-fn within<T: PartialOrd + std::fmt::Display + Copy>(
-    name: &str,
-    value: Option<T>,
-    min: T,
-    max: T,
-) -> MemoryResult<Option<T>> {
-    match value {
-        Some(value) if value < min || value > max => Err(MemoryError::invalid(format!(
-            "{name} must be between {min} and {max}"
-        ))),
-        other => Ok(other),
-    }
+    /// Whether to use a small model call to identify dates in each turn.
+    #[serde(default)]
+    pub date_hint: Option<bool>,
+    /// How long compaction waits for recalled context, in milliseconds.
+    #[serde(default)]
+    pub compaction_timeout_ms: Option<u64>,
+    /// How long queued belief builds wait for newer writes, in seconds.
+    /// Must fit within chrono's supported date range when subtracted from now.
+    #[serde(default)]
+    pub build_delay_secs: Option<u64>,
 }
 
 /// Applies `params` to `config`; the caller persists it.
-pub fn apply_policy_set(config: &mut Config, params: &PolicySetParams) -> MemoryResult<()> {
-    let recall = &mut config.memory.recall;
-    if let Some(value) = params.log_conversations {
-        config.memory.conversations.enabled = value;
-    }
+pub fn apply_policy_set(config: &mut Config, params: &PolicySetParams) -> Result<()> {
+    // Apply the complete proposed recall state to a copy, then let TinyMemory
+    // validate it before changing either recall or conversation settings.
+    let mut recall = config.memory.recall.clone();
     if let Some(value) = params.recall_enabled {
         recall.enabled = value;
     }
-    if let Some(value) = within("budget_tokens", params.budget_tokens, 100, 16_000)? {
+    if let Some(value) = params.budget_tokens {
         recall.budget_tokens = value;
     }
-    for (name, value, slot) in [
-        (
-            "learnings_limit",
-            params.learnings_limit,
-            &mut recall.learnings_limit,
-        ),
-        ("brain_limit", params.brain_limit, &mut recall.brain_limit),
-        (
-            "history_limit",
-            params.history_limit,
-            &mut recall.history_limit,
-        ),
-        ("team_limit", params.team_limit, &mut recall.team_limit),
-    ] {
-        if let Some(value) = within(name, value, 0, 50)? {
-            *slot = value;
-        }
+    if let Some(value) = params.learnings_limit {
+        recall.learnings_limit = value;
     }
-    if let Some(value) = within("build_beliefs_every", params.build_beliefs_every, 0, 1000)? {
+    if let Some(value) = params.brain_limit {
+        recall.brain_limit = value;
+    }
+    if let Some(value) = params.history_limit {
+        recall.history_limit = value;
+    }
+    if let Some(value) = params.team_limit {
+        recall.team_limit = value;
+    }
+    if let Some(value) = params.build_beliefs_every {
         recall.build_beliefs_every = value;
     }
-    if let Some(value) = within(
-        "pre_turn_timeout_ms",
-        params.pre_turn_timeout_ms,
-        100,
-        30_000,
-    )? {
+    if let Some(value) = params.pre_turn_timeout_ms {
         recall.pre_turn_timeout_ms = value;
     }
+    if let Some(value) = params.date_hint {
+        recall.date_hint = value;
+    }
+    if let Some(value) = params.compaction_timeout_ms {
+        recall.compaction_timeout_ms = value;
+    }
+    if let Some(value) = params.build_delay_secs {
+        recall.build_delay_secs = value;
+    }
+    recall.validate()?;
+
+    if let Some(value) = params.log_conversations {
+        config.memory.conversations.enabled = value;
+    }
+    config.memory.recall = recall;
     tracing::info!("[memory:policy] recall policy updated");
     Ok(())
 }
@@ -163,30 +161,28 @@ pub struct PackPreviewView {
 /// (without one) would be given. Reads only; nothing is logged.
 pub async fn pack_preview(
     config: &Config,
-    identity: &MemoryIdentity,
+    identity: &tinymemory_tools::layout::identity::Identity,
     params: PackPreviewParams,
-) -> MemoryResult<PackPreviewView> {
+) -> Result<PackPreviewView> {
     let (memory, identity) =
-        super::named_agent_memory(config, identity, params.agent_id.as_deref())?;
-    let query = params.query.filter(|query| !query.trim().is_empty());
-    let (mode, pack) = match query {
-        Some(query) => ("turn", memory.recall(&query).await?),
-        None => (
-            "session",
-            memory
-                .start_session(SessionStart {
-                    thread_id: params.thread_id.filter(|id| !id.trim().is_empty()),
-                    focus: None,
-                })
-                .await?,
-        ),
+        super::named_agent_memory(config, identity, params.agent_id.as_deref()).await?;
+    let preview = memory
+        .preview(params.query.as_deref(), params.thread_id.as_deref())
+        .await?;
+    let mode = match preview.mode {
+        PreviewMode::Turn => "turn",
+        PreviewMode::Session => "session",
     };
-    tracing::debug!(mode, tokens = pack.tokens, "[memory:views] pack preview");
+    tracing::debug!(
+        mode,
+        tokens = preview.pack.tokens,
+        "[memory:views] pack preview"
+    );
     Ok(PackPreviewView {
         root: identity.root().to_string(),
         agent_id: identity.agent_id,
         mode,
-        pack,
+        pack: preview.pack,
     })
 }
 
@@ -209,23 +205,18 @@ pub struct AgentsView {
 }
 
 /// `memory_agents_list`: the agents with conversations under the root.
-pub async fn agents_list(config: &Config, identity: &MemoryIdentity) -> MemoryResult<AgentsView> {
-    let (memory, identity) = super::current_agent_memory(config, identity)?;
-    let page = memory
-        .engine()
-        .explore(ExploreRequest {
-            facet: Facet::Agent,
-            filter: identity.layout.conversations_filter(None),
-            limit: 200,
-            scan_limit: 20_000,
-        })
-        .await?;
-    let agents = page
-        .buckets
+pub async fn agents_list(
+    config: &Config,
+    identity: &tinymemory_tools::layout::identity::Identity,
+) -> Result<AgentsView> {
+    let (memory, identity) = super::current_agent_memory(config, identity).await?;
+    let agents = memory
+        .agents()
+        .await?
         .into_iter()
-        .map(|bucket| AgentCount {
-            agent_id: bucket.value,
-            turns: bucket.count,
+        .map(|agent| AgentCount {
+            agent_id: agent.agent_id,
+            turns: agent.turns,
         })
         .collect();
     Ok(AgentsView {
@@ -235,7 +226,7 @@ pub async fn agents_list(config: &Config, identity: &MemoryIdentity) -> MemoryRe
 }
 
 /// `memory_jobs_list` result.
-pub type JobsView = JobQueue;
+pub type JobsView = QueueState;
 
 /// `memory_jobs_list`.
 pub async fn jobs_list(config: &Config) -> JobsView {
@@ -258,13 +249,16 @@ pub struct JobsRunView {
 }
 
 /// `memory_jobs_run`: runs now, ignoring the build delay.
-pub async fn jobs_run(config: &Config, params: JobsRunParams) -> MemoryResult<JobsRunView> {
-    let selection = match params.id.filter(|id| !id.trim().is_empty()) {
-        Some(id) => Selection::One(id),
-        None => Selection::All,
-    };
+pub async fn jobs_run(config: &Config, params: JobsRunParams) -> Result<JobsRunView> {
     Ok(JobsRunView {
-        runs: jobs::run(config, selection).await?,
+        runs: jobs::run(
+            config,
+            params
+                .id
+                .filter(|id| !id.trim().is_empty())
+                .map_or(Selection::All, Selection::One),
+        )
+        .await?,
     })
 }
 

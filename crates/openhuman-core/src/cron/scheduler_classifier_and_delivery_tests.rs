@@ -1,12 +1,5 @@
 use super::*;
 
-#[test]
-fn forbidden_path_argument_skips_flags_and_urls() {
-    let policy = SecurityPolicy::default();
-    assert!(forbidden_path_argument(&policy, "curl https://example.com").is_none());
-    assert!(forbidden_path_argument(&policy, "ls -la").is_none());
-}
-
 #[tokio::test]
 async fn deliver_if_configured_skips_empty_mode() {
     let tmp = TempDir::new().unwrap();

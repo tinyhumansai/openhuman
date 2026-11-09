@@ -32,7 +32,8 @@ import {
 } from '../helpers/core-rpc';
 
 const MOCK_ADMIN_BASE = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '18473'}`;
-const USER_ID = 'pw-chat-thread-lifecycle';
+const USER_ID_PREFIX = 'pw-chat-thread-lifecycle';
+let userId = USER_ID_PREFIX;
 
 async function resetMock(): Promise<void> {
   await fetch(`${MOCK_ADMIN_BASE}/__admin/reset`, {
@@ -43,7 +44,7 @@ async function resetMock(): Promise<void> {
 }
 
 async function openChat(page: Page): Promise<void> {
-  await bootAuthenticatedPage(page, USER_ID, '/chat');
+  await bootAuthenticatedPage(page, userId, '/chat');
   await page.goto('/#/chat');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
@@ -91,8 +92,11 @@ async function selectThreadAction(page: Page, threadId: string, action: 'Rename'
 }
 
 test.describe('Chat thread list — create, deep link, rename, delete', () => {
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ page }, testInfo) => {
+    void page;
     await resetMock();
+    const title = testInfo.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    userId = `${USER_ID_PREFIX}-${title}`;
   });
 
   test('the sidebar creates a thread and selects it', async ({ page }) => {

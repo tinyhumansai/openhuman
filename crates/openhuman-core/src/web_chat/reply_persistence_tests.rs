@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use super::persist_delivered_reply;
-use crate::memory::types::TurnCitation;
 use crate::threads::store::{self as conversations, CreateConversationThread};
+use crate::web_chat::TurnCitation;
 
 fn temp_ws() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("web-chat-reply-{}", uuid::Uuid::new_v4()));
@@ -223,5 +223,26 @@ fn a_reply_without_citations_stores_no_citations_key() {
     assert!(
         messages[0].extra_metadata.get("citations").is_none(),
         "an empty citation list must not add an empty array the client never wrote"
+    );
+}
+
+#[test]
+fn a_spoken_reply_row_points_at_its_stored_audio() {
+    let ws = temp_ws();
+    seed_thread(&ws, "t-voice");
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+
+    crate::web_chat::voice_notes::store_synthesized_reply(&ctx, &ws, "req-v", "YWJj", "audio/mpeg");
+    persist_delivered_reply(&ctx, &ws, "t-voice", "req-v", "Hello", &[]).expect("append");
+    persist_delivered_reply(&ctx, &ws, "t-no-audio", "req-w", "Hi", &[]).ok();
+
+    let messages = conversations::get_messages(&ctx, ws.clone(), "t-voice").expect("messages");
+    assert_eq!(
+        messages[0].extra_metadata["voiceNote"]["noteId"],
+        "reply-req-v"
+    );
+    assert_eq!(
+        messages[0].extra_metadata["voiceNote"]["mime"],
+        "audio/mpeg"
     );
 }

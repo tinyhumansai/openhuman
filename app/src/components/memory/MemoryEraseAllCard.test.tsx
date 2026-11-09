@@ -179,6 +179,7 @@ describe('MemoryEraseAllCard', () => {
     expect(eraseErrorKey(coded('UNAUTHORIZED'))).toBe(
       'memoryPage.settings.eraseError.unauthorized'
     );
+    expect(eraseErrorKey(coded('PLAN_REQUIRED'))).toBe('memory.error.planRequired');
     expect(eraseErrorKey(coded('ENGINE'))).toBe('memoryPage.settings.eraseError.generic');
     expect(eraseErrorKey('nope')).toBe('memoryPage.settings.eraseError.generic');
   });

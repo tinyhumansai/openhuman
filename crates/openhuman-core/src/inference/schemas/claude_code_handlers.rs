@@ -51,8 +51,13 @@ pub(super) fn handle_inference_claude_code_settings(
     use tinyagents_harness::providers::claude_code::settings;
     Box::pin(async move {
         let config = ctx.load_config().await?;
-        let workspace = config.config_path.parent().unwrap_or(&config.workspace_dir);
-        let settings = settings::load(workspace);
+        let opened = crate::storage::local::open("claude_code::settings", &config.workspace_dir)
+            .map_err(|error| error.to_string())?;
+        let scoped = opened.scoped().map_err(|error| error.to_string())?;
+        let kv = settings::store(scoped.documents()).map_err(|error| error.to_string())?;
+        let settings = settings::load(&kv)
+            .await
+            .map_err(|error| error.to_string())?;
         log::debug!(
             "[rpc][inference.claude_code_settings] full_access={}",
             settings.full_access
@@ -69,11 +74,15 @@ pub(super) fn handle_inference_claude_code_set_full_access(
     Box::pin(async move {
         let p = deserialize_params::<InferenceClaudeCodeSetFullAccessParams>(params)?;
         let config = ctx.load_config().await?;
-        let workspace = config.config_path.parent().unwrap_or(&config.workspace_dir);
+        let opened = crate::storage::local::open("claude_code::settings", &config.workspace_dir)
+            .map_err(|error| error.to_string())?;
+        let scoped = opened.scoped().map_err(|error| error.to_string())?;
+        let kv = settings::store(scoped.documents()).map_err(|error| error.to_string())?;
         let settings = settings::ClaudeCodeSettings {
             full_access: p.enabled,
         };
-        settings::save(workspace, &settings)
+        settings::save(&kv, &settings)
+            .await
             .map_err(|e| format!("failed to persist claude code settings: {e}"))?;
         log::info!(
             "[rpc][inference.claude_code_set_full_access] persisted full_access={}",

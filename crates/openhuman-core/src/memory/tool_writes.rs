@@ -13,28 +13,29 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use tinymemory_api::{Namespace, StoreItem, WriteOptions};
+use tinymemory_api::{Namespace, Reach, StoreItem, WriteOptions};
+use tinymemory_tools::confine::Policy;
 use tinymemory_tools::list_store::{ListStore, StoreError};
 use tinymemory_tools::pending::{
     Ack, Binding, Entry, Epoch, FenceToken, Limits, PendingError, PendingWrites, WriteExecutor,
     WriteGate, WriteOperation,
 };
+use tinymemory_tools::ToolScope;
+use tinymemory_tools::WriteSink;
 
-use super::error::{MemoryError, MemoryResult};
-use super::tools::CallFacts;
-use super::types::{ForgetParams, LearnParams};
+use super::types::ForgetParams;
 use crate::config::Config;
+use tinymemory_api::{Error, Result};
 
 const MAX_PENDING: usize = 256;
 const MAX_BYTES: usize = 2 * 1024 * 1024;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(120);
-static PROCESS_EPOCH: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4().to_string());
 const QUEUED: &str = "queued; not yet saved to memory";
 static LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -45,21 +46,21 @@ struct DrainState {
 
 /// One owner's erasure state: the module's gate (generation, fences) and the
 /// barrier an erasure takes exclusively to wait for the write in flight.
-/// Kept for the life of the process (a few bytes per owner) because a fence
-/// token borrows its gate.
+/// Kept alive by active mutations and fences; the registry only holds a weak
+/// reference so owners with no active work can be released.
 struct OwnerState {
     gate: WriteGate,
     barrier: Arc<tokio::sync::RwLock<()>>,
 }
 
-type Owners = HashMap<PathBuf, &'static OwnerState>;
+type Owners = HashMap<PathBuf, Weak<OwnerState>>;
 static OWNERS: LazyLock<Mutex<Owners>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 type DrainLocks = HashMap<PathBuf, std::sync::Weak<DrainState>>;
 static DRAINS: LazyLock<Mutex<DrainLocks>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 type Queue = PendingWrites<FileStore>;
-static QUEUES: LazyLock<Mutex<HashMap<PathBuf, Arc<Queue>>>> =
+static QUEUES: LazyLock<Mutex<HashMap<PathBuf, Weak<Queue>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// An entry as older builds wrote it: the owner and layout as two fields.
@@ -108,7 +109,7 @@ fn binding_of(root: Option<String>, layout_v3: bool) -> Binding {
 fn binding(config: &Config) -> Binding {
     binding_of(
         super::scope::user_root(config),
-        super::scope::layout_is_v3(config),
+        config.memory.layout == crate::config::MemoryLayoutMode::V3,
     )
 }
 
@@ -137,7 +138,7 @@ fn owner_prefix(config: &Config) -> String {
 fn queue_path(config: &Config, root: &Namespace) -> PathBuf {
     let partition = serde_json::to_vec(&(
         &config.memory.root,
-        super::scope::layout_is_v3(config),
+        config.memory.layout == crate::config::MemoryLayoutMode::V3,
         root,
     ))
     .expect("partition fields serialize");
@@ -148,84 +149,81 @@ fn queue_path(config: &Config, root: &Namespace) -> PathBuf {
     ))
 }
 
-fn unavailable() -> MemoryError {
-    MemoryError::Unavailable(
-        "memory write queue unavailable; durable queueing was not confirmed".into(),
-    )
+fn unavailable() -> Error {
+    Error::Unavailable("memory write queue unavailable; durable queueing was not confirmed".into())
 }
 
-/// Accepts a validated, scrubbed write locally. The acknowledgement means only
-/// that it is durable in the local outbox, not accepted by the remote engine.
-pub(super) fn enqueue(
-    config: &Config,
-    args: &serde_json::Value,
-    facts: &CallFacts,
-) -> MemoryResult<serde_json::Value> {
-    if super::engine::switched_off(config) {
-        return Err(MemoryError::Off("memory is disabled".into()));
+/// The host policy and queue adapter used by TinyMemory's single tool.
+pub(super) struct HostWriteSink {
+    config: Arc<Config>,
+}
+
+impl HostWriteSink {
+    pub(super) fn new(config: Arc<Config>) -> Self {
+        Self { config }
     }
-    let confinement = super::user_scope::confinement(config)?;
-    let reach = match confinement {
-        Some(ref root) => super::user_scope::clamp_reach(Some(facts.reach.clone()), root),
-        None => facts.reach.clone(),
-    };
+}
+
+impl WriteSink for HostWriteSink {
+    fn preflight(&self, _scope: &ToolScope) -> Result<()> {
+        if super::engine::switched_off(&self.config) {
+            return Err(Error::Off("memory is disabled".into()));
+        }
+        super::ops::saas_confinement(&self.config, Policy::Clamp)?;
+        Ok(())
+    }
+
+    fn enqueue(&self, operation: WriteOperation, scope: &ToolScope) -> Result<Ack> {
+        enqueue_operation(&self.config, operation, scope)
+    }
+}
+
+fn enqueue_operation(config: &Config, operation: WriteOperation, scope: &ToolScope) -> Result<Ack> {
+    if super::engine::switched_off(config) {
+        return Err(Error::Off("memory is disabled".into()));
+    }
+    let confinement = super::ops::saas_confinement(config, Policy::Clamp)?;
+    let mut reach = scope
+        .reach
+        .clone()
+        .unwrap_or_else(|| Reach::subtree(scope.place.clone()));
+    if let Some(confinement) = &confinement {
+        reach = confinement.reach(Some(reach))?;
+    }
     let scope_root = reach.at.clone();
-    let file = queue_path(config, &scope_root);
-    let operation = match args.get("action").and_then(serde_json::Value::as_str) {
-        Some("learn") => {
-            let mut params: LearnParams = serde_json::from_value(args.clone())
-                .map_err(|_| MemoryError::invalid("invalid learning arguments"))?;
-            params.meta = None;
-            let mut item = super::ops::learning_item(params, Some(facts.learn_meta()))?;
-            if let Some(root) = confinement {
-                super::user_scope::clamp_item(&mut item, &root);
+    let operation = match operation {
+        WriteOperation::Learn { mut item } => {
+            if let Some(confinement) = &confinement {
+                confinement.item(&mut item)?;
             }
-            if !super::user_scope::within(&item.meta().namespace, &reach.at) || reach.inherit {
-                return Err(MemoryError::invalid(
-                    "learning namespace is outside the trusted reach",
+            if reach.inherit || !Reach::subtree(reach.at.clone()).admits(&item.meta().namespace) {
+                return Err(Error::InvalidRequest(
+                    "learning namespace is outside the trusted reach".into(),
                 ));
             }
             WriteOperation::Learn {
-                item: super::guard::scrub(item),
+                item: tinymemory_integrations::safety::scrub_item_with(
+                    item,
+                    crate::memory::host_policy::host_policy(),
+                )
+                .value,
             }
         }
-        Some("forget") => {
-            let params: ForgetParams = serde_json::from_value(args.clone())
-                .map_err(|_| MemoryError::invalid("invalid forgetting arguments"))?;
-            let mut ids: Vec<_> = params
-                .ids
-                .into_iter()
-                .map(|id| id.trim().to_string())
-                .filter(|id| !id.is_empty())
-                .collect();
-            ids.sort();
-            ids.dedup();
-            if ids.is_empty() {
-                return Err(MemoryError::invalid("forget needs at least one id"));
-            }
-            WriteOperation::Forget { ids, reach }
-        }
-        _ => return Err(MemoryError::invalid("expected a memory write")),
+        WriteOperation::Forget { ids, .. } => WriteOperation::Forget { ids, reach },
     };
+    let file = queue_path(config, &scope_root);
     let _guard = LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let known = partitions(config)?;
-    if !known.contains(&file) && known.len() >= MAX_PENDING {
-        return Err(MemoryError::Unavailable(
+    if !file.exists() && partitions(config)?.len() >= MAX_PENDING {
+        return Err(Error::Unavailable(
             "memory write queue full; nothing was queued".into(),
         ));
     }
     let owner = owner_state(config);
-    let ack = queue(&file)
+    queue(&file)
         .enqueue(operation, scope_root, binding(config), &owner.gate)
-        .map_err(map_pending)?;
-    Ok(match ack {
-        Ack::Learned { id } => serde_json::json!({"id":id, "status":QUEUED}),
-        Ack::Forgotten { queued } => {
-            serde_json::json!({"queued":queued, "status":"queued; not yet removed from memory"})
-        }
-    })
+        .map_err(map_pending)
 }
 
 /// A [`ListStore`] over one queue partition (one storage write per save).
@@ -234,11 +232,11 @@ struct FileStore {
 }
 
 impl ListStore<Entry> for FileStore {
-    fn load(&self) -> Result<Vec<Entry>, StoreError> {
+    fn load(&self) -> std::result::Result<Vec<Entry>, StoreError> {
         read_file(&self.file).map_err(|_| StoreError("queue file unreadable".into()))
     }
 
-    fn save(&self, entries: &[Entry]) -> Result<(), StoreError> {
+    fn save(&self, entries: &[Entry]) -> std::result::Result<(), StoreError> {
         write_file(&self.file, entries).map_err(|_| StoreError("queue file unwritable".into()))
     }
 }
@@ -281,32 +279,33 @@ fn queue(file: &Path) -> Arc<Queue> {
     let mut queues = QUEUES
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    queues
-        .entry(file.to_path_buf())
-        .or_insert_with(|| {
-            Arc::new(PendingWrites::new(
-                FileStore {
-                    file: file.to_path_buf(),
-                },
-                Limits {
-                    max_entries: MAX_PENDING,
-                    max_bytes: MAX_BYTES,
-                },
-            ))
-        })
-        .clone()
+    queues.retain(|_, queue| queue.strong_count() > 0);
+    if let Some(queue) = queues.get(file).and_then(Weak::upgrade) {
+        return queue;
+    }
+    let queue = Arc::new(PendingWrites::new(
+        FileStore {
+            file: file.to_path_buf(),
+        },
+        Limits {
+            max_entries: MAX_PENDING,
+            max_bytes: MAX_BYTES,
+        },
+    ));
+    queues.insert(file.to_path_buf(), Arc::downgrade(&queue));
+    queue
 }
 
-fn map_pending(error: PendingError) -> MemoryError {
-    MemoryError::Unavailable(error.to_string())
+fn map_pending(error: PendingError) -> Error {
+    Error::Unavailable(error.to_string())
 }
 
-fn read_at(path: &Path) -> MemoryResult<Vec<Entry>> {
+fn read_at(path: &Path) -> Result<Vec<Entry>> {
     queue(path).entries().map_err(map_pending)
 }
 
 #[cfg(test)]
-fn write_at(file: &Path, entries: &[Entry]) -> MemoryResult<()> {
+fn write_at(file: &Path, entries: &[Entry]) -> Result<()> {
     FileStore {
         file: file.to_path_buf(),
     }
@@ -315,11 +314,11 @@ fn write_at(file: &Path, entries: &[Entry]) -> MemoryResult<()> {
 }
 
 #[cfg(test)]
-fn read(workspace: &Path) -> MemoryResult<Vec<Entry>> {
+fn read(workspace: &Path) -> Result<Vec<Entry>> {
     read_at(&path(workspace))
 }
 #[cfg(test)]
-fn write(workspace: &Path, entries: &[Entry]) -> MemoryResult<()> {
+fn write(workspace: &Path, entries: &[Entry]) -> Result<()> {
     write_at(&path(workspace), entries)
 }
 
@@ -336,7 +335,7 @@ fn drain_state(workspace: &Path) -> Arc<DrainState> {
     lock
 }
 
-fn owner_state(config: &Config) -> &'static OwnerState {
+fn owner_state(config: &Config) -> Arc<OwnerState> {
     let key = config
         .workspace_dir
         .join("memory")
@@ -344,15 +343,21 @@ fn owner_state(config: &Config) -> &'static OwnerState {
     let mut owners = OWNERS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    owners.entry(key).or_insert_with(|| {
-        Box::leak(Box::new(OwnerState {
-            gate: WriteGate::new(PROCESS_EPOCH.clone()),
-            barrier: Arc::default(),
-        }))
-    })
+    owners.retain(|_, owner| owner.strong_count() > 0);
+    if let Some(owner) = owners.get(&key).and_then(Weak::upgrade) {
+        return owner;
+    }
+    let owner = Arc::new(OwnerState {
+        // A new gate starts at generation zero, so it needs a distinct epoch
+        // identity to make entries from a released gate stale after eviction.
+        gate: WriteGate::new(uuid::Uuid::new_v4().to_string()),
+        barrier: Arc::default(),
+    });
+    owners.insert(key, Arc::downgrade(&owner));
+    owner
 }
 
-fn partitions(config: &Config) -> MemoryResult<Vec<PathBuf>> {
+fn partitions(config: &Config) -> Result<Vec<PathBuf>> {
     let prefix = format!("{}-", owner_prefix(config));
     let names =
         super::state_store::names(&config.workspace_dir, &prefix).map_err(|_| unavailable())?;
@@ -369,7 +374,7 @@ fn partitions(config: &Config) -> MemoryResult<Vec<PathBuf>> {
 /// wait in the prefetch queue. Erasure retires older work and waits for active
 /// mutations while subsequent work waits behind the exclusive barrier.
 pub(crate) struct AutomaticMutation {
-    state: &'static OwnerState,
+    state: Arc<OwnerState>,
     generation: u64,
 }
 
@@ -389,20 +394,48 @@ impl AutomaticMutation {
 /// Captures authority without waiting on the engine or an active erasure.
 pub(crate) fn automatic_mutation(config: &Config) -> AutomaticMutation {
     let state = owner_state(config);
-    AutomaticMutation {
-        state,
-        generation: state.gate.generation(),
-    }
+    let generation = state.gate.generation();
+    AutomaticMutation { state, generation }
 }
 
 /// Holds the owner's mutation barrier through explicit engine erasure.
 /// Subsequent queued writes resume only after the outer erasure finishes.
 pub(crate) struct WriteFence {
     guard: Option<tokio::sync::OwnedRwLockWriteGuard<()>>,
-    token: Option<FenceToken<'static>>,
-    state: &'static OwnerState,
+    token: Option<OwnedFenceToken>,
+    state: Arc<OwnerState>,
     config: Arc<Config>,
     ctx: crate::core::runtime::DispatchCtx,
+}
+
+/// An owned fence token. The token borrows its gate, so keep the owner alive
+/// and drop the token before releasing that owner.
+struct OwnedFenceToken {
+    _state: Arc<OwnerState>,
+    token: Option<FenceToken<'static>>,
+}
+
+impl OwnedFenceToken {
+    fn new(state: Arc<OwnerState>) -> Self {
+        let token = state.gate.begin_fence();
+        // SAFETY: `state` owns the borrowed gate and remains alive in this
+        // wrapper. `Drop` takes the token before Rust drops the state field.
+        let token = unsafe { std::mem::transmute::<FenceToken<'_>, FenceToken<'static>>(token) };
+        Self {
+            _state: state,
+            token: Some(token),
+        }
+    }
+
+    fn generation(&self) -> u64 {
+        self.token.as_ref().expect("live fence token").generation()
+    }
+}
+
+impl Drop for OwnedFenceToken {
+    fn drop(&mut self) {
+        drop(self.token.take());
+    }
 }
 
 impl Drop for WriteFence {
@@ -421,14 +454,14 @@ impl Drop for WriteFence {
 pub(crate) async fn fence_and_clear(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
-) -> MemoryResult<WriteFence> {
+) -> Result<WriteFence> {
     let state = owner_state(config);
-    let token = state.gate.begin_fence();
+    let token = OwnedFenceToken::new(state.clone());
     let fencing_generation = token.generation();
     let mut fence = WriteFence {
         guard: None,
         token: Some(token),
-        state,
+        state: state.clone(),
         config: Arc::new(config.clone()),
         ctx: ctx.clone(),
     };
@@ -443,7 +476,7 @@ pub(crate) async fn fence_and_clear(
                 .clear_stale(state.gate.process(), fencing_generation)
                 .map_err(map_pending)?;
         }
-        Ok::<_, MemoryError>(())
+        Ok::<_, Error>(())
     })
     .await
     .map_err(|_| unavailable())??;
@@ -507,7 +540,7 @@ fn schedule_partition(ctx: &crate::core::runtime::DispatchCtx, config: Arc<Confi
         let _guard = guard;
         let _owner_guard = owner_guard;
         let _state = state;
-        drain_locked(&config, &file, owner, generation).await;
+        drain_locked(&config, &file, &owner, generation).await;
     });
 }
 
@@ -518,14 +551,16 @@ fn schedule_partition(ctx: &crate::core::runtime::DispatchCtx, config: Arc<Confi
 pub(crate) async fn drain(config: &Config) -> usize {
     let file = queue_path(
         config,
-        super::scope::MemoryIdentity::root().resolve(config).root(),
+        tinymemory_tools::layout::identity::Identity::root()
+            .resolve(&crate::memory::scope::identity_pins(config))
+            .root(),
     );
     let owner = owner_state(config);
     let _owner = owner.barrier.read().await;
     let state = drain_state(&file);
     let _draining = state.barrier.lock().await;
     let generation = owner.gate.generation();
-    drain_locked(config, &file, owner, generation).await
+    drain_locked(config, &file, &owner, generation).await
 }
 
 /// Runs one queued write against the bound engine, bounded by [`WRITE_TIMEOUT`].
@@ -535,15 +570,16 @@ struct Executor<'a> {
 
 #[async_trait]
 impl WriteExecutor for Executor<'_> {
-    async fn run(&self, operation: &WriteOperation) -> Result<(), String> {
+    async fn run(&self, operation: &WriteOperation) -> std::result::Result<(), String> {
         let config = self.config;
         let work = async {
             match operation {
                 WriteOperation::Learn { item } => {
-                    let bound = super::engine::resolve(config).engine()?;
-                    let receipt =
-                        super::ops::store_on_with(&bound, item.clone(), WriteOptions::accepted())
-                            .await?;
+                    let bound = super::engine::resolve(config).await.engine()?;
+                    let receipt = bound
+                        .engine
+                        .store_with(item.clone(), WriteOptions::accepted())
+                        .await?;
                     let category = match item {
                         StoreItem::Learning { kind, .. } => kind.as_str(),
                         _ => "learning",
@@ -595,4 +631,4 @@ async fn drain_locked(config: &Config, file: &Path, state: &OwnerState, generati
 
 #[cfg(test)]
 #[path = "tool_writes_tests.rs"]
-mod tests;
+pub(crate) mod tests;

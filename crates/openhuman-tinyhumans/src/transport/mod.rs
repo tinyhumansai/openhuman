@@ -6,7 +6,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+use openhuman_embed::__host::config::Config;
+use openhuman_embed::__host::credentials::backend_credential::{
+    resolve_backend_credential, BackendCredential,
+};
+use openhuman_embed::__host::memory::CallbackBearerSource;
+use openhuman_embed::__host::memory_engines::BearerSource;
 use reqwest::Method;
 use serde_json::Value;
 use tinyhumans_sdk::TinyHumansClient;
@@ -14,10 +19,16 @@ use tinyhumans_sdk::TinyHumansClient;
 mod error;
 mod port;
 
+#[cfg(test)]
+#[path = "memory_bearer_tests.rs"]
+mod memory_bearer_tests;
+
+#[cfg(test)]
+pub(crate) use error::billing_refusal;
 pub use error::map_sdk_error;
 pub use port::{
-    BackendRequest, BackendTransport, BackendTransportError, BaseUrlPurpose, QueryParam,
-    TransportProfile,
+    BackendRequest, BackendTransport, BackendTransportError, BaseUrlPurpose, BillingRefusal,
+    QueryParam, TransportProfile,
 };
 
 /// One `reqwest::Client` per [`TransportProfile`], each built from
@@ -114,6 +125,23 @@ impl BackendTransport for SdkBackendTransport {
             .post_multipart(req.path, form)
             .await
             .map_err(|error| map_sdk_error(error, &Method::POST, req.path))
+    }
+
+    fn memory_bearer_source(&self, config: Arc<Config>) -> Option<Arc<dyn BearerSource>> {
+        Some(Arc::new(CallbackBearerSource::new(move || {
+            let config = Arc::clone(&config);
+            async move {
+                resolve_backend_credential(&config)
+                    .await
+                    .map(BackendCredential::into_secret)
+                    .map_err(|error| {
+                        log::debug!("[tinyhumans-transport] memory bearer unavailable: {error}");
+                        tinymemory_api::Error::Unauthorized(
+                            "the backend credential is unavailable".to_string(),
+                        )
+                    })
+            }
+        })))
     }
 
     fn http_client(&self, profile: TransportProfile) -> reqwest::Client {

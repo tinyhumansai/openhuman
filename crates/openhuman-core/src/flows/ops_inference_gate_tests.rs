@@ -145,7 +145,7 @@ async fn inference_gate_surfaces_construction_error() {
     let _inference = crate::inference::inference_test_guard_async().await;
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
-    seed_app_session_for_gate_test(&tmp);
+    seed_app_session_for_gate_test(&tmp).await;
     config.memory_provider = Some("no_such_slug:some-model".to_string());
 
     let g = graph(json!({
@@ -181,8 +181,8 @@ async fn inference_gate_surfaces_construction_error() {
 // failure (no network, no test-provider-override seam) so a bug that skips a
 // role would show up as a falsely-empty `errors` list.
 
-#[test]
-fn agent_node_role_prefers_custom_registry_entry_model_pin_over_default() {
+#[tokio::test]
+async fn agent_node_role_prefers_custom_registry_entry_model_pin_over_default() {
     // Finding A/B: a node with no per-node `config.model` but a STATIC
     // (non-`=`) `agent_ref` naming a custom registry entry that itself pins a
     // model (e.g. `hint:reasoning`) must resolve to THAT role — the same
@@ -217,11 +217,27 @@ fn agent_node_role_prefers_custom_registry_entry_model_pin_over_default() {
         ],
         "edges": [ { "from_node": "t", "to_node": "a" } ]
     }));
-    let node = g.nodes.iter().find(|n| n.id == "a").expect("node 'a'");
+    let node = g["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "a")
+        .expect("node 'a'");
     assert_eq!(
-        agent_node_role(&config, node),
+        agent_node_role(&config, &node["config"]).await,
         "reasoning",
         "the custom registry entry's `hint:reasoning` pin must win over the default role"
+    );
+}
+
+#[tokio::test]
+async fn agent_node_role_uses_registered_provider_model_policy() {
+    crate::agent::session_host::test_support::install_model_fixture();
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    assert_eq!(
+        agent_node_role(&config, &json!({ "model": "fixture-reasoning" })).await,
+        "reasoning"
     );
 }
 
@@ -239,7 +255,7 @@ async fn inference_gate_probes_every_distinct_agent_node_role() {
     let _inference = crate::inference::inference_test_guard_async().await;
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
-    seed_app_session_for_gate_test(&tmp);
+    seed_app_session_for_gate_test(&tmp).await;
     config.chat_provider = Some("no_such_chat_slug:some-model".to_string());
     config.reasoning_provider = Some("no_such_reasoning_slug:some-model".to_string());
 
@@ -247,9 +263,9 @@ async fn inference_gate_probes_every_distinct_agent_node_role() {
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
             { "id": "a", "kind": "agent", "name": "Chat step",
-              "config": { "prompt": "chat", "model": "chat-v1" } },
+              "config": { "prompt": "chat", "model": "hint:chat" } },
             { "id": "b", "kind": "agent", "name": "Reasoning step",
-              "config": { "prompt": "reason", "model": "reasoning-v1" } }
+              "config": { "prompt": "reason", "model": "hint:reasoning" } }
         ],
         "edges": [
             { "from_node": "t", "to_node": "a" },

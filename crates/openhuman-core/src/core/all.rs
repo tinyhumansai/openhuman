@@ -4,57 +4,25 @@
 //! controllers (e.g., memory, skills, config) and providing a unified
 //! interface for both the CLI and RPC layers to invoke them.
 
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::{Arc, OnceLock, RwLock},
-};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use serde_json::{Map, Value};
 
-use crate::core::runtime::DispatchCtx;
+#[path = "all_entry.rs"]
+mod all_entry;
+pub use all_entry::{
+    BoundRegisteredController, CliHandler, ControllerEntry, ControllerFuture, ControllerHandler,
+    ControllerTask, RegisteredCliAdapter, RegisteredController,
+};
+
 use crate::core::ControllerSchema;
-
-/// A pinned, boxed future returned by a controller handler.
-pub type ControllerFuture = Pin<Box<dyn Future<Output = Result<Value, String>> + Send + 'static>>;
-
-/// A function pointer type for controller handlers.
-///
-/// Handlers take the call's explicit [`DispatchCtx`] and a map of parameters,
-/// and return a [`ControllerFuture`]. The transport that accepted the call
-/// builds the context; the registry passes it through untouched.
-pub type ControllerHandler = fn(DispatchCtx, Map<String, Value>) -> ControllerFuture;
-
-/// A function pointer type for domain-specific CLI handlers.
-pub type CliHandler = fn(&[String]) -> anyhow::Result<()>;
-
-/// A registered standalone CLI adapter for a domain.
-#[derive(Clone)]
-pub struct RegisteredCliAdapter {
-    pub namespace: &'static str,
-    pub handler: CliHandler,
-}
-
-/// A registered controller combining its schema and handler function.
-#[derive(Clone)]
-pub struct RegisteredController {
-    /// The schema defining the controller's identity and parameters.
-    pub schema: ControllerSchema,
-    /// The actual function that executes the controller's logic.
-    pub handler: ControllerHandler,
-}
-
-impl RegisteredController {
-    /// Returns the canonical RPC method name for this controller (e.g., `openhuman.memory_doc_put`).
-    pub fn rpc_method_name(&self) -> String {
-        rpc_method_name(&self.schema)
-    }
-}
 
 pub use super::domain_group::DomainGroup;
 mod components_gate;
+mod namespaces;
 mod validate;
 pub use components_gate::disabled_component_for_method;
+pub use namespaces::namespace_description;
 use validate::validate_registry;
 
 /// A [`RegisteredController`] tagged with the [`DomainGroup`] it belongs to.
@@ -66,13 +34,20 @@ use validate::validate_registry;
 #[derive(Clone)]
 struct GroupedController {
     group: DomainGroup,
-    controller: RegisteredController,
+    controller: ControllerEntry,
 }
 
 /// Append `items` to `dst`, tagging each with `group`.
 /// This is the single seam that attaches a [`DomainGroup`] to every domain's
 /// controllers without the domain modules knowing about groups.
 fn push(dst: &mut Vec<GroupedController>, group: DomainGroup, items: Vec<RegisteredController>) {
+    dst.extend(items.into_iter().map(|controller| GroupedController {
+        group,
+        controller: ControllerEntry::legacy(controller),
+    }));
+}
+
+fn push_entries(dst: &mut Vec<GroupedController>, group: DomainGroup, items: Vec<ControllerEntry>) {
     dst.extend(
         items
             .into_iter()
@@ -87,18 +62,18 @@ fn active_domain_set() -> Option<crate::core::runtime::DomainSet> {
     crate::core::runtime::context::CoreContext::current().map(|c| c.domains())
 }
 
-/// Whether the given [`DomainGroup`] is enabled under the ambient
-/// [`DomainSet`](crate::core::runtime::DomainSet). No active context ⇒ `true`
-/// (full, no filter) so pre-boot unit tests and non-context callers see every
-/// domain, exactly as before #4796.
+/// Whether the given [`DomainGroup`] is enabled under the ambient [`DomainSet`].
 fn group_allowed(group: DomainGroup) -> bool {
     active_domain_set().map_or(group != DomainGroup::Operator, |s| s.allows(group))
 }
 
-/// Whether `g` is live in the ambient scope: its family is enabled and, for a
-/// SaaS user, the method is on the user surface (`profiles::surface`).
+/// Whether `g` is live in the ambient scope.
 fn visible(g: &GroupedController) -> bool {
-    group_allowed(g.group) && on_surface(g)
+    let doctor_report = g.controller.rpc_method_name() == "openhuman.doctor_report";
+    // Only the shared report bypasses its group gate; surface checks still apply.
+    let saas_doctor_report = crate::core::runtime::is_saas() && doctor_report;
+    // That surface check denies missing scopes and unrelated Platform methods.
+    (group_allowed(g.group) || saas_doctor_report) && on_surface(g)
 }
 
 fn on_surface(g: &GroupedController) -> bool {
@@ -212,7 +187,7 @@ pub fn register_controller_extension(ext: ControllerExtension) -> Result<(), Str
     for controller in ext.controllers {
         merged.push(GroupedController {
             group: ext.group,
-            controller,
+            controller: ControllerEntry::legacy(controller),
         });
     }
     // Validate the union so an extension cannot shadow a built-in or internal
@@ -317,16 +292,16 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         crate::platform::about_app::all_about_app_registered_controllers(),
     );
     // Core application shell state
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Desktop,
-        crate::desktop::app_state::all_app_state_registered_controllers(),
+        crate::desktop::app_state::all_app_state_controller_entries(),
     );
     // Composio integration controllers
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Integrations,
-        crate::integrations::composio::all_composio_registered_controllers(),
+        crate::integrations::composio::all_composio_controller_entries(),
     );
     // Scheduled job management
     push(
@@ -342,6 +317,14 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Flows,
         crate::flows::all_flows_registered_controllers(),
     );
+    // Inbound event queues: depths, dead letters, redrive (`[components]
+    // eventqueues`; the handlers answer COMPONENT_DISABLED when it is off).
+    #[cfg(feature = "inbound-queues")]
+    push(
+        &mut controllers,
+        DomainGroup::Automation,
+        crate::inbound::all_inbound_registered_controllers(),
+    );
     // Proactive task ingestion from external tools (github/notion/linear/clickup)
     push(
         &mut controllers,
@@ -353,10 +336,10 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Desktop,
         crate::desktop::dashboard::all_dashboard_registered_controllers(),
     );
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Mcp,
-        crate::mcp::all_registered_controllers(),
+        crate::mcp::all_controller_entries(),
     );
     // Agent definition and prompt inspection
     push(
@@ -397,10 +380,10 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         crate::core::subsystem::all_subsystems_registered_controllers(),
     );
     // Diagnostic tools
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Platform,
-        crate::platform::doctor::all_doctor_registered_controllers(),
+        crate::doctor::all_doctor_controller_entries(),
     );
     // User-authored hooks — inspect, reload, and test-fire `hooks.json` entries.
     push(
@@ -409,16 +392,16 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         crate::hooks::all_hooks_registered_controllers(),
     );
     // Secret storage and encryption
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Security,
-        crate::security::encryption::all_encryption_registered_controllers(),
+        crate::security::encryption::all_encryption_controller_entries(),
     );
     // Keyring consent — user approval before local secret storage fallback
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Security,
-        crate::security::keyring_consent::all_keyring_consent_registered_controllers(),
+        crate::security::keyring_consent::all_keyring_consent_controller_entries(),
     );
     // Security policy metadata
     push(
@@ -427,10 +410,10 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         crate::security::all_security_registered_controllers(),
     );
     // Interactive approval workflow (#1339 — gate external-effect tool calls)
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Security,
-        crate::security::approval::all_approval_registered_controllers(),
+        crate::security::approval::schemas::all_approval_controller_entries(),
     );
     // Interactive plan-review gate — parks a live turn on a thread-scoped plan
     push(
@@ -504,7 +487,7 @@ fn build_registered_controllers() -> Vec<GroupedController> {
     push(
         &mut controllers,
         DomainGroup::Security,
-        crate::security::credentials::all_credentials_registered_controllers(),
+        crate::credentials::all_credentials_registered_controllers(),
     );
     // Desktop service management
     push(
@@ -512,17 +495,17 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Platform,
         crate::platform::service::all_service_registered_controllers(),
     );
-    // Unified inference domain: text / vision / local runtime / cloud providers.
-    // (Formerly split across inference, local AI, and providers modules.)
+    let mut inference_controllers = crate::inference::all_inference_registered_controllers();
+    // Agent-owned chat keeps inference's capability group and contract order.
+    // Append it before the local runtime's speech controllers.
+    // This remains the registry's sole registration site for these methods.
+    inference_controllers
+        .extend(crate::agent_runs::all_inference_agent_chat_registered_controllers());
+    inference_controllers.extend(crate::inference::all_local_inference_registered_controllers());
     push(
         &mut controllers,
         DomainGroup::Inference,
-        crate::inference::all_inference_registered_controllers(),
-    );
-    push(
-        &mut controllers,
-        DomainGroup::Inference,
-        crate::inference::all_local_inference_registered_controllers(),
+        inference_controllers,
     );
     // Embedding provider configuration and embed RPC.
     push(
@@ -537,10 +520,10 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         crate::sandbox::all_sandbox_registered_controllers(),
     );
     // Backend Socket.IO bridge + related runtime plumbing
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Platform,
-        crate::platform::socket::all_socket_registered_controllers(),
+        crate::platform::socket::all_controller_entries(),
     );
     // Discovered SKILL.md skills and their bundled resources
     push(
@@ -573,10 +556,10 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         crate::tools::all_tools_registered_controllers(),
     );
     // Unified read-only registry across MCP stdio tools and controller-backed tools
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Platform,
-        crate::tools::registry::all_tool_registry_registered_controllers(),
+        crate::tools::registry::all_tool_registry_bound_controller_entries(),
     );
     // Memory v2 (`docs/specs/memory-v2.md`): engines, recall/fetch/learn/
     // forget, conversations, document sources, context.md and v1 import.
@@ -621,10 +604,10 @@ fn build_registered_controllers() -> Vec<GroupedController> {
     );
     // Voice transcription and synthesis (gated behind the `voice` feature).
     #[cfg(feature = "voice")]
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Voice,
-        crate::voice::all_voice_registered_controllers(),
+        crate::voice::all_voice_controller_entries(),
     );
     // Webhook tunnel management
     push(
@@ -639,10 +622,10 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         crate::platform::update::all_update_registered_controllers(),
     );
     // Conversation thread and message management
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Threads,
-        crate::threads::all_threads_registered_controllers(),
+        crate::threads::schemas::all_controller_entries(),
     );
     // TokenJuice content-router debug controllers (detect / compress / cache_stats / retrieve).
     // Classified Inference: TokenJuice is the token-compression content router,
@@ -661,13 +644,16 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         crate::desktop::notifications::all_notifications_registered_controllers(),
     );
     // Storage layout v1 -> v2 migration, status and restore
-    #[rustfmt::skip]
+    #[cfg(feature = "legacy-import")]
+    {
+        #[rustfmt::skip]
     push(&mut controllers, DomainGroup::Config, crate::storage::layout::schemas::all_registered_controllers());
+    }
     // Mobile device pairing and management
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Security,
-        crate::security::devices::all_devices_registered_controllers(),
+        crate::security::devices::all_controller_entries(),
     );
     // Durable agent/workflow run ledger — read surface over run state, lineage, events, telemetry
     push(
@@ -688,10 +674,10 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         crate::agent_runs::all_orchestration_registered_controllers(),
     );
     // SaaS operator plane: provision and inspect user profiles.
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Operator,
-        crate::profiles::all_profiles_registered_controllers(),
+        crate::profiles::schemas::all_profiles_controller_entries(),
     );
     controllers
 }
@@ -720,21 +706,21 @@ fn build_internal_only_controllers() -> Vec<GroupedController> {
     // compiled into `modules::registry`, so this namespace can start a module
     // the build already trusts and nothing else.
     #[cfg(feature = "modules")]
-    push(
+    push_entries(
         &mut controllers,
         DomainGroup::Modules,
-        crate::modules::all_registered_controllers(),
+        crate::modules::schemas::all_controller_entries(),
     );
     controllers
 }
 
 /// Returns registered controllers filtered by the ambient [`crate::core::runtime::DomainSet`].
-pub fn all_registered_controllers() -> Vec<RegisteredController> {
+pub fn all_registered_controllers() -> Vec<ControllerEntry> {
     let view = registry_view();
     registered_controllers(&view)
 }
 
-fn registered_controllers(view: &RegistryView) -> Vec<RegisteredController> {
+fn registered_controllers(view: &RegistryView) -> Vec<ControllerEntry> {
     let found = view
         .iter()
         .filter(|g| visible(g))
@@ -764,118 +750,6 @@ fn controller_schemas(view: &RegistryView) -> Vec<ControllerSchema> {
 /// Generates a standardized RPC method name from a controller schema.
 pub fn rpc_method_name(schema: &ControllerSchema) -> String {
     format!("openhuman.{}_{}", schema.namespace, schema.function)
-}
-
-/// Returns a human-readable description for a given namespace.
-///
-/// This is used for CLI help output.
-pub fn namespace_description(namespace: &str) -> Option<&'static str> {
-    match namespace {
-        "about_app" => Some("Catalog the app's user-facing capabilities and where to find them."),
-        "agent" => Some("Per-thread agent run-mode control (Plan vs Build)."),
-        "ai" => Some("Agent-generated artifact storage, retrieval, and lifecycle management."),
-        "app_state" => Some("Expose core-owned app shell state for frontend polling."),
-        "profiles" => {
-            Some("SaaS operator plane: provision and inspect the profile serving each user.")
-        }
-        "auth" => Some("Manage app session and provider credentials."),
-        "agent_experience" => Some("Local procedural experience capture and retrieval for agents."),
-        "channels" => Some("Channel definitions, connections, and lifecycle management."),
-        "composio" => Some(
-            "Composio OAuth integrations proxied via the backend — toolkits, connections, tools, and actions.",
-        ),
-        "config" => Some("Read and update persisted runtime configuration."),
-        "connectivity" => Some(
-            "Connectivity diagnostics for the local sidecar, listening port, and backend Socket.IO state.",
-        ),
-        "cron" => Some("Manage scheduled jobs and run history."),
-        "flows" => Some("Create, store, and run automation workflows."),
-        "dashboard" => {
-            Some("Operator-facing dashboard aggregations: per-model health comparison rows.")
-        }
-        "mcp_clients" => Some(
-            "Browse the MCP registries, declare the user's servers in one mcp.json document, manage their connections and credentials, and expose their tools to the agent.",
-        ),
-        "mcp_ui" => Some("Serve MCP tool widgets their documents and run their tool calls."),
-        "decrypt" => Some("Decrypt secure values managed by secret storage."),
-        "doctor" => Some("Run diagnostics for workspace and runtime health."),
-        "hooks" => Some(
-            "User-authored hooks: list what is configured, reload every hooks.json layer, and test-fire one event.",
-        ),
-        "encrypt" => Some("Encrypt secure values managed by secret storage."),
-        "health" => Some("Process and component health snapshots."),
-        "inference" => {
-            Some("Connect to configured text, vision, and embedding inference runtimes.")
-        }
-        "javascript" => {
-            Some("First-class JavaScript runtime bridge for listing and dispatching tools.")
-        }
-        "security" => Some("Security policy and autonomy guardrail metadata."),
-        "service" => Some("Desktop service lifecycle management."),
-        "session_import" => {
-            Some("One-time import of legacy session transcripts into TinyAgents stores.")
-        }
-        "skill_registry" => Some(
-            "Browse, search, install, and uninstall skills from remote registries (OpenHuman, Hermes, OpenClaw).",
-        ),
-        "skill_runtime" => {
-            Some("Run installed skills, inspect run logs, and resolve Node/Python skill runtimes.")
-        }
-        "skills" => {
-            Some("Discovered SKILL.md skills (discovery, parse, install, run) and their resources.")
-        }
-        "socket" => Some("Backend Socket.IO bridge controls."),
-        "memory" => Some(
-            "Memory v2: engine selection, recall, fetch, learn, forget, conversations, document sources, context.md and v1 import.",
-        ),
-        "run_ledger" => Some(
-            "Durable agent and workflow run state, child lineage, events, telemetry, and checkpoint references.",
-        ),
-        "agent_work" => Some(
-            "Background agent command center — recent agent runs grouped by status (needs-input, working, completed, failed, stopped).",
-        ),
-        "workflow_run" => Some(
-            "Durable dynamic workflow runs — declarative multi-agent definitions and the read surface over persisted runs.",
-        ),
-        "agent_team" => Some(
-            "Durable agent-team coordination: teams, members, dependency-aware task claiming, and teammate messaging.",
-        ),
-        "tool_registry" => Some(
-            "Read-only discovery for MCP stdio tools and controller-backed tools, including routes, schemas, version, allowed agents, and health.",
-        ),
-        "test" => Some("E2E test support — wipe sidecar state in-place between specs."),
-        "wallet" => {
-            Some("Local wallet onboarding status and derived multi-chain account metadata.")
-        }
-        "web3_swap" => Some("Single-chain crypto swaps via deBridge, built on the local wallet."),
-        "web3_bridge" => {
-            Some("Cross-chain crypto bridges via deBridge DLN, built on the local wallet.")
-        }
-        "web3_dapp" => Some("Generic EVM dapp contract calls signed by the local wallet."),
-        "provider_surfaces" => {
-            Some("Local-first assistive surfaces for provider events, respond queues, and drafts.")
-        }
-        "voice" => Some("Speech-to-text and text-to-speech using local models."),
-        "webhooks" => {
-            Some("Webhook tunnel registrations and captured request/response debug logs.")
-        }
-        "update" => {
-            Some("Self-update: check GitHub Releases for newer core binary and stage updates.")
-        }
-
-        "notification" => Some(
-            "Integration notification ingest, triage scoring, listing, read-state, \
-             and per-provider routing settings.",
-        ),
-        "devices" => Some(
-            "Paired mobile device management — pairing channel creation, listing, and revocation.",
-        ),
-        "storage" => Some("Storage layout v1 to v2 migration, schema status and restore."),
-        "subsystems" => Some(
-            "Kernel subsystem slots and their bound drivers: class, health, contract version, and advertised capabilities.",
-        ),
-        other => extension_namespace_description(other),
-    }
 }
 
 /// Returns the CLI handler for a given namespace, if one is registered.
@@ -1184,33 +1058,23 @@ pub fn all_http_method_schemas() -> Vec<HttpMethodSchemaDefinition> {
     methods
 }
 
-/// Shared test helper: assert a domain's controller-schema list and
-/// registered-controller list stay in lockstep, and that a known function is
-/// present. Replaces the brittle `assert_eq!(schemas().len(), N)` magic-number
-/// pattern repeated across ~15 domains (plan.md §3/§6) — a legitimate new
-/// controller no longer breaks the count, but a schema/handler desync or a
-/// dropped op still fails.
 #[cfg(test)]
-pub(crate) fn assert_schema_controller_parity(
-    schemas: &[ControllerSchema],
-    controllers: &[RegisteredController],
-    known_function: &str,
-) {
-    assert_eq!(
-        schemas.len(),
-        controllers.len(),
-        "schema/controller registration lists must stay in lockstep",
-    );
-    assert!(
-        schemas.iter().any(|s| s.function == known_function),
-        "expected a `{known_function}` controller schema to be registered",
-    );
-}
+#[path = "schema_test_support.rs"]
+mod schema_test_support;
+#[cfg(test)]
+pub(crate) use schema_test_support::*;
+
+#[cfg(test)]
+#[path = "all_bound_controller_tests.rs"]
+mod bound_controller_tests;
+
+#[cfg(test)]
+#[path = "all_schema_contract_tests.rs"]
+mod schema_contract_tests;
 
 #[path = "all_invoke.rs"]
 mod invoke_registered;
 pub use invoke_registered::try_invoke_registered_rpc;
-
 #[cfg(test)]
 #[path = "all_tests.rs"]
 mod tests;

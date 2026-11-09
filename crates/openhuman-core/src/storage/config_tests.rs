@@ -73,14 +73,38 @@ fn the_default_differs_per_workspace() {
 }
 
 #[tokio::test]
+#[cfg(feature = "storage-sqlite")]
 async fn the_default_url_opens_in_directory_mode() {
     let dir = tempfile::tempdir().unwrap();
-    let backend = crate::storage::open(&default_url(dir.path()))
+    let url = default_url(dir.path());
+    let backend = crate::storage::open(&url).await.unwrap();
+    let scoped = backend.for_scope(&crate::storage::Scope::local()).unwrap();
+    let docs = scoped.documents();
+    docs.ensure_collection(&crate::storage::CollectionSpec::new("reopen_probe"))
         .await
         .unwrap();
-    assert_eq!(backend.driver(), "sqlite");
+    docs.put(
+        "reopen_probe",
+        "persisted",
+        serde_json::json!({"ok": true}),
+        crate::storage::Precondition::Absent,
+    )
+    .await
+    .unwrap();
     // Directory mode: the directory holds the database file.
     assert!(dir.path().join(DEFAULT_DIR).exists());
+    let reopened = crate::storage::open(&url).await.unwrap();
+    let scoped = reopened.for_scope(&crate::storage::Scope::local()).unwrap();
+    assert_eq!(
+        scoped
+            .documents()
+            .get("reopen_probe", "persisted")
+            .await
+            .unwrap()
+            .unwrap()
+            .doc["ok"],
+        true
+    );
 }
 
 fn v2_layout(root: &Path) -> crate::config::schema::ProfileLayout {
@@ -140,6 +164,7 @@ fn an_explicit_url_wins_over_the_v2_default() {
 }
 
 #[tokio::test]
+#[cfg(feature = "storage-sqlite")]
 async fn the_v2_default_opens_one_storage_db_file_beside_config_toml() {
     let tmp = tempfile::tempdir().unwrap();
     let layout = v2_layout(tmp.path());
@@ -147,11 +172,42 @@ async fn the_v2_default_opens_one_storage_db_file_beside_config_toml() {
     let backend = crate::storage::open(&default_url(&layout.workspace_dir))
         .await
         .unwrap();
-    assert_eq!(backend.driver(), "sqlite");
+    let scoped = backend.for_scope(&crate::storage::Scope::local()).unwrap();
+    let documents = scoped.documents();
+    documents
+        .ensure_collection(&crate::storage::CollectionSpec::new(
+            "storage.default_probe",
+        ))
+        .await
+        .unwrap();
+    documents
+        .put(
+            "storage.default_probe",
+            "persisted",
+            serde_json::json!({"opened": true}),
+            crate::storage::Precondition::Absent,
+        )
+        .await
+        .unwrap();
     assert!(
         layout.storage_db.is_file(),
         "{} should be a database file",
         layout.storage_db.display()
     );
     assert!(!layout.workspace_dir.join(DEFAULT_DIR).exists());
+
+    let reopened = crate::storage::open(&default_url(&layout.workspace_dir))
+        .await
+        .unwrap();
+    let scoped = reopened.for_scope(&crate::storage::Scope::local()).unwrap();
+    assert_eq!(
+        scoped
+            .documents()
+            .get("storage.default_probe", "persisted")
+            .await
+            .unwrap()
+            .unwrap()
+            .doc["opened"],
+        true
+    );
 }

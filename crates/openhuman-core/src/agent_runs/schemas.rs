@@ -8,25 +8,7 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
-/// Params for `agent.chat` and `agent.chat_simple`.
-///
-/// A near-copy of the params in
-/// [`crate::inference::host_runtime::schemas`], which backs the
-/// `inference.agent_chat*` namespace over the same ops. That surface carries
-/// two fields this one does not — a per-call `inference_url` + `api_key` —
-/// because `agent.chat` describes a turn on the account's own configured
-/// inference.
-#[derive(Debug, Deserialize)]
-struct AgentChatParams {
-    message: String,
-    model_override: Option<String>,
-    temperature: Option<f64>,
-    thread_id: Option<String>,
-    /// Optional per-turn working directory for the agent's filesystem / shell
-    /// tools. Absent or empty keeps the configured `action_dir`. Ignored by the
-    /// `*_simple` variant, which runs a bare provider call with no tools.
-    cwd: Option<String>,
-}
+use crate::agent_runs::agent_chat::params::AgentChatParams;
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
@@ -37,7 +19,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_definition"),
         schemas("reload_definitions"),
         schemas("triage_evaluate"),
-        schemas("graph_topologies"),
         schemas("registry_snapshot"),
         schemas("context_breakdown"),
     ]
@@ -72,10 +53,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("triage_evaluate"),
             handler: handle_triage_evaluate,
-        },
-        RegisteredController {
-            schema: schemas("graph_topologies"),
-            handler: handle_graph_topologies,
         },
         RegisteredController {
             schema: schemas("registry_snapshot"),
@@ -188,19 +165,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("result", "Triage evaluation result.")],
         },
-        "graph_topologies" => ControllerSchema {
-            namespace: "agent",
-            function: "graph_topologies",
-            description: "Export the structure-only topology (Mermaid + JSON + structural \
-                          validation report) of every custom tinyagents orchestration graph \
-                          for debugging and UI inspection. Structure only — node names, \
-                          edges, and routing; never closure bodies or run state.",
-            inputs: vec![],
-            outputs: vec![json_output(
-                "graphs",
-                "Object containing graph topology reports and built-in agent graph resolutions.",
-            )],
-        },
         "registry_snapshot" => ControllerSchema {
             namespace: "agent",
             function: "registry_snapshot",
@@ -265,7 +229,7 @@ fn handle_chat(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture
         let p = deserialize_params::<AgentChatParams>(params)?;
         let mut config = ctx.load_config().await?;
         to_json(
-            crate::inference::host_runtime::rpc::agent_chat(
+            crate::agent_runs::agent_chat::agent_chat(
                 &mut config,
                 &p.message,
                 p.model_override,
@@ -288,7 +252,7 @@ fn handle_chat_simple(ctx: DispatchCtx, params: Map<String, Value>) -> Controlle
         let p = deserialize_params::<AgentChatParams>(params)?;
         let config = ctx.load_config().await?;
         to_json(
-            crate::inference::host_runtime::rpc::agent_chat_simple(
+            crate::inference::host_runtime::ops::agent_chat_simple(
                 &ctx,
                 &config,
                 &p.message,
@@ -433,7 +397,7 @@ fn handle_triage_evaluate(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
                     // had. The envelope it builds may name a remote *source*,
                     // but the request itself is local (#5634).
                     let origin = crate::triage::local_trigger_origin();
-                    crate::security::turn_origin::with_origin(
+                    crate::core::runtime::turn_origin::with_origin(
                         origin,
                         crate::triage::apply_decision(&ctx, run.clone(), &envelope),
                     )
@@ -478,44 +442,6 @@ fn handle_triage_evaluate(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
     })
 }
 
-fn handle_graph_topologies(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async {
-        let reports = tinyagents_orchestration::topology::all_graph_topologies();
-        let agents = crate::agent_registry::agents::load_builtins()
-            .map_err(|e| format!("loading built-in agent graph resolutions: {e}"))?
-            .into_iter()
-            .map(|def| {
-                let graph = "default";
-                serde_json::json!({
-                    "id": def.id,
-                    "graph": graph,
-                })
-            })
-            .collect::<Vec<_>>();
-        tracing::debug!(
-            graphs = reports.len(),
-            agents = agents.len(),
-            "[rpc][agent] graph_topologies export"
-        );
-        let graphs: Vec<Value> = reports
-            .iter()
-            .map(|r| {
-                serde_json::json!({
-                    "name": r.name,
-                    "ok": r.ok,
-                    "errors": r.errors,
-                    "warnings": r.warnings,
-                    "mermaid": r.mermaid,
-                    // The topology JSON is embedded as structured JSON, not a string.
-                    "topology": serde_json::from_str::<Value>(&r.json)
-                        .unwrap_or(Value::Null),
-                })
-            })
-            .collect();
-        Ok(serde_json::json!({ "graphs": graphs, "agents": agents }))
-    })
-}
-
 /// Read-only projection of the tinyagents `CapabilityRegistry` inventory.
 ///
 /// The per-turn registry (`tinyagents::assemble_turn_harness`) owns live model
@@ -532,8 +458,8 @@ fn handle_graph_topologies(_ctx: DispatchCtx, _params: Map<String, Value>) -> Co
 ///   needs config/memory/audit/action-dir wiring that only exists inside a turn,
 ///   so only the baseline set is projected here. Deferred — see `deferred` in
 ///   the response and the migration follow-up.
-/// * **Graph** — `tinyagents::all_graph_topologies()` (same source the turn
-///   registers as `ComponentKind::Graph` descriptors).
+/// * **Graph** — the surviving host graph descriptors registered as
+///   `ComponentKind::Graph` components.
 /// * **Agent** — the built-in agent archetypes
 ///   (`agent_registry::agents::load_builtins()`); id + `when_to_use` blurb.
 ///
@@ -619,18 +545,6 @@ fn handle_registry_snapshot(ctx: DispatchCtx, _params: Map<String, Value>) -> Co
             );
         }
 
-        // ── Graphs: structure-only topology reports ─────────────────────────
-        let reports = tinyagents_orchestration::topology::all_graph_topologies();
-        let graph_count = reports.len();
-        for report in &reports {
-            let mut meta = ComponentMetadata::new(report.name, ComponentKind::Graph)
-                .with_tag(if report.ok { "ok" } else { "invalid" });
-            if !report.ok {
-                meta = meta.with_description("structural validation failed".to_string());
-            }
-            components.push(meta);
-        }
-
         // ── Agents: built-in archetypes ─────────────────────────────────────
         let agent_defs = crate::agent_registry::agents::load_builtins()
             .map_err(|e| format!("loading built-in agents for registry snapshot: {e}"))?;
@@ -657,7 +571,6 @@ fn handle_registry_snapshot(ctx: DispatchCtx, _params: Map<String, Value>) -> Co
         tracing::debug!(
             models = model_count,
             tools = tool_count,
-            graphs = graph_count,
             agents = agent_count,
             total = snapshot.len(),
             "[registry][rpc][agent] registry_snapshot export"
@@ -668,7 +581,6 @@ fn handle_registry_snapshot(ctx: DispatchCtx, _params: Map<String, Value>) -> Co
             "counts": {
                 "model": model_count,
                 "tool": tool_count,
-                "graph": graph_count,
                 "agent": agent_count,
                 "total": snapshot.len(),
             },

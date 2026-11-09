@@ -116,6 +116,25 @@ pub(super) struct StoredWalletState {
     pub updated_at_ms: u64,
 }
 
+/// Non-secret projection for read-only inspection of a stored wallet snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StoredWalletInspection {
+    pub consent_granted: bool,
+    pub account_count: usize,
+}
+
+/// Deserialize using the canonical persisted wallet schema and expose only
+/// the fields needed by health checks.
+pub(crate) fn inspect_stored_wallet_state(
+    bytes: &[u8],
+) -> Result<StoredWalletInspection, serde_json::Error> {
+    let state: StoredWalletState = serde_json::from_slice(bytes)?;
+    Ok(StoredWalletInspection {
+        consent_granted: state.consent_granted,
+        account_count: state.accounts.len(),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WalletSecretMaterial {
     pub encrypted_mnemonic: String,

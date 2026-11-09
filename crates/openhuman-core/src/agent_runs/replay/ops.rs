@@ -31,7 +31,8 @@ pub(crate) async fn read_run_status(
     workspace: &Path,
     run_id: &str,
 ) -> anyhow::Result<Option<HarnessRunStatus>> {
-    let store = crate::storage::sessions::status_store_for(workspace);
+    let store = crate::storage::sessions::status_store_for(workspace)
+        .ok_or_else(|| anyhow::anyhow!("run-status storage is unavailable for this scope"))?;
     replay::read_run_status(&store, run_id)
         .await
         .map_err(|e| anyhow::anyhow!("[agent] replay read_run_status failed run_id={run_id}: {e}"))
@@ -43,7 +44,8 @@ pub(crate) async fn list_active_runs(
     thread_id: Option<&str>,
     root_run_id: Option<&str>,
 ) -> anyhow::Result<Vec<HarnessRunStatus>> {
-    let store = crate::storage::sessions::status_store_for(workspace);
+    let store = crate::storage::sessions::status_store_for(workspace)
+        .ok_or_else(|| anyhow::anyhow!("run-status storage is unavailable for this scope"))?;
     replay::list_active_runs(&store, thread_id, root_run_id)
         .await
         .map_err(|e| anyhow::anyhow!("[agent] replay list_active_runs failed: {e}"))

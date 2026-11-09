@@ -97,6 +97,7 @@ fn child_inherits_tree_handles_but_isolates_observations_and_usage() {
     let mut parent = OpenHumanRunContext::new();
     parent.thread_id = Some("thread-a".to_string());
     parent.file_state_agent_id = Some("parent-file-state".to_string());
+    parent.headless_descendant_settlement = true;
     *parent.resolved_route.lock().expect("route lock") =
         Some(tinyinference_llm::model::ResolvedModelRoute {
             provider: "provider-a".to_string(),
@@ -107,6 +108,7 @@ fn child_inherits_tree_handles_but_isolates_observations_and_usage() {
     let child = parent.child();
 
     assert_eq!(child.spawn_depth, 1);
+    assert!(child.headless_descendant_settlement);
     assert_eq!(child.thread_id.as_deref(), Some("thread-a"));
     assert!(child.file_state_agent_id().is_none());
     assert!(child
@@ -132,32 +134,6 @@ fn root_context_is_owned_and_children_inherit_thread() {
 }
 
 #[test]
-fn dispatch_guard_refuses_pause_and_budget_without_a_task_scope() {
-    let paused = TurnDispatchState::new(Some(std::time::Duration::from_secs(60)));
-    paused.record_pause_requested(15, 15);
-    assert_eq!(
-        paused.check(),
-        DispatchDecision::RefusePaused {
-            completed_model_calls: 15,
-            cap: 15,
-        }
-    );
-
-    // A zero budget makes the time relationship deterministic: after an
-    // observed child, any check is strictly short of that child's duration.
-    let exhausted = TurnDispatchState::new(Some(std::time::Duration::ZERO));
-    exhausted.record_subagent_elapsed(std::time::Duration::from_secs(1));
-    assert!(matches!(
-        exhausted.check(),
-        DispatchDecision::RefuseBudget {
-            observed_max_ms: 1_000,
-            observed_samples: 1,
-            ..
-        }
-    ));
-}
-
-#[test]
 fn child_ledgers_are_isolated_and_parent_keeps_completed_child_totals() {
     let root = OpenHumanRunContext::new();
     let left = root.child();
@@ -165,7 +141,7 @@ fn child_ledgers_are_isolated_and_parent_keeps_completed_child_totals() {
     left.append_subagent_usage(SubagentUsageEntry {
         task_id: "left-task".into(),
         agent_id: "researcher".into(),
-        usage: crate::agent::subagent_host::SubagentUsage {
+        usage: tinyagents_harness::progress::SubagentUsage {
             input_tokens: 3,
             output_tokens: 2,
             cached_input_tokens: 1,
@@ -178,7 +154,7 @@ fn child_ledgers_are_isolated_and_parent_keeps_completed_child_totals() {
     left.record_completed_subagent_usage(SubagentUsageEntry {
         task_id: "completed-child".into(),
         agent_id: "researcher".into(),
-        usage: crate::agent::subagent_host::SubagentUsage::default(),
+        usage: tinyagents_harness::progress::SubagentUsage::default(),
     });
     assert_eq!(root.subagent_usage_entries().len(), 1);
     assert_eq!(left.subagent_usage_entries().len(), 1);
@@ -191,7 +167,7 @@ fn failed_outer_run_promotes_completed_nested_usage_once() {
     outer.append_subagent_usage(SubagentUsageEntry {
         task_id: "nested".into(),
         agent_id: "researcher".into(),
-        usage: crate::agent::subagent_host::SubagentUsage {
+        usage: tinyagents_harness::progress::SubagentUsage {
             input_tokens: 7,
             ..Default::default()
         },
@@ -209,12 +185,35 @@ fn failed_outer_run_promotes_completed_nested_usage_once() {
 fn detached_children_reset_turn_accounting_and_cancellation() {
     let mut root = OpenHumanRunContext::new();
     root.thread_id = Some("thread-a".into());
+    root.headless_descendant_settlement = true;
+    root.headless_descendant_owner = Some("root-owner".into());
     let dispatch = Arc::new(TurnDispatchState::new(Some(std::time::Duration::ZERO)));
     dispatch.record_subagent_elapsed(std::time::Duration::from_secs(1));
     root.dispatch = Some(dispatch);
     let detached = root.detached_child();
 
     assert_eq!(detached.thread_id.as_deref(), Some("thread-a"));
+    assert!(
+        !detached.headless_descendant_settlement,
+        "detached work is outside the root's settlement lease"
+    );
+    assert_eq!(
+        root.child().headless_descendant_owner.as_deref(),
+        Some("root-owner")
+    );
+    assert!(detached.headless_descendant_owner.is_none());
+    let workspace = std::path::Path::new("/workspace");
+    assert_eq!(
+        root.child()
+            .subagent_owner_scope(workspace, "session", Some("worker-thread")),
+        "root-owner",
+        "headless descendants retain the root lease's owner across native thread ids"
+    );
+    assert_ne!(
+        detached.subagent_owner_scope(workspace, "session", Some("worker-thread")),
+        "root-owner",
+        "detached chat work keeps its own owner scope"
+    );
     assert!(detached.dispatch.is_none());
     root.cancellation.cancel();
     assert!(!detached.cancellation.is_cancelled());
@@ -277,7 +276,7 @@ fn stale_parent_snapshot() -> ParentExecutionContext {
 /// `on_progress.is_some()` proves *presence*, not *identity*: a bind that
 /// installed some other, freshly created channel satisfies it just as happily,
 /// and that is the miswiring that actually ships. Production reads this exact
-/// field one clone away — `spawn_async_subagent_execute.rs` opens with
+/// field one clone away — `spawn_subagent_execute.rs` opens with
 /// `let progress_sink = parent.on_progress.clone();` — so delivery onto this
 /// receiver is what "the panel will see the spawn" reduces to.
 fn assert_bound_sink_is_this_runs_channel(
@@ -387,7 +386,7 @@ fn attach_parent_keeps_the_snapshot_sink_when_the_run_has_none() {
 #[test]
 fn child_inherits_shared_model_budget_and_narrowed_depth_limit() {
     use {
-        crate::agent::tinyagents::budget::ModelBudget, tinyinference_llm::model::budget::Budget,
+        tinyagents_harness::cost::ModelBudget, tinyinference_llm::model::budget::Budget,
         tinyinference_llm::model::budget::CallBudget, tinyinference_llm::model::budget::Spend,
         tinyinference_llm::model::budget::SpendLimits,
     };
@@ -584,161 +583,4 @@ async fn the_approval_context_survives_await_points_and_a_move_between_tasks() {
         seen.chat.as_ref().map(|c| c.thread_id.as_str()),
         Some("t-await")
     );
-}
-
-/// The memory identity is explicit on the run: a child inherits it (the
-/// sub-agent runner then narrows it with `child(<definition id>)`), and a host
-/// environment that carries one — the team runtime's member — applies it, while
-/// an environment without one leaves the run's own alone.
-#[test]
-fn the_memory_identity_rides_the_run_and_its_children() {
-    use crate::memory::scope::MemoryIdentity;
-
-    let mut context = OpenHumanRunContext::new();
-    assert_eq!(context.memory_identity, None);
-
-    let env = crate::agent::turn_env::HostTurnEnv {
-        memory_identity: Some(MemoryIdentity::team_member("acme", "lead")),
-        ..Default::default()
-    };
-    context = context.with_host_env(&env);
-    assert_eq!(
-        context.memory_identity,
-        Some(MemoryIdentity::team_member("acme", "lead"))
-    );
-
-    let child = context.child();
-    assert_eq!(child.memory_identity, context.memory_identity);
-    assert_eq!(
-        child.memory_identity.unwrap().child("scout"),
-        MemoryIdentity::team_member("acme", "scout")
-    );
-
-    let unchanged = context.with_host_env(&crate::agent::turn_env::HostTurnEnv::default());
-    assert_eq!(
-        unchanged.memory_identity,
-        Some(MemoryIdentity::team_member("acme", "lead"))
-    );
-}
-
-fn tool_context_for(run: OpenHumanRunContext) -> tinyagents_harness::tool::ToolExecutionContext {
-    let run = run.into_tinyagents(tinyagents_harness::context::RunConfig::new("core-carrier"));
-    tinyagents_harness::tool::ToolExecutionContext::from_run_context(
-        &run,
-        tinyagents_harness::ids::CallId::new("core-carrier-call"),
-    )
-}
-
-#[tokio::test]
-async fn a_tool_reads_the_runs_core_not_the_ambient_scope() {
-    use crate::core::runtime::{CoreContext, DomainSet};
-
-    let runs = CoreContext::for_test(DomainSet::full(), None);
-    let ambient = CoreContext::for_test(DomainSet::full(), None);
-    let context = tool_context_for(OpenHumanRunContext::new().with_core(Some(runs.clone())));
-
-    CoreContext::scope(ambient.clone(), async {
-        let ctx = dispatch_ctx_for_tool(Some(&context));
-        assert!(Arc::ptr_eq(ctx.core().expect("bound"), &runs));
-        assert!(!Arc::ptr_eq(ctx.core().expect("bound"), &ambient));
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn concurrent_runs_keep_their_own_core_across_awaits_and_spawns() {
-    use crate::core::runtime::{CoreContext, DomainSet};
-
-    let a = CoreContext::for_test(DomainSet::full(), None);
-    let b = CoreContext::for_test(DomainSet::full(), None);
-    let ctx_a = tool_context_for(OpenHumanRunContext::new().with_core(Some(a.clone())));
-    let ctx_b = tool_context_for(OpenHumanRunContext::new().with_core(Some(b.clone())));
-
-    let read = |context: tinyagents_harness::tool::ToolExecutionContext| async move {
-        tokio::task::yield_now().await;
-        // A plain spawn loses every task-local; the carrier does not.
-        tokio::spawn(async move { dispatch_ctx_for_tool(Some(&context)).into_core() })
-            .await
-            .unwrap()
-    };
-    let (got_a, got_b) = tokio::join!(read(ctx_a), read(ctx_b));
-    assert!(Arc::ptr_eq(&got_a.expect("a bound"), &a));
-    assert!(Arc::ptr_eq(&got_b.expect("b bound"), &b));
-}
-
-#[test]
-fn the_core_rides_the_host_env_and_survives_child_and_detached_child() {
-    use crate::core::runtime::{CoreContext, DomainSet};
-
-    let core = CoreContext::for_test(DomainSet::full(), None);
-    let env = crate::agent::turn_env::HostTurnEnv {
-        core: Some(Arc::downgrade(&core)),
-        ..Default::default()
-    };
-    let run = OpenHumanRunContext::new().with_host_env(&env);
-    let bound = |run: &OpenHumanRunContext| run.core.as_ref().and_then(std::sync::Weak::upgrade);
-    assert!(Arc::ptr_eq(&bound(&run).unwrap(), &core));
-    assert!(Arc::ptr_eq(&bound(&run.child()).unwrap(), &core));
-    assert!(Arc::ptr_eq(&bound(&run.detached_child()).unwrap(), &core));
-    // An env with no core leaves the run's own in place.
-    let kept = run.with_host_env(&crate::agent::turn_env::HostTurnEnv::default());
-    assert!(Arc::ptr_eq(&bound(&kept).unwrap(), &core));
-}
-
-#[test]
-fn a_run_kept_past_its_turn_does_not_pin_the_tenant() {
-    use crate::core::runtime::{CoreContext, DomainSet};
-
-    let core = CoreContext::for_test(DomainSet::full(), None);
-    let run = OpenHumanRunContext::new().with_core(Some(core.clone()));
-    let env = crate::agent::turn_env::HostTurnEnv {
-        core: Some(Arc::downgrade(&core)),
-        ..Default::default()
-    };
-    let _kept_run = run.child();
-    let _kept_env = env.clone();
-    // Only the handle in this test holds the context: sessions and runs that
-    // outlive a turn reference it weakly.
-    assert!(!core.tenant_in_use());
-}
-
-#[test]
-fn the_turns_still_in_the_prompt_reach_the_runs_tools() {
-    let config = crate::config::Config::default();
-    let mut host = OpenHumanRunContext::new();
-    host.memory_turn = Some(std::sync::Arc::new(
-        crate::memory::lifecycle::hooks::MemoryTurn {
-            identity: crate::memory::scope::MemoryIdentity::agent("a").resolve(&config),
-            config: std::sync::Arc::new(config),
-            thread_id: "thread-long".into(),
-            pack: None,
-            in_prompt_from: std::sync::Arc::new(
-                crate::memory::lifecycle::window::InPromptFrom::new(12, 20),
-            ),
-            core: None,
-        },
-    ));
-    let run = host.into_tinyagents(tinyagents_harness::context::RunConfig::new("memory-window"));
-    let call = tinyagents_harness::tool::ToolExecutionContext::from_run_context(
-        &run,
-        tinyagents_harness::ids::CallId::new("memory-window-call"),
-    );
-    assert_eq!(
-        memory_in_prompt_for_tool(Some(&call)),
-        Some(tinymemory_api::ThreadWindow {
-            thread_id: "thread-long".into(),
-            from_turn: 12,
-        })
-    );
-
-    // A run without the turn's memory (a sub-agent's, a direct dispatch)
-    // knows no window.
-    let bare = OpenHumanRunContext::new()
-        .into_tinyagents(tinyagents_harness::context::RunConfig::new("no-memory"));
-    let call = tinyagents_harness::tool::ToolExecutionContext::from_run_context(
-        &bare,
-        tinyagents_harness::ids::CallId::new("no-memory-call"),
-    );
-    assert_eq!(memory_in_prompt_for_tool(Some(&call)), None);
-    assert_eq!(memory_in_prompt_for_tool(None), None);
 }

@@ -1,0 +1,19 @@
+api_url = "__MOCK_BACKEND_URL__"
+default_model = "e2e-mock-model"
+default_temperature = 0.2
+chat_onboarding_completed = true
+
+[secrets]
+encrypt = false
+
+[local_ai]
+enabled = false
+
+[memory]
+engine = "tinyhumans"
+embedding_provider = "cloud"
+embedding_model = "embedding-v1"
+embedding_dimensions = 1024
+
+[storage]
+url = "memory"

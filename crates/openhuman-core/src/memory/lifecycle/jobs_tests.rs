@@ -1,14 +1,56 @@
 use super::*;
+use tinymemory_tools::queue::QueueState;
+use tinymemory_tools::queue::MAX_ATTEMPTS;
 
 use tinymemory_api::{ConsolidateRequest, ItemKind, Reach};
 
 use crate::memory::test_fixtures::{bind_reference, config_in};
+
+#[test]
+fn workspace_queues_are_released_after_the_last_holder_drops() {
+    let temp = tempfile::tempdir().unwrap();
+    let workspaces = (0..32)
+        .map(|index| temp.path().join(index.to_string()))
+        .collect::<Vec<_>>();
+    let queues = workspaces
+        .iter()
+        .map(|workspace| queue_of(workspace))
+        .collect::<Vec<_>>();
+
+    drop(queues);
+
+    let sentinel = temp.path().join("sentinel");
+    drop(queue_of(&sentinel));
+
+    let queues = QUEUES.lock().unwrap();
+    assert!(workspaces
+        .iter()
+        .all(|workspace| !queues.contains_key(workspace)));
+}
 
 fn build(agent: &str) -> BackgroundJob {
     BackgroundJob::BuildBeliefs {
         request: ConsolidateRequest::new(Reach::exact(Namespace::agent(agent)))
             .kinds([ItemKind::Conversation]),
     }
+}
+
+#[test]
+fn corrupt_legacy_job_queue_is_skipped_without_replacing_the_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = crate::memory::state_store::legacy_path(tmp.path(), "jobs");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, b"{\"pending\":[").unwrap();
+    let store = FileQueueStore {
+        workspace_dir: tmp.path().to_path_buf(),
+    };
+
+    assert_eq!(store.load(), QueueState::default());
+    assert!(
+        file.exists(),
+        "the read-only legacy import must leave corrupt bytes in place"
+    );
+    assert_eq!(std::fs::read(file).unwrap(), b"{\"pending\":[");
 }
 
 #[tokio::test]
@@ -72,7 +114,7 @@ async fn one_job_runs_by_id_and_an_unknown_id_is_refused() {
     assert_eq!(snapshot(&config).await.pending.len(), 1);
     assert!(matches!(
         run(&config, Selection::One("nope".into())).await,
-        Err(MemoryError::InvalidRequest(_))
+        Err(Error::InvalidRequest(_))
     ));
     assert_eq!(
         snapshot(&config).await.pending.len(),
@@ -88,27 +130,27 @@ async fn a_run_needs_an_engine() {
     enqueue(&config, &Namespace::ROOT, vec![build("a")]).await;
     assert!(matches!(
         run(&config, Selection::All).await,
-        Err(MemoryError::Off(_))
+        Err(Error::Off(_))
     ));
     run_due(&config).await;
     assert_eq!(snapshot(&config).await.pending.len(), 1);
 }
 
 #[tokio::test]
-async fn the_build_delay_comes_from_the_recall_config_and_the_file_store_is_the_workspaces() {
+async fn the_build_delay_comes_from_recall_config_and_the_queue_uses_the_state_store() {
     let tmp = tempfile::tempdir().unwrap();
     let mut config = config_in(&tmp);
     bind_reference(&config);
     config.memory.recall.build_delay_secs = 3600;
     enqueue(&config, &Namespace::ROOT, vec![build("a")]).await;
     assert!(has_pending(&config.workspace_dir));
-    let stored: JobQueue = crate::memory::state_store::load(&config.workspace_dir, "jobs")
+    let stored: QueueState = crate::memory::state_store::load(&config.workspace_dir, "jobs")
         .unwrap()
         .unwrap();
     assert_eq!(
         stored.pending.len(),
         1,
-        "persisted in the memory state store"
+        "persisted through the state KV port"
     );
     assert!(run(&config, Selection::Due).await.unwrap().is_empty());
 }

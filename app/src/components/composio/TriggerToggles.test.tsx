@@ -27,7 +27,7 @@ beforeEach(() => {
   mockListTriggers.mockReset();
   mockEnable.mockReset();
   mockDisable.mockReset();
-  mockClearSession.mockReset();
+  mockClearSession.mockReset().mockResolvedValue(undefined);
 });
 
 describe('triggerSignature / activeTriggerSignature', () => {

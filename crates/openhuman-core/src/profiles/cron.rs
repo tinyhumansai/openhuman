@@ -15,9 +15,9 @@
 //!
 //! The reply goes where the job's delivery says; with a
 //! [`CronDelivery`](crate::cron::host_delivery::CronDelivery) installed that is
-//! the host. Shell and flow jobs are never run here: the sweep's scheduler is
-//! agent-only, so a due shell or flow row of a profile is refused (and recorded
-//! as such) rather than executed.
+//! the host. Shell jobs and user-owned flow jobs are never run here. The
+//! sweep's scheduler is agent-only, with a narrow owner check for the two
+//! trusted memory-maintenance system jobs.
 //!
 //! # Shutdown
 //!
@@ -70,7 +70,10 @@ pub async fn sweep(host: &ProfileHost, now: DateTime<Utc>) -> SweepReport {
             match store_in::<Vec<CronJob>>(&config, &scope, StoreOperation::Due { now }).await {
                 Ok(jobs) => jobs
                     .into_iter()
-                    .filter(|job| matches!(job.job_type, JobType::Agent))
+                    .filter(|job| {
+                        matches!(job.job_type, JobType::Agent)
+                            || crate::cron::system_jobs::trusted_system_job_owner(job).is_some()
+                    })
                     .collect(),
                 Err(error) => {
                     log::warn!("[profiles][cron] profile={id} due jobs unreadable: {error}");

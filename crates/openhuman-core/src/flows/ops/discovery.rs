@@ -1,6 +1,16 @@
 use super::*;
 use crate::core::runtime::DispatchCtx;
 
+/// Persist suggestions received through the Copilot bus's portable wire shape.
+pub(crate) fn flows_suggestions_upsert_from_copilot(
+    config: &Config,
+    suggestions: Value,
+) -> Result<usize, String> {
+    let suggestions: Vec<FlowSuggestion> = serde_json::from_value(suggestions)
+        .map_err(|error| format!("invalid Copilot suggestions: {error}"))?;
+    store::upsert_suggestions(config, &suggestions).map_err(|error| error.to_string())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Flow Scout — workflow discovery + suggestion lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,7 +52,7 @@ pub async fn flows_discover(
     stream: Option<FlowStreamTarget>,
 ) -> Result<Outcome<Vec<FlowSuggestion>>, String> {
     use crate::agent::OpenHumanSessionHost;
-    use crate::security::turn_origin::{with_origin, AgentTurnOrigin};
+    use crate::core::runtime::turn_origin::{with_origin, AgentTurnOrigin};
 
     tracing::info!(
         target: "flows",
@@ -59,6 +69,7 @@ pub async fn flows_discover(
     .map_err(|e| format!("failed to initialise agent registry: {e}"))?;
 
     let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, config, "flow_discovery")
+        .await
         .map_err(|e| format!("failed to build flow_discovery agent: {e:#}"))?;
     agent.set_agent_definition_name("flow_discovery".to_string());
 
@@ -110,7 +121,7 @@ pub async fn flows_discover(
     // Emit the terminal chat event so a client viewing the thread finalizes the
     // assistant bubble instead of spinning (the bridge only streams deltas).
     if let Some(target) = &stream {
-        finalize_flow_stream(ctx, target, &outcome, FLOW_DISCOVER_PROMPT).await;
+        finalize_flow_stream(ctx, target, &outcome, FLOW_DISCOVER_PROMPT, config).await;
     }
 
     let suggestions = store::list_suggestions(config, Some(SuggestionStatus::New), 50)

@@ -53,7 +53,12 @@ use tinyinference_llm::message::{ContentBlock, ImageRef, Message, UserMessage};
 use tinyinference_llm::model::{ModelRequest, ModelResponse};
 
 use crate::error::CoreError;
-use crate::turn::{is_safe_endpoint_for_bearer, sanitize_url_for_display, Route};
+use crate::turn::{sanitize_url_for_display, Route};
+
+pub use tinyagents_harness::observability::{
+    PhysicalDispatchMetadata, PhysicalDispatchObserver, PhysicalDispatchOutcome,
+    PhysicalDispatchStatus, PhysicalDispatchTerminal, PhysicalDispatchUsage,
+};
 
 /// Method label carried by every [`CoreError`] this module returns.
 pub const COMPLETE: &str = "openhuman.complete";
@@ -236,8 +241,10 @@ impl CompletionRequest {
         self
     }
 
-    /// Bound each physical provider HTTP request, including repair attempts.
-    /// This leaves the logical call deadline and cancellation scope unchanged.
+    /// Bound each provider request, including structured-repair attempts.
+    /// Provider-internal compatibility retries remain within that request and
+    /// use the same timeout. This leaves the logical call deadline and
+    /// cancellation scope unchanged.
     pub fn timeout_ms(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = Some(timeout_ms);
         self
@@ -317,6 +324,13 @@ pub struct CompletionResponse {
     /// The provider's raw response body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw: Option<Value>,
+}
+
+#[derive(Clone)]
+struct CompletionEndpoint {
+    base_url: String,
+    api_key: String,
+    headers: Vec<(String, String)>,
 }
 
 impl CompletionResponse {
@@ -426,15 +440,22 @@ pub trait CompletionObserver: Send + Sync {
     fn on_complete(&self, trace: &CompletionTrace<'_>);
 }
 
+#[derive(Clone, Default)]
+struct CompleterObservers {
+    completion: Option<Arc<dyn CompletionObserver>>,
+    physical_dispatch: Option<Arc<dyn PhysicalDispatchObserver>>,
+}
+
 /// Runs stateless completions against one [`Route`].
 #[derive(Clone)]
 pub struct Completer {
     route: Route,
     headers: Vec<(String, String)>,
     timeout: Option<Duration>,
-    observer: Option<Arc<dyn CompletionObserver>>,
+    observers: Arc<CompleterObservers>,
     cancellation: crate::cancellation::Cancellation,
     budget: Option<crate::budget::ModelBudget>,
+    dispatch_admission: Option<Arc<dyn crate::budget::PhysicalDispatchAdmission>>,
 }
 
 impl std::fmt::Debug for Completer {
@@ -443,7 +464,7 @@ impl std::fmt::Debug for Completer {
             .field("route", &self.route)
             .field("headers", &self.headers.len())
             .field("timeout", &self.timeout)
-            .field("observer", &self.observer.is_some())
+            .field("observer", &self.observers.completion.is_some())
             .finish()
     }
 }
@@ -455,9 +476,10 @@ impl Completer {
             headers: route.headers.clone(),
             route,
             timeout: None,
-            observer: None,
+            observers: Arc::new(CompleterObservers::default()),
             cancellation: Default::default(),
             budget: None,
+            dispatch_admission: None,
         }
     }
 
@@ -489,9 +511,31 @@ impl Completer {
         self
     }
 
+    /// Attach a host-owned physical-dispatch policy shared with other calls.
+    pub fn dispatch_admission(
+        mut self,
+        admission: Arc<dyn crate::budget::PhysicalDispatchAdmission>,
+    ) -> Self {
+        self.dispatch_admission = Some(admission);
+        self
+    }
+
     /// Report every call to `observer`.
     pub fn observer(mut self, observer: Arc<dyn CompletionObserver>) -> Self {
-        self.observer = Some(observer);
+        Arc::make_mut(&mut self.observers).completion = Some(observer);
+        self
+    }
+
+    /// Observe each admitted provider `ChatModel` invocation without request
+    /// or response content.
+    ///
+    /// With a budget, the observer receives charge-normalized usage after
+    /// admission, matching the amount settled by the ledger. A refusal before
+    /// provider invocation does not produce an event. Structured repairs use
+    /// separate invocations. Transport-level compatibility retries performed
+    /// inside one provider invocation remain part of its event and latency.
+    pub fn physical_observer(mut self, observer: Arc<dyn PhysicalDispatchObserver>) -> Self {
+        Arc::make_mut(&mut self.observers).physical_dispatch = Some(observer);
         self
     }
 
@@ -524,7 +568,7 @@ impl Completer {
             _ = self.cancellation.cancelled() => Err(CoreError::Cancelled { method: COMPLETE }),
             result = operation => result,
         };
-        if let Some(observer) = &self.observer {
+        if let Some(observer) = &self.observers.completion {
             observer.on_complete(&CompletionTrace {
                 request: &request,
                 outcome: result.as_ref(),
@@ -559,7 +603,17 @@ impl Completer {
         let mut usage = None;
         let mut unknown_cost = false;
         for attempt in 0..=request.structured_retries {
-            let mut response = self.dispatch(request.clone()).await?;
+            let mut response = match self.dispatch(request.clone()).await {
+                Ok(response) => response,
+                Err(CoreError::DispatchAdmission { source, .. }) => {
+                    return Err(CoreError::DispatchAdmission {
+                        method: COMPLETE,
+                        source,
+                        usage,
+                    });
+                }
+                Err(error) => return Err(error),
+            };
             unknown_cost |= response
                 .usage
                 .as_ref()
@@ -588,12 +642,20 @@ impl Completer {
     async fn dispatch(&self, request: CompletionRequest) -> Result<CompletionResponse, CoreError> {
         let endpoint = self.checked_endpoint(&request)?;
         let format = request.response_format.clone();
-        let model = request.model.clone();
+        let model_id = request.model.clone();
         log::debug!(
-            "[embed] complete start method={COMPLETE} model={model} messages={} timeout_ms={:?}",
+            "[embed] complete start method={COMPLETE} model={model_id} messages={} timeout_ms={:?}",
             request.messages.len(),
             request.timeout_ms
         );
+        let wire_request = request.into_wire();
+        let model = endpoint.headers.iter().fold(
+            tinyinference_llm::providers::openai::OpenAiModel::new(endpoint.api_key.clone())
+                .with_base_url(endpoint.base_url.clone())
+                .with_model(model_id.clone()),
+            |model, (name, value)| model.with_header(name.clone(), value.clone()),
+        );
+        let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> = Arc::new(model);
         let budget = self
             .budget
             .as_ref()
@@ -602,13 +664,42 @@ impl Completer {
                 call: budget.call,
             });
         // The spend ledger is an explicit argument of the call, not an ambient scope.
-        let call = openhuman_core::inference::host_runtime::ops::complete_once(
-            &endpoint,
-            request.into_wire(),
-            budget.as_ref(),
+        let oneshot_budget = budget.as_ref().map(|budget| {
+            tinyagents_harness::cost::ModelBudget::new(budget.ledger.clone(), budget.call)
+        });
+        let call = tinyagents_harness::oneshot::complete_once_controlled(
+            model,
+            wire_request,
+            tinyagents_harness::oneshot::OneshotOptions {
+                budget: oneshot_budget,
+            },
+            self.observers.physical_dispatch.clone(),
+            self.dispatch_admission.clone(),
         );
         let started = std::time::Instant::now();
-        let response = call.await.map_err(|message| {
+        let response = call.await.map_err(|error| {
+            let message = match error {
+                tinyagents_harness::oneshot::CompleteOnceError::InvalidRequest(message) => {
+                    return CoreError::Rpc {
+                        method: COMPLETE,
+                        message,
+                    };
+                }
+                tinyagents_harness::oneshot::CompleteOnceError::Dispatch(
+                    tinyagents_harness::cost::ControlledDispatchError::Admission(source),
+                ) => {
+                    return CoreError::DispatchAdmission {
+                        method: COMPLETE,
+                        source,
+                        usage: None,
+                    };
+                }
+                tinyagents_harness::oneshot::CompleteOnceError::Dispatch(
+                    tinyagents_harness::cost::ControlledDispatchError::Model(source),
+                ) => {
+                    format!("complete_once: {source}")
+                }
+            };
             if let Some(source) = budget.as_ref().and_then(|budget| budget.ledger.refusal()) {
                 return CoreError::BudgetExceeded {
                     method: COMPLETE,
@@ -616,7 +707,7 @@ impl Completer {
                 };
             }
             log::warn!(
-                "[embed] complete failed method={COMPLETE} model={model} elapsed_ms={}",
+                "[embed] complete failed method={COMPLETE} model={model_id} elapsed_ms={}",
                 started.elapsed().as_millis()
             );
             CoreError::Rpc {
@@ -625,7 +716,7 @@ impl Completer {
             }
         })?;
         log::debug!(
-            "[embed] complete ok method={COMPLETE} model={model} elapsed_ms={}",
+            "[embed] complete ok method={COMPLETE} model={model_id} elapsed_ms={}",
             started.elapsed().as_millis()
         );
         Ok(CompletionResponse::from_wire(response, format.as_ref()))
@@ -634,25 +725,23 @@ impl Completer {
     fn checked_endpoint(
         &self,
         request: &CompletionRequest,
-    ) -> Result<openhuman_core::inference::host_runtime::ops::CompletionEndpoint, CoreError> {
+    ) -> Result<CompletionEndpoint, CoreError> {
         let base_url = self.route.base_url.trim();
         let api_key = self.route.api_key.trim();
         if request.model.trim().is_empty() || base_url.is_empty() || api_key.is_empty() {
             return Err(CoreError::InvalidRoute { method: COMPLETE });
         }
-        if !is_safe_endpoint_for_bearer(base_url) {
+        if !crate::security::is_safe_endpoint_for_bearer(base_url) {
             return Err(CoreError::InsecureRoute {
                 method: COMPLETE,
                 endpoint: sanitize_url_for_display(base_url),
             });
         }
-        Ok(
-            openhuman_core::inference::host_runtime::ops::CompletionEndpoint {
-                base_url: base_url.to_string(),
-                api_key: api_key.to_string(),
-                headers: self.headers.clone(),
-            },
-        )
+        Ok(CompletionEndpoint {
+            base_url: base_url.to_string(),
+            api_key: api_key.to_string(),
+            headers: self.headers.clone(),
+        })
     }
 }
 

@@ -16,8 +16,8 @@
 //! to exist ($3 / $0.30 / $15 per MTok) and priced a glm-5.3-flash thread at
 //! $4.25 when the provider billed about $0.30.
 
-use crate::inference::provider::BilledUsage;
 use tinyagents_harness::cost::{CallCost, CallUsage};
+use tinyinference_llm::usage::BilledUsage;
 
 /// Whether a model names an explicitly free OpenRouter variant.
 pub(crate) fn is_free_model(model: &str) -> bool {

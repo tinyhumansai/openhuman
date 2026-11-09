@@ -29,7 +29,7 @@
 //! * **Audit.** One line per call: module id, scope, object, operation, target
 //!   (a collection or a granted prefix) and outcome. Never a payload.
 //!
-//! The reference `StorageServer` of `tinystoragedrivers-client` answers the
+//! The reference `StorageServer` of `tinystoragedrivers-busproxy` answers the
 //! messages once a call is allowed; this file adds only the host's decisions.
 //!
 //! Blobs over a bus stream (`PutStream`/`GetStream`) and watches (`WatchOpen`)
@@ -46,13 +46,11 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tinybus::BusName;
 use tinystoragedrivers::secrets::{DocumentSecrets, KeyProvider};
-use tinystoragedrivers::BlobReader;
+use tinystoragedrivers_api::BlobReader;
 use tinystoragedrivers_bus::{
     BlobKeyRequest, BlobStreamHead, PutBlobStreamRequest, StorageFailure, StorageKind,
 };
-use tinystoragedrivers_busproxy::HostFailure;
-
-use tinystoragedrivers_client::{Admission, StorageServer};
+use tinystoragedrivers_busproxy::{Admission, HostFailure, StorageServer};
 
 use self::endpoint::HostEndpoint;
 use super::storage_grants::{authorize, declared, filter_reply, Object, Plan, StorageGrant};
@@ -250,7 +248,13 @@ impl StorageHost {
             Ok(plan) => plan,
             Err(denied) => {
                 call.record("", denied.label());
-                return Err(HostError::Denied(denied.label()));
+                return Err(match denied {
+                    super::storage_grants::Denied::QueueNotGranted => {
+                        failure(StorageKind::NotFound)
+                    }
+                    super::storage_grants::Denied::QueueSpec => failure(StorageKind::Conflict),
+                    _ => HostError::Denied(denied.label()),
+                });
             }
         };
         Ok(Admitted {
@@ -384,7 +388,8 @@ impl StorageHost {
     /// The module's binding for `scope`, built on first use and again when the
     /// installed backend changed. The host runs the declared schema here.
     async fn bind(&self, module: &str, scope: Scope) -> Result<Arc<Binding>, BindError> {
-        let backend = self.environment.backend().ok_or(BindError::NoBackend)?;
+        let backend =
+            backend_choice::for_module(module, &*self.environment).ok_or(BindError::NoBackend)?;
         let key = (module.to_string(), scope.as_str().to_string());
         let mut bindings = self.bindings.lock().await;
         if let Some(existing) = bindings.get(&key) {
@@ -412,7 +417,50 @@ impl StorageHost {
                 .await
                 .map_err(|_| BindError::Backend(StorageKind::Backend))?;
         }
-        let mut server = StorageServer::new(storage.clone());
+        // A broker queue backend replaces the scope's queue port before the
+        // server takes it; the default keeps the queues in the scope's documents.
+        let storage = match (&grant.queues, &grant.queue_backend) {
+            (Some(_), Some(backend)) if *backend != tinystoragedrivers::QueueConfig::Storage => {
+                tinystoragedrivers::open_queues(backend, storage, &scope)
+                    .await
+                    .map_err(|error| {
+                        tracing::warn!(
+                            target: "openhuman::storage_host",
+                            module,
+                            backend = %backend,
+                            %error,
+                            "[storage_host] could not open the granted queue backend"
+                        );
+                        BindError::Backend(StorageKind::Backend)
+                    })?
+            }
+            _ => storage,
+        };
+        let mut storage = storage;
+        if let Some(manifest) = &grant.queues {
+            for declaration in manifest.queues() {
+                storage
+                    .queues()
+                    .ensure_queue(&declaration.name, &declaration.spec())
+                    .await
+                    .map_err(|error| {
+                        tracing::warn!(
+                            target: "openhuman::storage_host",
+                            module,
+                            queue = %declaration.name,
+                            %error,
+                            "[storage_host] could not declare a granted queue"
+                        );
+                        BindError::Backend(StorageKind::Backend)
+                    })?;
+            }
+            tracing::debug!(
+                target: "openhuman::storage_host",
+                module,
+                queues = manifest.queues().len(),
+                "[storage_host] serving the granted queue manifest"
+            );
+        }
         if !grant.secret_prefixes.is_empty() {
             // A key-provider failure is retryable, so refuse the bind rather
             // than cache a server that silently lacks secrets.
@@ -424,8 +472,22 @@ impl StorageHost {
                 );
                 BindError::Backend(StorageKind::Backend)
             })?;
-            server = server.with_secrets(Arc::new(DocumentSecrets::new(&storage, keys)));
+            let secrets = Arc::new(DocumentSecrets::from_parts(
+                Arc::clone(storage.documents()),
+                tinystoragedrivers_types::Scope::new(scope.as_str())
+                    .map_err(|_| BindError::Backend(StorageKind::Backend))?,
+                keys,
+            ));
+            storage = tinystoragedrivers::Storage::new(
+                Arc::clone(storage.documents()),
+                Arc::clone(storage.streams()),
+                Arc::clone(storage.kv()),
+                Arc::clone(storage.blobs()),
+                Arc::clone(storage.queues()),
+                secrets,
+            );
         }
+        let server = StorageServer::new(storage);
         let binding = Arc::new(Binding {
             backend,
             grant,
@@ -515,6 +577,9 @@ pub(crate) fn current_module_scope(
     module_scope(tenant.profile.as_deref(), module_id)
 }
 
+#[path = "storage_host_backend.rs"]
+pub(crate) mod backend_choice;
+
 /// Production wiring: the broker's name owners, the installed backend, the
 /// host's scope rule and the compiled grants.
 struct Live {
@@ -538,7 +603,17 @@ impl CallerDirectory for Live {
 #[async_trait]
 impl Environment for Live {
     fn backend(&self) -> Option<Arc<dyn StorageBackend>> {
-        crate::storage::installed()
+        // A host that installed a backend (the app, or an embedder that passed
+        // one) wins. An embedder that did not gets the workspace default every
+        // other store already opens for itself ([`crate::storage::local::backend_for`]),
+        // so a module is not the one consumer left with no storage.
+        crate::storage::installed().or_else(|| {
+            let workspace = crate::core::runtime::DispatchCtx::ambient()
+                .resolved()?
+                .workspace_dir()
+                .ok()?;
+            crate::storage::local::backend_for(&workspace).ok()
+        })
     }
 
     fn module_scope(&self, module_id: &str) -> Result<Scope, StorageError> {
@@ -592,7 +667,7 @@ pub(super) async fn serve_objects(
 /// ([`super::storage_host_linked`]). If that cannot be attached the objects
 /// are served from the host connection as before, with Secrets unreachable,
 /// and the failure is logged.
-pub(super) async fn install(
+pub(crate) async fn install(
     connection: &tinybus::Connection,
     modules: &tinybus::module::ModuleHost,
 ) -> tinybus::Result<()> {
@@ -615,12 +690,57 @@ pub(super) async fn install(
     }
 }
 
+/// Prepare the exact per-module storage capability used by TinyMCP and
+/// TinyEventQueues. The callback endpoint reuses the live storage policy but
+/// is reachable only by the verified module instance loaded with this binding.
+///
+/// Prepared on the module runtime, not the caller's: the binding is kept for
+/// the process, so its endpoint must outlive whichever runtime loaded the
+/// module first (as the host callbacks in [`super::runtime`] do).
+pub(super) async fn prepare_module_callbacks(
+    runtime: &'static tinybus::module::ModuleRuntime,
+) -> tinybus::Result<(
+    Arc<tinybus::module::HostCallbackBinding>,
+    tinystoragedrivers_busproxy::ServedStorage,
+)> {
+    runtime
+        .spawn(prepare_callbacks(runtime.connection(), runtime.host()))
+        .await
+        .map_err(callbacks_join_failed)?
+}
+
+/// The preparing task panicked or was cancelled before it returned a binding.
+fn callbacks_join_failed(error: tokio::task::JoinError) -> tinybus::Error {
+    tinybus::Error::Transport(format!(
+        "the module storage callbacks did not finish: {error}"
+    ))
+}
+
+/// Prepare a callback storage endpoint for a module host on `connection`.
+pub(crate) async fn prepare_callbacks(
+    connection: &tinybus::Connection,
+    modules: &tinybus::module::ModuleHost,
+) -> tinybus::Result<(
+    Arc<tinybus::module::HostCallbackBinding>,
+    tinystoragedrivers_busproxy::ServedStorage,
+)> {
+    let binding = tinystoragedrivers_busproxy::prepare_storage_host_callbacks(modules).await?;
+    let endpoint = Arc::new(HostEndpoint::new(
+        live_host(connection),
+        Some(tokio::runtime::Handle::current()),
+    ));
+    let served =
+        tinystoragedrivers_busproxy::serve_with_host_callbacks(Arc::clone(&binding), endpoint)
+            .await?;
+    Ok((binding, served))
+}
+
 #[path = "storage_host_endpoint.rs"]
 mod endpoint;
 
 #[cfg(test)]
 #[path = "storage_host_tests.rs"]
-mod tests;
+pub(in crate::modules) mod tests;
 
 #[cfg(test)]
 #[path = "storage_host_ctx_tests.rs"]

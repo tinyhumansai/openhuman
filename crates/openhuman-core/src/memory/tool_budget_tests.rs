@@ -1,203 +1,229 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use tinymemory_tools::{DenialReason, Refusal};
+
+fn budget() -> RunBudget {
+    RunBudget::new(Arc::new(TokioClock::default()))
+}
 
 #[tokio::test(start_paused = true)]
 async fn a_slow_memory_call_returns_and_disables_memory_only_for_its_turn() {
-    let budget = ToolBudget::default();
+    let budget = budget();
     let result = budget
-        .run(Some("turn-one".into()), async {
+        .run(Some("turn-one"), async {
             tokio::time::sleep(Duration::from_secs(60)).await;
-            ToolResult::success("late")
+            "late"
         })
         .await;
-    assert!(result.is_error);
-    assert!(result.text().contains("Continue answering"));
-    let calls = AtomicUsize::new(0);
-    let result = budget
-        .run(Some("turn-one".into()), async {
-            calls.fetch_add(1, Ordering::SeqCst);
-            ToolResult::success("should not run")
-        })
-        .await;
-    assert!(result.is_error);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
-    let next = budget
-        .run(Some("turn-two".into()), async {
-            ToolResult::success("healthy")
-        })
-        .await;
-    assert!(!next.is_error);
+    assert_eq!(result, Err(Refusal::TimedOut));
+    assert_eq!(
+        budget.run(Some("turn-one"), async { "must not run" }).await,
+        Err(Refusal::Denied(DenialReason::CircuitOpen))
+    );
+    assert_eq!(
+        budget.run(Some("turn-two"), async { "healthy" }).await,
+        Ok("healthy")
+    );
 }
 
 #[tokio::test]
 async fn successful_memory_churn_is_bounded_without_blocking_the_next_turn() {
-    let budget = ToolBudget::default();
+    let budget = budget();
     let calls = AtomicUsize::new(0);
-    for _ in 0..20 {
-        budget
-            .run(Some("turn-one".into()), async {
+    for i in 0..20 {
+        let result = budget
+            .run(Some("turn-one"), async {
                 calls.fetch_add(1, Ordering::SeqCst);
-                ToolResult::success("saved with a different id")
+                "saved"
             })
             .await;
+        if i < 8 {
+            assert!(result.is_ok());
+        } else {
+            assert_eq!(result, Err(Refusal::Denied(DenialReason::CallLimit)));
+        }
     }
     assert_eq!(calls.load(Ordering::SeqCst), 8);
-    let next = budget
-        .run(Some("turn-two".into()), async {
-            ToolResult::success("healthy")
-        })
-        .await;
-    assert!(!next.is_error);
+    assert_eq!(
+        budget.run(Some("turn-two"), async { "healthy" }).await,
+        Ok("healthy")
+    );
 }
 
 #[tokio::test(start_paused = true)]
 async fn successful_memory_calls_share_one_latency_budget() {
-    let budget = ToolBudget::default();
+    let budget = budget();
     let started = tokio::time::Instant::now();
     for i in 0..3 {
         let result = budget
-            .run(Some("turn".into()), async {
+            .run(Some("turn"), async {
                 tokio::time::sleep(Duration::from_secs(12)).await;
-                ToolResult::success("saved")
+                "saved"
             })
             .await;
-        assert_eq!(result.is_error, i == 2);
+        assert_eq!(result.is_ok(), i < 2);
+        if i == 2 {
+            assert_eq!(result, Err(Refusal::TimedOut));
+        }
     }
-    assert_eq!(started.elapsed(), RUN_TIME_BUDGET);
+    assert_eq!(started.elapsed(), Duration::from_secs(30));
 }
 
 #[tokio::test(start_paused = true)]
 async fn an_ordinary_tool_error_refunds_unused_time_without_opening_the_circuit() {
-    let budget = ToolBudget::default();
+    let budget = budget();
     let error = budget
-        .run(Some("turn".into()), async {
+        .run(Some("turn"), async {
             tokio::time::sleep(Duration::from_secs(3)).await;
-            ToolResult::error("invalid memory arguments")
+            Err::<(), _>("invalid memory arguments")
         })
         .await;
-    assert!(error.is_error);
-    let next = budget
-        .run(Some("turn".into()), async {
-            ToolResult::success("healthy")
-        })
-        .await;
-    assert!(!next.is_error);
-    let runs = budget.runs.lock().unwrap();
-    assert!(!runs.states["turn"].disabled);
-    assert_eq!(runs.states["turn"].remaining, Duration::from_secs(27));
+    assert_eq!(error, Ok(Err("invalid memory arguments")));
+    assert_eq!(
+        budget
+            .run(Some("turn"), async {
+                tokio::time::sleep(Duration::from_secs(12)).await;
+                "healthy"
+            })
+            .await,
+        Ok("healthy")
+    );
+    assert_eq!(
+        budget
+            .run(Some("turn"), async {
+                tokio::time::sleep(Duration::from_secs(15)).await;
+                "remaining per-run allowance"
+            })
+            .await,
+        Ok("remaining per-run allowance")
+    );
+    assert_eq!(
+        budget.run(Some("turn"), async { "out of time" }).await,
+        Err(Refusal::Denied(DenialReason::LatencyBudget))
+    );
 }
 
 #[tokio::test(start_paused = true)]
 async fn callers_without_a_run_id_still_have_a_deadline() {
-    let budget = ToolBudget::default();
-    let result = budget
+    let result = budget()
         .run(None, async {
             tokio::time::sleep(Duration::from_secs(60)).await;
-            ToolResult::success("late")
+            "late"
         })
         .await;
-    assert!(result.is_error);
+    assert_eq!(result, Err(Refusal::TimedOut));
 }
 
 #[tokio::test(start_paused = true)]
 async fn parallel_memory_reads_reserve_from_the_same_time_budget() {
-    let budget = ToolBudget::default();
+    let budget = budget();
     let calls = AtomicUsize::new(0);
     let read = || async {
         calls.fetch_add(1, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_secs(12)).await;
-        ToolResult::success("read")
+        "read"
     };
     let (first, second, third) = tokio::join!(
-        budget.run(Some("turn".into()), read()),
-        budget.run(Some("turn".into()), read()),
-        budget.run(Some("turn".into()), read()),
+        budget.run(Some("turn"), read()),
+        budget.run(Some("turn"), read()),
+        budget.run(Some("turn"), read()),
     );
-    assert!(!first.is_error);
-    assert!(!second.is_error);
-    assert!(third.is_error);
+    assert!(first.is_ok());
+    assert!(second.is_ok());
+    assert_eq!(third, Err(Refusal::Denied(DenialReason::LatencyBudget)));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(
-        budget.runs.lock().unwrap().states["turn"].remaining,
-        Duration::from_secs(6)
+        budget
+            .run(Some("turn"), async {
+                tokio::time::sleep(Duration::from_secs(6)).await;
+                "last allowance"
+            })
+            .await,
+        Ok("last allowance")
     );
 }
 
 #[tokio::test]
 async fn completed_run_tracking_is_bounded() {
-    let budget = ToolBudget::default();
+    let budget = budget();
     for i in 0..200 {
-        budget
-            .run(Some(format!("turn-{i}")), async {
-                ToolResult::success("saved")
-            })
-            .await;
+        assert!(budget
+            .run(Some(&format!("turn-{i}")), async { "ok" })
+            .await
+            .is_ok());
     }
-    let runs = budget.runs.lock().unwrap();
-    assert_eq!(runs.states.len(), MAX_TRACKED_RUNS);
-    assert_eq!(runs.order.len(), MAX_TRACKED_RUNS);
+    // The first idle record was evicted, so it receives a fresh call allowance.
+    for _ in 0..8 {
+        assert!(budget.run(Some("turn-0"), async { "ok" }).await.is_ok());
+    }
+    assert_eq!(
+        budget.run(Some("turn-0"), async { "too many" }).await,
+        Err(Refusal::Denied(DenialReason::CallLimit))
+    );
 }
 
 #[tokio::test(start_paused = true)]
 async fn an_outstanding_memory_call_survives_other_runs_and_keeps_its_timeout_circuit() {
-    let budget = ToolBudget::default();
-    let call = budget.run(Some("active".into()), std::future::pending());
+    let budget = budget();
+    let call = budget.run(Some("active"), std::future::pending::<()>());
     tokio::pin!(call);
     assert!(futures::poll!(call.as_mut()).is_pending());
-    for i in 0..MAX_TRACKED_RUNS {
-        budget
-            .run(Some(format!("other-{i}")), async {
-                ToolResult::success("saved")
-            })
-            .await;
+    for i in 0..128 {
+        assert!(budget
+            .run(Some(&format!("other-{i}")), async { "ok" })
+            .await
+            .is_ok());
     }
-    assert!(budget.runs.lock().unwrap().states.contains_key("active"));
-    assert!(call.await.is_error);
-    let calls = AtomicUsize::new(0);
-    let result = budget
-        .run(Some("active".into()), async {
-            calls.fetch_add(1, Ordering::SeqCst);
-            ToolResult::success("must not execute")
-        })
-        .await;
-    assert!(result.is_error);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(call.await, Err(Refusal::TimedOut));
+    assert_eq!(
+        budget
+            .run(Some("active"), async { "must not execute" })
+            .await,
+        Err(Refusal::Denied(DenialReason::CircuitOpen))
+    );
 }
 
 #[tokio::test(start_paused = true)]
 async fn full_tracking_refuses_new_work_until_an_active_reservation_is_released() {
-    let budget = ToolBudget::default();
+    let budget = budget();
+    let run_ids: Vec<String> = (0..128).map(|i| format!("active-{i}")).collect();
     let mut pending = Vec::new();
-    for i in 0..MAX_TRACKED_RUNS {
-        let mut call = Box::pin(budget.run(Some(format!("active-{i}")), std::future::pending()));
+    for run_id in &run_ids {
+        let mut call = Box::pin(budget.run(Some(run_id), std::future::pending::<()>()));
         assert!(futures::poll!(call.as_mut()).is_pending());
         pending.push(call);
     }
-    let calls = AtomicUsize::new(0);
-    let result = budget
-        .run(Some("new".into()), async {
-            calls.fetch_add(1, Ordering::SeqCst);
-            ToolResult::success("must not execute")
-        })
-        .await;
-    assert!(result.is_error);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        budget.run(Some("new"), async { "must not execute" }).await,
+        Err(Refusal::Denied(DenialReason::TrackingFull))
+    );
     drop(pending);
-    assert!(
-        !budget
-            .run(Some("new".into()), async { ToolResult::success("healthy") })
-            .await
-            .is_error
+    assert_eq!(
+        budget.run(Some("new"), async { "healthy" }).await,
+        Ok("healthy")
     );
 }
 
 #[tokio::test(start_paused = true)]
 async fn cancelling_a_call_returns_its_unused_time_reservation() {
-    let budget = ToolBudget::default();
-    let mut call = Box::pin(budget.run(Some("cancelled".into()), std::future::pending()));
+    let budget = budget();
+    let mut call = Box::pin(budget.run(Some("cancelled"), std::future::pending::<()>()));
     assert!(futures::poll!(call.as_mut()).is_pending());
     drop(call);
-    let runs = budget.runs.lock().unwrap();
-    assert_eq!(runs.states["cancelled"].remaining, RUN_TIME_BUDGET);
+    for _ in 0..2 {
+        assert_eq!(
+            budget
+                .run(Some("cancelled"), async {
+                    tokio::time::sleep(Duration::from_secs(15)).await;
+                    "full reservation returned"
+                })
+                .await,
+            Ok("full reservation returned")
+        );
+    }
+    assert_eq!(
+        budget.run(Some("cancelled"), async { "out of time" }).await,
+        Err(Refusal::Denied(DenialReason::LatencyBudget))
+    );
 }

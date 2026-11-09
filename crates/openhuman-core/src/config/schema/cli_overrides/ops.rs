@@ -158,6 +158,9 @@ fn apply_overrides(config: &mut Config, overrides: &CliInferenceOverrides) {
     if provider_key == "openhuman" {
         if let Some(model) = model.as_ref() {
             config.default_model = Some(model.clone());
+            config
+                .load_provenance_mut()
+                .record_cli_override("default_model");
         }
     }
 
@@ -171,6 +174,15 @@ fn apply_overrides(config: &mut Config, overrides: &CliInferenceOverrides) {
     config.reasoning_provider = Some(route.clone());
     config.agentic_provider = Some(route.clone());
     config.coding_provider = Some(route);
+    let provenance = config.load_provenance_mut();
+    for field in [
+        "chat_provider",
+        "reasoning_provider",
+        "agentic_provider",
+        "coding_provider",
+    ] {
+        provenance.record_cli_override(field);
+    }
 }
 
 fn split_provider_route(route: &str) -> (&str, Option<&str>) {

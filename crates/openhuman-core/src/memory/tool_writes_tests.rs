@@ -1,12 +1,122 @@
 use super::*;
-use crate::memory::scope::MemoryIdentity;
 use crate::memory::test_fixtures::{bind_reference, config_in, stored, RefusingEngine};
+use crate::memory::tools::CallFacts;
 use serde_json::json;
-use tinymemory_api::Reach;
-use tinymemory_api::{MetaFilter, Namespace};
+use tinymemory_api::{MetaFilter, Namespace, Reach};
+use tinymemory_tools::{CallContext, SingleTool, ToolScope};
+
+/// Exercises the production native single-tool parser and the host write sink.
+pub(crate) fn enqueue(
+    config: &Config,
+    args: &serde_json::Value,
+    facts: &CallFacts,
+) -> tinymemory_api::Result<serde_json::Value> {
+    let config = config.clone();
+    let args = args.clone();
+    let facts = facts.clone();
+    let invoke = move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(async move {
+                let scope = ToolScope {
+                    place: facts.namespace.clone(),
+                    reach: Some(facts.reach.clone()),
+                    writes: true,
+                    zone: Some(config.time_zone()),
+                    workspace: facts.workspace.clone(),
+                    thread_id: facts.thread_id.clone(),
+                    agent_id: facts.agent_id.clone(),
+                    tool_call: Some(tinymemory_api::ToolCallRef {
+                        name: crate::memory::tools::MEMORY_TOOL_NAME.to_string(),
+                        id: facts.tool_call_id.clone(),
+                    }),
+                };
+                let single = SingleTool::queued(
+                    crate::memory::tools::MEMORY_TOOL_NAME,
+                    scope,
+                    std::sync::Arc::new(super::HostWriteSink::new(std::sync::Arc::new(config))),
+                );
+                let outcome = single
+                    .call_with_details(args, CallContext::default())
+                    .await?;
+                Ok(outcome.value)
+            })
+    };
+    if tokio::runtime::Handle::try_current().is_ok() {
+        std::thread::spawn(invoke)
+            .join()
+            .map_err(|_| tinymemory_api::Error::Unavailable("native test call panicked".into()))?
+    } else {
+        invoke()
+    }
+}
+
+pub(crate) fn queued_for(config: &Config, facts: &CallFacts) -> tinymemory_api::Result<Vec<Entry>> {
+    super::read_at(&super::queue_path(config, &facts.reach.at))
+}
+
+pub(crate) async fn drain_for(config: &Config, root: &Namespace) -> usize {
+    let file = super::queue_path(config, root);
+    let owner = super::owner_state(config);
+    let _owner = owner.barrier.read().await;
+    let state = super::drain_state(&file);
+    let _draining = state.barrier.lock().await;
+    let generation = owner.gate.generation();
+    super::drain_locked(config, &file, &owner, generation).await
+}
 
 fn facts(config: &Config) -> CallFacts {
-    CallFacts::of(config, &MemoryIdentity::agent("outbox-agent"))
+    CallFacts::of(
+        config,
+        &tinymemory_tools::layout::identity::Identity::agent("outbox-agent"),
+    )
+}
+
+#[test]
+fn owner_states_are_released_after_the_last_write_holder_drops() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut keys = Vec::new();
+    let mut queue_files = Vec::new();
+    let states = (0..32)
+        .map(|index| {
+            let workspace = temp.path().join(index.to_string());
+            std::fs::create_dir_all(&workspace).unwrap();
+            let config = config_in(&temp);
+            let config = Config {
+                workspace_dir: workspace.clone(),
+                ..config
+            };
+            let file = workspace
+                .join("memory")
+                .join(format!("{}-writes.json", owner_prefix(&config)));
+            keys.push(workspace.join("memory").join(owner_prefix(&config)));
+            queue_files.push(file.clone());
+            drop(queue(&file));
+            owner_state(&config)
+        })
+        .collect::<Vec<_>>();
+
+    drop(states);
+    let sentinel_workspace = temp.path().join("sentinel");
+    std::fs::create_dir_all(&sentinel_workspace).unwrap();
+    let sentinel_config = Config {
+        workspace_dir: sentinel_workspace.clone(),
+        ..config_in(&temp)
+    };
+    drop(owner_state(&sentinel_config));
+    drop(queue(
+        &sentinel_workspace
+            .join("memory")
+            .join("sentinel-writes.json"),
+    ));
+
+    let owners = OWNERS.lock().unwrap();
+    assert!(keys.iter().all(|key| !owners.contains_key(key)));
+    drop(owners);
+    let queues = QUEUES.lock().unwrap();
+    assert!(queue_files.iter().all(|file| !queues.contains_key(file)));
 }
 
 #[tokio::test]
@@ -21,12 +131,7 @@ async fn restart_drains_scrubbed_learnings_and_ordered_forgetting() {
     )
     .unwrap();
     let id = ack["id"].as_str().unwrap();
-    enqueue(
-        &config,
-        &json!({"action":"forget","ids":[id],"reach":{"at":"root"}}),
-        &facts,
-    )
-    .unwrap();
+    enqueue(&config, &json!({"action":"forget","ids":[id]}), &facts).unwrap();
     // A fresh config and engine sees only the durable file from before restart.
     let restarted = config_in(&tmp);
     let engine = bind_reference(&restarted);
@@ -326,7 +431,10 @@ async fn model_supplied_forget_reach_cannot_remove_another_identitys_item() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
     let engine = bind_reference(&config);
-    let other_facts = CallFacts::of(&config, &MemoryIdentity::agent("different-agent"));
+    let other_facts = CallFacts::of(
+        &config,
+        &tinymemory_tools::layout::identity::Identity::agent("different-agent"),
+    );
     let item = StoreItem::learning(
         "Other identity's learning",
         LearningKind::Fact,
@@ -339,16 +447,21 @@ async fn model_supplied_forget_reach_cannot_remove_another_identitys_item() {
     let id = engine.store(item).await.unwrap().id.0;
     // All agents under one identity share their root by design. Choose an
     // unrelated root explicitly to exercise a foreign identity boundary.
-    let mut confined = facts(&config);
-    confined.reach = Reach::subtree("user:isolated".parse().unwrap());
     let mut config = config;
     config.memory.root = Some("user:isolated".into());
-    enqueue(
+    let mut confined = facts(&config);
+    confined.reach = Reach::subtree("user:isolated".parse().unwrap());
+    let rejected = enqueue(
         &config,
         &json!({"action":"forget","ids":[id],"reach":{"at":"","inherit":true,"descendants":true}}),
         &confined,
-    )
-    .unwrap();
+    );
+    assert!(matches!(
+        rejected,
+        Err(tinymemory_api::Error::InvalidRequest(_))
+    ));
+    assert!(read(&config.workspace_dir).unwrap().is_empty());
+    enqueue(&config, &json!({"action":"forget","ids":[id]}), &confined).unwrap();
     assert_eq!(drain(&config).await, 1);
     assert_eq!(stored(&engine, MetaFilter::default()).await.len(), 1);
 }
@@ -368,7 +481,7 @@ async fn explicit_memory_disable_refuses_new_writes_and_keeps_old_writes_pending
             &json!({"action":"learn","text":"Must not persist"}),
             &call_facts
         ),
-        Err(MemoryError::Off(_))
+        Err(Error::Off(_))
     ));
     assert_eq!(drain(&config).await, 0);
     assert_eq!(read(&config.workspace_dir).unwrap().len(), 1);

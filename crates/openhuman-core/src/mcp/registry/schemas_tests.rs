@@ -1,100 +1,65 @@
 use super::*;
 use serde_json::json;
 
-use serde_json::{Map, Value};
-// ── schemas() coverage ────────────────────────────────────────────────────
+use crate::core::all::{
+    assert_schema_controller_parity, expect_schema_fields, expect_schema_identity,
+    expect_schema_input_order, expect_schema_output_names, expect_schema_required_inputs,
+};
+use serde_json::Map;
 
 #[test]
-fn schemas_registry_search_has_no_required_inputs() {
+fn registry_schema_contracts_are_preserved() {
+    crate::core::all::expect_schema_namespace(&all_controller_schemas(), "mcp_clients");
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "config_get",
+    );
+
     let s = schemas("registry_search");
-    assert_eq!(s.namespace, "mcp_clients");
-    assert!(s.inputs.iter().all(|f| !f.required));
-}
-
-#[test]
-fn schemas_registry_get_requires_qualified_name() {
-    let s = schemas("registry_get");
-    let qn = s
-        .inputs
-        .iter()
-        .find(|f| f.name == "qualified_name")
-        .unwrap();
-    assert!(qn.required);
-}
-
-#[test]
-fn schemas_config_set_takes_the_document_root() {
-    let s = schemas("config_set");
-    assert_eq!(s.inputs.len(), 1);
-    assert_eq!(s.inputs[0].name, "mcpServers");
-    assert!(s.inputs[0].required);
-    let outputs: Vec<_> = s.outputs.iter().map(|f| f.name).collect();
-    assert_eq!(outputs, ["mcpServers", "added", "updated", "removed"]);
-}
-
-#[test]
-fn schemas_config_get_has_no_inputs() {
-    let s = schemas("config_get");
-    assert!(s.inputs.is_empty());
-    assert_eq!(s.outputs[0].name, "mcpServers");
-}
-
-#[test]
-fn there_is_no_install_from_the_catalog_any_more() {
-    // Installing is declaring a server in mcp.json; the catalog has no install RPC.
-    assert_eq!(schemas("install").function, "unknown");
-    assert_eq!(schemas("config_assist").function, "unknown");
-}
-
-#[test]
-fn schemas_connect_requires_server_id() {
-    let s = schemas("connect");
-    let si = s.inputs.iter().find(|f| f.name == "server_id").unwrap();
-    assert!(si.required);
-}
-
-#[test]
-fn schemas_tool_call_requires_three_fields() {
-    let s = schemas("tool_call");
-    let required: Vec<_> = s.inputs.iter().filter(|f| f.required).collect();
-    assert_eq!(required.len(), 3);
-}
-
-// ── all_controller_schemas / all_registered_controllers ────────────────────
-
-#[test]
-fn all_controller_schemas_covers_expected_methods() {
-    let schemas = all_controller_schemas();
-    // 17 mcp_clients: the catalog install and the configuration assistant went
-    // with the setup agent; config_get / config_set (mcp.json) and list_tools
-    // took their place.
-    assert_eq!(schemas.len(), 17);
-    assert!(schemas.iter().all(|s| s.namespace == "mcp_clients"));
-    let functions: Vec<_> = schemas.iter().map(|s| s.function).collect();
-    assert!(functions.contains(&"config_get"));
-    assert!(functions.contains(&"config_set"));
-    assert!(functions.contains(&"list_tools"));
+    let catalog = all_controller_schemas();
+    assert_eq!(catalog.len(), 17);
+    let functions: Vec<_> = catalog.iter().map(|s| s.function).collect();
+    for name in [
+        "config_get",
+        "config_set",
+        "list_tools",
+        "update_env",
+        "registry_settings_get",
+        "registry_settings_set",
+        "set_enabled",
+        "detect_auth",
+        "oauth_begin",
+    ] {
+        assert!(functions.contains(&name), "missing mcp_clients.{name}");
+    }
     assert!(!functions.contains(&"install"));
     assert!(!functions.contains(&"config_assist"));
-    // The #3039 + #3196 additions are present.
-    assert!(functions.contains(&"update_env"));
-    assert!(functions.contains(&"registry_settings_get"));
-    assert!(functions.contains(&"registry_settings_set"));
-    assert!(functions.contains(&"set_enabled"));
-    // The #3495 OAuth/auth-detection additions are present.
-    assert!(functions.contains(&"detect_auth"));
-    assert!(functions.contains(&"oauth_begin"));
-}
+    assert_eq!(s.namespace, "mcp_clients");
+    expect_schema_required_inputs(&s, &[]);
+    expect_schema_identity(&schemas("registry_get"), "mcp_clients", "registry_get");
+    expect_schema_fields(&schemas("registry_get"), &[("qualified_name", Some(true))]);
 
-#[test]
-fn all_registered_controllers_use_expected_namespaces() {
-    for c in all_registered_controllers() {
-        assert_eq!(
-            c.schema.namespace, "mcp_clients",
-            "unexpected namespace {}",
-            c.schema.namespace
-        );
-    }
+    let set = schemas("config_set");
+    expect_schema_identity(&set, "mcp_clients", "config_set");
+    expect_schema_input_order(&set, &["mcpServers"]);
+    expect_schema_required_inputs(&set, &["mcpServers"]);
+    expect_schema_output_names(&set, &["mcpServers", "added", "updated", "removed"]);
+
+    let get = schemas("config_get");
+    assert!(get.inputs.is_empty());
+    assert_eq!(get.outputs[0].name, "mcpServers");
+    expect_schema_fields(&schemas("connect"), &[("server_id", Some(true))]);
+    assert_eq!(
+        schemas("tool_call")
+            .inputs
+            .iter()
+            .filter(|field| field.required)
+            .count(),
+        3
+    );
+    assert_eq!(schemas("install").function, "unknown");
+    assert_eq!(schemas("config_assist").function, "unknown");
 }
 
 // ── read_required ─────────────────────────────────────────────────────────
@@ -137,11 +102,41 @@ fn read_optional_u32_rejects_negative() {
 // ── type_name ─────────────────────────────────────────────────────────────
 
 #[test]
-fn type_name_covers_all_variants() {
-    assert_eq!(type_name(&Value::Null), "null");
-    assert_eq!(type_name(&json!(true)), "bool");
-    assert_eq!(type_name(&json!(1)), "number");
-    assert_eq!(type_name(&json!("s")), "string");
-    assert_eq!(type_name(&json!([])), "array");
-    assert_eq!(type_name(&json!({})), "object");
+fn registry_get_shared_parser_preserves_value_and_validation_errors() {
+    let valid = Map::from_iter([("qualified_name".into(), json!("example/server"))]);
+    assert_eq!(
+        super::handlers::parse_registry_get(&valid).unwrap(),
+        "example/server"
+    );
+    let padded = Map::from_iter([("qualified_name".into(), json!(" example/server "))]);
+    assert_eq!(
+        super::handlers::parse_registry_get(&padded).unwrap(),
+        " example/server ",
+        "registry parser preserves the qualified name for downstream operation validation"
+    );
+    assert!(super::handlers::parse_registry_get(&Map::new())
+        .unwrap_err()
+        .contains("missing required param 'qualified_name'"));
+    let invalid = Map::from_iter([("qualified_name".into(), json!(42))]);
+    assert!(super::handlers::parse_registry_get(&invalid)
+        .unwrap_err()
+        .contains("invalid 'qualified_name'"));
+}
+
+#[test]
+fn registry_get_legacy_catalog_keeps_its_handler_and_fixture_contract() {
+    let controllers = all_registered_controllers()
+        .into_iter()
+        .filter(|controller| controller.schema.method_name() == "mcp_clients.registry_get")
+        .collect::<Vec<_>>();
+    assert_eq!(controllers.len(), 1);
+    assert!(std::ptr::fn_addr_eq(
+        controllers[0].handler,
+        super::handlers::handle_registry_get as crate::core::all::ControllerHandler
+    ));
+    crate::core::all::verify_parameter_schema(
+        &controllers[0].schema,
+        &super::registry_get_parameter_contract(),
+    )
+    .expect("legacy catalogue keeps its authored schema example");
 }

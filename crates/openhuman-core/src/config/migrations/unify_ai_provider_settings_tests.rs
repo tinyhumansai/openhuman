@@ -21,23 +21,21 @@ fn make_legacy_config_local_on() -> Config {
 }
 
 #[test]
-fn empty_config_seeds_openhuman_entry() {
+fn empty_config_does_not_seed_a_hosted_entry_in_core() {
     let mut c = Config::default();
     let stats = run(&mut c).expect("migration must succeed");
 
-    assert_eq!(stats.cloud_providers_seeded, 1);
-    assert_eq!(c.cloud_providers.len(), 1);
-    assert_eq!(c.cloud_providers[0].slug, "openhuman");
-    assert!(c.cloud_providers[0].id.starts_with("p_openhuman_"));
+    assert_eq!(stats.cloud_providers_seeded, 0);
+    assert!(c.cloud_providers.is_empty());
 }
 
 #[test]
-fn primary_cloud_defaults_to_openhuman_id() {
+fn core_migration_leaves_primary_cloud_unset_without_a_hosted_entry() {
     let mut c = Config::default();
     let stats = run(&mut c).expect("migration must succeed");
 
-    assert!(stats.primary_cloud_set);
-    assert_eq!(c.primary_cloud, Some(c.cloud_providers[0].id.clone()));
+    assert!(!stats.primary_cloud_set);
+    assert_eq!(c.primary_cloud, None);
 }
 
 #[test]
@@ -52,7 +50,7 @@ fn legacy_inference_url_becomes_custom_entry() {
 
     let stats = run(&mut c).expect("migration must succeed");
 
-    assert_eq!(stats.cloud_providers_seeded, 2);
+    assert_eq!(stats.cloud_providers_seeded, 1);
     let custom = c
         .cloud_providers
         .iter()
@@ -74,9 +72,8 @@ fn managed_inference_url_does_not_seed_custom() {
     c.resolved_endpoints.managed_hosts = vec![".managed.test".into()];
     c.inference_url = Some("https://api.managed.test/v1".into());
     let _ = run(&mut c).expect("migration must succeed");
-    // Only the openhuman entry should be seeded — no Custom entry.
-    assert_eq!(c.cloud_providers.len(), 1);
-    assert_eq!(c.cloud_providers[0].slug, "openhuman");
+    // Hosted entries are installed by TinyHumans, not the core migration.
+    assert!(c.cloud_providers.is_empty());
 }
 
 #[test]
@@ -86,8 +83,8 @@ fn without_managed_hosts_every_inference_url_is_custom() {
     let mut c = Config::default();
     c.inference_url = Some("https://api.managed.test/v1".into());
     let _ = run(&mut c).expect("migration must succeed");
-    assert_eq!(c.cloud_providers.len(), 2);
-    assert_eq!(c.cloud_providers[1].slug, "custom");
+    assert_eq!(c.cloud_providers.len(), 1);
+    assert_eq!(c.cloud_providers[0].slug, "custom");
 }
 
 #[test]
@@ -150,7 +147,8 @@ fn idempotent_second_run_is_noop() {
     assert_eq!(c.primary_cloud, primary_after_first);
 
     // Sanity: stats from the first run say we did do work.
-    assert!(first.cloud_providers_seeded >= 1);
+    assert_eq!(first.cloud_providers_seeded, 0);
+    assert!(!first.primary_cloud_set);
     assert!(first.workload_fields_filled >= 1);
 }
 

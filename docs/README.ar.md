@@ -382,7 +382,7 @@ println!("{}", reply.reply);
 
 اقرأ [`CONTRIBUTING.md`](../CONTRIBUTING.md)، أو دع وكيل برمجة بالذكاء الاصطناعي يرشدك عبر [هذا الموجّه](./CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you).
 
-1. ثبّت Git وNode.js 24+ وpnpm 10.10.0 وRust 1.96.1 (مع `rustfmt` و`clippy`) وCMake وNinja وripgrep، ومتطلبات بناء تطبيقات سطح المكتب لمنصتك.
+1. ثبّت Git وNode.js 24+ وpnpm 10.10.0 وRust 1.99.1 (مع `rustfmt` و`clippy`) وCMake وNinja وripgrep، ومتطلبات بناء تطبيقات سطح المكتب لمنصتك.
 2. انسخ المستودع (fork) ثم استنسخه. شغّل `git submodule update --init --recursive`، ثم `pnpm install`.
 3. شغّل `pnpm dev` لعمل الواجهة أو `pnpm dev:app` لتطبيق سطح المكتب. قبل فتح طلب سحب (PR)، شغّل `pnpm typecheck` و`pnpm format:check` و`cargo check --manifest-path Cargo.toml`.
 

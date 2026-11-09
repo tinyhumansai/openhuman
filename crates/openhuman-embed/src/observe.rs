@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tinyagents_harness::observability::turn_observer::{self, Observer, ObserverScope};
 pub use tinyagents_harness::observability::turn_observer::{
-    ObservedUsage, TraceContent, TurnObservation,
+    ObservedUsage, SetupOutcome, SetupPhase, TraceContent, TurnObservation,
 };
 
 /// Sanitized failure classification; no controller or provider error text.
@@ -19,6 +19,8 @@ pub enum TurnFailure {
     Structured,
     /// Spending admission refused another physical call.
     Budget,
+    /// Host policy refused a physical call before provider invocation.
+    DispatchAdmission,
     /// Caller requested cancellation.
     Cancelled,
     /// Whole-turn deadline elapsed.
@@ -87,6 +89,7 @@ where
         CoreError::Domain { .. } => TurnFailure::Domain,
         CoreError::StructuredOutput { .. } => TurnFailure::Structured,
         CoreError::BudgetExceeded { .. } => TurnFailure::Budget,
+        CoreError::DispatchAdmission { .. } => TurnFailure::DispatchAdmission,
         CoreError::Cancelled { .. } | CoreError::TurnCancelled { .. } => TurnFailure::Cancelled,
         CoreError::DeadlineExceeded { .. } => TurnFailure::Deadline,
         _ => TurnFailure::Other,

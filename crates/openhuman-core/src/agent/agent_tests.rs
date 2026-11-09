@@ -26,15 +26,17 @@
 
 use crate::agent::session_host::OpenHumanSessionHost;
 use crate::config::AgentConfig;
-use crate::inference::provider::ChatResponse;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyinference_llm::usage::BilledUsage;
 use tinytools::{Tool, ToolResult};
 use tinytools_agent::dialect::NativeToolCall;
 use tinytools_agent::dialect::TranscriptEntry;
 use tinytools_agent::dialect::{NativeDialect, ToolDialect, XmlDialect};
+
+type ChatResponse = tinyinference_llm::model::ChatResponse<BilledUsage, NativeToolCall>;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Test Helpers — Mock Provider, Mock Tool, Mock Memory
@@ -83,15 +85,14 @@ impl ChatModel<()> for ScriptedProvider {
                 tool_calls: vec![],
                 usage: None,
                 reasoning_content: None,
+                finish_reason: None,
             }
         } else {
             guard.remove(0)
         };
-        Ok(
-            crate::inference::provider::model::native_model_response_for_request(
-                &response, &request,
-            ),
-        )
+        Ok(tinyinference_llm::model::response_to_model_response(
+            &response, &request,
+        ))
     }
 }
 
@@ -235,6 +236,7 @@ fn build_agent_with(
     let tmp = tempfile::TempDir::new().unwrap();
     let agent = OpenHumanSessionHost::builder()
         .chat_model(provider)
+        .model_name("agent-test/mock".into())
         .tools(tools)
         .tool_dispatcher(dispatcher)
         .workspace_dir(tmp.path().to_path_buf())
@@ -251,6 +253,7 @@ fn build_agent_with_config(
     let tmp = tempfile::TempDir::new().unwrap();
     let agent = OpenHumanSessionHost::builder()
         .chat_model(provider)
+        .model_name("agent-test/mock".into())
         .tools(tools)
         .tool_dispatcher(Box::new(NativeDialect))
         .workspace_dir(tmp.path().to_path_buf())
@@ -267,6 +270,7 @@ fn tool_response(calls: Vec<NativeToolCall>) -> ChatResponse {
         tool_calls: calls,
         usage: None,
         reasoning_content: None,
+        finish_reason: None,
     }
 }
 
@@ -277,6 +281,7 @@ fn text_response(text: &str) -> ChatResponse {
         tool_calls: vec![],
         usage: None,
         reasoning_content: None,
+        finish_reason: None,
     }
 }
 
@@ -289,6 +294,7 @@ fn xml_tool_response(name: &str, args: &str) -> ChatResponse {
         tool_calls: vec![],
         usage: None,
         reasoning_content: None,
+        finish_reason: None,
     }
 }
 

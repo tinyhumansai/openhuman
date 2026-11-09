@@ -4,7 +4,7 @@ use crate::flows::store;
 use serde_json::json;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tinyflows_catalog::types::SuggestionStatus;
+use tinyflows_bus::catalog::SuggestionStatus;
 
 fn test_config(tmp: &TempDir) -> Arc<Config> {
     let config = Config {

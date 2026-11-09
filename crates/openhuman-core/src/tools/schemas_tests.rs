@@ -1,8 +1,15 @@
 use super::*;
 
+use crate::core::all::{
+    assert_schema_controller_parity, expect_schema_fields, expect_schema_identity,
+    expect_schema_output_fields,
+};
 use crate::tools::schemas::registry::tools_schemas;
 use serde_json::{json, Map};
 const BASE_CONTROLLERS: usize = 5;
+
+type InputContract = (&'static str, Option<bool>);
+type ToolSchemaContract = (&'static str, &'static [InputContract]);
 
 #[test]
 fn all_schemas_covers_the_base_surface() {
@@ -28,37 +35,29 @@ fn apify_linkedin_scrape_controller_is_retired() {
 }
 
 #[test]
-fn composio_execute_schema_shape() {
-    let s = tools_schemas("tools_composio_execute");
-    assert_eq!(s.namespace, "tools");
-    assert_eq!(s.function, "composio_execute");
-    assert!(s.inputs.iter().any(|f| f.name == "action" && f.required));
-}
-
-#[test]
-fn web_answer_schema_shape() {
-    let s = tools_schemas("tools_web_answer");
-    assert_eq!(s.namespace, "tools");
-    assert_eq!(s.function, "web_answer");
-    assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
-    assert!(s.inputs.iter().any(|f| f.name == "depth"));
-    assert!(s.outputs.iter().any(|f| f.name == "citations"));
-}
-
-#[test]
-fn web_contents_schema_shape() {
-    let s = tools_schemas("tools_web_contents");
-    assert_eq!(s.function, "web_contents");
-    assert!(s.inputs.iter().any(|f| f.name == "urls" && f.required));
-}
-
-#[test]
-fn searxng_search_schema_shape() {
-    let s = tools_schemas("tools_searxng_search");
-    assert_eq!(s.namespace, "tools");
-    assert_eq!(s.function, "searxng_search");
-    assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
-    assert!(s.inputs.iter().any(|f| f.name == "max_results"));
+fn tools_schema_wire_contracts_are_preserved() {
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "web_search",
+    );
+    let contracts: &[ToolSchemaContract] = &[
+        ("composio_execute", &[("action", Some(true))]),
+        ("web_answer", &[("query", Some(true)), ("depth", None)]),
+        ("web_contents", &[("urls", Some(true))]),
+        (
+            "searxng_search",
+            &[("query", Some(true)), ("max_results", None)],
+        ),
+        ("web_search", &[("query", Some(true))]),
+    ];
+    for (function, inputs) in contracts {
+        let schema = tools_schemas(&format!("tools_{function}"));
+        expect_schema_identity(&schema, "tools", function);
+        expect_schema_fields(&schema, inputs);
+    }
+    expect_schema_output_fields(&tools_schemas("tools_web_answer"), &["citations"]);
+    expect_schema_output_fields(&tools_schemas("tools_web_search"), &["provider"]);
 }
 
 #[test]
@@ -68,15 +67,4 @@ fn optional_string_array_trims_and_drops_blank_entries() {
     let values = optional_string_array(&params, "categories").expect("string array");
 
     assert_eq!(values, vec!["web", "news"]);
-}
-
-#[test]
-fn web_search_schema_shape() {
-    let s = tools_schemas("tools_web_search");
-    assert_eq!(s.namespace, "tools");
-    assert_eq!(s.function, "web_search");
-    assert!(s.inputs.iter().any(|f| f.name == "query" && f.required));
-    // The resolved search provider is part of the documented output so
-    // callers can attribute a managed search (#5136).
-    assert!(s.outputs.iter().any(|f| f.name == "provider"));
 }

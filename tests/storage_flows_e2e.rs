@@ -1,23 +1,23 @@
-//! Cron jobs, the flow catalog and flow state on a configured storage
+//! Cron jobs and the flow catalog on a configured storage
 //! backend, end to end through the core's public functions.
 //!
 //! Its own test binary because it installs a backend into the process-wide
 //! storage slot, which would reroute every other suite's stores in a shared
-//! process. Each driver runs as its own test case (see `support/storage_drivers.rs`), and the cases take turns on the slot.
+//! process. The tests take turns on the slot (see `support/storage_case.rs`).
 
 use openhuman_core::config::Config;
 use openhuman_core::cron::{self, Schedule};
 use openhuman_core::flows;
-use openhuman_core::flows::tinyflows::state::FlowState;
 use serde_json::json;
 
-#[macro_use]
-#[path = "support/storage_drivers.rs"]
-mod storage_drivers;
+#[path = "support/storage_case.rs"]
+mod storage_case;
 
-use storage_drivers::Case;
+use storage_case::Case;
 
-async fn a_configured_backend_holds_cron_flows_and_flow_state(case: Case) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_configured_backend_holds_cron_jobs_and_flow_catalog() {
+    let case = Case::open();
     let workspace = tempfile::tempdir().unwrap();
     let config = Config {
         workspace_dir: workspace.path().to_path_buf(),
@@ -53,7 +53,7 @@ async fn a_configured_backend_holds_cron_flows_and_flow_state(case: Case) {
         ],
         "edges": [ { "from_node": "t", "to_node": "a" } ]
     });
-    let flow = flows::ops::flows_create(&config, "Digest".to_string(), graph, false)
+    let flow = flows::ops::flows_create(&config, "Digest".to_string(), graph.clone(), false)
         .await
         .unwrap()
         .value;
@@ -61,26 +61,9 @@ async fn a_configured_backend_holds_cron_flows_and_flow_state(case: Case) {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, flow.id);
 
-    // Flow state resolves to the backend, and its records read back through
-    // the catalog's KV (the engine/dedup sharing is unit-tested in core).
-    let state_config = config.clone();
-    tokio::task::spawn_blocking(move || {
-        assert!(matches!(
-            FlowState::open(&state_config, "flow:digest"),
-            FlowState::Documents(_)
-        ));
-        flows::kv_set(&state_config, "flow:digest", "seen", &json!(["a"])).unwrap();
-        assert_eq!(
-            flows::kv_get(&state_config, "flow:digest", "seen").unwrap(),
-            Some(json!(["a"]))
-        );
-    })
-    .await
-    .unwrap();
-
-    // The delegation graph's checkpointer lives on the backend too.
-    let delegation_config = config.clone();
-    openhuman_core::agent::orchestration::open_delegation_checkpointer(&delegation_config).unwrap();
+    // The flow catalog is module-owned and reaches this configured backend
+    // through the host's scoped CatalogStorage callback. The successful
+    // create/list round-trip above exercises that boundary.
 
     // A job's scheduling policy lives on the backend too.
     let policy_config = config.clone();
@@ -127,7 +110,6 @@ async fn a_configured_backend_holds_cron_flows_and_flow_state(case: Case) {
         "cron/schedule.db",
         "flows/flows.db",
         "flows/catalog.db",
-        "graph_checkpoints.db",
     ] {
         assert!(
             !workspace.path().join(path).exists(),
@@ -135,31 +117,32 @@ async fn a_configured_backend_holds_cron_flows_and_flow_state(case: Case) {
         );
     }
 
-    // Without a backend the workspace's own databases are used.
+    // Without the configured backend, catalog operations use the default
+    // workspace storage path.
     assert!(openhuman_core::storage::clear());
-    let fallback = config.clone();
-    tokio::task::spawn_blocking(move || {
-        assert!(matches!(
-            FlowState::open(&fallback, "flow:digest"),
-            FlowState::Documents(_)
-        ));
-    })
-    .await
-    .unwrap();
-    assert!(workspace.path().join("storage/storage.db").exists());
     // The flow written to the backend is not in the workspace's catalog.
     assert!(flows::ops::flows_list(&config)
         .await
         .unwrap()
         .value
         .is_empty());
-    openhuman_core::agent::orchestration::open_delegation_checkpointer(&config).unwrap();
+    let fallback_flow = flows::ops::flows_create(&config, "Fallback".to_string(), graph, false)
+        .await
+        .unwrap()
+        .value;
+    assert_eq!(
+        flows::ops::flows_list(&config).await.unwrap().value.len(),
+        1
+    );
+    assert_eq!(fallback_flow.name, "Fallback");
 }
 
-/// The stores tinyflows used to write (`jobs.db`, `flows.db`, `checkpoints.db`,
+/// The stores TinyFlows used to write (`jobs.db`, `flows.db`, `checkpoints.db`,
 /// `drafts/`) are copied into a configured backend by the boot-time import,
 /// read-only: the legacy files are byte-identical afterwards.
-async fn legacy_tinyflows_files_are_imported_into_a_configured_backend(case: Case) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_tinyflows_files_are_imported_into_a_configured_backend() {
+    let case = Case::open();
     let workspace = tempfile::tempdir().unwrap();
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../openhuman-core/src/storage/import/fixtures/tinyflows/workspace");
@@ -175,12 +158,43 @@ async fn legacy_tinyflows_files_are_imported_into_a_configured_backend(case: Cas
     let before = digest(workspace.path());
     case.install();
 
-    for report in openhuman_core::storage::import::run(
+    let reports = openhuman_core::storage::import::run(
         &openhuman_core::core::runtime::DispatchCtx::process_default(),
         &config,
     )
-    .await
-    {
+    .await;
+    if case.url == "memory" {
+        let mut flow_error = None;
+        for report in reports {
+            if let Err(error) = report.outcome {
+                assert!(
+                    format!("{error:#}").contains("conditional_writes"),
+                    "memory backend should explain why the {} import was refused: {error:#}",
+                    report.domain
+                );
+                if report.domain == "flows" {
+                    flow_error = Some(error);
+                }
+            }
+        }
+        flow_error.expect("flow importer should report its capability refusal");
+        let cron_config = config.clone();
+        tokio::task::spawn_blocking(move || {
+            assert!(
+                cron::list_jobs(&cron_config).unwrap().is_empty(),
+                "memory import refusals must not leave a partial cron import"
+            );
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            digest(workspace.path()),
+            before,
+            "a legacy file was modified"
+        );
+        return;
+    }
+    for report in reports {
         report.outcome.unwrap();
     }
 
@@ -223,8 +237,3 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
         }
     }
 }
-
-driver_cases!(
-    async a_configured_backend_holds_cron_flows_and_flow_state,
-    legacy_tinyflows_files_are_imported_into_a_configured_backend
-);

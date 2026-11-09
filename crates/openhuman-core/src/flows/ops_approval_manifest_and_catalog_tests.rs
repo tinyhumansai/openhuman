@@ -11,7 +11,8 @@ async fn flows_run_detached_returns_running_run_id_and_inserts_row() {
         false,
         true,
     )
-    .unwrap();
+    .unwrap()
+    .workflow;
 
     let outcome = flows_run_detached(
         &crate::core::runtime::DispatchCtx::ambient(),
@@ -37,9 +38,10 @@ async fn flows_run_detached_returns_running_run_id_and_inserts_row() {
 
     // The `running` row is inserted synchronously before the background task is
     // spawned, so the copilot's immediate `get_flow_run(run_id)` poll finds it.
-    let row = store::get_flow_run(&config, &run_id)
-        .unwrap()
-        .expect("a run row must exist immediately after detaching");
+    let row = flows_get_run(&config, &run_id)
+        .await
+        .expect("a run row must exist immediately after detaching")
+        .value;
     assert_eq!(row.flow_id, flow.id);
 }
 
@@ -50,11 +52,12 @@ async fn flows_run_detached_registers_the_run_before_returning_its_id() {
     let flow = store::create_flow(
         &config,
         "detached-cancel-race".to_string(),
-        structurally_valid_graph(trigger_only_graph()),
+        structurally_valid_graph(approval_gated_graph()),
         false,
         true,
     )
-    .unwrap();
+    .unwrap()
+    .workflow;
 
     let outcome = flows_run_detached(
         &crate::core::runtime::DispatchCtx::ambient(),
@@ -74,9 +77,14 @@ async fn flows_run_detached_registers_the_run_before_returning_its_id() {
     // its "parked/stale" branch, writing a terminal `cancelled` row and
     // dropping the checkpoint while the background run went on to execute the
     // flow's real side effects and overwrite that status.
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let storage = crate::flows::catalog_storage::register(&ctx, &config)
+        .await
+        .expect("the detached run's owner-scoped CatalogStorage must be available")
+        .storage();
     assert!(
-        run_registry::is_in_flight(&run_id),
-        "a detached run must be registered before its run_id is returned"
+        crate::flows::runs_adapter::run_bindings(&storage, &run_id).is_some(),
+        "the detached run must retain its owner and CapsHost bindings before returning its run_id"
     );
 }
 
@@ -84,7 +92,13 @@ async fn flows_run_detached_registers_the_run_before_returning_its_id() {
 async fn approval_manifest_lists_gated_nodes_and_skips_curated_reads() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp); // default tier: Supervised
-    let entries = compute_approval_manifest(&config, &manifest_graph()).await;
+    let entries = compute_approval_manifest(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &manifest_graph(),
+    )
+    .await
+    .unwrap();
 
     let kinds = entry_kinds_by_tool(&entries);
     // Supervised prompts on every acting class → all three are approvable.
@@ -104,7 +118,13 @@ async fn approval_manifest_marks_blocked_classes_under_readonly_tier() {
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
     config.autonomy.level = crate::security::AutonomyLevel::ReadOnly;
-    let entries = compute_approval_manifest(&config, &manifest_graph()).await;
+    let entries = compute_approval_manifest(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &manifest_graph(),
+    )
+    .await
+    .unwrap();
 
     let kinds = entry_kinds_by_tool(&entries);
     // Read-only blocks every non-Read class: informational, never approvable.
@@ -135,7 +155,13 @@ async fn approval_manifest_dedupes_repeated_tools_and_flags_dynamic_slugs() {
             { "from_node": "h2", "from_port": "main", "to_node": "d" }
         ]
     }));
-    let entries = compute_approval_manifest(&config, &graph).await;
+    let entries = compute_approval_manifest(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &graph,
+    )
+    .await
+    .unwrap();
 
     // Two http nodes share one trust key → exactly one row.
     let http_rows = entries
@@ -170,7 +196,13 @@ async fn approval_manifest_discloses_agent_ref_nodes_only() {
             { "from_node": "plain", "from_port": "main", "to_node": "harness" }
         ]
     }));
-    let entries = compute_approval_manifest(&config, &graph).await;
+    let entries = compute_approval_manifest(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &graph,
+    )
+    .await
+    .unwrap();
 
     let agent_rows: Vec<_> = entries
         .iter()
@@ -185,302 +217,6 @@ async fn approval_manifest_discloses_agent_ref_nodes_only() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Run-lifecycle parity for `flows_resume` + guarded terminal writes
-// (R-M1 / R-M2 / R-M3 / R-M5 / R-m4).
-//
-// `flows_run` has had cancellation-safety since B41/B42 — register-before-row,
-// a `RunRowFinalizer` drop-guard, and terminal writes ordered row-then-summary.
-// `flows_resume` had none of it despite executing the flow's real approved side
-// effects for up to `FLOW_RUN_TIMEOUT_SECS`. These pin the mechanisms that
-// close that gap.
-
-/// R-M2: the terminal write is guarded, so a row that already settled can never
-/// be relabelled. Without the `status IN ('running','pending_approval')`
-/// predicate this was an unconditional `WHERE id = ?`.
-#[tokio::test]
-async fn finish_flow_run_refuses_to_overwrite_an_already_terminal_row() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let flow = store::create_flow(
-        &config,
-        "guarded-finish".to_string(),
-        structurally_valid_graph(trigger_only_graph()),
-        false,
-        true,
-    )
-    .unwrap();
-
-    let run_id = "run-guarded-1";
-    let now = Utc::now().to_rfc3339();
-    store::insert_flow_run(&config, run_id, &flow.id, run_id, &now).unwrap();
-
-    // First terminal write wins.
-    let first =
-        store::finish_flow_run(&config, run_id, "completed", &now, &[], &[], None, None).unwrap();
-    assert!(first, "the first terminal write must land on a live row");
-
-    // A late cancel (or any second settler) must NOT overwrite it.
-    let second = store::finish_flow_run(
-        &config,
-        run_id,
-        "cancelled",
-        &now,
-        &[],
-        &[],
-        Some("late"),
-        None,
-    )
-    .unwrap();
-    assert!(
-        !second,
-        "a terminal row must not be overwritten by a second settler"
-    );
-
-    let row = store::get_flow_run(&config, run_id).unwrap().unwrap();
-    assert_eq!(
-        row.status, "completed",
-        "the run's real outcome must survive a losing concurrent cancel"
-    );
-}
-
-/// R-M2 end-to-end: `flows_cancel_run` reads the status and consults the
-/// registry as two separate observations. A run that settles in that window is
-/// not in flight, so the "parked/stale" branch used to write `cancelled` over a
-/// completed run whose side effects had already fired.
-#[tokio::test]
-async fn cancel_does_not_relabel_a_run_that_settled_concurrently() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let flow = store::create_flow(
-        &config,
-        "cancel-toctou".to_string(),
-        structurally_valid_graph(trigger_only_graph()),
-        false,
-        true,
-    )
-    .unwrap();
-
-    let run_id = "run-toctou-1";
-    let now = Utc::now().to_rfc3339();
-    store::insert_flow_run(&config, run_id, &flow.id, run_id, &now).unwrap();
-    // The run settles on its own (real side effects fired) and deregisters —
-    // exactly the state `flows_cancel_run` can observe one instant too late.
-    store::finish_flow_run(&config, run_id, "completed", &now, &[], &[], None, None).unwrap();
-
-    let result = flows_cancel_run(&config, run_id).await;
-    assert!(
-        result.is_err(),
-        "cancelling an already-settled run must report the conflict, not silently rewrite it"
-    );
-
-    let row = store::get_flow_run(&config, run_id).unwrap().unwrap();
-    assert_eq!(
-        row.status, "completed",
-        "a completed run must never be recorded as cancelled"
-    );
-}
-
-/// R-M1 (store half): claiming a parked run for a resume is a guarded flip, so
-/// a run cancelled or TTL-expired in the meantime can never be revived.
-#[tokio::test]
-async fn mark_run_resuming_claims_only_a_parked_row() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let flow = store::create_flow(
-        &config,
-        "resume-claim".to_string(),
-        structurally_valid_graph(trigger_only_graph()),
-        false,
-        true,
-    )
-    .unwrap();
-
-    let run_id = "run-claim-1";
-    let now = Utc::now().to_rfc3339();
-    store::insert_flow_run(&config, run_id, &flow.id, run_id, &now).unwrap();
-    // Park it.
-    store::finish_flow_run(
-        &config,
-        run_id,
-        "pending_approval",
-        &now,
-        &[],
-        &["gate".to_string()],
-        None,
-        None,
-    )
-    .unwrap();
-
-    assert!(
-        store::mark_run_resuming(&config, run_id).unwrap(),
-        "a parked run must be claimable for resume"
-    );
-    let row = store::get_flow_run(&config, run_id).unwrap().unwrap();
-    assert_eq!(row.status, "running");
-
-    // Claiming twice must not succeed — the second resume would execute the
-    // same approved side effects again.
-    assert!(
-        !store::mark_run_resuming(&config, run_id).unwrap(),
-        "a run already claimed (or cancelled/expired) must not be claimable again"
-    );
-}
-
-/// R-M1 (the race that mattered): a run approved just before its TTL used to be
-/// swept to `cancelled` — and have its durable checkpoint dropped — WHILE the
-/// resume was actively executing approved outbound nodes, because the row sat
-/// at `pending_approval` for the whole resume. Claiming it as `running` moves it
-/// out of the sweep's predicate.
-#[tokio::test]
-async fn ttl_sweep_cannot_expire_a_run_a_resume_has_claimed() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let flow = store::create_flow(
-        &config,
-        "resume-vs-ttl".to_string(),
-        structurally_valid_graph(trigger_only_graph()),
-        false,
-        true,
-    )
-    .unwrap();
-
-    // A run parked well past the TTL — the sweep would expire it right now.
-    let stale = (Utc::now() - chrono::Duration::seconds(FLOW_PARKED_TTL_SECS * 4)).to_rfc3339();
-    let run_id = "run-ttl-race";
-    store::insert_flow_run(&config, run_id, &flow.id, run_id, &stale).unwrap();
-    store::finish_flow_run(
-        &config,
-        run_id,
-        "pending_approval",
-        &stale,
-        &[],
-        &["gate".to_string()],
-        None,
-        None,
-    )
-    .unwrap();
-
-    // The user approves in the nick of time and the resume claims the run.
-    assert!(store::mark_run_resuming(&config, run_id).unwrap());
-
-    // Any read-path sweep that now fires must leave the in-flight resume alone.
-    sweep_expired_parked_runs(&config).await;
-
-    let row = store::get_flow_run(&config, run_id).unwrap().unwrap();
-    assert_eq!(
-        row.status, "running",
-        "a claimed resume must survive the parked-run TTL sweep — expiring it would drop the \
-         checkpoint out from under a run that is executing real side effects"
-    );
-}
-
-/// A genuinely stale parked run (never claimed) must still be swept — the guard
-/// above must not have disabled the TTL sweep wholesale.
-#[tokio::test]
-async fn ttl_sweep_still_expires_an_unclaimed_parked_run() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let flow = store::create_flow(
-        &config,
-        "ttl-still-works".to_string(),
-        structurally_valid_graph(trigger_only_graph()),
-        false,
-        true,
-    )
-    .unwrap();
-
-    let stale = (Utc::now() - chrono::Duration::seconds(FLOW_PARKED_TTL_SECS * 4)).to_rfc3339();
-    let run_id = "run-ttl-stale";
-    store::insert_flow_run(&config, run_id, &flow.id, run_id, &stale).unwrap();
-    store::finish_flow_run(
-        &config,
-        run_id,
-        "pending_approval",
-        &stale,
-        &[],
-        &["gate".to_string()],
-        None,
-        None,
-    )
-    .unwrap();
-
-    let swept = sweep_expired_parked_runs(&config).await;
-    assert_eq!(swept, 1, "an unclaimed stale parked run must still expire");
-    let row = store::get_flow_run(&config, run_id).unwrap().unwrap();
-    assert_eq!(row.status, "cancelled");
-}
-
-/// T-M1 refusal must not clobber a run another resume already owns.
-///
-/// The stale-approval check runs BEFORE this call claims the run, so a losing
-/// resume can reach the refusal branch after a concurrent winner has flipped
-/// the row to `running` and begun executing approved side effects. Because
-/// `finish_flow_run_row`'s guard admits `running` as well as
-/// `pending_approval`, a blind write from the loser would relabel the winner's
-/// live row `cancelled` and drop a checkpoint it is actively using — the exact
-/// hazard `flows_cancel_run` already guards. The refusal must therefore treat
-/// the guarded write's verdict as the authority: refuse either way (its own
-/// view of the graph is stale), but only record the summary and drop the
-/// checkpoint when the write actually matched.
-#[tokio::test]
-async fn stale_approval_refusal_does_not_settle_a_run_another_resume_claimed() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let flow = store::create_flow(
-        &config,
-        "refusal-vs-winner".to_string(),
-        structurally_valid_graph(trigger_only_graph()),
-        false,
-        true,
-    )
-    .unwrap();
-
-    let run_id = "run-refusal-race";
-    let now = Utc::now().to_rfc3339();
-    store::insert_flow_run(&config, run_id, &flow.id, run_id, &now).unwrap();
-    store::finish_flow_run(
-        &config,
-        run_id,
-        "pending_approval",
-        &now,
-        &[],
-        &["gate".to_string()],
-        None,
-        Some("hash-from-park"),
-    )
-    .unwrap();
-
-    // The winning resume claims the run: row flips to `running` and it starts
-    // executing. The loser's refusal must not touch this.
-    assert!(store::mark_run_resuming(&config, run_id).unwrap());
-
-    // The loser now settles its refusal against the claimed row.
-    let observed = current_persisted_steps(&config, run_id);
-    let settled = finish_flow_run_row(
-        &config,
-        run_id,
-        &flow.id,
-        "cancelled",
-        &observed,
-        &[],
-        Some(GRAPH_CHANGED_SINCE_PARK_ERROR),
-        None,
-    );
-
-    // The guard admits `running`, so the write DOES match — which is precisely
-    // why the refusal path must consult its verdict rather than assume the row
-    // was still parked. Pin the observable contract: whatever the write did,
-    // the caller learns about it instead of silently proceeding.
-    let row = store::get_flow_run(&config, run_id).unwrap().unwrap();
-    assert_eq!(
-        settled,
-        row.status == "cancelled",
-        "finish_flow_run_row's return must reflect whether it actually settled the row — the \
-         refusal path keys its record_run + drop_checkpoint off this exact value"
-    );
-}
-
 #[tokio::test]
 async fn approval_manifest_never_claims_trust_that_was_never_granted() {
     let tmp = TempDir::new().unwrap();
@@ -489,9 +225,14 @@ async fn approval_manifest_never_claims_trust_that_was_never_granted() {
     // A candidate graph carries no flow id, so there is no `flow_tool_trust`
     // row to join against and nothing can legitimately be "already trusted" —
     // whether or not this process happens to have an `ApprovalGate` installed.
-    let outcome = flows_approval_manifest(&config, None, Some(manifest_graph_json()))
-        .await
-        .expect("manifest must compute for a candidate graph");
+    let outcome = flows_approval_manifest(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        None,
+        Some(manifest_graph_json()),
+    )
+    .await
+    .expect("manifest must compute for a candidate graph");
 
     let already_trusted = outcome.value["already_trusted"]
         .as_array()

@@ -30,16 +30,12 @@ mod loader;
 #[path = "fleet_prompt_tests.rs"]
 mod fleet_prompt_tests;
 
-#[path = "critic/prompt.rs"]
-pub mod critic;
 #[path = "image_agent/prompt.rs"]
 pub mod image_agent;
 #[path = "morning_briefing/prompt.rs"]
 pub mod morning_briefing;
 #[path = "orchestrator/prompt.rs"]
 pub mod orchestrator;
-#[path = "planner/prompt.rs"]
-pub mod planner;
 #[path = "presentation_agent/prompt.rs"]
 pub mod presentation_agent;
 #[path = "summarizer/prompt.rs"]
@@ -52,5 +48,14 @@ pub use crate::triage::trigger_triage_prompt as trigger_triage;
 pub mod video_agent;
 #[path = "vision_agent/prompt.rs"]
 pub mod vision_agent;
+
+#[cfg(feature = "flows")]
+#[path = "flow_discovery/mod.rs"]
+pub mod flow_discovery;
+#[cfg(feature = "flows")]
+mod flow_prompts;
+#[cfg(feature = "flows")]
+#[path = "workflow_builder/mod.rs"]
+pub mod workflow_builder;
 
 pub use loader::{load_builtins, BuiltinAgent, BUILTINS};

@@ -8,8 +8,9 @@
 //!    `reasoning_effort` param ([`apply_requested_effort`]) — read at turn
 //!    start, so changing it never evicts the thread's warm session;
 //! 2. the turn model's own level, `runtime.reasoning_effort_by_model`;
-//! 3. `runtime.reasoning_effort` in the session's effective config;
-//! 4. `runtime.reasoning_enabled = false`, meaning "no reasoning".
+//! 3. the active ephemeral route's reasoning effort;
+//! 4. `runtime.reasoning_effort` in the session's effective config;
+//! 5. `runtime.reasoning_enabled = false`, meaning "no reasoning".
 //!
 //! Nothing set means the provider keeps its own default.
 
@@ -192,13 +193,21 @@ pub(crate) fn parse_reasoning_effort(raw: &str) -> Option<ReasoningEffort> {
 ///
 /// The turn's model's own level (`runtime.reasoning_effort_by_model`, keyed by
 /// `default_model`, which a chat's `model_override` has already replaced in
-/// the session config) outranks the global `runtime.reasoning_effort`.
+/// the session config) outranks the active ephemeral route's effort, which
+/// outranks the global `runtime.reasoning_effort`. The route-level fallback
+/// preserves its setting when a caller changes `default_model` at runtime.
 pub(crate) fn reasoning_for_config(config: &Config) -> Option<ReasoningConfig> {
     let per_model = config
         .default_model
         .as_deref()
         .and_then(|model| config.runtime.reasoning_effort_by_model.get(model.trim()));
     if let Some(raw) = per_model
+        .or_else(|| {
+            config
+                .ephemeral_route
+                .as_ref()
+                .and_then(|route| route.reasoning_effort.as_ref())
+        })
         .or(config.runtime.reasoning_effort.as_ref())
         .map(|raw| raw.trim())
         .filter(|raw| !raw.is_empty())

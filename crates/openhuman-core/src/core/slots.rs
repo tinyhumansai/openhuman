@@ -290,6 +290,16 @@ impl<V: Clone + Send + Sync + 'static> HookSlot<V> {
             .or_else(|| self.with_global(|table| table.get(id)))
     }
 
+    /// The value for `id` in an explicitly selected context, then process
+    /// registration. `None` deliberately means process-only and never consults
+    /// an unrelated ambient task context.
+    pub fn get_for(&self, extensions: Option<&Extensions>, id: &str) -> Option<V> {
+        extensions
+            .and_then(|extensions| extensions.existing::<V>(self.name))
+            .and_then(|table| table.get(id))
+            .or_else(|| self.with_global(|table| table.get(id)))
+    }
+
     /// Every registration in order: process-wide first, a context entry
     /// replacing a process entry with the same id, context-only ids last.
     pub fn entries(&self) -> Vec<(String, V)> {

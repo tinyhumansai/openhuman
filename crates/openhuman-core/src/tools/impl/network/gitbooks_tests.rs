@@ -133,20 +133,28 @@ async fn gitbooks_tools_fail_closed_when_the_module_is_not_attested() {
 }
 
 #[test]
-fn redact_endpoint_keeps_only_origin() {
+fn redact_endpoint_origin_keeps_only_safe_origin() {
     assert_eq!(
-        redact_endpoint("https://tinyhumans.gitbook.io/openhuman/~gitbook/mcp"),
-        "https://tinyhumans.gitbook.io"
+        redact_endpoint_origin(
+            "https://tinyhumans.gitbook.io/openhuman/~gitbook/mcp?token=secret#fragment-secret"
+        ),
+        "https://tinyhumans.gitbook.io/"
     );
     assert_eq!(
-        redact_endpoint("http://example.com:8080/path?token=secret"),
-        "http://example.com:8080"
+        redact_endpoint_origin("http://example.com:8080/path?token=secret"),
+        "http://example.com:8080/"
     );
     assert_eq!(
-        redact_endpoint("https://user:secret@example.com/path?token=secret"),
-        "<redacted>"
+        redact_endpoint_origin(
+            "https://user:secret@example.com/private/secret?token=secret#fragment-secret"
+        ),
+        "https://example.com/"
     );
-    assert_eq!(redact_endpoint("file:///private/path"), "file://");
+    assert_eq!(
+        redact_endpoint_origin("file:///private/path"),
+        "[REDACTED INVALID URL]"
+    );
+    assert_eq!(redact_endpoint_origin("not a URL secret"), "<endpoint>");
 }
 
 #[test]

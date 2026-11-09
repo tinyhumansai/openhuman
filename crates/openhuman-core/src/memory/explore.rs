@@ -13,27 +13,13 @@
 //!    `memory_items_get {ids}` reads one whole.
 
 use serde::{Deserialize, Serialize};
-use tinymemory_api::{ExplorePage, ExploreRequest, Facet, GetRequest, Hit, ItemId, MetaFilter};
+use tinymemory_api::{ExplorePage, Facet, Hit, ItemId, MetaFilter, Result};
+use tinymemory_tools::ops::ExploreOptions;
 
 use crate::config::Config;
 
 use super::engine;
-use super::error::{MemoryError, MemoryResult};
-
-/// Default bucket count of `memory_explore`.
-pub const DEFAULT_BUCKETS: usize = 50;
-
-/// Most steps an explorer path may take (one per facet is the useful most).
-pub const MAX_PATH_STEPS: usize = 16;
-
-/// One step down the explorer: the items whose `facet` is `value`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PathStep {
-    /// The facet.
-    pub facet: Facet,
-    /// Its chosen value, as a bucket reported it.
-    pub value: String,
-}
+pub use tinymemory_tools::ops::{narrowed, PathStep, DEFAULT_BUCKETS, MAX_PATH_STEPS};
 
 /// `memory_explore` params.
 #[derive(Debug, Clone, Deserialize)]
@@ -71,39 +57,28 @@ pub struct ItemsGetView {
     pub items: Vec<Hit>,
 }
 
-/// `filter` narrowed by every step of `path`.
-///
-/// # Errors
-///
-/// [`MemoryError::invalid`] for a path that is too long or a step whose
-/// value the facet cannot take (blank, or an unknown kind).
-pub fn narrowed(filter: Option<MetaFilter>, path: &[PathStep]) -> MemoryResult<MetaFilter> {
-    if path.len() > MAX_PATH_STEPS {
-        return Err(MemoryError::invalid(format!(
-            "an explorer path takes at most {MAX_PATH_STEPS} steps"
-        )));
-    }
-    let mut filter = filter.unwrap_or_default();
-    for step in path {
-        step.facet.narrow(&mut filter, &step.value)?;
-    }
-    Ok(filter)
-}
-
 /// `memory_explore`.
-pub async fn explore(config: &Config, params: ExploreParams) -> MemoryResult<ExplorePage> {
-    let bound = engine::resolve(config).engine()?;
-    let mut request = ExploreRequest::new(params.facet, params.limit.unwrap_or(DEFAULT_BUCKETS));
-    request.filter = super::ops::confine_filter(config, narrowed(params.filter, &params.path)?)?;
-    if let Some(scan_limit) = params.scan_limit {
-        request.scan_limit = scan_limit;
-    }
-    request.validate()?;
-    let page = bound.engine.explore(request).await?;
+pub async fn explore(config: &Config, params: ExploreParams) -> Result<ExplorePage> {
+    let bound = engine::resolve(config).await.engine()?;
+    let facet = params.facet;
+    let depth = params.path.len();
+    let filter = narrowed(params.filter, &params.path)?;
+    let page = super::ops::memory_ops(config)?
+        .explore(
+            bound.engine.as_ref(),
+            ExploreOptions {
+                facet: params.facet,
+                path: Vec::new(),
+                filter: Some(filter),
+                limit: params.limit,
+                scan_limit: params.scan_limit,
+            },
+        )
+        .await?;
     tracing::debug!(
         engine = %bound.id,
-        facet = params.facet.as_str(),
-        depth = params.path.len(),
+        facet = facet.as_str(),
+        depth,
         buckets = page.buckets.len(),
         total = page.total,
         truncated = page.truncated,
@@ -113,15 +88,13 @@ pub async fn explore(config: &Config, params: ExploreParams) -> MemoryResult<Exp
 }
 
 /// `memory_items_get`.
-pub async fn items_get(config: &Config, params: ItemsGetParams) -> MemoryResult<ItemsGetView> {
-    let bound = engine::resolve(config).engine()?;
-    let request = GetRequest {
-        ids: params.ids.into_iter().map(ItemId::new).collect(),
-        reach: params.reach,
-    };
-    request.validate()?;
-    let asked = request.ids.len();
-    let items = bound.engine.get(request).await?;
+pub async fn items_get(config: &Config, params: ItemsGetParams) -> Result<ItemsGetView> {
+    let bound = engine::resolve(config).await.engine()?;
+    let ids: Vec<ItemId> = params.ids.into_iter().map(ItemId::new).collect();
+    let asked = ids.len();
+    let items = super::ops::memory_ops(config)?
+        .items_get(bound.engine.as_ref(), ids, params.reach)
+        .await?;
     tracing::debug!(
         engine = %bound.id,
         asked,

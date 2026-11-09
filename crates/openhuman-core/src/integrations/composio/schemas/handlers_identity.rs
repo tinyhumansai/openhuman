@@ -52,26 +52,23 @@ pub(super) fn handle_get_user_scopes(
             toolkit = %toolkit,
             "[composio:scopes] handler entry"
         );
-        // Reads through the bound memory driver's `Graph` family, not through
-        // the engine's `load_or_default` (which resolved the in-process client
-        // itself — openhuman#5560 deleted that client). The read still fails
-        // OPEN onto the default pref for every failure mode, deliberately; see
-        // `ops::user_scopes`.
-        //
-        // The config load is `?`-free for the same reason: this handler has
-        // never had a failing path, and turning "settings file momentarily
-        // unreadable" into an RPC error would make the scopes panel fail where
-        // it used to render the defaults.
-        let pref = match ctx.load_config().await {
-            Ok(config) => ops::load_user_scope_pref(&ctx, &config, &toolkit).await,
+        // Fails closed: a pref the module cannot read is an error, not the
+        // default. The default is `read+write`, so showing it for a user who
+        // turned `write` off would misstate what the agent may run; the
+        // Connections panel renders the error instead.
+        let config = ctx.load_config().await?;
+        let pref = match ops::load_user_scope_pref(&ctx, &config, &toolkit).await {
+            Ok(pref) => pref,
             Err(error) => {
                 tracing::warn!(
                     method = "composio.get_user_scopes",
                     toolkit = %toolkit,
                     %error,
-                    "[composio:scopes] config load failed, using default pref (read+write)"
+                    "[composio:scopes] pref unavailable"
                 );
-                contract::UserScopePref::default()
+                return Err(format!(
+                    "scope preference for `{toolkit}` is unavailable: {error}"
+                ));
             }
         };
         tracing::debug!(

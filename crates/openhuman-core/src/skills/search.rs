@@ -30,13 +30,11 @@
 //! if this ever becomes a loadable module — a module can rank, but it cannot be
 //! the thing that decides whose skills a caller may see.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::ops_discover::{discover_workflows, is_workspace_trusted};
 use crate::config::Config;
 use tinyskills::Skill as Workflow;
 use tinytools::{Tool, ToolResult};
@@ -51,12 +49,11 @@ pub const SKILL_SEARCH_NAME: &str = "skill_search";
 /// Compact per-result projection, via the module's capped projection with the
 /// host's `sanitize_for_llm` supplied as the sanitiser.
 fn project(workflow: &Workflow) -> tinyskills::SkillHit {
-    tinyskills::project(workflow, tinytools_std::sanitize::sanitize_for_llm)
+    tinyskills::project(workflow, tinytools::sanitize::sanitize_for_llm)
 }
 
 /// Search installed skills by capability.
 pub struct SkillSearchTool {
-    workspace_dir: PathBuf,
     /// Kept whole so saved Flows automations can be listed alongside SKILL.md
     /// bundles. Search has to see the same catalogue the prompt renders, or
     /// "find me the thing that does X" answers from half the library.
@@ -65,22 +62,15 @@ pub struct SkillSearchTool {
 
 impl SkillSearchTool {
     pub fn new(config: Arc<Config>) -> Self {
-        Self {
-            workspace_dir: config.workspace_dir.clone(),
-            config,
-        }
+        Self { config }
     }
 
     /// The visible corpus for this caller.
     ///
     /// Uses the same discovery roots as `list_workflows`.
     fn visible(&self) -> Vec<Workflow> {
-        let trusted = is_workspace_trusted(&self.workspace_dir);
-        let mut workflows = discover_workflows(
-            crate::skills::ops_discover::discovery_home_dir().as_deref(),
-            Some(&self.workspace_dir),
-            trusted,
-        );
+        let ctx = crate::core::runtime::DispatchCtx::ambient();
+        let mut workflows = crate::skills::load_workflow_metadata_for(&ctx, &self.config);
         // Saved Flows automations, appended AFTER the allowlist filter.
         //
         #[cfg(feature = "flows")]

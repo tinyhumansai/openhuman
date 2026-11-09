@@ -290,6 +290,7 @@ pub async fn ai_save_artifact_version(
         super::files::FileRoots::from_config(config),
         artifact_id,
         body,
+        &crate::core::runtime::DispatchCtx::ambient(),
     )
     .await?;
     log::debug!(
@@ -314,14 +315,15 @@ pub async fn ai_share_artifact(
     public: bool,
 ) -> Result<Outcome<Value>, String> {
     let publisher = super::artifact_publisher(config)
+        .await
         .ok_or_else(|| "sign in to share artifacts".to_string())?;
-    let artifacts = super::tiny_store::artifacts_service(
+    let artifacts = super::tiny_store::artifacts_service_with_publisher(
         &config.workspace_dir,
         super::files::FileRoots::from_config(config),
         None,
         None,
-    )
-    .with_publisher(publisher);
+        Some(&publisher),
+    );
     let options = tiny_artifacts::PublishOptions {
         public,
         ..tiny_artifacts::PublishOptions::default()

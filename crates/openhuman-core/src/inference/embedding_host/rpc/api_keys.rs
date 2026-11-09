@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::security::credentials::AuthService;
+use crate::credentials::AuthService;
 
 use super::LOG_PREFIX;
 
@@ -24,6 +24,7 @@ pub async fn set_api_key(
     let cred_provider = format!("embeddings:{provider_slug}");
     let auth = AuthService::from_config(config);
     auth.store_provider_token(&cred_provider, "default", api_key, HashMap::new(), true)
+        .await
         .map_err(|e| format!("failed to store embedding API key: {e}"))?;
 
     tracing::info!(provider = provider_slug, "{LOG_PREFIX} set_api_key stored");
@@ -47,6 +48,7 @@ pub async fn clear_api_key(
     let auth = AuthService::from_config(config);
     let removed = auth
         .remove_profile(&cred_provider, "default")
+        .await
         .map_err(|e| format!("failed to clear embedding API key: {e}"))?;
 
     tracing::info!(

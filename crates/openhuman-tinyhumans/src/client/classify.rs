@@ -2,7 +2,7 @@
 //! expected states (typed [`HostedApiError`]s), which are transient noise, and
 //! which are reported.
 
-use crate::transport::BackendTransportError;
+use crate::transport::{BackendTransportError, BillingRefusal};
 use anyhow::{Context, Result};
 use openhuman_embed::__host::core::observability::{
     contains_transient_transport_phrase, is_transient_http_status_code, report_error,
@@ -17,6 +17,10 @@ use super::error::HostedApiError;
 /// Max bytes of the `body_shape` key-name list echoed into the report.
 /// Bounded so a body with pathologically many keys can't bloat the event.
 pub(super) const BACKEND_API_BODY_SHAPE_MAX_BYTES: usize = 120;
+
+/// Max bytes of a non-2xx response body carried in the returned error, which
+/// reaches the RPC error string and the logs.
+pub(super) const BACKEND_API_ERROR_BODY_MAX_BYTES: usize = 512;
 
 /// PII-safe classification of a non-2xx response body for telemetry.
 ///
@@ -48,6 +52,14 @@ pub(super) fn backend_api_body_shape(body: &str) -> String {
         Ok(_) => "scalar".to_string(),
         Err(_) => "non_json".to_string(),
     }
+}
+
+/// The backend's `errorCode`, only when it is a short ASCII identifier (an
+/// enum-like code such as `INVALID_ARGUMENT`), so it is safe for telemetry.
+pub(super) fn backend_api_error_code(body: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(body.trim()).ok()?;
+    let code = value.get("errorCode")?.as_str()?;
+    is_schema_like_key(code).then(|| code.to_string())
 }
 
 /// A JSON key safe to echo into telemetry: a short ASCII identifier.
@@ -160,6 +172,47 @@ impl BackendClient {
                     message_id,
                 }));
             }
+            // The transport classifies billing refusals (it owns what a backend
+            // response means); surfacing them as typed errors is ours.
+            Err(BackendTransportError::BillingRefusal {
+                refusal,
+                status,
+                body,
+            }) => {
+                tracing::info!(
+                    domain = "backend_api",
+                    operation = "authed_json",
+                    method = method.as_str(),
+                    path = url.path(),
+                    status,
+                    failure = "non_2xx",
+                    kind = ?refusal,
+                    "[backend_api] billing refusal {status} on {} {}: {refusal:?}, not reporting to Sentry",
+                    method.as_str(),
+                    url.path(),
+                );
+                let text = match body {
+                    Value::String(text) => text,
+                    other => serde_json::to_string(&other).unwrap_or_default(),
+                };
+                let (method, path) = (method.as_str().to_string(), url.path().to_string());
+                let body =
+                    truncate_at_byte_boundary(&text, BACKEND_API_ERROR_BODY_MAX_BYTES).to_string();
+                return Err(anyhow::Error::new(match refusal {
+                    BillingRefusal::InsufficientCredits => HostedApiError::InsufficientCredits {
+                        method,
+                        path,
+                        status,
+                        body,
+                    },
+                    BillingRefusal::PaidPlanRequired => HostedApiError::PaidPlanRequired {
+                        method,
+                        path,
+                        status,
+                        body,
+                    },
+                }));
+            }
             Err(BackendTransportError::Status { status, body }) => (status, body),
             Err(error) => {
                 return Err(anyhow::Error::new(error).context(format!(
@@ -234,13 +287,30 @@ impl BackendClient {
             let host = url.host_str().unwrap_or("");
             let body_shape = backend_api_body_shape(&text);
             let status_str = status_code.to_string();
+            let error_code = backend_api_error_code(&text)
+                .map(|c| format!("; error_code={c}"))
+                .unwrap_or_default();
+            // Only the identifier-shaped `errorCode` is logged here: the raw
+            // body may hold PII and the report message precedes Sentry scrubbing.
+            tracing::warn!(
+                domain = "backend_api",
+                operation = "authed_json",
+                method = method.as_str(),
+                path = url.path(),
+                status = status_code,
+                error_code = backend_api_error_code(&text).as_deref().unwrap_or(""),
+                "[backend_api] {} {} failed ({status})",
+                method.as_str(),
+                url.path(),
+            );
             report_error(
                 format!(
-                    "{} {} failed ({status}); response_body_len={}; body_shape={}",
+                    "{} {} failed ({status}); response_body_len={}; body_shape={}{}",
                     method.as_str(),
                     url.path(),
                     text.len(),
                     body_shape,
+                    error_code,
                 )
                 .as_str(),
                 "backend_api",
@@ -255,9 +325,10 @@ impl BackendClient {
             );
         }
         anyhow::bail!(
-            "{} {} failed ({status}): {text}",
+            "{} {} failed ({status}): {}",
             method.as_str(),
-            url.path()
+            url.path(),
+            truncate_at_byte_boundary(&text, BACKEND_API_ERROR_BODY_MAX_BYTES)
         )
     }
 }

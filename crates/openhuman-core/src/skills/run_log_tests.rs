@@ -46,7 +46,17 @@ fn noisy_events_are_skipped_steps_are_kept() {
 #[tokio::test]
 async fn drain_to_log_returns_the_turns_stop() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("run.log");
+    let path = run_log_path(dir.path(), "workflow", "run-stop-123");
+    write_header(
+        dir.path(),
+        &path,
+        "workflow",
+        "run-stop-123",
+        &serde_json::json!({}),
+        "prompt",
+    )
+    .await
+    .unwrap();
     let (tx, rx) = tokio::sync::mpsc::channel(4);
     tx.send(AgentProgress::TurnCompleted {
         iterations: 5,
@@ -55,13 +65,16 @@ async fn drain_to_log_returns_the_turns_stop() {
     .await
     .unwrap();
     drop(tx);
-    let stop = drain_to_log(rx, path.clone()).await;
+    let stop = drain_to_log(rx, dir.path().to_path_buf(), path.clone()).await;
     assert_eq!(
         stop,
         Some(tinyagents_harness::turn_stop::TurnStop::iteration_cap())
     );
-    let log = std::fs::read_to_string(&path).expect("log written");
-    assert!(log.contains("stopped: iteration_cap"), "{log}");
+    let log = read_run_log_slice(dir.path(), &path, 0, 4096).unwrap();
+    assert!(log.content.contains("stopped: iteration_cap"), "{log:?}");
+    write_footer(dir.path(), &path, "STOPPED", 1, "stopped")
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -70,8 +83,9 @@ async fn host_written_log_parses_like_legacy_layout() {
     // must parse identically to logs written before the move.
     let tmp = tempfile::TempDir::new().unwrap();
     let path = run_log_path(tmp.path(), "triage-inbox", "run-abcdef123456");
-    assert!(path.starts_with(runs_dir(tmp.path())));
+    assert!(path.to_string_lossy().starts_with("skills.runs."));
     write_header(
+        tmp.path(),
         &path,
         "triage-inbox",
         "run-abcdef123456",
@@ -80,22 +94,90 @@ async fn host_written_log_parses_like_legacy_layout() {
     )
     .await
     .unwrap();
-    write_footer(&path, "DONE", 42, "ok").await.unwrap();
+    write_footer(tmp.path(), &path, "DONE", 42, "ok")
+        .await
+        .unwrap();
     let runs = scan_runs(tmp.path(), Some("triage-inbox"), 10);
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].run_id, "run-abcdef123456");
+    assert_eq!(
+        find_run_log_path(tmp.path(), "run-abcdef123456"),
+        Some(path.clone())
+    );
     assert_eq!(runs[0].status, "DONE");
     assert_eq!(runs[0].duration_ms, Some(42));
-    assert_eq!(read_terminal_outcome(&path).unwrap().status, "DONE");
+    assert_eq!(
+        read_terminal_outcome(tmp.path(), &path).unwrap().status,
+        "DONE"
+    );
 
-    // A pre-existing log in the legacy format still parses.
-    let legacy = runs_dir(tmp.path()).join("old_20260528T075113Z_aaaaaaaa.log");
-    std::fs::write(
-        &legacy,
-        "==== workflow_run: old ====\nrun_id : aaaaaaaa-1\nstarted: 2026-05-28T07:51:13+00:00 UTC\ninputs : {}\n\n--- task prompt ---\nx\n\n--- steps ---\n\n--- result ---\nstatus  : FAILED\nduration: 5 ms\nfinished: 2026-05-28T07:51:14+00:00 UTC\n\nboom\n",
+    // The stream retains the same parsed run metadata as the old log format.
+}
+
+#[test]
+fn a_compaction_is_logged_as_a_step() {
+    let line = format_event(&AgentProgress::ContextCompacting).expect("a step line");
+    assert!(
+        line.ends_with("· summarizing earlier conversation"),
+        "{line}"
+    );
+}
+
+/// The run's progress bridge is spawned from the detached run task. The log
+/// store resolves its storage scope from the acting context, so the bridge
+/// must act for the dispatching agent: spawned bare, its steps land under the
+/// default scope while the header sits under the agent's, and the agent's log
+/// never shows them.
+#[tokio::test]
+async fn the_progress_bridge_writes_under_the_dispatching_agents_scope() {
+    use crate::core::runtime::{ContextOverlay, CoreContext, DispatchCtx, DomainSet};
+
+    let ctx = CoreContext::for_test(DomainSet::full(), None).derive_with(
+        ContextOverlay::new(
+            crate::config::Config::default(),
+            DomainSet::full(),
+            Default::default(),
+        )
+        .session_agent("u-asha"),
+    );
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = run_log_path(dir.path(), "workflow", "run-scope-123");
+    CoreContext::scope(
+        ctx.clone(),
+        write_header(
+            dir.path(),
+            &path,
+            "workflow",
+            "run-scope-123",
+            &serde_json::json!({}),
+            "prompt",
+        ),
     )
+    .await
     .unwrap();
-    let old = scan_runs(tmp.path(), Some("old"), 10);
-    assert_eq!(old[0].status, "FAILED");
-    assert_eq!(old[0].duration_ms, Some(5));
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    tx.send(AgentProgress::TurnCompleted {
+        iterations: 5,
+        stop: Some(tinyagents_harness::turn_stop::TurnStop::iteration_cap()),
+    })
+    .await
+    .unwrap();
+    drop(tx);
+
+    // Spawned from outside any scope, as the run task's bridge is.
+    spawn_drain_to_log(
+        &DispatchCtx::new(ctx.clone()),
+        rx,
+        dir.path().to_path_buf(),
+        path.clone(),
+    )
+    .await
+    .unwrap();
+
+    let log = CoreContext::scope(ctx, async {
+        read_run_log_slice(dir.path(), &path, 0, 4096)
+    })
+    .await
+    .unwrap();
+    assert!(log.content.contains("stopped: iteration_cap"), "{log:?}");
 }

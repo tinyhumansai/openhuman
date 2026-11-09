@@ -52,8 +52,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                           Imports the legacy files, copies and verifies the database, moves user files, archives the originals to \
                           <root>/backups/<user>-<timestamp>.tar.zst, then deletes only what was archived. Resumable. \
                           dry_run returns the plan and writes nothing. Stop the core before running it for real.",
-            inputs: vec![field("dry_run", TypeSchema::Option(Box::new(TypeSchema::Bool)), "Plan only: list what would be archived, moved, deleted and left alone, with byte totals.", false)],
-            outputs: vec![field("result", TypeSchema::String, "noop, dry_run or migrated, with the plan or report alongside.", true)],
+            inputs: vec![field(
+                "dry_run",
+                TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                "Plan only: list what would be archived, moved, deleted and left alone, with byte totals.",
+                false,
+            )],
+            outputs: vec![field(
+                "result",
+                TypeSchema::String,
+                "noop, dry_run or migrated, with the plan or report alongside.",
+                true,
+            )],
         },
         "status" => ControllerSchema {
             namespace: "storage",
@@ -67,15 +77,35 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "restore",
             description: "Put the active profile back to layout v1 from a migration archive: verifies the archive, restores its entries under workspace/, \
                           sets the v2 storage.db aside and removes the layout marker.",
-            inputs: vec![field("archive", TypeSchema::String, "Path of the .tar.zst archive.", true)],
-            outputs: vec![field("entries", TypeSchema::U64, "Top-level entries restored.", true)],
+            inputs: vec![field(
+                "archive",
+                TypeSchema::String,
+                "Path of the .tar.zst archive.",
+                true,
+            )],
+            outputs: vec![field(
+                "entries",
+                TypeSchema::U64,
+                "Top-level entries restored.",
+                true,
+            )],
         },
         _ => ControllerSchema {
             namespace: "storage",
             function: "unknown",
             description: "Unknown storage controller function.",
-            inputs: vec![field("function", TypeSchema::String, "Unknown function requested for schema lookup.", true)],
-            outputs: vec![field("error", TypeSchema::String, "Lookup error details.", true)],
+            inputs: vec![field(
+                "function",
+                TypeSchema::String,
+                "Unknown function requested for schema lookup.",
+                true,
+            )],
+            outputs: vec![field(
+                "error",
+                TypeSchema::String,
+                "Lookup error details.",
+                true,
+            )],
         },
     }
 }

@@ -12,8 +12,12 @@
 // Host-condition policy (battery / AC / CPU) that throttles background LLM
 // work such as memory digests. The cron poll loop itself does not consult it.
 
-pub mod bus;
 pub(crate) mod bus_host;
+#[allow(
+    deprecated,
+    reason = "v21 ChannelMessage/SendMessage shims stay until the native channel path moves to canonical v22 content"
+)]
+#[cfg(feature = "channels")]
 pub mod channel_bridge;
 pub(crate) mod client;
 pub mod completion_owner;
@@ -38,8 +42,6 @@ pub mod scheduler;
 mod cutover_tests;
 
 pub use ops as rpc;
-#[cfg(test)]
-pub use ops::update_cron_job;
 pub use ops::{add_once, add_once_at, pause_job, resume_job};
 pub use schemas::{
     all_controller_schemas as all_cron_controller_schemas,
@@ -47,10 +49,10 @@ pub use schemas::{
 };
 #[allow(unused_imports)]
 pub use store::{
-    add_agent_job, add_agent_job_from_spec, add_agent_job_with_definition, add_flow_schedule_job,
-    add_job, add_shell_job, clear_all_jobs, dedup_named_jobs, delete_queued_runs, due_jobs,
-    find_flow_schedule_job, get_job, list_jobs, list_runs, record_last_run, record_run,
-    record_run_with_delivery, remove_job, reschedule_after_run, update_job,
+    add_agent_job_from_spec, add_agent_job_with_definition, add_flow_schedule_job, add_job,
+    add_shell_job, clear_all_jobs, dedup_named_jobs, delete_queued_runs, find_flow_schedule_job,
+    get_job, list_jobs, list_runs, record_last_run, record_run, record_run_with_delivery,
+    remove_job, update_job,
 };
 // The job, run and schedule records are the tinyflows bus contract's; the
 // host re-exports them so `cron::Schedule` etc. keep their paths and no type is

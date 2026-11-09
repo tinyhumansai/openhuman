@@ -2,10 +2,10 @@
 //! module's blob storage.
 //!
 //! The compress-cache-retrieve tier used to write each offloaded original to
-//! `<workspace>/.tokenjuice/ccr/<token>`, expiring by file age. From v0.10.0
-//! the module keeps them as expiring blobs `tinyjuice_ccr/<token>` in its own
-//! scope and writes no files. A model that was handed a recovery handle before
-//! the upgrade can still fetch the original afterwards.
+//! `<workspace>/.tokenjuice/ccr/<token>`, expiring by file age. The module
+//! keeps them as expiring blobs `tinyjuice_ccr/<token>` in its own scope and writes
+//! no files. A model that was handed a recovery handle before the upgrade can
+//! still fetch the original afterwards.
 //!
 //! * **Legacy files are never modified or deleted.** They are only read.
 //! * **Nothing is overwritten.** A blob that already exists is kept.
@@ -24,9 +24,11 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, Context, Result};
-use tinystoragedrivers::{Capability, ScopedStorage};
+use tinystoragedrivers_types::Capability;
 
-use super::storage_grant_schemas::tinyjuice::{CCR_BLOB_PREFIX, MODULE_ID};
+use crate::storage::Storage;
+
+use super::storage_grant_schemas::tinyjuice::MODULE_ID;
 use super::storage_import_support as support;
 use crate::core::runtime::DispatchCtx;
 
@@ -66,7 +68,26 @@ pub(crate) async fn import_legacy(
     let Some(scoped) = support::module_scope(ctx, MODULE_ID)? else {
         return Ok(Outcome::NoBackend);
     };
-    import_into(ctx, &scoped, root, ttl, SystemTime::now()).await
+    if !root.is_dir() {
+        return Ok(Outcome::NoSource);
+    }
+    let blobs = scoped.blobs();
+    if ttl.is_some() && !blobs.capabilities().contains(Capability::BlobTtl) {
+        return Ok(Outcome::Unsupported);
+    }
+    let marker = support::marker_id("ccr", root);
+    let root = root.to_owned();
+    let ctx_for_read = ctx.clone();
+    let result =
+        support::with_module_claim(ctx, MODULE_ID, MARKER_COLLECTION, &marker, move |scoped| {
+            crate::storage::block_on_anyhow(async move {
+                import_into(&ctx_for_read, &scoped, &root, ttl, SystemTime::now()).await
+            })
+        })?;
+    let Some(outcome) = result else {
+        return Ok(Outcome::NoBackend);
+    };
+    Ok(outcome)
 }
 
 /// One readable original: its token, text and age.
@@ -78,7 +99,7 @@ struct LegacyOriginal {
 
 async fn import_into(
     ctx: &DispatchCtx,
-    scoped: &ScopedStorage,
+    scoped: &Storage,
     root: &Path,
     ttl: Option<Duration>,
     now: SystemTime,
@@ -113,7 +134,7 @@ async fn import_into(
             },
             None => None,
         };
-        let key = format!("{CCR_BLOB_PREFIX}{}", original.token);
+        let key = ccr_key(&original.token);
         let present = blobs
             .head(&key)
             .await
@@ -143,6 +164,10 @@ async fn import_into(
         expired,
         skipped,
     })
+}
+
+fn ccr_key(token: &str) -> String {
+    format!("{}/{token}", tinyjuice_bus::storage::CCR_PREFIX)
 }
 
 fn is_token(name: &str) -> bool {

@@ -115,6 +115,7 @@ async fn forced_approval_still_denies_automation_and_channel_origins() {
             reply_target: "chat".into(),
             message_id: "m".into(),
             history_key: None,
+            channel_session: None,
         },
         AgentTurnOrigin::Unknown,
     ] {
@@ -133,21 +134,85 @@ fn saas_outcome_is_absent_outside_saas() {
     assert!(saas_outcome_with(
         &crate::core::runtime::DispatchCtx::ambient(),
         false,
+        &web_origin(),
+        false,
         "shell"
     )
     .is_none());
 }
 
 #[test]
+fn saas_web_chat_with_a_prompt_route_can_request_human_approval() {
+    assert!(saas_prompt_needed(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        true,
+        &web_origin(),
+        "shell",
+        false
+    ));
+}
+
+#[test]
 fn saas_outcome_never_parks_and_denies_without_an_allowlisted_group() {
     // No agent host is installed here, so no tool group is allowlisted.
-    match saas_outcome_with(&crate::core::runtime::DispatchCtx::ambient(), true, "shell") {
+    match saas_outcome_with(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        true,
+        &AgentTurnOrigin::Cli,
+        false,
+        "shell",
+    ) {
         Some(GateOutcome::Deny { reason }) => {
             assert!(reason.starts_with(POLICY_DENIED_MARKER), "{reason}");
-            assert!(reason.contains("no approval surface"), "{reason}");
+            assert!(reason.contains("no approval surface for users"), "{reason}");
         }
         other => panic!("expected an immediate deny, got {other:?}"),
     }
+}
+
+#[test]
+fn saas_web_chat_falls_through_to_per_user_approval_when_allowlist_rejects() {
+    assert!(saas_outcome_with(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        true,
+        &web_origin(),
+        false,
+        "shell"
+    )
+    .is_none());
+}
+
+#[test]
+fn saas_forced_approval_needs_a_routable_web_chat_surface() {
+    assert!(matches!(
+        saas_outcome_with(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            true,
+            &AgentTurnOrigin::Cli,
+            true,
+            "shell"
+        ),
+        Some(GateOutcome::Deny { .. })
+    ));
+    assert!(saas_prompt_needed(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        true,
+        &web_origin(),
+        "shell",
+        true
+    ));
+}
+
+#[test]
+fn a_saas_human_approval_uses_the_one_time_variant_and_route() {
+    assert_eq!(
+        one_time_approval_mode(Variant::Standard, false, true),
+        (Variant::Forced, true)
+    );
+    assert_eq!(
+        one_time_approval_mode(Variant::Standard, false, false),
+        (Variant::Standard, false)
+    );
 }
 
 #[test]

@@ -16,7 +16,7 @@ If you only need the Rust workspace under `crates/` (no Node, no Tauri), use [Bu
 - `git`
 - Node.js 24 or newer (see `app/package.json`)
 - `pnpm@10.10.0` (see the root `package.json` `packageManager` field)
-- Rust 1.96.1 through `rustup` with `rustfmt` and `clippy` (see `rust-toolchain.toml`)
+- Rust 1.99.1 through `rustup` with `rustfmt` and `clippy` (see `rust-toolchain.toml`)
 - CMake, required by native Rust dependencies
 - Every `vendor/` submodule listed in `.gitmodules`, initialized recursively (`git submodule update --init --recursive`). The root `Cargo.toml` `[patch]` tables point into that tree, so cargo reads every manifest, optional crate or not. A partial checkout always fails to build
 - Platform desktop build tools: Xcode Command Line Tools on macOS, or the Tauri GTK/WebKit/AppIndicator package set on Linux
@@ -25,8 +25,8 @@ macOS Homebrew quick start:
 
 ```bash
 brew install node@24 pnpm rustup-init cmake
-rustup toolchain install 1.96.1 --profile minimal
-rustup component add rustfmt clippy --toolchain 1.96.1
+rustup toolchain install 1.99.1 --profile minimal
+rustup component add rustfmt clippy --toolchain 1.99.1
 ```
 
 Arch Linux quick start:
@@ -38,8 +38,8 @@ sudo pacman -S --needed nodejs npm rustup cmake base-devel clang openssl \
   libcups libdrm libxkbcommon libxcomposite libxdamage libxfixes \
   libxrandr mesa pango cairo libxshmfence
 npm install -g pnpm@10.10.0
-rustup toolchain install 1.96.1 --profile minimal
-rustup component add rustfmt clippy --toolchain 1.96.1
+rustup toolchain install 1.99.1 --profile minimal
+rustup component add rustfmt clippy --toolchain 1.99.1
 ```
 
 ## Build from source

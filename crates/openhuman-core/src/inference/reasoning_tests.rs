@@ -1,16 +1,19 @@
 use super::*;
+use crate::agent::tinyagents::thread_reasoning::{
+    apply_requested_effort, set_thread_effort, store, thread_effort, turn_reasoning_for,
+};
 
 #[test]
 fn parses_wire_tokens_and_aliases() {
-    assert_eq!(parse_reasoning_effort("high"), Some(ReasoningEffort::High));
-    assert_eq!(parse_reasoning_effort(" Low "), Some(ReasoningEffort::Low));
-    assert_eq!(parse_reasoning_effort("off"), Some(ReasoningEffort::None));
-    assert_eq!(parse_reasoning_effort("max"), Some(ReasoningEffort::XHigh));
+    assert_eq!(ReasoningEffort::parse("high"), Some(ReasoningEffort::High));
+    assert_eq!(ReasoningEffort::parse(" Low "), Some(ReasoningEffort::Low));
+    assert_eq!(ReasoningEffort::parse("off"), Some(ReasoningEffort::None));
+    assert_eq!(ReasoningEffort::parse("max"), Some(ReasoningEffort::XHigh));
     assert_eq!(
-        parse_reasoning_effort("xhigh"),
+        ReasoningEffort::parse("xhigh"),
         Some(ReasoningEffort::XHigh)
     );
-    assert_eq!(parse_reasoning_effort("turbo"), None);
+    assert_eq!(ReasoningEffort::parse("turbo"), None);
 }
 
 #[test]
@@ -82,6 +85,8 @@ fn thread_choice_wins_over_config_and_clears_back_to_it() {
     let thread = "reasoning-test-thread-precedence";
     let mut config = Config::default();
     config.runtime.reasoning_effort = Some("low".into());
+    let mut host_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    host_context.thread_id = Some(thread.to_string());
 
     apply_requested_effort(
         &crate::core::runtime::DispatchCtx::ambient(),
@@ -90,11 +95,7 @@ fn thread_choice_wins_over_config_and_clears_back_to_it() {
     )
     .expect("valid effort");
     assert_eq!(
-        turn_reasoning(
-            &crate::core::runtime::DispatchCtx::ambient(),
-            Some(thread),
-            Some(&config)
-        ),
+        turn_reasoning_for(&host_context, Some(&config), None),
         Some(ReasoningConfig::effort(ReasoningEffort::High))
     );
 
@@ -117,11 +118,7 @@ fn thread_choice_wins_over_config_and_clears_back_to_it() {
         None
     );
     assert_eq!(
-        turn_reasoning(
-            &crate::core::runtime::DispatchCtx::ambient(),
-            Some(thread),
-            Some(&config)
-        ),
+        turn_reasoning_for(&host_context, Some(&config), None),
         Some(ReasoningConfig::effort(ReasoningEffort::Low))
     );
 }
@@ -135,12 +132,13 @@ fn unknown_requested_effort_is_rejected_and_keeps_the_prior_choice() {
         Some("off"),
     )
     .expect("valid effort");
-    assert!(apply_requested_effort(
+    let error = apply_requested_effort(
         &crate::core::runtime::DispatchCtx::ambient(),
         thread,
-        Some("turbo")
+        Some(" turbo "),
     )
-    .is_err());
+    .expect_err("unknown effort is rejected");
+    assert_eq!(error, "unknown reasoning_effort 'turbo'");
     assert_eq!(
         thread_effort(&crate::core::runtime::DispatchCtx::ambient(), thread),
         Some(ReasoningEffort::None)
@@ -149,11 +147,43 @@ fn unknown_requested_effort_is_rejected_and_keeps_the_prior_choice() {
 }
 
 #[test]
-fn turn_without_thread_or_config_has_no_reasoning() {
+fn cloned_harness_store_shares_effort_and_turn_snapshots_are_frozen() {
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let thread = tinyagents_harness::ids::ThreadId::new("reasoning-snapshot-thread");
+    let store = store(&ctx);
+    let explicitly_shared = store.clone();
+
+    explicitly_shared
+        .apply_requested(Some(&thread), Some("high"))
+        .expect("valid request");
+    assert_eq!(store.get(&thread), Some(ReasoningEffort::High));
+    let mut host_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    host_context.thread_id = Some(thread.as_str().to_string());
+    let turn_snapshot = turn_reasoning_for(&host_context, None, Some(4_000));
+    explicitly_shared
+        .apply_requested(Some(&thread), Some("low"))
+        .expect("next turn choice");
+
+    assert_eq!(store.get(&thread), Some(ReasoningEffort::Low));
     assert_eq!(
-        turn_reasoning(&crate::core::runtime::DispatchCtx::ambient(), None, None),
-        None
+        turn_snapshot,
+        Some(ReasoningConfig {
+            effort: Some(ReasoningEffort::High),
+            budget_tokens: Some(2_200),
+            summary: None,
+        })
     );
+    assert_eq!(
+        turn_reasoning_for(&host_context, None, Some(4_000)).and_then(|reasoning| reasoning.effort),
+        Some(ReasoningEffort::Low)
+    );
+    store.clear(&thread);
+}
+
+#[test]
+fn turn_without_thread_or_config_has_no_reasoning() {
+    let ctx = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    assert_eq!(turn_reasoning_for(&ctx, None, None), None);
 }
 
 #[test]
@@ -215,7 +245,7 @@ fn root_turn_reasoning_reserves_output_room_with_a_budget() {
     let reasoning = turn_reasoning_for(
         &ctx,
         None,
-        Some(crate::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS),
+        Some(tinyagents_harness::turn_policy::AGENT_TURN_MAX_OUTPUT_TOKENS),
     );
     set_thread_effort(&crate::core::runtime::DispatchCtx::ambient(), thread, None);
     assert_eq!(
@@ -313,4 +343,39 @@ async fn reasoning_effort_stays_with_the_agent_that_chose_it() {
         },
         None
     );
+}
+
+#[test]
+fn same_thread_reasoning_is_isolated_between_user_profiles() {
+    use crate::core::runtime::{context::CoreContext, ContextOverlay, DomainSet};
+    let tmp = tempfile::tempdir().unwrap();
+    let config = Config {
+        workspace_dir: tmp.path().to_path_buf(),
+        ..Config::default()
+    };
+    let root = CoreContext::for_test(DomainSet::full(), None);
+    let derive = |profile: &str| {
+        root.derive_with(
+            ContextOverlay::new(config.clone(), DomainSet::kernel(), Default::default())
+                .profile(profile),
+        )
+    };
+    let (alice, bob) = (derive("u-alice"), derive("u-bob"));
+    let thread = "same-thread-profile-isolation";
+    let alice_dispatch = crate::core::runtime::DispatchCtx::new(alice.clone());
+    set_thread_effort(&alice_dispatch, thread, Some(ReasoningEffort::High));
+
+    let mut alice_turn = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    alice_turn.thread_id = Some(thread.into());
+    let alice_turn = alice_turn.with_core(Some(alice));
+    let mut bob_turn = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    bob_turn.thread_id = Some(thread.into());
+    let bob_turn = bob_turn.with_core(Some(bob));
+
+    assert_eq!(
+        turn_reasoning_for(&alice_turn, None, None),
+        Some(ReasoningConfig::effort(ReasoningEffort::High))
+    );
+    assert_eq!(turn_reasoning_for(&bob_turn, None, None), None);
+    set_thread_effort(&alice_dispatch, thread, None);
 }

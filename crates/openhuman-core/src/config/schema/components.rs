@@ -23,7 +23,6 @@ use super::defaults::default_true;
 pub const COMPONENT_NAMES: [&str; 16] = [
     "flows",
     "tinyflows",
-    "memes",
     "documents",
     "search",
     "mcp",
@@ -37,6 +36,7 @@ pub const COMPONENT_NAMES: [&str; 16] = [
     "channels",
     "skills",
     "voice",
+    "eventqueues",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -50,9 +50,6 @@ pub struct ComponentsConfig {
     /// `COMPONENT_DISABLED:tinyflows` and no scheduler runs.
     #[serde(default = "default_true")]
     pub tinyflows: bool,
-    /// Meme remixing (tinymemes).
-    #[serde(default = "default_true")]
-    pub memes: bool,
     /// Document extraction and generation (tinydocs).
     #[serde(default = "default_true")]
     pub documents: bool,
@@ -92,6 +89,11 @@ pub struct ComponentsConfig {
     /// Voice (tinyvoice).
     #[serde(default = "default_true")]
     pub voice: bool,
+    /// Inbound event queues (tinyeventqueues): Composio triggers and agent
+    /// webhooks are queued, deduplicated and paced before triage. Off, they
+    /// take the direct triage path.
+    #[serde(default = "default_true")]
+    pub eventqueues: bool,
 }
 
 impl Default for ComponentsConfig {
@@ -99,7 +101,6 @@ impl Default for ComponentsConfig {
         Self {
             flows: true,
             tinyflows: true,
-            memes: true,
             documents: true,
             search: true,
             mcp: true,
@@ -113,6 +114,7 @@ impl Default for ComponentsConfig {
             channels: true,
             skills: true,
             voice: true,
+            eventqueues: true,
         }
     }
 }
@@ -123,7 +125,6 @@ impl ComponentsConfig {
         Some(match name {
             "flows" => self.flows,
             "tinyflows" => self.tinyflows,
-            "memes" => self.memes,
             "documents" => self.documents,
             "search" => self.search,
             "mcp" => self.mcp,
@@ -137,6 +138,7 @@ impl ComponentsConfig {
             "channels" => self.channels,
             "skills" => self.skills,
             "voice" => self.voice,
+            "eventqueues" => self.eventqueues,
             _ => return None,
         })
     }
@@ -146,7 +148,6 @@ impl ComponentsConfig {
         let slot = match name {
             "flows" => &mut self.flows,
             "tinyflows" => &mut self.tinyflows,
-            "memes" => &mut self.memes,
             "documents" => &mut self.documents,
             "search" => &mut self.search,
             "mcp" => &mut self.mcp,
@@ -160,6 +161,7 @@ impl ComponentsConfig {
             "channels" => &mut self.channels,
             "skills" => &mut self.skills,
             "voice" => &mut self.voice,
+            "eventqueues" => &mut self.eventqueues,
             _ => return false,
         };
         *slot = value;

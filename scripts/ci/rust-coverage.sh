@@ -66,6 +66,24 @@ llvm_cov_embed() {
   llvm_cov_product_facade "$@"
 }
 
+# The nextest runner builds every product-feature package with ONE Cargo
+# argument set. Cargo hashes each unit by its resolved feature set, and the
+# core's feature graph differs per selected package set (core alone,
+# embed/tinyhumans, and the cli, which drops the core's `default` alias), so
+# separate `-p` invocations each compile the core and its dependencies again.
+# The packages run as one suite whose filter is the union of what the old
+# per-package arguments built and ran:
+#   core        its only target is the lib (`--lib --bins`)
+#   embed       `--all-targets`
+#   tinyhumans  `--all-targets`
+#   cli         `--tests -E 'kind(test)'` (integration targets only)
+UNIFIED_PRODUCT_ARGS=(-p openhuman -p openhuman-embed -p openhuman-tinyhumans -p openhuman-cli --all-targets)
+FILTER_CORE='package(=openhuman)'
+FILTER_EMBED='package(=openhuman-embed)'
+FILTER_TINYHUMANS='package(=openhuman-tinyhumans)'
+FILTER_CLI_TESTS='package(=openhuman-cli) & kind(test)'
+FILTER_PRODUCT="${FILTER_CORE} | ${FILTER_EMBED} | ${FILTER_TINYHUMANS} | (${FILTER_CLI_TESTS})"
+
 integration_test_targets() {
   find tests -maxdepth 1 -type f -name '*.rs' -print |
     sed -e 's#^tests/##' -e 's#\.rs$##' |
@@ -146,10 +164,40 @@ target_expected_in_coverage() {
 # merged from whatever did run. A cancellation (130/143 from
 # scripts/ci-cancel-aware.sh) stops the run at once.
 FAILED_SUITES=()
+
+# Cargo names why it rebuilds a unit ("Dirty <crate>: <reason>") only in
+# verbose mode. Keep those lines, in the log and in ci-out/rebuilds/<suite>.log,
+# and drop the verbose noise ("Running `rustc ...`", "Fresh <crate>"): an
+# identical suite rebuilding the whole graph (the embed suite after the core
+# suite in EX63 runs 39365491098 and 39371566398) is otherwise unexplained.
+# OH_COV_EXPLAIN_REBUILDS=0 turns it off.
+explain_rebuilds() {
+  awk -v reasons="$1" '
+    /^ +Dirty / { print >> reasons; print; fflush(); next }
+    /^ +(Running `|Fresh )/ { next }
+    { print; fflush() }
+  '
+}
+
 suite() {
-  local name="$1" rc=0
+  local name="$1" rc=0 slug
   shift
-  COV_SUITE="$(printf '%s' "$name" | tr -cs '[:alnum:]' '-')" "$@" || rc=$?
+  slug="$(printf '%s' "$name" | tr -cs '[:alnum:]' '-')"
+  if [ "${OH_COV_EXPLAIN_REBUILDS:-1}" = "1" ]; then
+    mkdir -p ci-out/rebuilds
+    CARGO_TERM_VERBOSE=true COV_SUITE="${slug}" "$@" 2> >(explain_rebuilds "ci-out/rebuilds/${slug}.log" >&2) || rc=$?
+  else
+    COV_SUITE="${slug}" "$@" || rc=$?
+  fi
+  # On the self-hosted guest (CI_SCRATCH_DIR is set) log what the scratch disk
+  # has left and how large the coverage target and its raw profiles are after
+  # each suite, so a full disk (EX63 run 39292268284) names the suite that
+  # grew it.
+  if [ -n "${CI_SCRATCH_DIR:-}" ]; then
+    log "disk after ${name}: $(df -h "${CI_SCRATCH_DIR}" 2>/dev/null | awk 'NR==2 { print $4 " free of " $2 }')," \
+      "target $(du -sh "${CARGO_BUILD_TARGET_DIR:-target}" 2>/dev/null | cut -f1)," \
+      "profraw $(find "${CARGO_BUILD_TARGET_DIR:-target}" -name '*.profraw' -print0 2>/dev/null | du -ch --files0-from=- 2>/dev/null | tail -1 | cut -f1)"
+  fi
   case "${rc}" in
     0) ;;
     130 | 143)
@@ -193,7 +241,7 @@ run_integration_target() {
     # as scripts/test-rust-with-mock.sh does.
     suite "${target}" llvm_cov --no-report --no-fail-fast -p openhuman-cli \
       --test "${target}" -- --test-threads=1
-  elif [ "${target}" = "json_rpc_e2e" ]; then
+  elif [[ "${target}" =~ ^json_rpc_.*_e2e$ ]]; then
     # JSON-RPC tests share runtime/config globals and must remain serial.
     suite "${target}" llvm_cov --no-report --no-fail-fast -p openhuman-cli \
       --test "${target}" -- --test-threads=1
@@ -215,7 +263,17 @@ if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
   # process's counters online into a pool of 8 files per instrumented binary as
   # it exits. cargo-llvm-cov reads the pattern from LLVM_PROFILE_FILE_NAME.
   export LLVM_PROFILE_FILE_NAME="${LLVM_PROFILE_FILE_NAME:-openhuman-%8m.profraw}"
+  # The harness retries a failing model call on a 3/6/12/24 s schedule (about
+  # 45 s per turn). Suites that drive an unreachable or erroring upstream sat
+  # through it on a worker slot doing nothing: 9 of the 10 slowest tests in the
+  # warm EX63 run (60-90 s each) were that wait. The same schedule, with the
+  # waits scaled to 100 ms, keeps every retry and every assertion. The
+  # schedule itself is pinned by a unit test that ignores this variable.
+  export OPENHUMAN_MODEL_RETRY_BACKOFF_MS="${OPENHUMAN_MODEL_RETRY_BACKOFF_MS:-100}"
 fi
+# Credential saves ask the user to approve each TinySecurity keyring operation;
+# the test builds answer for them (keyring_consent/test_responder.rs).
+export OPENHUMAN_TEST_KEYRING_CONSENT="${OPENHUMAN_TEST_KEYRING_CONSENT:-approve}"
 
 log "running complete instrumented Rust suite (runner: ${OH_COV_RUNNER:-cargo})"
 llvm_cov clean --workspace
@@ -258,8 +316,45 @@ trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
 if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
-  # One process per test isolates process globals without separate target dirs.
-  suite "openhuman lib+bins (nextest)" llvm_cov --no-report --no-fail-fast -p openhuman --lib --bins
+  # The core, embed, tinyhumans and cli suites are one nextest run: one build
+  # of the product graph and one test run over the union of their filters.
+  # Run as four invocations with the same arguments, Cargo still rebuilt most
+  # of the graph between them (5-6 min each in EX63 runs 39365491098 and
+  # 39371566398), and their tests could not overlap. Every integration target
+  # still runs in its own processes, one per test, and the listing below is
+  # the same build, so the run that follows finds it fresh.
+  mkdir -p ci-out/nextest
+  expected_targets="${PWD}/ci-out/nextest/cli-expected-targets.txt"
+  : >"${expected_targets}"
+  while IFS= read -r target; do
+    [ -n "${target}" ] || continue
+    if target_features_satisfied "${target}" && target_expected_in_coverage "${target}"; then
+      printf '%s\n' "${target}" >>"${expected_targets}"
+    fi
+  done < <(integration_test_targets)
+  expected_inventory="${PWD}/ci-out/nextest/product-inventory.json"
+  # Listing executes no tests. cargo-llvm-cov supplies the same wrapper and
+  # instrumentation environment, but show-env leaves Cargo on the plain
+  # target dir while `cargo llvm-cov nextest` builds in its llvm-cov-target
+  # subdir. Without the explicit --target-dir the listing re-instrumented
+  # the whole graph a second time (578 crates, +53 GB on the EX63 scratch
+  # disk in run 39315551099, which then filled it). Listing also launches
+  # each instrumented binary; keep those profiles out of the report.
+  product_inventory() (
+    inventory_env="$(bash scripts/ci-cancel-aware.sh cargo llvm-cov show-env --sh)" || exit $?
+    eval "${inventory_env}"
+    inventory_profiles="${PWD}/ci-out/nextest/product-inventory-profraw"
+    export LLVM_PROFILE_FILE="${inventory_profiles}/list-%p.profraw"
+    bash scripts/ci-cancel-aware.sh cargo nextest list --message-format json --features "${CORE_PRODUCT_FEATURES}" \
+      --target-dir "${CARGO_LLVM_COV_TARGET_DIR}/llvm-cov-target" \
+      "${UNIFIED_PRODUCT_ARGS[@]}" -E "${FILTER_PRODUCT}" >"${expected_inventory}"
+    rm -rf "${inventory_profiles}"
+  )
+  suite "openhuman product test inventory" product_inventory
+  NEXTEST_EXPECTED_TARGETS="${expected_targets}" \
+  NEXTEST_EXPECTED_INVENTORY="${expected_inventory}" \
+  suite "openhuman product suites (nextest)" llvm_cov --no-report --no-fail-fast \
+    "${UNIFIED_PRODUCT_ARGS[@]}" -E "${FILTER_PRODUCT}"
 else
   # Keep the aggregate unit-test process aligned with the canonical Rust runner.
   # The isolated reaper test installs one-shot process globals, so it cannot run
@@ -275,14 +370,24 @@ fi
 # Run every root-workspace Rust support crate rather than only crates named by
 # changed paths. Product features are forwarded to the embedding facade; the
 # remaining crates do not expose that feature vocabulary.
-suite "openhuman-embed" llvm_cov_embed --no-report --no-fail-fast -p openhuman-embed --all-targets
-suite "openhuman-rpc" llvm_cov_package --no-report --no-fail-fast -p openhuman-rpc --all-targets
-suite "openhuman-tinyhumans" llvm_cov_product_facade --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets
+if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
+  suite "openhuman-embed" llvm_cov_embed --no-report --no-fail-fast -p openhuman-embed --all-targets
+fi
+suite "openhuman-rpc" llvm_cov_package --no-report --no-fail-fast -p openhuman-rpc --all-targets \
+  --features storage-sqlite,secret-file
+if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
+  suite "openhuman-tinyhumans" llvm_cov_product_facade --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets
+fi
 if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
   # Contributor/default features are distinct from product features. Keep both
   # configurations instrumented rather than dropping the default-only surface.
-  suite "openhuman-embed (default)" llvm_cov_package --no-report --no-fail-fast -p openhuman-embed --all-targets
-  suite "openhuman-tinyhumans (default)" llvm_cov_package --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets
+  # Integration tests use the facade's in-memory session store testkit, and
+  # storage-backed tests need the contributor SQLite driver even though it is
+  # not part of the small default feature set.
+  suite "openhuman-embed (default)" llvm_cov_package --no-report --no-fail-fast -p openhuman-embed --all-targets \
+    --features testkit,storage-sqlite
+  suite "openhuman-tinyhumans (default)" llvm_cov_package --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets \
+    --features storage-sqlite
 fi
 # The terminal frontend builds the core a third time (default features, not the
 # product set). It is on by default and on in the PR lane; OH_COV_TUI=0 is an
@@ -293,39 +398,8 @@ else
   log "skipping openhuman-tui (OH_COV_TUI=${OH_COV_TUI})"
 fi
 
-if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
-  # Every integration target in one parallel run, one process per test: the
-  # raw_coverage modules and the JSON-RPC tests are then isolated from each
-  # other without the per-module and serial invocations below. Cargo skips a
-  # target whose required-features are not in the product set; `kind(test)`
-  # keeps the run to the integration targets, as the loop below runs them.
-  mkdir -p ci-out/nextest
-  expected_targets="${PWD}/ci-out/nextest/cli-expected-targets.txt"
-  : >"${expected_targets}"
-  while IFS= read -r target; do
-    [ -n "${target}" ] || continue
-    if target_features_satisfied "${target}" && target_expected_in_coverage "${target}"; then
-      printf '%s\n' "${target}" >>"${expected_targets}"
-    fi
-  done < <(integration_test_targets)
-  expected_inventory=""
-  if [ -s "${expected_targets}" ]; then
-    expected_inventory="${PWD}/ci-out/nextest/cli-inventory.json"
-    # Listing executes no tests. cargo-llvm-cov supplies the same wrapper and
-    # instrumentation environment, so Cargo can reuse this CLI test build.
-    cli_inventory() (
-      inventory_env="$(bash scripts/ci-cancel-aware.sh cargo llvm-cov show-env --sh)" || exit $?
-      eval "${inventory_env}"
-      bash scripts/ci-cancel-aware.sh cargo nextest list --message-format json --features "${CORE_PRODUCT_FEATURES}" \
-        -p openhuman-cli --tests -E 'kind(test)' >"${expected_inventory}"
-    )
-    suite "openhuman-cli test inventory" cli_inventory
-  fi
-  NEXTEST_EXPECTED_TARGETS="${expected_targets}" \
-  NEXTEST_EXPECTED_INVENTORY="${expected_inventory}" \
-  suite "openhuman-cli integration tests (nextest)" llvm_cov \
-    --no-report --no-fail-fast -p openhuman-cli --tests -E 'kind(test)'
-else
+if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
+  # The nextest runner ran the integration targets with the product suites.
   while IFS= read -r target; do
     [ -n "${target}" ] || continue
     log "running integration target: ${target}"
@@ -339,7 +413,7 @@ fi
 # parallel lane instead (CI Fast on the EX63) sets OH_COV_DOCTESTS=0.
 if [ "${OH_COV_DOCTESTS:-1}" = "1" ]; then
   suite "openhuman doctests" bash scripts/ci-cancel-aware.sh cargo test -p openhuman \
-    --doc --features "${PRODUCT_FEATURES}"
+    --doc --features "${CORE_PRODUCT_FEATURES}"
 else
   log "skipping doctests (OH_COV_DOCTESTS=${OH_COV_DOCTESTS}); the caller runs them"
 fi

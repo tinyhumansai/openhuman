@@ -33,6 +33,8 @@ pub(super) struct TerminalRecord {
     pub(super) agent_id: String,
     #[serde(default)]
     pub(super) elapsed_ms: u64,
+    #[serde(flatten)]
+    extensions: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// A terminal file as older builds wrote it: the record, or the bare outcome.
@@ -46,12 +48,32 @@ enum CompatibleTerminalRecord {
 impl From<CompatibleTerminalRecord> for TerminalRecord {
     fn from(record: CompatibleTerminalRecord) -> Self {
         match record {
-            CompatibleTerminalRecord::Current(record) => record,
+            CompatibleTerminalRecord::Current(mut record) => {
+                if !record.agent_id.is_empty() {
+                    record
+                        .outcome
+                        .extensions
+                        .entry("agent_id".into())
+                        .or_insert_with(|| serde_json::Value::String(record.agent_id.clone()));
+                }
+                if record.elapsed_ms != 0 {
+                    record
+                        .outcome
+                        .extensions
+                        .entry("elapsed_ms".into())
+                        .or_insert_with(|| serde_json::json!(record.elapsed_ms));
+                }
+                for (name, value) in std::mem::take(&mut record.extensions) {
+                    record.outcome.extensions.entry(name).or_insert(value);
+                }
+                record
+            }
             CompatibleTerminalRecord::Legacy(outcome) => Self {
                 key: None,
                 outcome,
                 agent_id: String::new(),
                 elapsed_ms: 0,
+                extensions: Default::default(),
             },
         }
     }
@@ -136,7 +158,7 @@ fn workspace_of(checkpoint_dir: &Path) -> PathBuf {
 /// Legacy migration sources and destination documents in one acting scope.
 pub(super) struct LifecycleStore {
     kv: StateKv,
-    documents: std::sync::Arc<dyn tinystoragedrivers::DocumentStore>,
+    documents: std::sync::Arc<dyn tinystoragedrivers_api::DocumentStore>,
 }
 
 impl LifecycleStore {
@@ -156,7 +178,7 @@ impl LifecycleStore {
         let kv = StateKv::open(&workspace_of(checkpoint_dir), OWNER, NS).map_err(failure)?;
         if import_files {
             let legacy = checkpoint_dir.join("lifecycle");
-            kv.import_once(IMPORT, || import_legacy(&kv, &legacy))
+            kv.import_once(IMPORT, |_| import_legacy(&kv, &legacy))
                 .map_err(failure)?;
         }
         let opened = crate::storage::local::open("subagents", &workspace_of(checkpoint_dir))
@@ -323,15 +345,7 @@ fn import_legacy(kv: &StateKv, dir: &Path) -> anyhow::Result<()> {
         } else if let Some(component) = file.strip_suffix(".terminal.json") {
             match serde_json::from_slice::<CompatibleTerminalRecord>(&bytes) {
                 Ok(terminal) => {
-                    let mut terminal = TerminalRecord::from(terminal);
-                    if let Some(key) = terminal.key.as_ref() {
-                        if let Some(outcome) = super::persistence::legacy_terminal::owner_terminal(
-                            dir.parent().unwrap_or(dir),
-                            key,
-                        )? {
-                            terminal.outcome = outcome;
-                        }
-                    }
+                    let terminal = TerminalRecord::from(terminal);
                     kv.update::<LifecycleRecord, ()>(&format!("record/{component}"), move |r| {
                         if r.terminal.is_none() {
                             r.terminal = Some(terminal.clone());

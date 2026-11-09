@@ -49,7 +49,8 @@ pub(super) async fn dispatch(ctx: DispatchCtx, call: ServerHostCall) -> ServerHo
             .await;
             result.map_or_else(reply_error, |value| ServerHostReply::Success { value })
         }
-        ServerHostCall::ReadResource { uri, .. } => resources::read_resource(&uri)
+        ServerHostCall::ReadResource { uri, .. } => resources::read_resource(&ctx, &uri)
+            .await
             .map_or_else(reply_error, |value| ServerHostReply::Success { value }),
         ServerHostCall::ListPrompts { .. } => ServerHostReply::Success {
             value: Value::Array(Vec::new()),

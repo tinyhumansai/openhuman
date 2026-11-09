@@ -320,7 +320,7 @@ println!("{}", reply.reply);
 
 [`CONTRIBUTING.md`](../CONTRIBUTING.md) をお読みください。または、[このプロンプト](./CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you)を使って AI コーディングエージェントに案内してもらうこともできます。
 
-1. Git、Node.js 24+、pnpm 10.10.0、Rust 1.96.1（`rustfmt` と `clippy` を含む）、CMake、Ninja、ripgrep、そしてお使いのプラットフォームのデスクトップビルドに必要なものをインストールします。
+1. Git、Node.js 24+、pnpm 10.10.0、Rust 1.99.1（`rustfmt` と `clippy` を含む）、CMake、Ninja、ripgrep、そしてお使いのプラットフォームのデスクトップビルドに必要なものをインストールします。
 2. リポジトリをフォークしてクローンします。`git submodule update --init --recursive` を実行し、続けて `pnpm install` を実行します。
 3. UI の作業には `pnpm dev`、デスクトップアプリには `pnpm dev:app` を実行します。PR を開く前に、`pnpm typecheck`、`pnpm format:check`、`cargo check --manifest-path Cargo.toml` を実行してください。
 

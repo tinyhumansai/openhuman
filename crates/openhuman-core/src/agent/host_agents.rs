@@ -28,10 +28,13 @@
 //! origin. Resolving an agent does not change who is asking.
 
 use crate::core::runtime::DispatchCtx;
+use std::any::Any;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, LazyLock, PoisonError, RwLock};
 
 use crate::agent::{HostTools, OpenHumanSessionHost};
-use crate::agent_registry::host_definition::AgentDefinition;
+use crate::agent_registry::host_definition::{AgentDefinition, AgentDefinitionRegistry};
 use crate::config::Config;
 use crate::core::runtime::CoreContext;
 
@@ -56,6 +59,124 @@ pub struct HostAgent {
 }
 
 impl HostAgent {
+    /// Resolve a config-owned agent into the same trusted carrier used for
+    /// embedder-owned agents. Channel entry points use this after routing has
+    /// selected an agent; the caller still supplies the untrusted origin and
+    /// approval context at execution time.
+    pub(crate) fn from_config(
+        dispatch: &DispatchCtx,
+        config: Config,
+        agent_id: &str,
+    ) -> anyhow::Result<Self> {
+        let definition = AgentDefinitionRegistry::load(&config.workspace_dir)
+            .ok()
+            .and_then(|registry| registry.get(agent_id).cloned())
+            .ok_or_else(|| anyhow::anyhow!("agent definition `{agent_id}` is unavailable"))?;
+        let context = dispatch
+            .core()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("agent turn has no core context"))?;
+        Ok(Self {
+            definition,
+            config,
+            host_tools: None,
+            context,
+            hooks: Default::default(),
+        })
+    }
+
+    /// Execute one durable, externally-authored turn with the resolved host
+    /// agent's context and hooks. `session_key` is the trusted caller's
+    /// canonical conversation identity (already scoped by tenant/provider/
+    /// account/conversation); TinyAgents adds the agent id through
+    /// `set_thread_id` when it binds the SessionRef.
+    #[allow(clippy::too_many_arguments)]
+    #[cfg(feature = "channels")]
+    pub(crate) async fn run_external_channel_turn(
+        self,
+        session_key: &str,
+        event_session_id: &str,
+        channel: &str,
+        message: &str,
+        message_input: Option<tinyinference_llm::message::Message>,
+        origin: crate::core::runtime::turn_origin::AgentTurnOrigin,
+        approval: crate::security::approval::ApprovalTurnContext,
+        progress: Option<tokio::sync::mpsc::Sender<crate::progress::AgentProgress>>,
+        run_queue: Option<
+            std::sync::Arc<
+                tinyagents_harness::run_queue::RunQueue<crate::agent::queued_turn::QueuedTurn>,
+            >,
+        >,
+        cancellation: tinyagents_harness::CancellationToken,
+        turn_deadline: Option<std::time::Duration>,
+        imported_history: &[tinyagents_session::transcript::TranscriptMessage],
+        legacy_history: Option<crate::channels::providers::relay::LegacyHistoryImport>,
+        staged_parts: Vec<tinychannels_bus::ContentPart>,
+        staged_lease: Option<crate::threads::attachments::NativeStagedLease>,
+        staged_message_id: Option<String>,
+    ) -> anyhow::Result<String> {
+        let config = self.config.clone();
+        let agent_id = self.definition.id.clone();
+        let mut session = self.session_host(&config, Some(session_key)).await?;
+        session.set_thread_id(Some(session_key));
+        session.set_event_context(event_session_id, channel);
+        session.adopt_imported_history(imported_history)?;
+        if let Some(source) = legacy_history {
+            let dispatch = crate::core::runtime::DispatchCtx::new(Arc::clone(&self.context));
+            session
+                .adopt_legacy_history_if_needed(|| async {
+                    source.load(&dispatch).await.map_err(anyhow::Error::msg)
+                })
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!(crate::channels::failure_copy::LEGACY_HISTORY_UNAVAILABLE)
+                })?;
+        }
+        self.scope(crate::agent::turn_host::AgentTurnHost::run(
+            &mut session,
+            crate::agent::turn_host::AgentTurnRequest {
+                message: message.to_owned(),
+                message_input,
+                native_staged_parts: staged_parts,
+                native_staged_lease: staged_lease,
+                native_message_id: staged_message_id,
+                thread_id: Some(session_key.to_owned()),
+                origin,
+                approval: approval.clone(),
+                progress,
+                run_queue,
+                cancellation,
+                turn_deadline,
+                workspace: crate::agent::turn_host::WorkspaceBinding::Preserve,
+                host_env: crate::agent::turn_env::HostTurnEnv {
+                    hooks: self.hooks.clone(),
+                    core: Some(Arc::downgrade(&self.context)),
+                    approval,
+                    memory_identity: Some(
+                        tinymemory_tools::layout::identity::Identity::root().child(&agent_id),
+                    ),
+                    ..Default::default()
+                },
+            },
+        ))
+        .await
+    }
+
+    /// Reset the durable session used by an external channel command. The
+    /// caller serializes this operation with turns for the same trusted
+    /// tenant, agent, and canonical session identity.
+    pub(crate) async fn reset_external_channel_history(
+        &self,
+        session_key: &str,
+        event_session_id: &str,
+        channel: &str,
+    ) -> anyhow::Result<bool> {
+        let mut session = self.session_host(&self.config, Some(session_key)).await?;
+        session.set_thread_id(Some(session_key));
+        session.set_event_context(event_session_id, channel);
+        self.scope(session.reset_bound_history()).await
+    }
+
     /// Build a session for this agent from `config` -- normally a clone of
     /// [`HostAgent::config`] carrying a driver's overrides.
     ///
@@ -63,7 +184,7 @@ impl HostAgent {
     /// the ambient context (tool groups, skill roots) while it assembles the
     /// belt. `session_id` reaches the host belt factory as the turn's
     /// session; `None` when the driver names none.
-    pub fn session_host(
+    pub async fn session_host(
         &self,
         config: &Config,
         session_id: Option<&str>,
@@ -74,7 +195,7 @@ impl HostAgent {
             "[host_agents] building session for host agent"
         );
         let dispatch = DispatchCtx::new(Arc::clone(&self.context));
-        let mut session = CoreContext::sync_scope(Arc::clone(&self.context), || {
+        let mut session = CoreContext::scope(Arc::clone(&self.context), async {
             if crate::profiles::capabilities::ProfileCapabilities::in_ctx(&dispatch).is_some() {
                 return OpenHumanSessionHost::from_config_host_only(
                     &dispatch,
@@ -82,23 +203,31 @@ impl HostAgent {
                     &self.definition,
                     self.host_tools.as_ref(),
                     session_id,
-                );
+                )
+                .await;
             }
             match &self.host_tools {
-                Some(host) => OpenHumanSessionHost::from_config_with_host_tools(
-                    &dispatch,
-                    config,
-                    &self.definition,
-                    host,
-                    session_id,
-                ),
-                None => OpenHumanSessionHost::from_config_with_definition(
-                    &dispatch,
-                    config,
-                    &self.definition,
-                ),
+                Some(host) => {
+                    OpenHumanSessionHost::from_config_with_host_tools(
+                        &dispatch,
+                        config,
+                        &self.definition,
+                        host,
+                        session_id,
+                    )
+                    .await
+                }
+                None => {
+                    OpenHumanSessionHost::from_config_with_definition(
+                        &dispatch,
+                        config,
+                        &self.definition,
+                    )
+                    .await
+                }
             }
-        })?;
+        })
+        .await?;
         // The agent's own callbacks ride the session explicitly: its tool and
         // stop hooks reach every turn's run context, its post-turn hooks join
         // the learning sink.
@@ -131,6 +260,55 @@ impl std::fmt::Debug for HostAgent {
 pub trait HostAgentResolver: Send + Sync {
     /// The agent registered under `agent_id`, if the host has one.
     fn resolve(&self, agent_id: &str) -> Option<HostAgent>;
+
+    /// Like [`resolve`](Self::resolve), for a driver that runs the agent for
+    /// a while: the [`OpenedHostAgent`] may carry a lease that keeps a live
+    /// agent from being torn down mid-run when its owner drops the last other
+    /// handle. The default holds nothing.
+    fn resolve_leased(&self, agent_id: &str) -> Option<OpenedHostAgent> {
+        self.resolve(agent_id).map(OpenedHostAgent::new)
+    }
+
+    /// Bring up the agent `agent_id` when [`resolve`](Self::resolve) found
+    /// nothing live, for a driver (a due cron job) that cannot run without
+    /// it. `None` -- the default -- means the host cannot or will not open
+    /// it, and the driver must not substitute another agent. The
+    /// [`OpenedHostAgent`] may carry a lease that keeps the agent alive until
+    /// the driver is done with it.
+    fn open<'a>(
+        &'a self,
+        agent_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Option<OpenedHostAgent>> + Send + 'a>> {
+        let _ = agent_id;
+        Box::pin(async { None })
+    }
+}
+
+/// A [`HostAgent`] a resolver opened on demand, with whatever keeps it alive.
+pub struct OpenedHostAgent {
+    /// The agent to build the session from.
+    pub agent: HostAgent,
+    /// Dropped when the driver finishes with the agent, so a host can close
+    /// an agent it only opened for one run.
+    lease: Option<Box<dyn Any + Send + Sync>>,
+}
+
+impl OpenedHostAgent {
+    /// An agent that needs nothing held after it is built.
+    pub fn new(agent: HostAgent) -> Self {
+        Self { agent, lease: None }
+    }
+
+    /// Hold `lease` for as long as this value (and so the run) lives.
+    pub fn with_lease(mut self, lease: impl Any + Send + Sync) -> Self {
+        self.lease = Some(Box::new(lease));
+        self
+    }
+
+    /// Split into the agent and its lease; keep the lease for the whole run.
+    pub fn into_parts(self) -> (HostAgent, Option<Box<dyn Any + Send + Sync>>) {
+        (self.agent, self.lease)
+    }
 }
 
 static RESOLVER: LazyLock<RwLock<Option<Arc<dyn HostAgentResolver>>>> =
@@ -175,6 +353,41 @@ pub fn resolve(agent_id: &str) -> Option<HostAgent> {
         "[host_agents] resolve host agent"
     );
     hit
+}
+
+/// Like [`resolve`], but the agent comes with the lease its resolver holds
+/// for it (see [`HostAgentResolver::resolve_leased`]).
+pub fn resolve_leased(agent_id: &str) -> Option<OpenedHostAgent> {
+    let resolver = RESOLVER
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()?;
+    resolver.resolve_leased(agent_id)
+}
+
+/// Like [`resolve`], but when the installed resolver has no live `agent_id`
+/// it is asked to [`open`](HostAgentResolver::open) one. `None` when nothing
+/// is installed or the host has no such agent and will not open it, or when
+/// it opens an agent under another id: a driver never runs a different agent
+/// than the one it asked for.
+pub async fn resolve_or_open(agent_id: &str) -> Option<OpenedHostAgent> {
+    let resolver = RESOLVER
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()?;
+    if let Some(live) = resolver.resolve_leased(agent_id) {
+        return Some(live);
+    }
+    let opened = resolver
+        .open(agent_id)
+        .await
+        .filter(|opened| opened.agent.definition.id == agent_id);
+    tracing::debug!(
+        agent_id,
+        opened = opened.is_some(),
+        "[host_agents] open missing host agent"
+    );
+    opened
 }
 
 #[cfg(test)]

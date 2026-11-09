@@ -1,4 +1,10 @@
 //! Test-only agent definitions used by harness and orchestration tests.
+//!
+//! The authoritative built-in list lives in
+//! [`crate::agent_registry::agents`]. Flow agent prompts are fetched from
+//! TinyFlows Copilot through the module bus; the test fixtures here let
+//! orchestration tests exercise those definitions without moving registry
+//! ownership into the agent harness.
 
 use crate::agent_registry::host_definition::AgentDefinition;
 use tinyagents_definition::DefinitionSource;
@@ -56,7 +62,7 @@ pub(crate) fn test_main_def() -> AgentDefinition {
 /// prompt. Inherit means the runner uses `parent.provider` verbatim,
 /// so a test's scripted `MockProvider` reaches the sub-agent loop —
 /// which is exactly what the full-path spawn test needs to assert the
-/// dispatch → run_subagent → result-threading chain end to end.
+/// dispatch → detached child execution → result-threading chain end to end.
 /// Provider *routing* for `Hint` sub-agents is covered separately by
 /// `subagent_host::ops::tests::resolve_subagent_source_*`.
 #[cfg(test)]

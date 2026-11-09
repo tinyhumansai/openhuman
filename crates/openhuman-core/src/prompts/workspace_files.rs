@@ -258,3 +258,7 @@ pub fn default_workspace_file_content(filename: &str) -> &'static str {
         _ => "",
     }
 }
+
+#[cfg(test)]
+#[path = "workspace_files_tests.rs"]
+mod tests;

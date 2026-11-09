@@ -1,10 +1,18 @@
 use super::*;
 use crate::config::Config;
-use crate::storage::{MemoryStorage, Scope, StorageBackend};
+use crate::storage::state_kv::StateKv;
+use crate::storage::test_support::memory_backend;
+use crate::storage::Scope;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-fn docs_in(storage: &MemoryStorage, scope: &str) -> Docs {
-    Docs::over(&storage.for_scope(&Scope::new(scope).unwrap()).unwrap())
+fn docs_in(storage: &Arc<dyn crate::storage::StorageBackend>, scope: &Scope) -> Docs {
+    Docs::over(&storage.for_scope(scope).unwrap())
+}
+
+fn local_docs() -> Docs {
+    let storage = memory_backend();
+    docs_in(&storage, &Scope::local())
 }
 
 fn path() -> &'static str {
@@ -13,15 +21,13 @@ fn path() -> &'static str {
 
 #[test]
 fn a_missing_file_loads_the_default() {
-    let loaded: BTreeMap<String, u32> = docs_in(&MemoryStorage::new(), "local")
-        .load(path())
-        .unwrap();
+    let loaded: BTreeMap<String, u32> = local_docs().load(path()).unwrap();
     assert!(loaded.is_empty());
 }
 
 #[test]
 fn save_then_load_round_trips_by_file_name() {
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let docs = local_docs();
     let mut value = BTreeMap::new();
     value.insert("gmail".to_string(), 3u32);
     docs.save(path(), &value).unwrap();
@@ -33,18 +39,22 @@ fn save_then_load_round_trips_by_file_name() {
 
 #[test]
 fn scopes_do_not_see_each_others_state() {
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let mut value = BTreeMap::new();
     value.insert("gmail".to_string(), 1u32);
-    docs_in(&storage, "alice").save(path(), &value).unwrap();
-    let bob: BTreeMap<String, u32> = docs_in(&storage, "bob").load(path()).unwrap();
+    docs_in(&storage, &Scope::tenant("alice").unwrap())
+        .save(path(), &value)
+        .unwrap();
+    let bob: BTreeMap<String, u32> = docs_in(&storage, &Scope::tenant("bob").unwrap())
+        .load(path())
+        .unwrap();
     assert!(bob.is_empty());
 }
 
 #[tokio::test]
 async fn the_file_store_dispatches_to_documents_when_a_backend_is_pinned() {
-    let storage = MemoryStorage::new();
-    let docs = docs_in(&storage, "local");
+    let storage = memory_backend();
+    let docs = docs_in(&storage, &Scope::local());
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
         workspace_dir: dir.path().to_path_buf(),
@@ -76,7 +86,7 @@ async fn the_file_store_dispatches_to_documents_when_a_backend_is_pinned() {
 
 #[test]
 fn update_creates_applies_and_skips_unchanged() {
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let docs = local_docs();
     let added = docs
         .update(path(), |v: &mut BTreeMap<String, u32>| {
             v.insert("gmail".into(), 1);
@@ -94,7 +104,7 @@ fn update_creates_applies_and_skips_unchanged() {
 
 #[test]
 fn concurrent_updates_do_not_lose_each_other() {
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let docs = local_docs();
     let handles: Vec<_> = (0..8u32)
         .map(|n| {
             let docs = docs.clone();
@@ -116,8 +126,8 @@ fn concurrent_updates_do_not_lose_each_other() {
 
 #[test]
 fn values_are_tsd_kv_entries_that_kv_itself_reads_and_updates_in_place() {
-    let storage = MemoryStorage::new();
-    let docs = docs_in(&storage, "local");
+    let storage = memory_backend();
+    let docs = docs_in(&storage, &Scope::local());
     let mut value = BTreeMap::new();
     value.insert("gmail".to_string(), 1u32);
     docs.save(path(), &value).unwrap();
@@ -132,16 +142,15 @@ fn values_are_tsd_kv_entries_that_kv_itself_reads_and_updates_in_place() {
         .unwrap();
     assert_eq!(bumped, 2);
 
-    let scoped = storage.for_scope(&Scope::new("local").unwrap()).unwrap();
-    let kv = tinystoragedrivers::Kv::ns(scoped.documents(), "composio", "state").unwrap();
-    let read: Option<BTreeMap<String, u32>> =
-        crate::storage::block_on(async move { kv.get(path()).await }).unwrap();
+    let scoped = storage.for_scope(&Scope::local()).unwrap();
+    let kv = StateKv::over(&scoped, "composio", "state");
+    let read: Option<BTreeMap<String, u32>> = kv.get(path()).unwrap();
     assert_eq!(read.unwrap()["gmail"], 2);
 }
 
 #[test]
 fn an_unchanged_update_writes_nothing_and_returns_its_result() {
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let docs = local_docs();
     let seen = docs
         .update::<BTreeMap<String, u32>, usize>(path(), |map| (map.len(), false))
         .unwrap();
@@ -150,9 +159,11 @@ fn an_unchanged_update_writes_nothing_and_returns_its_result() {
     assert!(loaded.is_empty());
 }
 
+#[cfg(feature = "storage-sqlite")]
 #[test]
 fn the_import_marker_is_a_migrations_entry_and_stops_a_second_import() {
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let storage = crate::storage::test_support::sqlite_backend().unwrap();
+    let docs = Docs::on_backend(&storage.backend, &Scope::local()).unwrap();
     assert!(!docs.legacy_imported(path()).unwrap());
     assert!(docs
         .import_if_absent(path(), serde_json::json!({ "gmail": 5 }))
@@ -165,8 +176,8 @@ fn the_import_marker_is_a_migrations_entry_and_stops_a_second_import() {
 #[tokio::test]
 async fn v1_state_documents_move_into_kv_without_replacing_a_newer_value() {
     use tinystoragedrivers::Precondition;
-    let storage = MemoryStorage::new();
-    let scoped = storage.for_scope(&Scope::new("local").unwrap()).unwrap();
+    let storage = memory_backend();
+    let scoped = storage.for_scope(&Scope::local()).unwrap();
     let raw = scoped.documents();
     raw.ensure_collection(&tinystoragedrivers::CollectionSpec::new("composio_state"))
         .await
@@ -181,21 +192,16 @@ async fn v1_state_documents_move_into_kv_without_replacing_a_newer_value() {
         .await
         .unwrap();
     }
-    let kv = tinystoragedrivers::Kv::ns(raw, "composio", "state").unwrap();
-    for spec in tinystoragedrivers::primitives::collection_specs() {
-        raw.ensure_collection(&spec).await.unwrap();
-    }
-    kv.put("b.json", &serde_json::json!({ "n": 99 }))
-        .await
-        .unwrap();
+    let kv = StateKv::over(&scoped, "composio", "state");
+    kv.put("b.json", &serde_json::json!({ "n": 99 })).unwrap();
 
     assert_eq!(migrate_legacy_state(&scoped).await.unwrap(), 1);
     assert_eq!(
-        kv.get::<serde_json::Value>("a.json").await.unwrap(),
+        kv.get::<serde_json::Value>("a.json").unwrap(),
         Some(serde_json::json!({ "n": 1 }))
     );
     assert_eq!(
-        kv.get::<serde_json::Value>("b.json").await.unwrap(),
+        kv.get::<serde_json::Value>("b.json").unwrap(),
         Some(serde_json::json!({ "n": 99 })),
         "a value already in kv is newer"
     );

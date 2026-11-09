@@ -5,6 +5,8 @@
 
 #![allow(dead_code)]
 
+pub mod gated_provider;
+
 use openhuman_core::config::Config;
 use openhuman_core::core::runtime::{AGENT_WORKER_STACK_BYTES, MAX_BLOCKING_THREADS};
 use serde_json::json;
@@ -48,6 +50,10 @@ pub fn offline_config() -> Config {
     // but unrelated to these tests' contracts and would race the final
     // ephemeral-workspace cleanup assertion.
     config.memory.conversations.enabled = false;
+    // These tests use canned providers and do not exercise jailed tool
+    // execution. Avoid recursively inspecting host toolchain trees for local
+    // jail grants on every test turn.
+    config.runtime.local_jail.toolchain_homes = false;
     // Session-store dual writes and shadow reads are also deliberately
     // fire-and-forget; leaving them on makes their detached filesystem work
     // race the synchronous ephemeral cleanup.
@@ -55,6 +61,18 @@ pub fn offline_config() -> Config {
     config.agent.session_shadow_reads = false;
     config.default_temperature = 0.0;
     config
+}
+
+/// Install an isolated SQLite backend for tests that exercise atomic storage
+/// capabilities. The basic in-memory testkit intentionally advertises none.
+pub async fn install_sqlite_storage() -> tempfile::TempDir {
+    let directory = tempfile::tempdir().expect("SQLite storage directory");
+    let url = openhuman_core::storage::config::default_url(directory.path());
+    let backend = openhuman_core::storage::open(&url)
+        .await
+        .expect("SQLite test backend opens");
+    openhuman_core::storage::install(backend);
+    directory
 }
 
 /// Serve the tinyflows module (scheduler runtime, job store, schedule maths)
@@ -255,15 +273,30 @@ pub async fn eventually<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> 
 /// through the generic chat-model registry.
 pub struct PointedInference;
 
+struct PointedBearerSource(Config);
+
+#[async_trait::async_trait]
+impl tinyinference_llm::providers::BearerSource for PointedBearerSource {
+    async fn current(&self) -> tinyinference_llm::Result<Option<String>> {
+        openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential(
+            &self.0,
+        )
+        .await
+        .map(|credential| Some(credential.secret().to_string()))
+        .map_err(tinyinference_llm::Error::Model)
+    }
+}
+
 impl PointedInference {
     pub fn install(base_url: &str) {
         use openhuman_embed::__host::inference_registry::{
-            register_chat_model, ChatModelEntry, ChatModelRequest, PROVIDER_OPENHUMAN,
+            register_chat_model, ChatModelEntry, ChatModelRequest, ProviderContext,
+            ProviderModelMetadata, PROVIDER_OPENHUMAN,
         };
         use tinyinference_llm::providers::openai::OpenAiModel;
 
         let base_url = base_url.trim_end_matches('/').to_string();
-        let build = move |request: &ChatModelRequest<'_>| {
+        let build = move |request: &ChatModelRequest<'_, ProviderContext>| {
             let model = request
                 .model_override
                 .or(request.default_model)
@@ -271,12 +304,16 @@ impl PointedInference {
                 .to_string();
             // Like the hosted provider: the acting profile's own credential
             // rides as the bearer.
-            let token = openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential(request.config)
-                .map(|credential| credential.secret().to_string())
-                .map_err(anyhow::Error::msg)?;
-            let wire =
-                OpenAiModel::compatible_provider("EmbedTest", token, base_url.clone(), &model)
-                    .with_native_tool_calling(request.native_tool_calling);
+            let wire = OpenAiModel::compatible_provider(
+                "EmbedTest",
+                "unused-static-token",
+                base_url.clone(),
+                &model,
+            )
+            .with_bearer_source(std::sync::Arc::new(PointedBearerSource(
+                request.context.config.clone(),
+            )))
+            .with_native_tool_calling(request.native_tool_calling);
             let wire: std::sync::Arc<dyn tinyinference_llm::model::ChatModel<()>> =
                 std::sync::Arc::new(wire);
             Ok((wire, model))
@@ -286,6 +323,36 @@ impl PointedInference {
             ChatModelEntry {
                 build: std::sync::Arc::new(build),
                 probe: None,
+                models: Some(ProviderModelMetadata {
+                    default_model: std::sync::Arc::new(|| Some("embed-test-model".to_string())),
+                    role_for_model: std::sync::Arc::new(|_| None),
+                    is_alias: std::sync::Arc::new(|_| false),
+                    is_raw_model: std::sync::Arc::new(|model| {
+                        !model.trim().is_empty() && !model.starts_with("hint:")
+                    }),
+                    supports_vision: std::sync::Arc::new(|_| false),
+                    resolve_model: std::sync::Arc::new(|_, config, model| {
+                        model
+                            .map(str::trim)
+                            .filter(|model| !model.is_empty() && !model.starts_with("hint:"))
+                            .map(str::to_string)
+                            .or_else(|| {
+                                config
+                                    .config
+                                    .default_model
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|model| {
+                                        !model.is_empty() && !model.starts_with("hint:")
+                                    })
+                                    .map(str::to_string)
+                            })
+                            .or_else(|| Some("embed-test-model".to_string()))
+                    }),
+                    context_window: std::sync::Arc::new(|_| None),
+                    default_pricing: std::sync::Arc::new(|| None),
+                    without_reasoning: std::sync::Arc::new(|request| request),
+                }),
             },
         );
     }

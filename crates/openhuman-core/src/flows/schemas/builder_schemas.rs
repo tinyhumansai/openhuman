@@ -171,6 +171,11 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 ty: TypeSchema::Json,
                 comment: "The action contract: { slug, toolkit, description, required_args, input_schema, output_fields, output_schema, primary_array_path, is_curated }.",
                 required: true,
+            }, FieldSchema {
+                name: "runtime_gate",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "Present when this real action is outside the toolkit's curated runtime allowlist and will be rejected on every real run.",
+                required: false,
             }],
         }),
         "discover" => Some(ControllerSchema {

@@ -137,6 +137,16 @@ validate_linuxdeploy_appdir() {
     done < <(find "$appdir/apprun-hooks" -maxdepth 1 -type f -print0)
   fi
 
+  # The system-WebKit hook (#7652) must be installed with its version stamped,
+  # and sourced before every other hook so the bundled GTK hook cannot run first.
+  local webkit_hook="$appdir/apprun-hooks/$SYSTEM_WEBKIT_HOOK"
+  [ -f "$webkit_hook" ] \
+    || { runtime_validation_error "apprun-hooks/$SYSTEM_WEBKIT_HOOK is missing"; return 1; }
+  grep -q "^OPENHUMAN_BUNDLED_WEBKIT='libwebkit2gtk-4.1.so.0\." "$webkit_hook" \
+    || { runtime_validation_error "apprun-hooks/$SYSTEM_WEBKIT_HOOK has no bundled WebKit version stamped"; return 1; }
+  [ "$(grep -m 1 '^source .*apprun-hooks/' "$apprun")" = "source \"\$this_dir\"/apprun-hooks/\"$SYSTEM_WEBKIT_HOOK\"" ] \
+    || { runtime_validation_error "AppRun does not source $SYSTEM_WEBKIT_HOOK before the other hooks"; return 1; }
+
   local desktop_count
   desktop_count="$(find "$appdir/usr/share/applications" -maxdepth 1 -name '*.desktop' 2>/dev/null | wc -l | tr -d ' ')"
   [ "$desktop_count" = "1" ] \
@@ -483,7 +493,7 @@ smoke_extracted_apprun() {
     return 1
   fi
 
-  grep -Ei 'loader|loading|cef|startup|started|ready' "$log_file" \
+  grep -Ei 'loader|loading|webkit|startup|started|ready' "$log_file" \
     | sed 's/^/[appimage-runtime]   /' \
     || true
   echo "[appimage-runtime] Application remained alive for the 15-second startup window"
@@ -527,7 +537,21 @@ validate_final_appimage() (
   validate_extracted_appdir "$appdir" || return 1
 
   if [ "${APPIMAGE_RUNTIME_SMOKE:-0}" = "1" ]; then
-    smoke_extracted_apprun "$appdir" "$foreign_cwd" "$smoke_log" || return 1
+    # On the runner the host WebKit matches the bundled one, so the default run
+    # takes the system-WebKit hook path (#7652). Smoke the bundled path as well,
+    # because hosts without webkit2gtk-4.1 still take it.
+    local host_notice='[openhuman] using host WebKitGTK from '
+    OPENHUMAN_APPIMAGE_WEBKIT= \
+      smoke_extracted_apprun "$appdir" "$foreign_cwd" "$smoke_log" || return 1
+    grep -Fq "$host_notice" "$smoke_log" \
+      || { runtime_validation_error "default smoke did not select the host WebKitGTK"; return 1; }
+    echo "[appimage-runtime] Smoking again with OPENHUMAN_APPIMAGE_WEBKIT=bundled"
+    OPENHUMAN_APPIMAGE_WEBKIT=bundled \
+      smoke_extracted_apprun "$appdir" "$foreign_cwd" "$smoke_log" || return 1
+    if grep -Fq "$host_notice" "$smoke_log"; then
+      runtime_validation_error "OPENHUMAN_APPIMAGE_WEBKIT=bundled smoke still selected the host WebKitGTK"
+      return 1
+    fi
   else
     echo "[appimage-runtime] Static validation complete; executable smoke disabled for this architecture"
   fi

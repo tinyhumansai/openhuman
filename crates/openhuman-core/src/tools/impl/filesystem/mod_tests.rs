@@ -5,10 +5,10 @@
 use super::gate::security_scoped_to_root;
 use crate::security::policy::TrustedAccess;
 use crate::security::SecurityPolicy;
+use crate::tools::implementations::system::security_for_tool_context;
 use std::path::Path;
 use tinyagents_harness::context::{RunConfig, RunContext};
 use tinyagents_harness::tool::ToolExecutionContext;
-use tinytools::ToolRunContext;
 use tinytools::WorkspaceDescriptor;
 
 /// A run context carrying a workspace descriptor rooted at `root`, exactly as
@@ -17,20 +17,6 @@ fn tool_context_with_workspace(root: &Path) -> ToolExecutionContext {
     let ws = WorkspaceDescriptor::new(root.to_path_buf()).with_policy_id("test-descriptor");
     let ctx: RunContext = RunContext::new(RunConfig::new("test-run"), ()).with_workspace(ws);
     ToolExecutionContext::from_run_context(&ctx, tinyagents_harness::ids::CallId::new("test-call"))
-}
-
-/// The policy the tools validate against for a call: scoped to the run's
-/// workspace descriptor when there is one, otherwise untouched. This is what
-/// `tinytools_std::filesystem` does through `FsGate::scoped_to_workspace`.
-fn security_for_tool_context(
-    security: &SecurityPolicy,
-    context: Option<&dyn ToolRunContext>,
-    _tool: &str,
-) -> SecurityPolicy {
-    match context.and_then(|ctx| ctx.workspace()) {
-        Some(workspace) => security_scoped_to_root(security, &workspace.root),
-        None => security.clone(),
-    }
 }
 
 /// A policy whose `workspace_dir`/`action_dir` are the OpenHuman home — i.e. a
@@ -117,7 +103,7 @@ async fn always_forbidden_paths_under_a_granted_root_still_fail() {
     let home = tempfile::tempdir().expect("home");
     let project = tempfile::tempdir().expect("project");
     // `.ssh` is an unconditional credential store: a grant on its parent must
-    // never expose it (`SecurityPolicy::is_always_forbidden`).
+    // never expose it (TinySecurity's protected-path floor).
     let creds = project.path().join(".ssh");
     std::fs::create_dir(&creds).expect("creds dir");
     let key = creds.join("id_rsa");
@@ -207,4 +193,19 @@ fn descriptor_grant_is_read_write_and_additive() {
     let granted = scoped.trusted_roots.last().expect("granted root");
     assert_eq!(granted.path, project.path().to_string_lossy());
     assert_eq!(granted.access, TrustedAccess::ReadWrite);
+}
+
+#[test]
+fn system_and_filesystem_tools_share_workspace_scoped_policy() {
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let base = policy_rooted_at(home.path());
+    let ctx = tool_context_with_workspace(project.path());
+
+    let system = security_for_tool_context(&base, Some(&ctx), "shell");
+    let filesystem = security_scoped_to_root(&base, project.path());
+
+    assert_eq!(system.action_dir, filesystem.action_dir);
+    assert_eq!(system.trusted_roots, filesystem.trusted_roots);
+    assert_eq!(system.workspace_dir, filesystem.workspace_dir);
 }

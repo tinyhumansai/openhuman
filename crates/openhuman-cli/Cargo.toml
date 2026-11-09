@@ -49,6 +49,10 @@ path = "src/bin/fleet.rs"
 # (no `http-server`) this target is skipped rather than failing to link.
 required-features = ["http-server", "bin-tools"]
 
+[[example]]
+name = "thread_wire_schema"
+path = "../../examples/thread_wire_schema.rs"
+
 # The benchmark and profiling binaries (`library-profile`, `rss-bench`,
 # `tool-search-bench`, `tool-dialect-bench`) and their driver scripts live in
 # tinyhumansai/openhuman-benchmarks (`profile/`), which builds them against a
@@ -79,16 +83,87 @@ name = "storage_schema_dump"
 path = "../../examples/storage_schema_dump.rs"
 
 [[test]]
-# Loads the tinydocs module from the linked executable and calls GenerateDocx
-# end to end. Local only: needs `--features linked-modules,documents`.
+name = "security_native_fixture"
+path = "../../tests/security_native_fixture.rs"
+required-features = ["security-module"]
+
+[[test]]
+# TinyComputer end to end with its staged release (TS-E2E-010); each test runs
+# by exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_tinycomputer"
+path = "../../tests/ts_e2e_tinycomputer.rs"
+required-features = ["security-module"]
+
+[[test]]
+# TinyComputer under LocalOnly with its staged release (TS-E2E-011); runs by
+# exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_computer_privacy"
+path = "../../tests/ts_e2e_computer_privacy.rs"
+required-features = ["security-module"]
+
+[[test]]
+# Which command hooks the host runs, with the staged TinySecurity release
+# (TS-E2E-019); runs by exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_hooks"
+path = "../../tests/ts_e2e_hooks.rs"
+required-features = ["security-module"]
+
+[[test]]
+# Host callbacks called by a peer that is not their module (TS-E2E-012); runs
+# by exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_callback_owner"
+path = "../../tests/ts_e2e_callback_owner.rs"
+required-features = ["inbound-queues", "security-module", "web3"]
+
+[[test]]
+# TinySecurity from a pinned release (no local-file source) serves later loads.
+name = "security_release_reuse_fixture"
+path = "../../tests/security_release_reuse_fixture.rs"
+required-features = ["security-module"]
+
+[[test]]
+# Callback-bound modules from a pinned release (no local-file source) load and reload.
+name = "callback_module_release_fixture"
+path = "../../tests/callback_module_release_fixture.rs"
+required-features = ["security-module"]
+
+[[test]]
+# Desktop sign-in stores its token through TinySecurity's OS keyring after approval.
+name = "desktop_sign_in_fixture"
+path = "../../tests/desktop_sign_in_fixture.rs"
+required-features = ["security-module"]
+
+[[test]]
+# Loads tinydocs from the linked executable and calls GenerateDocx end to end.
+# `scripts/test-rust-e2e.sh --suite tinydocs_linked_e2e` enables its local-only
+# `linked-modules,documents` feature requirements explicitly.
 name = "tinydocs_linked_e2e"
 path = "../../tests/tinydocs_linked_e2e.rs"
 required-features = ["linked-modules", "documents"]
 
 [[test]]
+name = "inbound_module_e2e"
+path = "../../tests/inbound_module_e2e.rs"
+required-features = ["modules", "inbound-queues", "e2e-test-support"]
+
+[[test]]
 name = "tinysearch_module_e2e"
 path = "../../tests/tinysearch_module_e2e.rs"
 required-features = ["modules"]
+
+[[test]]
+# Manually runs the normal host prompt path against a caller-supplied published
+# TinyFlows native module library; see the test's module-level instructions.
+name = "tinyflows_published_prompt_e2e"
+path = "../../tests/tinyflows_published_prompt_e2e.rs"
+required-features = ["flows"]
+
+[[test]]
+# Runs the checksum-verified published TinyFlows module through host Runs,
+# CapsHost, and scoped CatalogStorage adapters.
+name = "tinyflows_published_runs_e2e"
+path = "../../tests/tinyflows_published_runs_e2e.rs"
+required-features = ["flows"]
 
 [[test]]
 # Reproduction of the removed spend cap: needs its own process because the
@@ -104,14 +179,7 @@ name = "cost_report_e2e"
 path = "../../tests/cost_report_e2e.rs"
 
 [[test]]
-# Installs a backend into the process-wide storage slot, so it needs its own
-# process: in a shared one it would reroute other suites' approvals.
-name = "storage_approvals_e2e"
-path = "../../tests/storage_approvals_e2e.rs"
-
-[[test]]
-# Its own binary for the same reason as storage_approvals_e2e: it installs a
-# storage backend into the process-wide slot.
+# Its own binary because it installs a storage backend into the process-wide slot.
 name = "storage_domains_e2e"
 path = "../../tests/storage_domains_e2e.rs"
 
@@ -126,6 +194,13 @@ name = "storage_flows_e2e"
 path = "../../tests/storage_flows_e2e.rs"
 
 [[test]]
+# Starts with no configured backend to exercise TinyFlows' workspace fallback
+# in an isolated module runtime.
+name = "storage_flows_fallback_e2e"
+path = "../../tests/storage_flows_fallback_e2e.rs"
+required-features = ["flows", "modules", "linked-modules", "storage-sqlite"]
+
+[[test]]
 # Its own binary: it installs a storage backend into the process-wide slot and
 # sets the keyring master-key environment.
 name = "storage_secrets_e2e"
@@ -138,19 +213,32 @@ name = "storage_scope_e2e"
 path = "../../tests/storage_scope_e2e.rs"
 
 [[test]]
+name = "native_channel_session_restart_e2e"
+path = "../../tests/native_channel_session_restart_e2e.rs"
+# Boots the CLI's real native Telegram listener via a compiled TinyBus artifact.
+required-features = ["modules", "inference", "channels", "storage-sqlite"]
+
+[[test]]
 # Its own binary: two agents on one backend keep cron jobs and flows apart.
 name = "storage_agent_scopes_e2e"
 path = "../../tests/storage_agent_scopes_e2e.rs"
 
 [[test]]
-# Its own binary: the delegation graph's checkpointer on every driver.
-name = "storage_delegation_e2e"
-path = "../../tests/storage_delegation_e2e.rs"
+# Its own binary: one live agent's pass leaves the others' due jobs alone.
+name = "cron_agent_pass_e2e"
+path = "../../tests/cron_agent_pass_e2e.rs"
 
 [[test]]
 # Its own binary: it boots a core with `[components]` switches off.
 name = "components_e2e"
 path = "../../tests/components_e2e.rs"
+
+[[test]]
+# Boots a signed-in profile through the desktop host's storage migration and
+# reads its historical records through their owning domains.
+name = "storage_legacy_profile_boot_e2e"
+path = "../../tests/storage_legacy_profile_boot_e2e.rs"
+required-features = ["storage-sqlite", "modules", "flows", "linked-modules"]
 
 [[test]]
 name = "embedded_server_shutdown_e2e"
@@ -189,15 +277,91 @@ path = "../../tests/memory_v2_e2e.rs"
 name = "memory_cortexdb_live"
 path = "../../tests/memory_cortexdb_live.rs"
 # Memory v2 through the real `openhuman-core` binary against a live CortexDB.
-# Skips unless OPENHUMAN_LIVE_CORTEXDB_URL is set; run it with
-# scripts/test-memory-cortexdb-live.sh, which boots the server in Docker.
+# Explicitly ignored; run it with scripts/test-memory-cortexdb-live.sh, which
+# boots the server in Docker and sets OPENHUMAN_LIVE_CORTEXDB_URL.
 
 [[test]]
-name = "json_rpc_e2e"
-path = "../../tests/json_rpc_e2e.rs"
-# `openhuman_tinyhumans::voice::reply_speech::{test_seam, TEST_SEAM_ENV}` — the
-# reply-speech seam only exists with the voice feature (hosted TTS provider).
+name = "json_rpc_threads_e2e"
+path = "../../tests/json_rpc_threads_e2e.rs"
 required-features = ["voice", "http-server"]
+
+[[test]]
+name = "json_rpc_wallet_e2e"
+path = "../../tests/json_rpc_wallet_e2e.rs"
+required-features = ["voice", "http-server"]
+
+[[test]]
+name = "json_rpc_flows_e2e"
+path = "../../tests/json_rpc_flows_e2e.rs"
+required-features = ["voice", "http-server"]
+
+[[test]]
+# Chat → orchestrator → async workflow_builder → delivered proposal → saves.
+# Its own binary: it initialises the bus and the default core context, which
+# are process-wide.
+name = "json_rpc_flows_builder_chat_e2e"
+path = "../../tests/json_rpc_flows_builder_chat_e2e.rs"
+required-features = ["flows", "http-server"]
+
+[[test]]
+name = "json_rpc_mcp_e2e"
+path = "../../tests/json_rpc_mcp_e2e.rs"
+required-features = ["voice", "http-server"]
+
+[[test]]
+name = "json_rpc_inference_e2e"
+path = "../../tests/json_rpc_inference_e2e.rs"
+required-features = ["voice", "http-server"]
+
+[[test]]
+name = "json_rpc_auth_security_e2e"
+path = "../../tests/json_rpc_auth_security_e2e.rs"
+required-features = ["voice", "http-server"]
+
+[[test]]
+name = "json_rpc_config_e2e"
+path = "../../tests/json_rpc_config_e2e.rs"
+required-features = ["voice", "http-server"]
+
+[[test]]
+name = "json_rpc_agent_team_e2e"
+path = "../../tests/json_rpc_agent_team_e2e.rs"
+required-features = ["voice", "http-server"]
+
+[[test]]
+name = "json_rpc_web_chat_e2e"
+path = "../../tests/json_rpc_web_chat_e2e.rs"
+required-features = ["voice", "http-server"]
+
+[[test]]
+name = "json_rpc_misc_e2e"
+path = "../../tests/json_rpc_misc_e2e.rs"
+required-features = ["voice", "http-server"]
+
+[[test]]
+name = "security_characterization_e2e"
+path = "../../tests/security_characterization_e2e.rs"
+required-features = ["voice", "http-server"]
+
+[[test]]
+name = "security_policy_characterization"
+path = "../../tests/security_policy_characterization.rs"
+
+[[test]]
+name = "security_approval_characterization"
+path = "../../tests/security_approval_characterization.rs"
+
+[[test]]
+name = "security_redaction_characterization"
+path = "../../tests/security_redaction_characterization.rs"
+
+[[test]]
+name = "security_sandbox_characterization"
+path = "../../tests/security_sandbox_characterization.rs"
+
+[[test]]
+name = "security_keyring_fixture"
+path = "../../tests/security_keyring_fixture.rs"
 
 [[test]]
 name = "raw_coverage_all"
@@ -228,6 +392,10 @@ name = "cli_sigpipe"
 path = "../../tests/cli_sigpipe.rs"
 
 [[test]]
+name = "cli_agent_chat_headless_e2e"
+path = "../../tests/cli_agent_chat_headless_e2e.rs"
+
+[[test]]
 name = "cli_storage_url_e2e"
 path = "../../tests/cli_storage_url_e2e.rs"
 
@@ -251,7 +419,7 @@ required-features = ["voice", "http-server"]
 # installs a storage backend into the process-wide slot.
 name = "storage_desktop_upgrade_e2e"
 path = "../../tests/storage_desktop_upgrade_e2e.rs"
-required-features = ["storage-sqlite", "modules"]
+required-features = ["storage-sqlite", "modules", "flows", "linked-modules"]
 
 [[test]]
 # The released TinyMCP cdylib under the real host: add a server, restart the
@@ -361,26 +529,36 @@ uuid = { version = "1", features = ["v4"] }
 # the library crates' own manifests (`default-features = false`; the gates come
 # from this crate's features through `openhuman-rpc`), so the dev graphs unify
 # and `cargo test -p` reuses one core build.
-openhuman-core = { path = "../openhuman-core", package = "openhuman", default-features = false }
+# `test-keyring-consent` answers the credential store's keyring prompts in the
+# in-process tests; dev-dependency features never reach the shipped binary.
+openhuman-core = { path = "../openhuman-core", package = "openhuman", default-features = false, features = ["test-keyring-consent"] }
 openhuman-embed = { workspace = true }
 openhuman-tinyhumans = { workspace = true }
-aes-gcm = "0.10"
+tinymemory-tools = { path = "../../vendor/tinymemory/crates/tinymemory-tools" }
 async-trait = "0.1"
+aes-gcm = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 tinyinference-llm = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
 # The document-port contract for failure injection in cron storage regressions.
-tinystoragedrivers-core = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v1.0.0" }
+tinystoragedrivers-api = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039" }
+tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", default-features = false, features = ["sqlite"] }
+# The in-memory host storage backend the integration suites install.
+tinystoragedrivers-testkit = { path = "../../vendor/tinystoragedrivers/crates/tinystoragedrivers-testkit" }
+zeroize = "1"
 tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }
-tinytools-std = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 # The completion log a detached sub-agent leaves, for the SaaS delivery-recovery e2e.
 tinyagents-tasks = { path = "../../vendor/tinyagents/crates/tinyagents-tasks" }
+# The storage-kit backend port the completion-queue fixture adapts the host backend to.
+tinyagents-storage-kit = { path = "../../vendor/tinyagents/crates/tinyagents-storage-kit" }
+tinyagents-harness-tools = { path = "../../vendor/tinyagents/crates/tinyagents-harness-tools", default-features = false, features = ["goals"] }
 toml = "1.0"
 tracing = "0.1"
 # The TinyComputer contract, for the live computer-use e2e (`computer_bali_live_e2e`).
 tinycomputer-bus = { path = "../../vendor/tinycomputer/crates/tinycomputer-bus" }
+tinysecurity-bus = { path = "../../vendor/tinysecurity/crates/tinysecurity-bus" }
 # sentry's TestTransport for the observability before_send smoke tests;
 # `default-features = false` keeps actix out of the graph (see the core manifest).
 sentry = { version = "0.47.0", default-features = false, features = ["test"] }
@@ -391,14 +569,16 @@ hex = "0.4"
 parking_lot = "0.12"
 sha2 = "0.10"
 tar = "0.4"
-tinyagents-graph = { path = "../../vendor/tinyagents/crates/tinyagents-graph", features = ["sqlite", "storage-drivers"] }
 tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", features = ["sqlite", "multimodal"] }
 tinyagents-definition = { path = "../../vendor/tinyagents/crates/tinyagents-definition" }
-tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session" }
+tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session", features = ["testkit"] }
 tinydocs-bus = { path = "../../vendor/tinydocs/crates/tinydocs-bus" }
+# `inbound_module_e2e` loads the staged TinyEventQueues release and names its
+# ingest dispositions from the contract.
+tinyeventqueues-bus = { path = "../../vendor/tinyeventqueues/crates/tinyeventqueues-bus" }
 tinysearch-bus = { path = "../../vendor/tinysearch/crates/tinysearch-bus" }
 tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false, features = ["macros", "uds"] }
-tinychannels = { version = "0.1", features = ["relay-websocket", "email"] }
+tinychannels = { version = "0.2", features = ["email"] }
 tinyinference-core = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-core" }
 tinyinference-local = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-local" }
 tinyinference-voice = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-voice" }
@@ -433,8 +613,11 @@ default = [
     "file-logging",
     "modules",
     "jev",
-    "tinymemes",
+    "inbound-queues",
     "storage-sqlite",
+    "storage-file",
+    "secret-file",
+    "legacy-import",
 ]
 # Every gate forwards to `openhuman-rpc` alone (chain: rpc -> tinyhumans ->
 # embed -> core); `scripts/ci/check-feature-forwarding.mjs` checks the link.
@@ -444,8 +627,9 @@ http-server = ["openhuman-rpc/http-server"]
 inference = ["openhuman-rpc/inference"]
 documents = ["openhuman-rpc/documents"]
 hosting = ["openhuman-rpc/hosting"]
-tinymemes = ["openhuman-rpc/tinymemes"]
+inbound-queues = ["openhuman-rpc/inbound-queues"]
 modules = ["openhuman-rpc/modules"]
+security-module = ["openhuman-rpc/security-module"]
 voice = ["openhuman-rpc/voice"]
 web3 = ["openhuman-rpc/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).
@@ -453,12 +637,14 @@ storage-sqlite = ["openhuman-rpc/storage-sqlite"]
 storage-mongodb = ["openhuman-rpc/storage-mongodb"]
 storage-s3 = ["openhuman-rpc/storage-s3"]
 storage-file = ["openhuman-rpc/storage-file"]
+storage-rabbitmq = ["openhuman-rpc/storage-rabbitmq"]
+secret-file = ["openhuman-rpc/secret-file"]
+legacy-import = ["openhuman-rpc/legacy-import"]
 media = ["openhuman-rpc/media"]
 flows = ["openhuman-rpc/flows"]
 skills = ["openhuman-rpc/skills"]
 mcp = ["openhuman-rpc/mcp"]
 channels = ["openhuman-rpc/channels"]
-whatsapp-web = ["openhuman-rpc/whatsapp-web"]
 e2e-test-support = ["openhuman-rpc/e2e-test-support"]
 file-logging = ["openhuman-rpc/file-logging"]
 scheduler-gate = ["openhuman-rpc/scheduler-gate"]
@@ -478,5 +664,18 @@ linked-modules = ["modules", "dep:openhuman-modules-linked"]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 
 [[test]]
+name = "doctor_e2e"
+path = "../../tests/doctor_e2e.rs"
+
+[[test]]
 name = "embeddings_opt_out"
 path = "../../tests/embeddings_opt_out.rs"
+
+[[test]]
+name = "storage_backend_capabilities"
+path = "../../tests/storage_backend_capabilities.rs"
+required-features = ["storage-sqlite"]
+
+[[test]]
+name = "security_bus_latency_baseline"
+path = "../../tests/security_bus_latency_baseline.rs"

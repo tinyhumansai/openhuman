@@ -1,8 +1,8 @@
-//! Static MCP resource catalog for bundled prompt assets.
+//! MCP resource catalog for bundled and module-owned prompt assets.
 //!
-//! Exposes `IDENTITY.md`, `SOUL.md`, `USER.md` and the `prompt.md` template
-//! for each built-in subagent as MCP resources. The content is
-//! embedded at compile time via `include_str!`.
+//! Static prompt assets are embedded at compile time via `include_str!`.
+//! The two TinyFlows archetypes are read through Copilot's `GetPrompt` bus
+//! method using the current dispatch config.
 //!
 //! ## URI scheme
 //!
@@ -11,13 +11,12 @@
 //! | `IDENTITY.md`       | `openhuman://prompts/identity`           |
 //! | `SOUL.md`           | `openhuman://prompts/soul`               |
 //! | `USER.md`           | `openhuman://prompts/user`               |
-//! | `<id>/prompt.md`    | `openhuman://prompts/agents/<id>`        |
+//! | Agent archetype    | `openhuman://prompts/agents/<id>`        |
 //!
 //! ## Catalog parity
 //!
-//! The unit test `catalog_mirrors_builtins` cross-references this catalog
-//! against `BUILTINS` in `loader.rs`. Adding a new built-in subagent without
-//! a matching catalog entry fails that test and therefore CI.
+//! The unit test `catalog_mirrors_builtins` cross-references the exposed
+//! resources against `BUILTINS` in `loader.rs`.
 
 use serde_json::{json, Value};
 use tinymcp_bus::{ResourceSpec, ToolCallError};
@@ -58,18 +57,6 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         name: "orchestrator",
         description: "Chat-tier orchestrator that routes tasks to specialist subagents.",
         content: include_str!("../../agent_registry/agents/orchestrator/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/planner",
-        name: "planner",
-        description: "Read-only reasoning worker that decomposes and researches a question for workflow runs.",
-        content: include_str!("../../agent_registry/agents/planner/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/critic",
-        name: "critic",
-        description: "Read-only worker that cross-checks claims and reviews changes for workflow runs.",
-        content: include_str!("../../agent_registry/agents/critic/prompt.md"),
     },
     PromptResource {
         uri: "openhuman://prompts/agents/vision_agent",
@@ -125,20 +112,6 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         description: "Specialist worker for task-source feeds, workflow bundles, and artifacts.",
         content: include_str!("../../agent_registry/agents/task_manager_agent/prompt.md"),
     },
-    #[cfg(feature = "flows")]
-    PromptResource {
-        uri: "openhuman://prompts/agents/flow_discovery",
-        name: "flow_discovery",
-        description: "Flow Scout — read-only workflow discovery agent that suggests automations from memory, threads, and integrations.",
-        content: tinyflows_copilot::prompts::FLOW_DISCOVERY,
-    },
-    #[cfg(feature = "flows")]
-    PromptResource {
-        uri: "openhuman://prompts/agents/workflow_builder",
-        name: "workflow_builder",
-        description: "Workflow authoring specialist that builds tinyflows automation graphs and returns proposals for review.",
-        content: tinyflows_copilot::prompts::WORKFLOW_BUILDER,
-    },
     #[cfg(feature = "skills")]
     PromptResource {
         uri: "openhuman://prompts/agents/skill_setup",
@@ -158,6 +131,29 @@ pub fn resource_specs() -> Vec<ResourceSpec> {
                 .with_mime_type(MIME_TYPE)
         })
         .collect::<Vec<_>>();
+    #[cfg(feature = "flows")]
+    let resources = {
+        let mut resources = resources;
+        resources.extend([
+            ResourceSpec::new(
+                "openhuman://prompts/agents/flow_discovery",
+                "flow_discovery",
+            )
+            .with_description(
+                "Flow Scout — read-only workflow discovery agent that suggests automations from memory, threads, and integrations.",
+            )
+            .with_mime_type(MIME_TYPE),
+            ResourceSpec::new(
+                "openhuman://prompts/agents/workflow_builder",
+                "workflow_builder",
+            )
+            .with_description(
+                "Workflow authoring specialist that builds tinyflows automation graphs and returns proposals for review.",
+            )
+            .with_mime_type(MIME_TYPE),
+        ]);
+        resources
+    };
     log::debug!("[mcp_server] resources/list count={}", resources.len());
     resources
 }
@@ -165,7 +161,22 @@ pub fn resource_specs() -> Vec<ResourceSpec> {
 /// The `resources/read` result for `uri`, or
 /// [`ToolCallError::ResourceNotFound`] (`-32002`) when the catalog has no such
 /// entry. TinyMCP has already rejected a missing or blank `uri`.
-pub fn read_resource(uri: &str) -> Result<Value, ToolCallError> {
+pub async fn read_resource(
+    _ctx: &crate::core::runtime::DispatchCtx,
+    uri: &str,
+) -> Result<Value, ToolCallError> {
+    #[cfg(feature = "flows")]
+    if let Some(agent_id) = flow_prompt_agent_id(uri) {
+        let config = _ctx.load_config().await.map_err(|_| {
+            ToolCallError::Internal("TinyFlows prompt config is unavailable".into())
+        })?;
+        return read_flow_prompt(&config, uri, agent_id).await;
+    }
+
+    read_static_resource(uri)
+}
+
+fn read_static_resource(uri: &str) -> Result<Value, ToolCallError> {
     let resource = RESOURCE_CATALOG
         .iter()
         .find(|r| r.uri == uri)
@@ -179,13 +190,38 @@ pub fn read_resource(uri: &str) -> Result<Value, ToolCallError> {
         resource.content.len()
     );
 
-    Ok(json!({
+    Ok(resource_contents(uri, resource.content))
+}
+
+#[cfg(feature = "flows")]
+fn flow_prompt_agent_id(uri: &str) -> Option<&'static str> {
+    match uri {
+        "openhuman://prompts/agents/flow_discovery" => Some("flow_discovery"),
+        "openhuman://prompts/agents/workflow_builder" => Some("workflow_builder"),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "flows")]
+async fn read_flow_prompt(
+    config: &crate::config::Config,
+    uri: &str,
+    agent_id: &str,
+) -> Result<Value, ToolCallError> {
+    let text = crate::agent::prompts::flow_archetype::fetch_prompt(config, agent_id)
+        .await
+        .map_err(|_| ToolCallError::Internal("TinyFlows prompt is unavailable".into()))?;
+    Ok(resource_contents(uri, &text))
+}
+
+fn resource_contents(uri: &str, text: &str) -> Value {
+    json!({
         "contents": [{
-            "uri": resource.uri,
+            "uri": uri,
             "mimeType": MIME_TYPE,
-            "text": resource.content
+            "text": text
         }]
-    }))
+    })
 }
 
 #[cfg(test)]

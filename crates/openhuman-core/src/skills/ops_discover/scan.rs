@@ -9,6 +9,8 @@ use std::path::Path;
 
 use tinyskills::{discover_layout, LayoutQuery, RootKind};
 
+use super::api::DiscoveryGate;
+
 pub(super) use tinyskills::{ALL_ROOT_KINDS, WORKFLOW_ROOT_KINDS};
 
 use {tinyskills::Skill as Workflow, tinyskills::SkillScope as WorkflowScope};
@@ -22,7 +24,11 @@ pub(super) fn discover_filtered(
     workspace_dir: Option<&Path>,
     trusted: bool,
     kinds: &[RootKind],
+    gate: &DiscoveryGate,
+    flow_generation: Option<u64>,
 ) -> Vec<Workflow> {
+    #[cfg(not(feature = "flows"))]
+    let _ = (gate, flow_generation);
     tracing::debug!(
         trusted,
         has_home = home_dir.is_some(),
@@ -42,6 +48,18 @@ pub(super) fn discover_filtered(
         }
         _ => Vec::new(),
     };
+    #[cfg(feature = "flows")]
+    let mut builtin = builtin;
+    #[cfg(feature = "flows")]
+    if gate.flow_authoring_enabled() && kinds.contains(&RootKind::Skill) {
+        if let (Some(workspace), Some(generation)) = (workspace_dir, flow_generation) {
+            if let Some(flow_authoring) = crate::skills::bundled::flow_authoring::materialized_skill(
+                workspace, gate, generation,
+            ) {
+                builtin.push(flow_authoring);
+            }
+        }
+    }
 
     let extra_user_roots = workspace_dir
         .and_then(crate::skills::write_root::agent_skill_home)

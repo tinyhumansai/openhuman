@@ -1,18 +1,15 @@
 use super::*;
 
 #[test]
-fn defaults_match_issue_spec() {
-    let cfg = DashboardConfig::default();
-    assert!(cfg.event_stream.enabled);
-    assert_eq!(cfg.event_stream.max_entries, 200);
-    assert_eq!(cfg.event_stream.new_entries, "top");
-}
-
-#[test]
-fn deserialize_from_empty_json() {
-    let cfg: DashboardConfig = serde_json::from_value(serde_json::json!({})).unwrap();
-    assert!(cfg.event_stream.enabled);
-    assert_eq!(cfg.event_stream.max_entries, 200);
+fn construction_and_empty_json_preserve_event_stream_defaults() {
+    for cfg in [
+        DashboardConfig::default(),
+        serde_json::from_value(serde_json::json!({})).unwrap(),
+    ] {
+        assert!(cfg.event_stream.enabled);
+        assert_eq!(cfg.event_stream.max_entries, 200);
+        assert_eq!(cfg.event_stream.new_entries, "top");
+    }
 }
 
 #[test]

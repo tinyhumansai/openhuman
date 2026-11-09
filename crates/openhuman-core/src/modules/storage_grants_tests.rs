@@ -8,6 +8,8 @@ fn grant() -> StorageGrant {
         blob_prefixes: vec!["files/".into()],
         secret_prefixes: vec!["token.".into()],
         writable: true,
+        queues: None,
+        queue_backend: None,
     }
 }
 
@@ -131,8 +133,9 @@ fn an_object_the_grant_does_not_hold_is_refused() {
 
 #[test]
 fn capabilities_are_answered_for_an_object_the_grant_does_not_hold() {
-    // The module's client probes every object's capabilities when it connects
-    // (tinymcp 0.18.0 holds no blobs); refusing the probe left it without storage.
+    // The module's client probes all six objects when it connects; refusing a
+    // capability probe leaves it without storage, even if the object itself
+    // is not granted.
     let documents_only = StorageGrant {
         collections: vec![CollectionSpec::new("notes")],
         writable: true,
@@ -146,6 +149,14 @@ fn capabilities_are_answered_for_an_object_the_grant_does_not_hold() {
             "max_key_len": 0,
         })))
     );
+    assert_eq!(
+        authorize(&documents_only, Object::Streams, "Capabilities", &json!({})),
+        Ok(Plan::Answer(json!({ "capabilities": [] })))
+    );
+    assert_eq!(
+        authorize(&documents_only, Object::Secrets, "Capabilities", &json!({})),
+        Ok(Plan::Answer(json!({ "enumerable": false })))
+    );
     // Anything else on that object is still refused.
     assert_eq!(
         authorize(
@@ -153,6 +164,24 @@ fn capabilities_are_answered_for_an_object_the_grant_does_not_hold() {
             Object::Blobs,
             "Head",
             &json!({"key": "files/a"})
+        ),
+        Err(Denied::Object)
+    );
+    assert_eq!(
+        authorize(
+            &documents_only,
+            Object::Streams,
+            "Len",
+            &json!({ "stream": "x" })
+        ),
+        Err(Denied::Object)
+    );
+    assert_eq!(
+        authorize(
+            &documents_only,
+            Object::Secrets,
+            "Get",
+            &json!({ "name": "x" })
         ),
         Err(Denied::Object)
     );
@@ -396,6 +425,7 @@ fn only_modules_with_a_declared_grant_have_storage() {
                     | "tinychannels"
                     | "tinyconnectors"
                     | "tinywallet"
+                    | "tinyeventqueues"
                     | "tinybox"
                     | "tinyjuice"
             ),
@@ -455,11 +485,12 @@ fn only_mutating_selectors_ask_for_the_write_fence() {
 #[test]
 fn the_write_selectors_track_the_contract_selector_sets() {
     use tinystoragedrivers_bus as wire;
-    let all: [(Object, &[&str]); 4] = [
+    let all: [(Object, &[&str]); 5] = [
         (Object::Documents, &wire::DOCUMENTS_SELECTORS),
         (Object::Streams, &wire::STREAMS_SELECTORS),
         (Object::Blobs, &wire::BLOBS_SELECTORS),
         (Object::Secrets, &wire::SECRETS_SELECTORS),
+        (Object::Queues, &wire::QUEUES_SELECTORS),
     ];
     let mut writes: Vec<String> = Vec::new();
     for (object, selectors) in all {
@@ -485,13 +516,113 @@ fn the_write_selectors_track_the_contract_selector_sets() {
             "Documents.Delete",
             "Documents.DeleteWhere",
             "Documents.Put",
+            "Queues.Ack",
+            "Queues.Enqueue",
+            "Queues.EnsureQueue",
+            "Queues.Extend",
+            "Queues.Nack",
+            "Queues.Purge",
+            "Queues.Receive",
+            "Queues.Redrive",
             "Secrets.Delete",
             "Secrets.Set",
+            "Secrets.SetIf",
             "Streams.Append",
             "Streams.AppendBatch",
             "Streams.AppendBatchIfOffset",
             "Streams.DeleteStream",
+            "Streams.Seal",
             "Streams.TruncateBefore",
         ]
     );
+}
+
+/// The inbound event queues' grant is derived from their contract schema
+/// (the `teq.*` collections, with indexes) and carries the configured queue
+/// manifest, so the module can use both documents and queues.
+#[cfg(feature = "inbound-queues")]
+#[test]
+fn the_event_queues_grant_carries_their_collections_and_queues() {
+    let grant = declared("tinyeventqueues").expect("a grant");
+    assert!(grant.validate().is_ok());
+    assert_eq!(
+        grant.collections,
+        crate::storage::schema::event_queue_collection_specs()
+    );
+    let manifest = grant.queues.expect("a queue manifest");
+    assert!(manifest.get("teq.ingress").is_some());
+    assert_eq!(
+        grant.queue_backend,
+        Some(tinystoragedrivers::QueueConfig::Storage)
+    );
+}
+
+#[test]
+fn every_selector_of_a_granted_object_is_decided_rather_than_refused_as_malformed() {
+    // The module's storage client probes `Capabilities` on every object it was
+    // granted, and reads and writes through the selectors the wire contract
+    // added after the grant table was written. A selector that is part of the
+    // contract must reach the grant check, never fall through as malformed.
+    let g = grant();
+    for (object, selector, request) in [
+        (Object::Streams, "Capabilities", json!({})),
+        (Object::Streams, "Info", json!({"stream": "log/a"})),
+        (Object::Streams, "Seal", json!({"stream": "log/a"})),
+        (Object::Secrets, "Capabilities", json!({})),
+        (Object::Secrets, "GetVersioned", json!({"name": "token.a"})),
+        (Object::Secrets, "SetIf", json!({"name": "token.a"})),
+        (Object::Blobs, "ListPage", json!({"prefix": "files/"})),
+    ] {
+        assert!(
+            authorize(&g, object, selector, &request).is_ok(),
+            "{object:?} {selector}"
+        );
+    }
+}
+
+#[test]
+fn the_selectors_added_to_the_wire_keep_the_grants_prefixes_and_read_only_rule() {
+    assert_eq!(
+        authorize(
+            &grant(),
+            Object::Streams,
+            "Seal",
+            &json!({"stream": "audit/a"})
+        ),
+        Err(Denied::Target)
+    );
+    assert_eq!(
+        authorize(
+            &grant(),
+            Object::Secrets,
+            "SetIf",
+            &json!({"name": "other.a"})
+        ),
+        Err(Denied::Target)
+    );
+    assert_eq!(
+        authorize(
+            &read_only(),
+            Object::Streams,
+            "Seal",
+            &json!({"stream": "log/a"})
+        ),
+        Err(Denied::ReadOnly)
+    );
+    assert_eq!(
+        authorize(
+            &read_only(),
+            Object::Secrets,
+            "SetIf",
+            &json!({"name": "token.a"})
+        ),
+        Err(Denied::ReadOnly)
+    );
+    assert!(authorize(
+        &read_only(),
+        Object::Streams,
+        "Info",
+        &json!({"stream": "log/a"})
+    )
+    .is_ok());
 }

@@ -57,9 +57,6 @@
 [submodule "vendor/tinysearch"]
 	path = vendor/tinysearch
 	url = https://github.com/tinyhumansai/tinysearch.git
-[submodule "vendor/tinymemes"]
-	path = vendor/tinymemes
-	url = https://github.com/tinyhumansai/tinymemes.git
 [submodule "vendor/tinystoragedrivers"]
 	path = vendor/tinystoragedrivers
 	url = https://github.com/tinyhumansai/tinystoragedrivers.git
@@ -67,3 +64,11 @@
 [submodule "vendor/tiny-artifacts"]
 	path = vendor/tiny-artifacts
 	url = https://github.com/tinyhumansai/tiny-artifacts
+[submodule "vendor/tinyeventqueues"]
+	path = vendor/tinyeventqueues
+	url = https://github.com/tinyhumansai/tinyeventqueues
+	branch = main
+[submodule "vendor/tinysecurity"]
+	path = vendor/tinysecurity
+	url = https://github.com/tinyhumansai/tinysecurity.git
+	branch = main

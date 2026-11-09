@@ -265,3 +265,130 @@ async fn set_default_applies_to_the_live_proactive_handle() {
          process restarts (#3712)"
     );
 }
+
+fn channel_payload<'a>(value: &'a Value, context: &str) -> &'a Value {
+    let result = crate::rpc_harness::ok(value, context);
+    result
+        .get("data")
+        .or_else(|| result.get("result"))
+        .unwrap_or(result)
+}
+
+fn find_status_entry<'a>(entries: &'a [Value], channel: &str, auth_mode: &str) -> &'a Value {
+    entries
+        .iter()
+        .find(|entry| {
+            entry.get("channel_id").and_then(Value::as_str) == Some(channel)
+                && entry.get("auth_mode").and_then(Value::as_str) == Some(auth_mode)
+        })
+        .unwrap_or_else(|| panic!("missing status entry for {channel}/{auth_mode}: {entries:?}"))
+}
+
+#[tokio::test]
+async fn channels_imessage_config_only_connection_reports_status_and_disconnects() {
+    let _lock = env_lock_async().await;
+    let harness = setup().await;
+
+    let described = rpc(
+        &harness.rpc_base,
+        1,
+        "openhuman.channels_describe",
+        json!({ "channel": "imessage" }),
+    )
+    .await;
+    assert_eq!(
+        channel_payload(&described, "channels_describe")
+            .get("id")
+            .and_then(Value::as_str),
+        Some("imessage")
+    );
+
+    let baseline = rpc(
+        &harness.rpc_base,
+        2,
+        "openhuman.channels_status",
+        json!({ "channel": "imessage" }),
+    )
+    .await;
+    let baseline_entries = channel_payload(&baseline, "channels_status baseline")
+        .as_array()
+        .expect("status entries");
+    assert_eq!(
+        find_status_entry(baseline_entries, "imessage", "managed_dm")
+            .get("connected")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let connected = rpc(
+        &harness.rpc_base,
+        3,
+        "openhuman.channels_connect",
+        json!({
+            "channel": "imessage",
+            "authMode": "managed_dm",
+            "credentials": { "allowed_contacts": "alice@example.com, +15550100" }
+        }),
+    )
+    .await;
+    assert_eq!(
+        channel_payload(&connected, "channels_connect imessage")
+            .get("status")
+            .and_then(Value::as_str),
+        Some("connected")
+    );
+
+    let after_connect = rpc(
+        &harness.rpc_base,
+        4,
+        "openhuman.channels_status",
+        json!({ "channel": "imessage" }),
+    )
+    .await;
+    let connected_entries = channel_payload(&after_connect, "channels_status after connect")
+        .as_array()
+        .expect("status entries");
+    assert_eq!(
+        find_status_entry(connected_entries, "imessage", "managed_dm")
+            .get("connected")
+            .and_then(Value::as_bool),
+        Some(true),
+        "config-only iMessage connection must be visible through channels_status"
+    );
+
+    let disconnected = rpc(
+        &harness.rpc_base,
+        5,
+        "openhuman.channels_disconnect",
+        json!({
+            "channel": "imessage",
+            "authMode": "managed_dm",
+            "clearMemory": false
+        }),
+    )
+    .await;
+    assert_eq!(
+        channel_payload(&disconnected, "channels_disconnect imessage")
+            .get("disconnected")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let after_disconnect = rpc(
+        &harness.rpc_base,
+        6,
+        "openhuman.channels_status",
+        json!({ "channel": "imessage" }),
+    )
+    .await;
+    let disconnected_entries =
+        channel_payload(&after_disconnect, "channels_status after disconnect")
+            .as_array()
+            .expect("status entries");
+    assert_eq!(
+        find_status_entry(disconnected_entries, "imessage", "managed_dm")
+            .get("connected")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+}

@@ -56,6 +56,7 @@ fn base_builder() -> openhuman_core::agent::SessionHostBuilder {
             Box::new(StubTool("beta")),
         ])
         .tool_dispatcher(Box::new(XmlDialect))
+        .model_name("stub-model".into())
 }
 
 #[test]
@@ -75,6 +76,7 @@ fn builder_validates_required_fields() {
 
     let err = OpenHumanSessionHost::builder()
         .chat_model(Arc::new(StubModel))
+        .model_name("stub-model".into())
         .tools(vec![Box::new(StubTool("alpha"))])
         .build()
         .err()
@@ -90,7 +92,7 @@ fn builder_applies_defaults_and_exposes_public_accessors() {
 
     assert_eq!(agent.tools().len(), 2);
     assert_eq!(agent.tool_specs().len(), 2);
-    assert_eq!(agent.model_name(), openhuman_core::config::DEFAULT_MODEL);
+    assert_eq!(agent.model_name(), "stub-model");
     assert_eq!(agent.temperature(), 0.7);
     assert_eq!(agent.workspace_dir(), std::path::Path::new("."));
     assert!(agent.workflows().is_empty());

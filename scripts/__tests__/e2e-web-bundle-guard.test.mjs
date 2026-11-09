@@ -25,6 +25,7 @@ const repoRoot = path.join(
   "..",
 );
 const MARKER = "openhuman-e2e-bundle.marker";
+const TEST_PORT_BASE = 20_000 + (process.pid % 40_000);
 const BUNDLE_INPUTS = ["src/App.tsx", "public/favicon.ico", "index.html", "vite.config.ts"];
 
 function writeExecutable(file, body) {
@@ -134,11 +135,12 @@ function run(tree, script, extraEnv = {}) {
   const env = {
     ...process.env,
     PATH: `${tree.bin}:${process.env.PATH}`,
-    // Do not let a developer's shell select real build tools or different
-    // harness ports; the assertions exercise the fixed contract below.
+    // Keep these fixtures isolated from live E2E sessions in other worktrees.
     CARGO_BIN: path.join(tree.bin, "cargo"),
-    E2E_MOCK_PORT: "18473",
-    OPENHUMAN_CORE_PORT: "17788",
+    E2E_PORT_BASE: String(TEST_PORT_BASE),
+    E2E_MOCK_PORT: String(TEST_PORT_BASE),
+    OPENHUMAN_CORE_PORT: String(TEST_PORT_BASE + 1),
+    E2E_WEB_PORT: String(TEST_PORT_BASE + 2),
     RUST_HOST_TRIPLE: "test-triple",
     OPENHUMAN_WORKSPACE: path.join(tree.root, "workspace"),
     OPENHUMAN_KEYRING_MASTER_KEY: "11".repeat(32),
@@ -209,7 +211,7 @@ test("an ephemeral explicit workspace can generate a private key", () => {
     fs.writeFileSync(path.join(distWeb, MARKER), "VITE_OPENHUMAN_TARGET=web\n");
     fs.writeFileSync(
       path.join(distWeb, ".e2e-build-ports.json"),
-      '{"e2e_mock_port":"18473","openhuman_core_port":"17788"}\n',
+      `${JSON.stringify({ e2e_mock_port: String(TEST_PORT_BASE), openhuman_core_port: String(TEST_PORT_BASE + 1) })}\n`,
     );
 
     const res = run(tree, "e2e-web-session.sh", {
@@ -240,7 +242,7 @@ test("the session accepts a marked bundle and proceeds past the guard", () => {
     fs.writeFileSync(path.join(distWeb, MARKER), "VITE_OPENHUMAN_TARGET=web\n");
     fs.writeFileSync(
       path.join(distWeb, ".e2e-build-ports.json"),
-      '{"e2e_mock_port":"18473","openhuman_core_port":"17788"}\n',
+      `${JSON.stringify({ e2e_mock_port: String(TEST_PORT_BASE), openhuman_core_port: String(TEST_PORT_BASE + 1) })}\n`,
     );
 
     const res = run(tree, "e2e-web-session.sh", {
@@ -339,8 +341,16 @@ test("e2e-web-build.sh marks the bundle it builds, recording the E2E settings", 
     const recorded = fs.readFileSync(marker, "utf8");
     assert.match(recorded, /^VITE_OPENHUMAN_TARGET=web$/m);
     assert.match(recorded, /^VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE=cloud$/m);
-    assert.match(recorded, /^VITE_BACKEND_URL=http:\/\/127\.0\.0\.1:18473$/m);
-    assert.match(recorded, /^VITE_OPENHUMAN_CORE_RPC_URL=http:\/\/127\.0\.0\.1:17788\/rpc$/m);
+    assert.ok(recorded.includes(`VITE_BACKEND_URL=http://127.0.0.1:${TEST_PORT_BASE}\n`));
+    assert.ok(recorded.includes(`VITE_OPENHUMAN_CORE_RPC_URL=http://127.0.0.1:${TEST_PORT_BASE + 1}/rpc\n`));
+    const cargoBuild = tree.calls().find((call) => call.startsWith("cargo "));
+    assert.ok(cargoBuild, "web E2E build invokes Cargo for the standalone core");
+    assert.ok(
+      cargoBuild.includes(`--target-dir ${path.join(tree.root, "target")}`),
+      `web E2E build should honor E2E_WEB_CORE_TARGET_DIR: ${cargoBuild}`,
+    );
+    assert.match(cargoBuild, /--features voice,e2e-test-support/);
+    assert.doesNotMatch(cargoBuild, /CARGO_TARGET_DIR=/);
   } finally {
     tree.cleanup();
   }

@@ -6,13 +6,14 @@ async fn attachment_scope_is_request_local_and_contains_only_typed_authority() {
     let root = std::path::PathBuf::from("/workspace/project");
     let mut data = crate::agent::tinyagents::host::OpenHumanRunContext::new();
     data.origin = Some(
-        crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+        crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
             sender_name: None,
             channel: "test".into(),
             sender: None,
             reply_target: "room".into(),
             message_id: "message".into(),
             history_key: None,
+            channel_session: None,
         },
     );
     data.workspace = Some(tinytools::WorkspaceDescriptor::new(root.clone()));

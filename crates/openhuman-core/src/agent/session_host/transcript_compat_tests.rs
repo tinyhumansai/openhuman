@@ -24,6 +24,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use serde_json::{json, Value};
 use tinyagents_harness::testkit::ScriptedModel;
+use tinyagents_session::port::SessionStoreProvider;
 use tinyagents_session::transcript::{SessionRef, TranscriptLocator};
 use tinyinference_llm::message::{AssistantMessage, ContentBlock};
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelResponse};
@@ -175,15 +176,19 @@ pub(super) fn model(responses: Vec<ModelResponse>, native: bool) -> Arc<Scripted
 
 /// The transcript store of the workspace under `root`, one per root so that two
 /// hosts built over the same root (two "processes") share the conversation.
-pub(super) fn store_locator(root: &Path) -> Arc<dyn TranscriptLocator> {
-    static STORES: LazyLock<Mutex<HashMap<PathBuf, Arc<dyn TranscriptLocator>>>> =
+fn store_provider(root: &Path) -> Arc<dyn SessionStoreProvider> {
+    static STORES: LazyLock<Mutex<HashMap<PathBuf, Arc<dyn SessionStoreProvider>>>> =
         LazyLock::new(Mutex::default);
     let mut stores = STORES.lock().unwrap_or_else(|e| e.into_inner());
     Arc::clone(
-        stores
-            .entry(root.to_path_buf())
-            .or_insert_with(crate::storage::sessions::splice_fixture_tests::memory_locator),
+        stores.entry(root.to_path_buf()).or_insert_with(
+            crate::storage::sessions::splice_fixture_tests::memory_session_provider,
+        ),
     )
+}
+
+pub(super) fn store_locator(root: &Path) -> Arc<dyn TranscriptLocator> {
+    store_provider(root).for_agent("fixture").transcripts
 }
 
 pub(super) fn build_host(
@@ -192,10 +197,22 @@ pub(super) fn build_host(
     native: bool,
     thread: &str,
 ) -> crate::agent::OpenHumanSessionHost {
+    build_host_with_config(root, model, native, thread, Default::default())
+}
+
+pub(super) fn build_host_with_config(
+    root: &Path,
+    model: Arc<ScriptedModel>,
+    native: bool,
+    thread: &str,
+    config: crate::config::AgentConfig,
+) -> crate::agent::OpenHumanSessionHost {
     let chat_model: Arc<dyn ChatModel<()>> = model;
     let builder = crate::agent::SessionHostBuilder::new()
+        .config(config)
         .with_session_history_locator(store_locator(root))
         .chat_model(chat_model)
+        .model_name("test/session-fixture".to_string())
         .tools(tools())
         .workspace_dir(root.join("workspace"))
         .action_dir(root.to_path_buf());
@@ -235,12 +252,12 @@ pub(super) fn classic_path(root: &Path, stem: &str) -> PathBuf {
 
 /// Imports the classic files placed under the workspace's `session_raw/` into
 /// the root's store, as the first start after an upgrade does.
-pub(super) fn import_placed(root: &Path) {
-    tinyagents_session::legacy::import_transcripts(
+pub(super) fn import_placed(root: &Path) -> (usize, usize, usize) {
+    crate::storage::import::sessions::import_transcript_groups(
+        store_provider(root).as_ref(),
         &root.join("workspace"),
-        store_locator(root).as_ref(),
     )
-    .expect("import the placed fixtures");
+    .expect("import the placed fixtures")
 }
 
 /// Everything the root's store holds for `session`'s thread, by stem: the
@@ -280,7 +297,12 @@ pub(super) fn store_tree(
 /// `variant` selects an alternate on-disk generation of a head fixture
 /// (`""` the committed legacy capture, `".typed"` the same rows re-written in
 /// the typed row form).
-pub(super) fn place_fixture(root: &Path, scenario: &Scenario, stem: &str, variant: &str) {
+pub(super) fn place_fixture(
+    root: &Path,
+    scenario: &Scenario,
+    stem: &str,
+    variant: &str,
+) -> (usize, usize, usize) {
     let name = scenario.name;
     match scenario.layout {
         Layout::Head => {
@@ -308,7 +330,7 @@ pub(super) fn place_fixture(root: &Path, scenario: &Scenario, stem: &str, varian
             }
         }
     }
-    import_placed(root);
+    import_placed(root)
 }
 
 fn place(from: PathBuf, to: PathBuf) {
@@ -463,6 +485,7 @@ fn assert_retired_tool_replay(identity_bound: bool) {
         let mut first = crate::agent::SessionHostBuilder::new()
             .with_session_history_locator(store_locator(root.path()))
             .chat_model(chat_model)
+            .model_name("test/session-fixture".to_string())
             .tools(vec![Box::new(ArchivedAudioTool)])
             .permanent_tool_names(std::collections::HashSet::from([RETIRED.to_string()]))
             .workspace_dir(workspace.clone())
@@ -504,6 +527,7 @@ fn assert_retired_tool_replay(identity_bound: bool) {
             crate::agent::SessionHostBuilder::new()
                 .with_session_history_locator(store_locator(root.path()))
                 .chat_model(chat_model)
+                .model_name("test/session-fixture".to_string())
                 .tools(tools())
                 .workspace_dir(workspace.clone())
                 .action_dir(root.path().to_path_buf())
@@ -566,13 +590,13 @@ fn assert_retired_tool_replay(identity_bound: bool) {
         let live = crate::tools::ops::all_tools(
             Arc::new(config.clone()),
             &security,
-            crate::security::AuditLogger::disabled(),
+            crate::security::AuditSink::disabled(),
             &config.browser,
             &config.http_request,
             root.path(),
-            &std::collections::HashMap::new(),
             &config,
-        );
+        )
+        .await;
         assert!(
             !live.iter().any(|tool| tool.name() == RETIRED),
             "retired tool must not be restored to the live registry"

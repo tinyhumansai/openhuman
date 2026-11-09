@@ -4,34 +4,70 @@
 //! Every operation takes the [`Config`] it runs against, so the RPC handlers
 //! (which load config per call) and the agent tool (which carries its
 //! session's config) share one implementation. Every write is
-//! scrubbed of secrets and PII by the bound engine itself ([`super::guard`]).
+//! scrubbed of secrets and PII by TinyMemory's native engine binder.
+
+#[cfg(feature = "channels")]
+use std::collections::{BTreeMap, BTreeSet};
+#[cfg(feature = "channels")]
+use std::path::Path;
 
 use chrono::Utc;
+#[cfg(feature = "channels")]
+use tinymemory_api::ItemKind;
 use tinymemory_api::{
-    EraseRequest, FetchRequest, ForgetTarget, ItemId, LearningKind, ListRequest, MemoryMeta,
-    MetaFilter, RecallMode, RecallRequest, StoreItem, StoreReceipt, ThreadWindow, TimeHint,
-    WriteOptions,
+    ForgetTarget, MemoryMeta, MetaFilter, Namespace, Reach, RecallMode, StoreItem, StoreReceipt,
+    ThreadWindow, TimeHint, WriteOptions,
 };
+use tinymemory_tools::confine::{Confinement, Policy};
+use tinymemory_tools::ops::{FetchOptions, LearningOptions, ListOptions, MemoryOps, RecallOptions};
 
 use crate::config::Config;
 
 use super::engine::{
     self, Binding, BoundEngine, CORTEXDB_ENGINE, DISABLED_ENGINE, TINYHUMANS_ENGINE,
 };
-use super::error::{MemoryError, MemoryResult};
 use super::types::{
-    clamp_limit, EngineSetParams, EngineStatus, EngineView, EnginesListView, EraseAllParams,
-    EraseAllView, FetchParams, FetchView, ForgetParams, ForgetView, ItemsListParams, ItemsListView,
-    LearnParams, LearnView, RecallParams, RecallView, RefersTo,
+    EngineSetParams, EngineStatus, EngineView, EnginesListView, EraseAllParams, EraseAllView,
+    FetchParams, FetchView, ForgetParams, ForgetView, ItemsListParams, ItemsListView, LearnParams,
+    LearnView, RecallParams, RecallView, RefersTo,
 };
+use tinymemory_api::{Error, Result};
+
+/// Apply the SaaS tenant boundary to a host memory operation. The namespace
+/// mechanics live in TinyMemory; this adapter only selects the authenticated
+/// profile root and preserves the existing fail-closed error.
+pub(crate) fn saas_confinement(config: &Config, policy: Policy) -> Result<Option<Confinement>> {
+    if !crate::core::runtime::is_saas() {
+        return Ok(None);
+    }
+    let root = config
+        .memory
+        .root
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .parse::<Namespace>();
+    match root {
+        Ok(root) if root != Namespace::ROOT => Ok(Some(Confinement {
+            allowed: Reach::subtree(root),
+            policy,
+        })),
+        Ok(_) | Err(_) => {
+            tracing::error!("[memory:scope] no valid confinement root in SaaS mode");
+            Err(Error::InvalidRequest(
+                "memory is unavailable: this agent has no valid memory root".into(),
+            ))
+        }
+    }
+}
 
 /// Default confidence of a learning stored without one.
-pub const DEFAULT_LEARNING_CONFIDENCE: f32 = 0.8;
+pub const DEFAULT_LEARNING_CONFIDENCE: f32 = tinymemory_tools::ops::DEFAULT_LEARNING_CONFIDENCE;
 
 /// `memory_engines_list`.
 #[must_use]
-pub fn engines_list(config: &Config) -> EnginesListView {
-    let active = match engine::resolve(config) {
+pub async fn engines_list(config: &Config) -> EnginesListView {
+    let active = match engine::resolve(config).await {
         Binding::On(bound) => Some(bound.id),
         Binding::Off { .. } => None,
     };
@@ -46,7 +82,7 @@ pub async fn engine_get(config: &Config) -> EngineView {
     let configured = Some(config.memory.engine.trim())
         .filter(|id| !id.is_empty())
         .map(str::to_string);
-    match engine::resolve(config) {
+    match engine::resolve(config).await {
         Binding::On(bound) => {
             let health = bound.engine.health().await;
             let (status, reason) = match health {
@@ -60,7 +96,7 @@ pub async fn engine_get(config: &Config) -> EngineView {
             EngineView {
                 engine: Some(bound.id.clone()),
                 endpoint: Some(bound.endpoint.clone()),
-                has_key: engine::has_key(config, &bound.id),
+                has_key: engine::has_key(config, &bound.id).await,
                 status,
                 reason,
                 fetch_modes: bound.engine.descriptor().fetch_modes.clone(),
@@ -73,7 +109,10 @@ pub async fn engine_get(config: &Config) -> EngineView {
         } => {
             let id = id.or(configured);
             EngineView {
-                has_key: id.as_deref().is_some_and(|id| engine::has_key(config, id)),
+                has_key: match id.as_deref() {
+                    Some(id) => engine::has_key(config, id).await,
+                    None => false,
+                },
                 engine: id,
                 endpoint,
                 status: EngineStatus::Off,
@@ -86,18 +125,17 @@ pub async fn engine_get(config: &Config) -> EngineView {
 
 /// Applies `memory_engine_set` to `config` in memory (and to the credential
 /// store for a key). The caller persists `config`.
-pub fn apply_engine_set(config: &mut Config, params: &EngineSetParams) -> MemoryResult<()> {
+pub async fn apply_engine_set(config: &mut Config, params: &EngineSetParams) -> Result<()> {
     let engine_id = params.engine.trim();
     if engine_id == DISABLED_ENGINE {
         // Turning memory off keeps every engine's endpoint and key, so
         // switching back needs no re-entry.
         if params.endpoint.is_some() || params.api_key.is_some() {
-            return Err(MemoryError::invalid(
-                "disabling memory takes no endpoint or API key",
+            return Err(Error::InvalidRequest(
+                ("disabling memory takes no endpoint or API key").into(),
             ));
         }
         config.memory.engine = DISABLED_ENGINE.to_string();
-        engine::invalidate();
         tracing::info!("[memory:ops] memory disabled");
         return Ok(());
     }
@@ -105,7 +143,7 @@ pub fn apply_engine_set(config: &mut Config, params: &EngineSetParams) -> Memory
         .iter()
         .any(|descriptor| descriptor.id == engine_id)
     {
-        return Err(MemoryError::invalid(format!(
+        return Err(Error::InvalidRequest(format!(
             "unknown memory engine `{engine_id}`"
         )));
     }
@@ -126,51 +164,61 @@ pub fn apply_engine_set(config: &mut Config, params: &EngineSetParams) -> Memory
     if let Some(key) = params.api_key.as_deref() {
         match engine_id {
             CORTEXDB_ENGINE if key.trim().is_empty() => {
-                engine::clear_cortexdb_key(config)?;
+                engine::clear_cortexdb_key(config).await?;
             }
-            CORTEXDB_ENGINE => engine::store_cortexdb_key(config, key)?,
+            CORTEXDB_ENGINE => engine::store_cortexdb_key(config, key).await?,
             TINYHUMANS_ENGINE => {
-                return Err(MemoryError::invalid(
-                    "the tinyhumans engine uses your sign-in, not an API key",
-                ))
+                return Err(Error::InvalidRequest(
+                    ("the tinyhumans engine uses your sign-in, not an API key").into(),
+                ));
             }
-            _ => return Err(MemoryError::invalid("this engine takes no API key")),
+            _ => {
+                return Err(Error::InvalidRequest(
+                    ("this engine takes no API key").into(),
+                ));
+            }
         }
     }
     config.memory.engine = engine_id.to_string();
-    engine::invalidate();
     tracing::info!(engine = %engine_id, "[memory:ops] engine selected");
     Ok(())
 }
 
-fn validate_endpoint(endpoint: &str) -> MemoryResult<()> {
+fn validate_endpoint(endpoint: &str) -> Result<()> {
     let parsed = url::Url::parse(endpoint)
-        .map_err(|_| MemoryError::invalid("the endpoint is not a valid URL"))?;
+        .map_err(|_| Error::InvalidRequest("the endpoint is not a valid URL".into()))?;
     if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-        return Err(MemoryError::invalid(
-            "the endpoint must be an http(s) URL with a host",
+        return Err(Error::InvalidRequest(
+            ("the endpoint must be an http(s) URL with a host").into(),
         ));
     }
     Ok(())
 }
 
-fn bound(config: &Config) -> MemoryResult<BoundEngine> {
-    engine::resolve(config).engine()
+async fn bound(config: &Config) -> Result<BoundEngine> {
+    engine::resolve(config).await.engine()
+}
+
+/// The native request adapter with the authenticated SaaS profile boundary,
+/// or no namespace boundary for a single-user host.
+pub(crate) fn memory_ops(config: &Config) -> Result<MemoryOps> {
+    Ok(match saas_confinement(config, Policy::Clamp)? {
+        Some(confinement) => MemoryOps::new(confinement),
+        None => MemoryOps::unconfined(),
+    })
 }
 
 /// The [`TimeHint`] for `refers_to`, in the user's time zone
 /// ([`Config::time_zone`]).
-fn time_hint(config: &Config, refers_to: Option<RefersTo>) -> MemoryResult<Option<TimeHint>> {
+fn time_hint(config: &Config, refers_to: Option<RefersTo>) -> Result<Option<TimeHint>> {
     let Some(RefersTo { from, to }) = refers_to else {
         return Ok(None);
     };
-    TimeHint::new(from, to.unwrap_or(from), Some(config.time_zone()))
-        .map(Some)
-        .map_err(MemoryError::from)
+    TimeHint::new(from, to.unwrap_or(from), Some(config.time_zone())).map(Some)
 }
 
 /// `memory_recall`.
-pub async fn recall(config: &Config, params: RecallParams) -> MemoryResult<RecallView> {
+pub async fn recall(config: &Config, params: RecallParams) -> Result<RecallView> {
     recall_with(config, params, RecallMode::Answer, None).await
 }
 
@@ -183,18 +231,17 @@ pub async fn recall_with(
     params: RecallParams,
     mode: RecallMode,
     exclude_thread: Option<ThreadWindow>,
-) -> MemoryResult<RecallView> {
-    let bound = bound(config)?;
-    let request = RecallRequest {
+) -> Result<RecallView> {
+    let bound = bound(config).await?;
+    let request = memory_ops(config)?.recall_request(RecallOptions {
         question: params.question,
-        filter: confine_filter(config, params.filter.unwrap_or_default())?,
-        limit: clamp_limit(params.limit),
+        filter: params.filter,
+        limit: params.limit,
         instructions: None,
         refers_to: time_hint(config, params.refers_to)?,
         exclude_thread,
         mode,
-    };
-    request.validate()?;
+    })?;
     let answer = bound.engine.recall(request).await?;
     tracing::debug!(
         engine = %bound.id,
@@ -211,7 +258,7 @@ pub async fn recall_with(
 
 /// `memory_fetch`. An unset mode uses the engine's first declared mode; a
 /// mode the engine does not declare is `UNSUPPORTED`.
-pub async fn fetch(config: &Config, params: FetchParams) -> MemoryResult<FetchView> {
+pub async fn fetch(config: &Config, params: FetchParams) -> Result<FetchView> {
     fetch_with(config, params, None).await
 }
 
@@ -220,31 +267,30 @@ pub async fn fetch_with(
     config: &Config,
     params: FetchParams,
     exclude_thread: Option<ThreadWindow>,
-) -> MemoryResult<FetchView> {
-    let bound = bound(config)?;
+) -> Result<FetchView> {
+    let bound = bound(config).await?;
     let descriptor = bound.engine.descriptor();
-    let mode = match params.mode {
-        Some(mode) => {
-            descriptor.ensure_mode(mode)?;
-            mode
+    match params.mode {
+        Some(mode) => descriptor.ensure_mode(mode)?,
+        None if descriptor.fetch_modes.is_empty() => {
+            return Err(Error::Unsupported("the engine offers no fetch mode".into()));
         }
-        None => *descriptor
-            .fetch_modes
-            .first()
-            .ok_or_else(|| MemoryError::Unsupported("the engine offers no fetch mode".into()))?,
-    };
-    let request = FetchRequest {
-        query: params.query,
-        mode,
-        filter: confine_filter(config, params.filter.unwrap_or_default())?,
-        limit: clamp_limit(params.limit),
-        cursor: params.cursor,
-        beliefs: 0,
-        max_scopes: None,
-        refers_to: time_hint(config, params.refers_to)?,
-        exclude_thread,
-    };
-    request.validate()?;
+        None => {}
+    }
+    let ops = memory_ops(config)?;
+    let refers_to = time_hint(config, params.refers_to)?;
+    let request = ops.fetch_request(
+        FetchOptions {
+            query: params.query,
+            mode: params.mode,
+            filter: params.filter,
+            limit: params.limit,
+            cursor: params.cursor,
+            refers_to,
+            exclude_thread,
+        },
+        descriptor,
+    )?;
     let page = bound.engine.fetch(request).await?;
     tracing::debug!(engine = %bound.id, hits = page.hits.len(), "[memory:ops] fetch answered");
     Ok(FetchView {
@@ -256,64 +302,16 @@ pub async fn fetch_with(
 /// Builds the learning `memory_learn` (and the `memory` tool's `learn`)
 /// stores. `host_meta` wins over the caller's `meta` field by field, so a
 /// caller cannot overwrite what the host knows (thread, agent, tool call).
-pub fn learning_item(
-    params: LearnParams,
-    host_meta: Option<MemoryMeta>,
-) -> MemoryResult<StoreItem> {
-    let confidence = params.confidence.unwrap_or(DEFAULT_LEARNING_CONFIDENCE);
-    if !(0.0..=1.0).contains(&confidence) {
-        return Err(MemoryError::invalid("confidence must be between 0 and 1"));
-    }
-    let mut meta = params.meta.unwrap_or_default();
-    if let Some(host) = host_meta {
-        merge_meta(&mut meta, host);
-    }
-    if meta.observed_at.is_none() {
-        meta.observed_at = Some(Utc::now());
-    }
-    let item = StoreItem::learning(
-        params.text.trim(),
-        params.kind.unwrap_or(LearningKind::Fact),
-        confidence,
-        meta,
-    );
-    item.validate()?;
-    Ok(item)
-}
-
-/// Overlays every field `host` sets onto `meta`.
-fn merge_meta(meta: &mut MemoryMeta, host: MemoryMeta) {
-    macro_rules! take {
-        ($($field:ident),*) => {$(
-            if host.$field.is_some() {
-                meta.$field = host.$field;
-            }
-        )*};
-    }
-    take!(
-        workspace,
-        folder,
-        file_path,
-        language,
-        repo,
-        commit,
-        url,
-        thread_id,
-        turns,
-        agent_id,
-        tool_call,
-        observed_at,
-        derive
-    );
-    meta.source = host.source;
-    // The host's node is authoritative: a caller cannot write into another
-    // agent's memory.
-    meta.namespace = host.namespace;
-    for tag in host.tags {
-        if !meta.tags.contains(&tag) {
-            meta.tags.push(tag);
-        }
-    }
+pub fn learning_item(params: LearnParams, host_meta: Option<MemoryMeta>) -> Result<StoreItem> {
+    MemoryOps::unconfined().learning_item(LearningOptions {
+        text: params.text,
+        kind: params.kind,
+        confidence: params.confidence,
+        meta: params.meta,
+        host_meta,
+        default_namespace: Namespace::ROOT,
+        now: Utc::now(),
+    })
 }
 
 /// `memory_learn`: returns once the learning is readable.
@@ -321,7 +319,7 @@ pub async fn learn(
     config: &Config,
     params: LearnParams,
     host_meta: Option<MemoryMeta>,
-) -> MemoryResult<LearnView> {
+) -> Result<LearnView> {
     learn_with(config, params, host_meta, WriteOptions::visible()).await
 }
 
@@ -333,20 +331,17 @@ pub async fn learn_with(
     params: LearnParams,
     host_meta: Option<MemoryMeta>,
     options: WriteOptions,
-) -> MemoryResult<LearnView> {
-    let mut item = learning_item(params, host_meta)?;
-    // The same confinement as `store_item`: a SaaS user's learning lands in
-    // their own tree whatever namespace it names.
-    if let Some(root) = super::user_scope::confinement(config)? {
-        super::user_scope::clamp_item(&mut item, &root);
-    }
-    let bound = bound(config)?;
-    let receipt = store_on_with(&bound, item, options).await?;
+) -> Result<LearnView> {
+    let item = learning_item(params, host_meta)?;
+    let item = memory_ops(config)?.store_item(item)?;
+    let bound = bound(config).await?;
+    let receipt = bound.engine.store_with(item, options).await?;
+    super::lifecycle::prefetch::invalidate(config);
     Ok(LearnView { id: receipt.id.0 })
 }
 
 /// Scrubs `item` and stores it on the bound engine.
-pub async fn store_item(config: &Config, item: StoreItem) -> MemoryResult<StoreReceipt> {
+pub async fn store_item(config: &Config, item: StoreItem) -> Result<StoreReceipt> {
     store_item_with(config, item, WriteOptions::visible()).await
 }
 
@@ -355,100 +350,271 @@ pub async fn store_item(config: &Config, item: StoreItem) -> MemoryResult<StoreR
 /// engine indexing the item.
 pub async fn store_item_with(
     config: &Config,
-    mut item: StoreItem,
-    options: WriteOptions,
-) -> MemoryResult<StoreReceipt> {
-    if let Some(root) = super::user_scope::confinement(config)? {
-        super::user_scope::clamp_item(&mut item, &root);
-    }
-    let bound = bound(config)?;
-    store_on_with(&bound, item, options).await
-}
-
-/// Stores `item` on `bound`; the bound engine scrubs it ([`super::guard`]).
-pub async fn store_on(bound: &BoundEngine, item: StoreItem) -> MemoryResult<StoreReceipt> {
-    store_on_with(bound, item, WriteOptions::visible()).await
-}
-
-/// [`store_on`], returning as soon as `options` allows.
-pub async fn store_on_with(
-    bound: &BoundEngine,
     item: StoreItem,
     options: WriteOptions,
-) -> MemoryResult<StoreReceipt> {
-    let kind = item.kind();
+) -> Result<StoreReceipt> {
+    let ops = memory_ops(config)?;
+    let bound = bound(config).await?;
+    let item = ops.store_item(item)?;
     let receipt = bound.engine.store_with(item, options).await?;
-    tracing::debug!(
-        engine = %bound.id,
-        kind = kind.as_str(),
-        wait = ?options.wait,
-        replayed = receipt.replayed,
-        "[memory:ops] item stored"
-    );
+    super::lifecycle::prefetch::invalidate(config);
     Ok(receipt)
 }
 
-/// Stores `items` on `bound` in one bulk call, returning as soon as
-/// `options` allows. With [`WriteOptions::visible`] each item is listed on
-/// return, and ranked recall may lag behind for all but the last. A backfill
-/// or an import that reads nothing back until it ends passes
-/// [`WriteOptions::accepted`]: an engine that supports it (CortexDB) returns
-/// once the items are durably accepted, before they are indexed, and any
-/// other stores them as with `visible`.
-pub async fn store_many_on_with(
-    bound: &BoundEngine,
-    items: Vec<StoreItem>,
-    options: WriteOptions,
-) -> MemoryResult<Vec<StoreReceipt>> {
-    let count = items.len();
-    let receipts = bound.engine.store_many_with(items, options).await?;
-    tracing::debug!(
-        engine = %bound.id,
-        count,
-        wait = ?options.wait,
-        replayed = receipts.iter().filter(|r| r.replayed).count(),
-        "[memory:ops] batch stored"
-    );
-    Ok(receipts)
-}
-
 /// `memory_forget`.
-pub async fn forget(config: &Config, params: ForgetParams) -> MemoryResult<ForgetView> {
-    let ids: Vec<ItemId> = params
-        .ids
-        .into_iter()
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty())
-        .map(ItemId)
-        .collect();
-    if ids.is_empty() {
-        return Err(MemoryError::invalid("forget needs at least one id"));
+pub async fn forget(config: &Config, params: ForgetParams) -> Result<ForgetView> {
+    if !params.ids.iter().any(|id| !id.trim().is_empty()) {
+        return Err(Error::InvalidRequest(
+            ("forget needs at least one id").into(),
+        ));
     }
-    let bound = bound(config)?;
-    // A SaaS user forgets only what lies in their own tree.
-    let reach = match super::user_scope::confinement(config)? {
-        Some(root) => Some(super::user_scope::clamp_reach(params.reach, &root)),
-        None => params.reach,
-    };
-    let report = match reach {
-        // With a reach the engine forgets by id inside it: `forget_within`
-        // never looks beyond the reach for an id, where `ForgetTarget::Ids`
-        // sweeps every scope of the tree to find one.
-        Some(reach) => {
-            let ids = within_reach(&bound, ids, reach.clone()).await?;
-            if ids.is_empty() {
-                tracing::debug!(engine = %bound.id, "[memory:ops] forget: nothing in reach");
-                return Ok(ForgetView { forgotten: 0 });
-            }
-            bound.engine.forget_within(ids, reach).await?
-        }
-        None => bound.engine.forget(ForgetTarget::Ids(ids)).await?,
-    };
+    let bound = bound(config).await?;
+    let report = memory_ops(config)?
+        .forget(bound.engine.as_ref(), params.ids, params.reach)
+        .await?;
     tracing::debug!(engine = %bound.id, forgotten = report.forgotten, "[memory:ops] forget");
     super::lifecycle::prefetch::invalidate(config);
     Ok(ForgetView {
         forgotten: report.forgotten,
     })
+}
+
+/// Forgets every item matching a non-empty metadata filter through the bound
+/// engine, applying the host-selected confinement.
+///
+/// # Errors
+///
+/// Returns an error if memory is unavailable, the filter is invalid, or the
+/// engine cannot complete the deletion.
+pub async fn forget_filter(config: &Config, filter: MetaFilter) -> Result<usize> {
+    let bound = bound(config).await?;
+    let report = memory_ops(config)?
+        .forget_filter(bound.engine.as_ref(), filter)
+        .await?;
+    tracing::debug!(
+        engine = %bound.id,
+        forgotten = report.forgotten,
+        "[memory:ops] filtered forget"
+    );
+    super::lifecycle::prefetch::invalidate(config);
+    Ok(report.forgotten)
+}
+
+/// Forgets conversation memory owned by an external channel on disconnect.
+///
+/// The engine filter removes stamped turns in one operation. A bounded
+/// snapshot of canonical thread IDs plus the previous release's read-only
+/// channel map supplies thread-level fallback for turns that predate channel
+/// metadata. New turns never write that map; remove the compatibility reader
+/// after one release.
+#[cfg(feature = "channels")]
+pub async fn forget_channel(config: &Config, channel: &str) -> Result<usize> {
+    let channel = channel.trim().to_ascii_lowercase();
+    if channel.is_empty() {
+        return Ok(0);
+    }
+    let legacy_threads = legacy_channel_threads(&config.workspace_dir, &channel);
+    let bound = match engine::resolve(config).await.engine() {
+        Ok(bound) => Some(bound),
+        Err(Error::Off(_)) => None,
+        Err(error) => return Err(error),
+    };
+
+    // Capture the request's tenant/profile before the module call and the
+    // thread-store wrappers move work off the caller's task.
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let identity = crate::modules::channel_controller::prepare_identity(
+        &crate::modules::client(config.clone()),
+        tinychannels_bus::module_inbound::PrepareChannelIdentityRequest {
+            channel: channel.clone(),
+            sender: None,
+            reply_target: None,
+            thread_ts: None,
+        },
+    )
+    .await;
+    let base_thread_id = match identity {
+        Ok(identity) => identity.thread_id,
+        Err(error) => {
+            enqueue_channel_threads(config, &legacy_threads);
+            return Err(Error::Engine(format!(
+                "channel identity preparation failed: {error}"
+            )));
+        }
+    };
+    let threads =
+        channel_thread_snapshot(&ctx, config, &channel, &base_thread_id, legacy_threads).await?;
+    let Some(bound) = bound else {
+        enqueue_channel_threads(config, &threads);
+        tracing::debug!(channel = %channel, queued = threads.len(), "[memory:channels] channel forget queued");
+        return Ok(0);
+    };
+
+    let filter = MetaFilter {
+        channel: Some(channel.clone()),
+        ..MetaFilter::kinds([ItemKind::Conversation])
+    };
+    let mut forgotten = match bound.engine.forget(ForgetTarget::Filter(filter)).await {
+        Ok(report) => report.forgotten,
+        Err(Error::Off(_)) => {
+            enqueue_channel_threads(config, &threads);
+            return Ok(0);
+        }
+        Err(error) => {
+            enqueue_channel_threads(config, &threads);
+            return Err(error);
+        }
+    };
+
+    let mut failure = None;
+    for thread_id in &threads {
+        match forget_channel_thread(&bound, thread_id).await {
+            Ok(count) => forgotten += count,
+            Err(error) => {
+                super::deletion::enqueue(
+                    &config.workspace_dir,
+                    super::deletion::PendingDeletion::Thread {
+                        thread_id: thread_id.clone(),
+                    },
+                );
+                if !matches!(error, Error::Off(_)) && failure.is_none() {
+                    failure = Some(error);
+                }
+            }
+        }
+    }
+
+    tracing::debug!(
+        channel = %channel,
+        forgotten,
+        queued = super::deletion::pending(&config.workspace_dir).len(),
+        "[memory:channels] channel forgotten"
+    );
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(forgotten),
+    }
+}
+
+#[cfg(feature = "channels")]
+fn channel_key(channel: &str) -> String {
+    channel.trim().to_ascii_lowercase()
+}
+
+/// Reads only the legacy map written by prior releases. Corrupt JSON is skipped
+/// without moving the source; current code never creates or updates it.
+#[cfg(feature = "channels")]
+fn legacy_channel_threads(workspace: &Path, channel: &str) -> BTreeSet<String> {
+    // Prefer the workspace state value, which may have imported and removed
+    // the old file. If no value is available (including a failed import),
+    // retain the legacy read path. Malformed JSON is skipped without moving
+    // or rewriting its source.
+    if let Ok(Some(all)) = super::state_store::load_strict::<BTreeMap<String, BTreeSet<String>>>(
+        workspace,
+        "channel_threads",
+    ) {
+        return all.get(&channel_key(channel)).cloned().unwrap_or_default();
+    }
+    let file = workspace.join("memory").join("channel_threads.json");
+    let Ok(text) = std::fs::read_to_string(&file) else {
+        return BTreeSet::new();
+    };
+    let all: BTreeMap<String, BTreeSet<String>> =
+        serde_json::from_str(&text).unwrap_or_else(|error| {
+            tracing::warn!(%error, "[memory:channels] legacy channel map unparsable; skipped");
+            BTreeMap::new()
+        });
+    all.get(&channel_key(channel)).cloned().unwrap_or_default()
+}
+
+#[cfg(feature = "channels")]
+fn is_channel_thread_id(thread_id: &str, base_thread_id: &str) -> bool {
+    if thread_id == base_thread_id {
+        return true;
+    }
+    thread_id
+        .strip_prefix(base_thread_id)
+        .is_some_and(|suffix| suffix.starts_with('/') || suffix.starts_with("#thread:"))
+}
+
+#[cfg(feature = "channels")]
+fn enqueue_channel_threads(config: &Config, threads: &BTreeSet<String>) {
+    for thread_id in threads {
+        super::deletion::enqueue(
+            &config.workspace_dir,
+            super::deletion::PendingDeletion::Thread {
+                thread_id: thread_id.clone(),
+            },
+        );
+    }
+}
+
+#[cfg(feature = "channels")]
+async fn channel_thread_snapshot(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    channel: &str,
+    base_thread_id: &str,
+    mut owned: BTreeSet<String>,
+) -> Result<BTreeSet<String>> {
+    let threads = match crate::threads::store::blocking::list_threads(
+        ctx.clone(),
+        config.workspace_dir.clone(),
+    )
+    .await
+    {
+        Ok(threads) => threads,
+        Err(error) => {
+            enqueue_channel_threads(config, &owned);
+            return Err(Error::Engine(format!(
+                "reading channel thread snapshot failed: {error}"
+            )));
+        }
+    };
+    for thread in threads {
+        if owned.contains(&thread.id) || is_channel_thread_id(&thread.id, base_thread_id) {
+            owned.insert(thread.id);
+            continue;
+        }
+        let messages = match crate::threads::store::blocking::get_messages(
+            ctx.clone(),
+            config.workspace_dir.clone(),
+            thread.id.clone(),
+        )
+        .await
+        {
+            Ok(messages) => messages,
+            Err(error) => {
+                enqueue_channel_threads(config, &owned);
+                return Err(Error::Engine(format!(
+                    "reading channel message snapshot failed: {error}"
+                )));
+            }
+        };
+        if messages.iter().any(|message| {
+            message
+                .extra_metadata
+                .get("channel")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| channel_key(value) == channel)
+        }) {
+            owned.insert(thread.id);
+        }
+    }
+    Ok(owned)
+}
+
+#[cfg(feature = "channels")]
+async fn forget_channel_thread(bound: &BoundEngine, thread_id: &str) -> Result<usize> {
+    let filter = MetaFilter {
+        thread_id: Some(thread_id.to_string()),
+        ..MetaFilter::kinds([ItemKind::Conversation])
+    };
+    Ok(bound
+        .engine
+        .forget(ForgetTarget::Filter(filter))
+        .await?
+        .forgotten)
 }
 
 /// `memory_erase_all`: erases everything the bound engine holds, the whole
@@ -465,25 +631,22 @@ pub async fn erase_all(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     params: EraseAllParams,
-) -> MemoryResult<EraseAllView> {
+) -> Result<EraseAllView> {
     if !params.confirm {
-        return Err(MemoryError::invalid(
-            "erasing all memory needs confirm: true; nothing erased comes back",
+        return Err(Error::InvalidRequest(
+            ("erasing all memory needs confirm: true; nothing erased comes back").into(),
         ));
     }
-    let bound = bound(config)?;
+    let bound = bound(config).await?;
     // Earlier durable tool writes must finish or be discarded before the
     // remote wipe; hold the owner barrier until the erase has completed.
     let _writes = super::tool_writes::fence_and_clear(ctx, config).await?;
     super::lifecycle::prefetch::invalidate(config);
-    let mut request = EraseRequest::new(tinymemory_api::Reach::subtree(
-        tinymemory_api::Namespace::ROOT,
-    ));
-    request.whole_tree = true;
+    let request = MemoryOps::unconfined().erase_all_request(true)?;
     tracing::info!(engine = %bound.id, "[memory:ops] erase_all: erasing the whole memory");
     let report = bound.engine.erase(request).await.map_err(|error| {
         tracing::warn!(engine = %bound.id, error = %error, "[memory:ops] erase_all failed");
-        MemoryError::from(error)
+        error
     })?;
     tracing::info!(
         engine = %bound.id,
@@ -496,40 +659,18 @@ pub async fn erase_all(
     })
 }
 
-/// The ids among `ids` naming an item in `reach`, read through `get` in
-/// chunks of its id limit.
-async fn within_reach(
-    bound: &BoundEngine,
-    ids: Vec<ItemId>,
-    reach: tinymemory_api::Reach,
-) -> MemoryResult<Vec<ItemId>> {
-    let mut kept = Vec::new();
-    for chunk in ids.chunks(tinymemory_api::explore::MAX_GET_IDS) {
-        let found = bound
-            .engine
-            .get(tinymemory_api::GetRequest {
-                ids: chunk.to_vec(),
-                reach: Some(reach.clone()),
-            })
-            .await?;
-        kept.extend(found.into_iter().map(|hit| hit.id));
-    }
-    Ok(kept)
-}
-
 /// `memory_items_list`.
-pub async fn items_list(config: &Config, params: ItemsListParams) -> MemoryResult<ItemsListView> {
-    let bound = bound(config)?;
-    let request = ListRequest {
-        filter: confine_filter(
-            config,
-            super::explore::narrowed(params.filter, &params.path)?,
-        )?,
-        limit: clamp_limit(params.limit),
+pub async fn items_list(config: &Config, params: ItemsListParams) -> Result<ItemsListView> {
+    let bound = bound(config).await?;
+    let preview = params.preview;
+    let filter = super::explore::narrowed(params.filter, &params.path)?;
+    let request = memory_ops(config)?.list_request(ListOptions {
+        filter: Some(filter),
+        path: Vec::new(),
+        limit: params.limit,
         cursor: params.cursor,
-    };
-    request.validate()?;
-    let page = if params.preview {
+    })?;
+    let page = if preview {
         bound.engine.list_preview(request).await?
     } else {
         bound.engine.list(request).await?
@@ -540,15 +681,10 @@ pub async fn items_list(config: &Config, params: ItemsListParams) -> MemoryResul
     })
 }
 
-/// `filter`, confined to the SaaS user's tree when `config` has one
-/// ([`super::user_scope`]).
-pub(crate) fn confine_filter(config: &Config, filter: MetaFilter) -> MemoryResult<MetaFilter> {
-    Ok(match super::user_scope::confinement(config)? {
-        Some(root) => super::user_scope::clamp_filter(filter, &root),
-        None => filter,
-    })
-}
-
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ops_saas_tests.rs"]
+mod saas_tests;

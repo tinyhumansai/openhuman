@@ -8,11 +8,11 @@ use tinymemory_api::{
     LearningKind, ListRequest, MemoryEngine, MemoryMeta, MetaFilter, Namespace, StoreItem,
 };
 use tinymemory_tools::layout_migration::{
-    Engines, FlowPlacement, LayoutHost, LegacyClaim, MigrationStateStore, Placement, Result,
+    Engines, FlowPlacement, FsLegacyClaim, LayoutHost, LegacyClaim, MigrationStateStore, Placement,
+    Result,
 };
 use tinymemory_tools::MemoryLayout;
 
-use super::claim::ClaimKey;
 use super::state::StateKvMigrationStore;
 use crate::config::Config;
 
@@ -24,7 +24,7 @@ pub(crate) struct FakeHost {
     pub(crate) switched: AtomicBool,
     pub(crate) free: AtomicBool,
     /// The claim when the legacy tree is shared.
-    pub(crate) claim: Option<ClaimKey>,
+    pub(crate) claim: Option<FsLegacyClaim>,
     /// Asks for free_now: after this many, moving stops being free.
     pub(crate) free_for: AtomicUsize,
     /// Written to the legacy tree as the switch happens (a turn racing it).
@@ -78,7 +78,7 @@ impl LayoutHost for FakeHost {
         &self.store
     }
 
-    fn engines(&self) -> Result<Engines> {
+    async fn engines(&self) -> Result<Engines> {
         Ok(Engines {
             legacy: self.legacy.clone(),
             tree: self.tree.clone(),
@@ -112,7 +112,7 @@ impl LayoutHost for FakeHost {
         self.free.load(Ordering::SeqCst) && left > 0
     }
 
-    fn legacy_claim(&self) -> Result<Option<Box<dyn LegacyClaim>>> {
+    async fn legacy_claim(&self) -> Result<Option<Box<dyn LegacyClaim>>> {
         Ok(self
             .claim
             .clone()

@@ -1,5 +1,5 @@
-//! Execution of `JobType::Shell` jobs under the security policy, with a
-//! forbidden-path argument scan and a hard timeout.
+//! Execution of `JobType::Shell` jobs under the security policy and a hard
+//! timeout.
 
 use crate::config::Config;
 use crate::security::SecurityPolicy;
@@ -8,116 +8,33 @@ use tokio::time::Duration;
 
 pub(super) const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 
-/// Check a scheduled shell command using the parser facts from the pinned
-/// TinyBox module. The host owns the allowlist and protected-path decisions;
-/// a missing module is a refusal, never a request to parse locally.
+/// Prefix the retry loop (`executor.rs#classify_failure`) reads as final.
+pub(super) const POLICY_REFUSAL_PREFIX: &str = "blocked by security policy:";
+
+/// Check and reserve a scheduled shell command through TinySecurity.
+///
+/// A refusal that waiting cannot change (the policy said no) carries
+/// [`POLICY_REFUSAL_PREFIX`], so the job fails without spending its retries.
+/// An unavailable module or an exhausted action budget may recover, so those
+/// stay retryable.
 pub(crate) async fn authorize_shell_command(
-    config: &Config,
+    _config: &Config,
     security: &SecurityPolicy,
     command: &str,
 ) -> Result<(), String> {
-    #[cfg(feature = "modules")]
-    {
-        let analysis = match crate::modules::tinybox::analyze_command(config, command.to_owned())
-            .await
-        {
-            Ok(analysis) => analysis,
-            Err(e) => {
-                tracing::warn!(error = %e, "[cron:shell] command analysis unavailable");
-                #[cfg(test)]
-                {
-                    if !config.modules.enabled {
-                        return Err("Command analysis is unavailable.".to_owned());
-                    }
-                    // Scheduler unit tests exercise process and retry behavior
-                    // without loading a native artifact. Production has no
-                    // parser fallback and fails closed below.
-                    security
-                        .check_gated_command(command)
-                        .map_err(|_| "blocked by security policy: command rejected".to_owned())?;
-                    if !security.is_command_allowed(command) {
-                        return Err("blocked by security policy: command not allowed".to_owned());
-                    }
-                    return Ok(());
-                }
-                #[cfg(not(test))]
-                return Err("Command analysis is unavailable.".to_owned());
-            }
-        };
-        security
-            .check_gated_command_analysis(&analysis)
-            .map_err(|_| "blocked by security policy: command rejected".to_owned())?;
-        if !security.is_command_allowed_analysis(&analysis) {
-            return Err("blocked by security policy: command not allowed".to_owned());
-        }
-        Ok(())
+    let verdict = security
+        .check_command(crate::security::policy::CommandQuery {
+            command,
+            declared: None,
+            flow: crate::security::policy::CommandFlow::Scheduled,
+            stage: crate::security::policy::CommandStage::Execute,
+        })
+        .await
+        .map_err(refusal_output)?;
+    if verdict.gate == crate::security::policy::GateDecision::Block {
+        return Err(format!("{POLICY_REFUSAL_PREFIX} command rejected"));
     }
-    #[cfg(not(feature = "modules"))]
-    {
-        let _ = (config, security, command);
-        Err("Command analysis is unavailable.".to_owned())
-    }
-}
-
-#[cfg(test)]
-pub(super) fn is_env_assignment(word: &str) -> bool {
-    word.contains('=')
-        && word
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-}
-
-#[cfg(test)]
-pub(super) fn strip_wrapping_quotes(token: &str) -> &str {
-    token.trim_matches(|c| c == '"' || c == '\'')
-}
-
-#[cfg(test)]
-pub(super) fn forbidden_path_argument(security: &SecurityPolicy, command: &str) -> Option<String> {
-    let mut normalized = command.to_string();
-    for sep in ["&&", "||"] {
-        normalized = normalized.replace(sep, "\x00");
-    }
-    for sep in ['\n', ';', '|'] {
-        normalized = normalized.replace(sep, "\x00");
-    }
-
-    for segment in normalized.split('\x00') {
-        let tokens: Vec<&str> = segment.split_whitespace().collect();
-        if tokens.is_empty() {
-            continue;
-        }
-
-        // Skip leading env assignments and executable token.
-        let mut idx = 0;
-        while idx < tokens.len() && is_env_assignment(tokens[idx]) {
-            idx += 1;
-        }
-        if idx >= tokens.len() {
-            continue;
-        }
-        idx += 1;
-
-        for token in &tokens[idx..] {
-            let candidate = strip_wrapping_quotes(token);
-            if candidate.is_empty() || candidate.starts_with('-') || candidate.contains("://") {
-                continue;
-            }
-
-            let looks_like_path = candidate.starts_with('/')
-                || candidate.starts_with("./")
-                || candidate.starts_with("../")
-                || candidate.starts_with("~/")
-                || candidate.contains('/');
-
-            if looks_like_path && !security.is_path_string_allowed(candidate) {
-                return Some(candidate.to_string());
-            }
-        }
-    }
-
-    None
+    Ok(())
 }
 
 pub(super) async fn run_job_command(
@@ -136,6 +53,15 @@ pub(super) async fn run_job_command(
     .await
 }
 
+/// The job output for a refused command: final unless it may recover.
+fn refusal_output(reason: crate::security::policy::Refusal) -> String {
+    use crate::security::policy::Refusal;
+    match reason {
+        Refusal::Unavailable | Refusal::RateLimit => reason.to_string(),
+        _ => format!("{POLICY_REFUSAL_PREFIX} {reason}"),
+    }
+}
+
 pub(super) async fn run_job_command_with_timeout(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
@@ -143,29 +69,8 @@ pub(super) async fn run_job_command_with_timeout(
     job: &CronJob,
     timeout: Duration,
 ) -> (bool, String) {
-    if !security.can_act() {
-        return (
-            false,
-            "blocked by security policy: autonomy is read-only".to_string(),
-        );
-    }
-
-    if security.is_rate_limited() {
-        return (
-            false,
-            "blocked by security policy: rate limit exceeded".to_string(),
-        );
-    }
-
     if let Err(reason) = authorize_shell_command(config, security, &job.command).await {
         return (false, reason);
-    }
-
-    if !security.record_action() {
-        return (
-            false,
-            "blocked by security policy: action budget exhausted".to_string(),
-        );
     }
 
     // Cron keeps host execution semantics (the host's own network, no jail)
@@ -184,7 +89,14 @@ pub(super) async fn run_job_command_with_timeout(
     .await
     {
         Ok(output) => output,
-        Err(_) => return (false, "Command execution is unavailable.".to_owned()),
+        Err(error) => {
+            tracing::warn!(
+                job_id = %job.id,
+                error = %format!("{error:#}"),
+                "[cron:shell] command could not run"
+            );
+            return (false, "Command execution is unavailable.".to_owned());
+        }
     };
     if output.timed_out {
         return (
@@ -200,3 +112,7 @@ pub(super) async fn run_job_command_with_timeout(
     );
     (output.success(), combined)
 }
+
+#[cfg(test)]
+#[path = "shell_job_tests.rs"]
+mod tests;

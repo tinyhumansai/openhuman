@@ -320,7 +320,7 @@ In short, the others are great for one person working with one agent. OpenHuman 
 
 Read [`CONTRIBUTING.md`](./CONTRIBUTING.md), or let an AI coding agent guide you with [this prompt](./docs/CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you).
 
-1. Install Git, Node.js 24+, pnpm 10.10.0, Rust 1.96.1 (with `rustfmt` and `clippy`), CMake, Ninja, ripgrep, and your platform's desktop build prerequisites.
+1. Install Git, Node.js 24+, pnpm 10.10.0, Rust 1.99.1 (with `rustfmt` and `clippy`), CMake, Ninja, ripgrep, and your platform's desktop build prerequisites.
 2. Fork and clone the repo. Run `git submodule update --init --recursive`, then `pnpm install`.
 3. Run `pnpm dev` for UI work or `pnpm dev:app` for the desktop app. Before you open a PR, run `pnpm typecheck`, `pnpm format:check` and `cargo check --manifest-path Cargo.toml`.
 

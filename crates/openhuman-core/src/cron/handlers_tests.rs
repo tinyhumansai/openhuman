@@ -1,5 +1,6 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tinyflows_bus::schedule::types::Schedule;
 
 /// Answers jobs whose command starts with `handlers-test:` and hands every
 /// other job to the handler it replaced, so parallel tests keep the defaults.
@@ -86,7 +87,12 @@ async fn the_registered_handler_decides_the_outcome() {
             &config.action_dir,
         )),
     );
-    let job = crate::cron::scheduler::run_delivery::stand_in_for_test("handlers-test:x");
+    let job = crate::cron::add_flow_schedule_job(
+        &config,
+        "handlers-test:x",
+        Schedule::Every { every_ms: 60_000 },
+    )
+    .unwrap();
     let outcome = registry
         .run(&JobRunContext::new(binding), &job, "run-1")
         .await;

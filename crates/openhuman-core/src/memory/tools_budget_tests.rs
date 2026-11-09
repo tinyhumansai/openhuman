@@ -45,6 +45,12 @@ async fn learn_is_not_capped_but_reads_are_and_recover_on_the_next_chat_turn() {
             .unwrap();
         assert_eq!(result.is_error, i == 8, "fetch {i}: {}", result.text());
         assert_eq!(is_budget_refusal(&result), i == 8);
+        if i == 8 {
+            assert_eq!(
+                result.metadata,
+                Some(json!({"openhuman.memory_budget": "refused"}))
+            );
+        }
     }
     let context = ToolExecutionContext::from_run_context(&next, CallId::new("next-call"));
     let result = tool

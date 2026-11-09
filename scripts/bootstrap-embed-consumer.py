@@ -37,7 +37,7 @@ def consumer_manifest(checkout: Path, unused: frozenset[str] = frozenset()) -> s
         'name = "embed-consumer"',
         'version = "0.0.0"',
         'edition = "2024"',
-        'rust-version = "1.96.1"',
+        'rust-version = "1.99.1"',
         "publish = false",
         "[features]",
         "default = []",
@@ -96,7 +96,7 @@ def bootstrap(source: str, rev: str, destination: Path, offline: bool = False) -
             '#[cfg(feature = "embed")]\npub use openhuman_embed as embed;\n'
         )
         (destination / "rust-toolchain.toml").write_text(
-            '[toolchain]\nchannel = "1.96.1"\nprofile = "minimal"\n'
+            '[toolchain]\nchannel = "1.99.1"\nprofile = "minimal"\n'
         )
         lock = checkout / "Cargo.lock"
         if lock.is_file():

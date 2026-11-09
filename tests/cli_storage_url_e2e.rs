@@ -5,18 +5,30 @@
 
 use std::process::Command;
 
-#[macro_use]
-#[path = "support/storage_drivers.rs"]
-mod storage_drivers;
+#[path = "support/storage_case.rs"]
+mod storage_case;
 
-use storage_drivers::UrlCase;
+use storage_case::UrlCase;
+
+#[cfg(unix)]
+fn make_workspace_private(workspace: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(workspace, std::fs::Permissions::from_mode(0o700))
+        .expect("make the test workspace private");
+}
+
+#[cfg(not(unix))]
+fn make_workspace_private(_workspace: &std::path::Path) {}
 
 fn core(workspace: &std::path::Path, url: Option<&str>, args: &[&str]) -> std::process::Output {
+    make_workspace_private(workspace);
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_openhuman-core"));
     cmd.args(args)
         .env("HOME", workspace)
         .env("USERPROFILE", workspace)
         .env("OPENHUMAN_WORKSPACE", workspace)
+        .env("OPENHUMAN_MODULE_SOURCE", "linked")
         // A shared backend keeps the config document encrypted under the
         // keyring master key and fails closed without one. CI has no OS
         // keychain, so every process gets the same fixed key, the way a
@@ -68,10 +80,11 @@ fn one_shot(url: &str, args: &[&str]) -> (std::process::Output, tempfile::TempDi
     (output, workspace)
 }
 
-/// Every driver is asked the same thing: write a job in one process, list in
-/// another. A durable driver shows it to the second process; `memory` keeps
-/// nothing between processes, so it must not.
-fn a_second_process_reads_what_a_one_shot_wrote_to_the_backend(case: UrlCase) {
+/// Write a job in one process, list in another: the backend is what carries
+/// it from the first to the second.
+#[test]
+fn a_second_process_reads_what_a_one_shot_wrote_to_the_backend() {
+    let case = UrlCase::open();
     let args = [
         "cron",
         "add",
@@ -87,7 +100,7 @@ fn a_second_process_reads_what_a_one_shot_wrote_to_the_backend(case: UrlCase) {
     assert!(
         added.status.success(),
         "cron add against {}: {stderr}",
-        case.driver.name()
+        case.url
     );
 
     // A different workspace: only the backend can hold the job.
@@ -98,17 +111,10 @@ fn a_second_process_reads_what_a_one_shot_wrote_to_the_backend(case: UrlCase) {
         String::from_utf8_lossy(&listed.stderr)
     );
     let stdout = String::from_utf8_lossy(&listed.stdout);
-    if case.driver.is_durable() {
-        assert!(
-            stdout.contains("storage-probe"),
-            "second process sees the job: {stdout}"
-        );
-    } else {
-        assert!(
-            !stdout.contains("storage-probe"),
-            "memory keeps nothing between processes: {stdout}"
-        );
-    }
+    assert!(
+        stdout.contains("storage-probe"),
+        "second process sees the job: {stdout}"
+    );
 
     // And without the URL the same fresh workspace has nothing.
     let workspace = tempfile::tempdir().unwrap();
@@ -123,5 +129,3 @@ fn a_second_process_reads_what_a_one_shot_wrote_to_the_backend(case: UrlCase) {
         "the job lives in the backend, not in files"
     );
 }
-
-driver_cases!(url a_second_process_reads_what_a_one_shot_wrote_to_the_backend);

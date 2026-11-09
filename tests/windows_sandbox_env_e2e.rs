@@ -19,6 +19,12 @@
 //! `child_process.spawn` (libuv) injects `SystemRoot` into the child, and a
 //! probe driven through `cmd.exe` from JavaScript reports it as present, so a
 //! JS harness cannot observe the stripping at all.
+//!
+//! The Windows CI lane ignores this root integration target because it only
+//! builds the core crate. Building the CLI integration target pulls in the full
+//! CLI test graph; the lane documents that compiling every integration-test
+//! binary can exhaust the Windows runner's paging file. Run it explicitly on
+//! Windows with `cargo test -p openhuman-cli --test windows_sandbox_env_e2e -- --ignored`.
 
 #[cfg(windows)]
 use std::collections::HashMap;
@@ -151,6 +157,7 @@ fn bracketed(stdout: &str, prefix: &str) -> Option<String> {
 /// allow-list with the jail path and has no OS-jail dependency.
 #[cfg(windows)]
 #[tokio::test]
+#[ignore = "requires Windows and an explicit CLI integration-test build"]
 async fn unsandboxed_child_receives_windows_bootstrap_env() {
     let (result, _) = run_in_sandbox(SandboxMode::None, env_probe_command()).await;
     assert_bootstrap_env_resolved(&result);
@@ -161,6 +168,7 @@ async fn unsandboxed_child_receives_windows_bootstrap_env() {
 /// `execute_local_jail`.
 #[cfg(windows)]
 #[tokio::test]
+#[ignore = "requires Windows and an explicit CLI integration-test build"]
 async fn sandboxed_child_receives_windows_bootstrap_env() {
     let (result, root) = run_in_sandbox(SandboxMode::Sandboxed, env_probe_command()).await;
     assert_bootstrap_env_resolved(&result);
@@ -171,6 +179,7 @@ async fn sandboxed_child_receives_windows_bootstrap_env() {
 /// spawn paths; the local jail must not silently replace per-call overrides.
 #[cfg(windows)]
 #[tokio::test]
+#[ignore = "requires Windows and an explicit CLI integration-test build"]
 async fn caller_temp_overrides_survive_sandbox_paths() {
     let expected = r"C:\openhuman-test-temp";
     for mode in [SandboxMode::None, SandboxMode::Sandboxed] {
@@ -200,6 +209,7 @@ async fn caller_temp_overrides_survive_sandbox_paths() {
 /// `node -e` must reach the crypto provider and print random bytes.
 #[cfg(windows)]
 #[tokio::test]
+#[ignore = "requires Windows and an explicit CLI integration-test build"]
 async fn node_crypto_runs_through_sandbox_path() {
     assert!(
         tool_available("node"),
@@ -239,6 +249,7 @@ async fn node_crypto_runs_through_sandbox_path() {
 /// directory to load its crypto provider from.
 #[cfg(windows)]
 #[tokio::test]
+#[ignore = "requires Windows and an explicit CLI integration-test build"]
 async fn powershell_runs_through_sandbox_path() {
     assert!(
         tool_available("powershell.exe"),

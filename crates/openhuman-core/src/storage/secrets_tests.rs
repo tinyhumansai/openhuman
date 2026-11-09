@@ -1,21 +1,19 @@
 use super::*;
-use crate::storage::{MemoryStorage, Scope, StorageBackend};
+use crate::storage::{test_support::memory_backend, Scope, StorageBackend};
 
 fn keys(byte: u8) -> Arc<dyn KeyProvider> {
     Arc::new(DerivedKeys::new(Zeroizing::new([byte; 32])))
 }
 
-fn secrets_in(storage: &MemoryStorage, scope: &str, key: u8) -> DocumentSecrets {
-    over(
-        &storage.for_scope(&Scope::new(scope).unwrap()).unwrap(),
-        keys(key),
-    )
+fn secrets_in(storage: &dyn StorageBackend, scope: &str, key: u8) -> DocumentSecrets {
+    let scope = Scope::new(scope).unwrap();
+    over(&storage.for_scope(&scope).unwrap(), scope, keys(key))
 }
 
 #[test]
 fn a_secret_round_trips_from_sync_code() {
-    let storage = MemoryStorage::new();
-    let secrets = secrets_in(&storage, "local", 7);
+    let storage = memory_backend();
+    let secrets = secrets_in(storage.as_ref(), "local", 7);
     assert!(get_blocking(&secrets, "user:token").unwrap().is_none());
     set_blocking(&secrets, "user:token", b"s3cret").unwrap();
     assert_eq!(
@@ -29,25 +27,30 @@ fn a_secret_round_trips_from_sync_code() {
 
 #[test]
 fn scopes_and_keys_keep_secrets_apart() {
-    let storage = MemoryStorage::new();
-    set_blocking(&secrets_in(&storage, "alice", 7), "user:token", b"a").unwrap();
+    let storage = memory_backend();
+    set_blocking(
+        &secrets_in(storage.as_ref(), "alice", 7),
+        "user:token",
+        b"a",
+    )
+    .unwrap();
     assert!(
-        get_blocking(&secrets_in(&storage, "bob", 7), "user:token")
+        get_blocking(&secrets_in(storage.as_ref(), "bob", 7), "user:token")
             .unwrap()
             .is_none(),
         "another scope sees nothing"
     );
     assert!(
-        get_blocking(&secrets_in(&storage, "alice", 8), "user:token").is_err(),
+        get_blocking(&secrets_in(storage.as_ref(), "alice", 8), "user:token").is_err(),
         "a different master key cannot decrypt"
     );
 }
 
 #[test]
 fn the_stored_document_holds_no_plaintext() {
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     set_blocking(
-        &secrets_in(&storage, "local", 7),
+        &secrets_in(storage.as_ref(), "local", 7),
         "user:token",
         b"plain-value",
     )

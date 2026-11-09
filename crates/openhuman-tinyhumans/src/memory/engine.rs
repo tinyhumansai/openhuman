@@ -16,14 +16,80 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use openhuman_embed::__host::config::Config;
+use openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential;
 use openhuman_embed::__host::memory_engines::{
-    build_cached, rooted, BearerSource, Binding, EngineCredential, EngineRequest, EngineSettings,
-    TINYHUMANS_ENGINE,
+    build_cached, rooted, BearerSource, Binding, EngineCredential, EngineFuture, EngineRequest,
+    EngineSettings, ReadOnlyEngineError, TINYHUMANS_ENGINE,
 };
-use openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential;
 
 use crate::backend::headers::attribution_headers;
 use crate::backend::url::effective_backend_api_url;
+
+/// Constructs an uncached TinyHumans engine for bounded, read-only inspection
+/// of an explicitly selected config. #502 may reuse this for its live probe;
+/// ordinary [`bind`] remains on its existing mutable credential/cache path.
+pub(crate) async fn build_read_only_engine(
+    config: &Config,
+) -> Result<Arc<dyn tinymemory_api::MemoryEngine>, ReadOnlyEngineError> {
+    let (credential, is_api_key) =
+        match openhuman_embed::__host::credentials::api_key::get_api_key_read_only(config).await {
+            Ok(Some(key)) => (key, true),
+            Ok(None) => (
+                read_only_session_token(config)
+                    .await?
+                    .ok_or(ReadOnlyEngineError::CredentialsUnavailable)?,
+                false,
+            ),
+            Err(_) => return Err(ReadOnlyEngineError::CredentialsUnavailable),
+        };
+    let endpoint = endpoint_for(config);
+    crate::client::endpoint::validate_credential_endpoint(&endpoint, is_api_key)
+        .map_err(|_| ReadOnlyEngineError::EndpointUnavailable)?;
+    let headers = crate::backend::headers::attribution_headers()
+        .map_err(|_| ReadOnlyEngineError::InvalidConfiguration)?
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_owned(), value.to_owned()))
+        })
+        .collect();
+    let settings = EngineSettings {
+        endpoint: Some(endpoint),
+        headers,
+        tenant_root: true,
+        ..EngineSettings::default()
+    };
+    tinymemory_integrations::build_engine(
+        TINYHUMANS_ENGINE,
+        &settings,
+        EngineCredential::Static(credential),
+    )
+    .map_err(|_| ReadOnlyEngineError::InvalidConfiguration)
+}
+
+async fn read_only_session_token(config: &Config) -> Result<Option<String>, ReadOnlyEngineError> {
+    use openhuman_embed::__host::credentials::session_state::{
+        check_session_backend, classify_session_token, is_local_session_token,
+        load_app_session_profile_read_only, SessionTokenCheck,
+    };
+
+    let profile = load_app_session_profile_read_only(config)
+        .await
+        .map_err(|_| ReadOnlyEngineError::CredentialsUnavailable)?;
+    let Some(profile) = profile else {
+        return Ok(None);
+    };
+    check_session_backend(config, Some(&profile))
+        .map_err(|_| ReadOnlyEngineError::CredentialsUnavailable)?;
+    match classify_session_token(Some(&profile), chrono::Utc::now()) {
+        SessionTokenCheck::Live(token) if !is_local_session_token(&token) => Ok(Some(token)),
+        SessionTokenCheck::Live(_) | SessionTokenCheck::Absent | SessionTokenCheck::Expired => {
+            Ok(None)
+        }
+    }
+}
 
 fn off(endpoint: Option<String>, reason: &str) -> Binding {
     Binding::Off {
@@ -42,39 +108,42 @@ pub(crate) fn endpoint_for(config: &Config) -> String {
 }
 
 /// Binds the hosted engine for `request.config` below `request.root`.
-pub(crate) fn bind(request: &EngineRequest<'_>) -> Binding {
-    let config = request.config;
-    let endpoint = endpoint_for(config);
-    if let Err(error) = resolve_backend_credential(config) {
-        tracing::debug!(error = %error, "[tinyhumans][memory] no usable TinyHumans credential");
-        return off(Some(endpoint), "sign in to use TinyHumans memory");
-    }
-    // The backend expects the host's attribution (`x-sdk-name`, ...) on every
-    // request, as every other backend caller sends it.
-    let headers = engine_headers();
-    let fingerprint = format!(
-        "{TINYHUMANS_ENGINE}|{endpoint}|{}|{headers:?}",
-        config.config_path.display()
-    );
-    let source: Arc<dyn BearerSource> = Arc::new(HostBearer {
-        config: Arc::new(config.clone()),
-    });
-    let (settings, layout) = rooted(
-        EngineSettings {
-            endpoint: Some(endpoint),
-            headers,
-            ..EngineSettings::default()
-        },
-        request.root,
-        true,
-        config.memory.legacy_user_segment_read,
-    );
-    build_cached(
-        TINYHUMANS_ENGINE,
-        settings,
-        fingerprint + &layout,
-        EngineCredential::Dynamic(source),
-    )
+pub(crate) fn bind(request: &EngineRequest<'_>) -> EngineFuture<Binding> {
+    let config = request.config.clone();
+    let root = request.root.map(str::to_owned);
+    Box::pin(async move {
+        let endpoint = endpoint_for(&config);
+        if let Err(error) = resolve_backend_credential(&config).await {
+            tracing::debug!(error = %error, "[tinyhumans][memory] no usable TinyHumans credential");
+            return off(Some(endpoint), "sign in to use TinyHumans memory");
+        }
+        // The backend expects the host's attribution (`x-sdk-name`, ...) on every
+        // request, as every other backend caller sends it.
+        let headers = engine_headers();
+        let fingerprint = format!(
+            "{TINYHUMANS_ENGINE}|{endpoint}|{}|{headers:?}",
+            config.config_path.display()
+        );
+        let source: Arc<dyn BearerSource> = Arc::new(HostBearer {
+            config: Arc::new(config.clone()),
+        });
+        let (settings, layout) = rooted(
+            EngineSettings {
+                endpoint: Some(endpoint),
+                headers,
+                ..EngineSettings::default()
+            },
+            root.as_deref(),
+            true,
+            config.memory.legacy_user_segment_read,
+        );
+        build_cached(
+            TINYHUMANS_ENGINE,
+            settings,
+            fingerprint + &layout,
+            EngineCredential::Dynamic(source),
+        )
+    })
 }
 
 /// The attribution headers as engine settings carry them. A value that is not
@@ -107,7 +176,7 @@ pub(crate) struct HostBearer {
 #[async_trait]
 impl BearerSource for HostBearer {
     async fn bearer(&self) -> openhuman_embed::memory::api::Result<String> {
-        match resolve_backend_credential(&self.config) {
+        match resolve_backend_credential(&self.config).await {
             Ok(credential) => Ok(credential.into_secret()),
             Err(error) => {
                 tracing::debug!(error = %error, "[tinyhumans][memory] backend credential unavailable");

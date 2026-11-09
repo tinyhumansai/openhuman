@@ -1,123 +1,19 @@
 use super::*;
-
-// ── validate_agent_refs (agent-ref resolvability gate, PR #5114) ───────────
-
 #[tokio::test]
-async fn agent_ref_plain_node_without_ref_is_accepted() {
-    // A plain `agent` node carries NO `agent_ref` — it runs on the default LLM
-    // completion and never touches `OpenHumanAgentRunner`'s routing at all, so
-    // this gate must never reject it. This is the exact invariant #5114 must
-    // preserve: only an UNKNOWN `agent_ref` is rejected, never a plain node.
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let g = graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "a", "kind": "agent", "name": "Plan", "config": { "prompt": "outline it" } }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "a" } ]
-    }));
-    let errors =
-        validate_agent_refs(&crate::core::runtime::DispatchCtx::ambient(), &config, &g).await;
-    assert!(errors.is_empty(), "{errors:?}");
-}
-
-#[tokio::test]
-async fn agent_ref_blank_string_is_treated_as_absent() {
-    // A whitespace-only `agent_ref` must be treated the same as no ref at all
-    // rather than being resolved (and potentially rejected as "unknown").
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let g = graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "a", "kind": "agent", "name": "Plan",
-              "config": { "agent_ref": "   ", "prompt": "outline it" } }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "a" } ]
-    }));
-    let errors =
-        validate_agent_refs(&crate::core::runtime::DispatchCtx::ambient(), &config, &g).await;
-    assert!(errors.is_empty(), "{errors:?}");
-}
-
-#[tokio::test]
-async fn agent_ref_resolving_to_a_harness_definition_is_accepted() {
-    // "orchestrator" is one of the bundled built-in agent definitions
-    // (see `agent_registry::defaults::default_agents_include_core_personas`),
-    // so it must resolve via `AgentRoute::Harness` and never touch the
-    // custom agent registry at all.
-    //
-    // This also exercises the CodeRabbit/Codex #5114 review fix: run via the
-    // scoped `cargo test --lib flows::ops` filter, no other domain's test gets
-    // to call `AgentDefinitionRegistry::init_global_builtins()` first, so this
-    // only passes because `validate_agent_refs` now defensively initialises
-    // the harness registry itself before resolving a ref.
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let g = graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "a", "kind": "agent", "name": "Plan",
-              "config": { "agent_ref": "orchestrator", "prompt": "outline it" } }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "a" } ]
-    }));
-    let errors =
-        validate_agent_refs(&crate::core::runtime::DispatchCtx::ambient(), &config, &g).await;
-    assert!(
-        errors.is_empty(),
-        "a real harness agent_ref must never be rejected: {errors:?}"
-    );
-}
-
-#[tokio::test]
-async fn agent_ref_unknown_is_rejected() {
-    // The whole point of the gate (and the branch Codex flagged as uncovered on
-    // #5114): an `agent` node whose `agent_ref` is NOT a real registered agent —
-    // neither a bundled harness definition nor a custom registry entry — must be
-    // REJECTED at author time, with the offending id named, rather than silently
-    // hitting the `RegistryFallback` persona path at run time. Exercises the
-    // error-construction branch of `validate_agent_refs`.
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let g = graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "a", "kind": "agent", "name": "Plan",
-              "config": { "agent_ref": "no_such_agent_xyz", "prompt": "outline it" } }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "a" } ]
-    }));
-    let errors =
-        validate_agent_refs(&crate::core::runtime::DispatchCtx::ambient(), &config, &g).await;
-    assert!(!errors.is_empty(), "an unknown agent_ref must be rejected");
-    assert!(
-        errors.iter().any(|e| e.contains("no_such_agent_xyz")),
-        "the rejection error must name the offending agent_ref: {errors:?}"
-    );
-}
-
-// ── dynamic agent_ref: refused at authoring, still reachable at run time ──
-
-/// A `=`-expression `agent_ref` is no longer authorable. TinyFlows requires a
-/// literal agent-registry reference so run data — which may include model
-/// output — cannot choose an agent with different privileges, the same
-/// reasoning this host already applies to `tool_call` slugs.
-///
-/// Pinned here rather than left to the vendor's own suite because the
-/// `workflow_builder` agent can propose this shape, and the message a builder
-/// sees on rejection is this host's contract with it.
-#[test]
-fn dynamic_agent_ref_is_rejected_during_structural_validation() {
-    let err = validate_and_migrate_graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "a", "kind": "agent", "name": "Dynamic",
-              "config": { "agent_ref": "=nodes.t.item.agent_choice", "prompt": "go" } }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "a" } ]
-    }))
+async fn dynamic_agent_ref_is_rejected_during_structural_validation() {
+    let err = validate_and_migrate_graph(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &Config::default(),
+        json!({
+            "nodes": [
+                { "id": "t", "kind": "trigger", "name": "Manual" },
+                { "id": "a", "kind": "agent", "name": "Dynamic",
+                  "config": { "agent_ref": "=nodes.t.item.agent_choice", "prompt": "go" } }
+            ],
+            "edges": [ { "from_node": "t", "to_node": "a" } ]
+        }),
+    )
+    .await
     .expect_err("dynamic agent_ref must fail structural validation");
     assert!(
         err.contains("agent_ref") && err.contains("must be a literal"),
@@ -149,29 +45,13 @@ async fn inference_gate_reports_signed_out_for_dynamic_agent_ref_only_graph() {
 
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let g = WorkflowGraph {
-        nodes: vec![
-            tinyflows::model::Node {
-                id: "t".to_string(),
-                kind: NodeKind::Trigger,
-                type_version: 1,
-                name: "Manual".to_string(),
-                config: json!({ "trigger_kind": "manual" }),
-                ports: Vec::new(),
-                position: None,
-            },
-            tinyflows::model::Node {
-                id: "a".to_string(),
-                kind: NodeKind::Agent,
-                type_version: 1,
-                name: "Dynamic".to_string(),
-                config: json!({ "agent_ref": "=nodes.t.item.agent_choice", "prompt": "go" }),
-                ports: Vec::new(),
-                position: None,
-            },
+    let g = json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual", "config": { "trigger_kind": "manual" } },
+            { "id": "a", "kind": "agent", "name": "Dynamic", "config": { "agent_ref": "=nodes.t.item.agent_choice", "prompt": "go" } }
         ],
-        ..Default::default()
-    };
+        "edges": []
+    });
 
     let errors =
         validate_inference_readiness(&crate::core::runtime::DispatchCtx::ambient(), &config, &g)
@@ -271,6 +151,42 @@ async fn proposal_omits_inference_status_for_tool_call_only_graph() {
     );
 }
 
+#[tokio::test]
+async fn proposal_graph_carries_the_proposal_name() {
+    // The builder resolves the name from its `name` argument; a graph authored
+    // without one used to reach the card (and a save) with an empty name.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let g = graph(json!({
+        "name": "",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "oh:noop" } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+
+    let payload = build_builder_proposal(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "edit_workflow",
+        "Daily Tech Digest",
+        &g,
+        false,
+        true,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("proposal must succeed for a tool_call-only graph");
+
+    assert_eq!(payload["name"], json!("Daily Tech Digest"));
+    assert_eq!(payload["graph"]["name"], json!("Daily Tech Digest"));
+}
+
 /// B45 run-time preflight (design correction, judge finding on live run
 /// 104aab90): since authoring no longer hard-blocks on inference readiness, a
 /// flow whose `agent` node cannot currently reach a working LLM provider can
@@ -327,28 +243,17 @@ async fn flows_run_fails_cleanly_without_invoking_engine_when_inference_not_read
         "error must surface the specific reason (signed out): {err}"
     );
 
-    // The run row settled `failed` with that same message, and the engine
-    // never ran (no persisted steps) — this is the "no pointless work" half
-    // of the contract, not just "the RPC call returned an error".
+    // Provider readiness is a host preflight before the module's StartRun
+    // admission boundary, so rejection must not create a module-owned run row
+    // or stamp the saved workflow as executed.
     let runs = flows_list_runs(&config, &created.value.id, 1)
         .await
         .unwrap()
         .value;
-    let run = runs.first().expect("a run row must exist");
-    assert_eq!(run.status, "failed");
-    assert!(
-        run.steps.is_empty(),
-        "the engine must never have executed a step: {:?}",
-        run.steps
-    );
-    let run_error = run
-        .error
-        .as_deref()
-        .expect("a failed run must carry an error message");
-    assert!(
-        run_error.to_ascii_lowercase().contains("ai provider"),
-        "the persisted run error must explain the AI-provider problem: {run_error}"
-    );
+    assert!(runs.is_empty(), "preflight rejection must not admit a run");
+    let reloaded = flows_get(&config, &created.value.id).await.unwrap();
+    assert!(reloaded.value.last_run_at.is_none());
+    assert!(reloaded.value.last_status.is_none());
 
     // `SignedOutTestGuard` restores the prior flag on drop at the end of this
     // scope — no other test observes this override.
@@ -424,8 +329,8 @@ async fn claude_agent_flow_readiness_does_not_require_an_openhuman_session() {
     }
 }
 
-#[test]
-fn harness_readiness_uses_runtime_role_and_node_override() {
+#[tokio::test]
+async fn harness_readiness_uses_runtime_role_and_node_override() {
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
     config.default_model = None;
@@ -437,16 +342,24 @@ fn harness_readiness_uses_runtime_role_and_node_override() {
         ],
         "edges": [{"from_node": "t", "to_node": "a"}]
     }));
-    let node = g.nodes.iter_mut().find(|n| n.id == "a").unwrap();
-    assert_eq!(agent_node_role(&config, node), "coding");
+    let node = g["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|node| node["id"] == "a")
+        .unwrap();
+    assert_eq!(agent_node_role(&config, &node["config"]).await, "coding");
     config.default_model = Some("hint:reasoning".into());
-    assert_eq!(agent_node_role(&config, node), "reasoning");
-    node.config["model"] = json!("chat-v1");
-    assert_eq!(agent_node_role(&config, node), "chat");
-    node.config["model"] = json!("hint:summarization");
-    assert_eq!(agent_node_role(&config, node), "summarization");
-    node.config["model"] = json!("custom-model-id");
-    assert_eq!(agent_node_role(&config, node), "chat");
+    assert_eq!(agent_node_role(&config, &node["config"]).await, "reasoning");
+    node["config"]["model"] = json!("chat-v1");
+    assert_eq!(agent_node_role(&config, &node["config"]).await, "chat");
+    node["config"]["model"] = json!("hint:summarization");
+    assert_eq!(
+        agent_node_role(&config, &node["config"]).await,
+        "summarization"
+    );
+    node["config"]["model"] = json!("custom-model-id");
+    assert_eq!(agent_node_role(&config, &node["config"]).await, "chat");
 }
 
 #[tokio::test]
@@ -532,13 +445,14 @@ async fn agent_ref_gate_reads_the_registry_of_the_explicit_context() {
         ],
         "edges": [ { "from_node": "t", "to_node": "a" } ]
     }));
+    let graph_json = serde_json::to_value(&g).unwrap();
 
     // Both calls run scoped to tenant B, so an ambient read would answer B's
     // registry for A's call.
     let (for_a, for_b) = CoreContext::scope(core_b, async {
         (
-            validate_agent_refs(&ctx_a, &config_a, &g).await,
-            validate_agent_refs(&ctx_b, &config_b, &g).await,
+            crate::flows::host_gates::validate_agent_refs(&ctx_a, &config_a, &graph_json).await,
+            crate::flows::host_gates::validate_agent_refs(&ctx_b, &config_b, &graph_json).await,
         )
     })
     .await;
@@ -550,4 +464,97 @@ async fn agent_ref_gate_reads_the_registry_of_the_explicit_context() {
         for_b.iter().any(|e| e.contains("tenant_a_only_agent")),
         "tenant B must not see tenant A's agent: {for_b:?}"
     );
+}
+
+fn tool_call_graph() -> Value {
+    graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "oh:noop" } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }))
+}
+
+async fn revision_payload(config: &Config, flow_id: &str, draft_id: Option<String>) -> Value {
+    build_builder_proposal(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        config,
+        "edit_workflow",
+        "Base",
+        &tool_call_graph(),
+        false,
+        true,
+        None,
+        draft_id,
+        Some(flow_id.to_string()),
+    )
+    .await
+    .expect("proposal must succeed for a tool_call-only graph")
+}
+
+#[tokio::test]
+async fn revision_proposal_carries_the_version_its_draft_was_seeded_from() {
+    // The draft was seeded from the flow as it is now, so the flow's current
+    // version is the one the revision was derived from.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow = flows_create(&config, "Base".to_string(), tool_call_graph(), false)
+        .await
+        .unwrap()
+        .value;
+    let draft = crate::flows::draft_store::create_draft(
+        &config,
+        Some(flow.id.clone()),
+        "Base".to_string(),
+        tool_call_graph(),
+        tinyflows_bus::catalog::DraftOrigin::Chat,
+    )
+    .unwrap();
+
+    let payload = revision_payload(&config, &flow.id, Some(draft.id)).await;
+
+    assert_eq!(payload["flow_id"], json!(flow.id));
+    assert_eq!(payload["flow_version"], json!(flow.updated_at));
+}
+
+#[tokio::test]
+async fn revision_proposal_omits_the_version_after_the_flow_changed_under_its_draft() {
+    // An edit after the draft was seeded makes the flow's current version a
+    // later one than the revision was derived from; stamping it would let the
+    // stale graph pass `expected_version`.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow = flows_create(&config, "Base".to_string(), tool_call_graph(), false)
+        .await
+        .unwrap()
+        .value;
+    let draft = crate::flows::draft_store::create_draft(
+        &config,
+        Some(flow.id.clone()),
+        "Base".to_string(),
+        tool_call_graph(),
+        tinyflows_bus::catalog::DraftOrigin::Chat,
+    )
+    .unwrap();
+    flows_update(
+        &config,
+        &flow.id,
+        Some("Edited".to_string()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let payload = revision_payload(&config, &flow.id, Some(draft.id)).await;
+
+    assert_eq!(payload["flow_id"], json!(flow.id));
+    assert!(payload.get("flow_version").is_none(), "{payload:?}");
+
+    // Without a draft to date the revision, no version is claimed either.
+    let undated = revision_payload(&config, &flow.id, None).await;
+    assert!(undated.get("flow_version").is_none(), "{undated:?}");
 }

@@ -92,6 +92,8 @@ fn every_dispatch_site_scopes_an_origin() {
         ),
         ("crates/openhuman-core/src/skills/webhooks/ops.rs", "remote"),
         ("crates/openhuman-core/src/skills/webhooks/bus.rs", "remote"),
+        // The inbound event queues' `Deliver` callback (via `RemoteTriage`).
+        ("crates/openhuman-core/src/inbound/host.rs", "remote"),
         // Locally initiated — trust root.
         (
             "crates/openhuman-core/src/desktop/notifications/rpc.rs",
@@ -130,6 +132,24 @@ fn every_dispatch_site_scopes_an_origin() {
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
+            // A file that constructs `RemoteTriage` dispatches through it: the
+            // runner scopes the remote origin itself (pinned by
+            // `remote_triage_scopes_the_remote_origin`), so such a site is
+            // remote by construction and must be recorded as remote.
+            if !text.contains("apply_decision(") && text.contains("RemoteTriage") {
+                let kind = KNOWN_SITES
+                    .iter()
+                    .find(|(path, _)| *path == rel)
+                    .map(|(_, kind)| *kind);
+                assert_eq!(
+                    kind,
+                    Some("remote"),
+                    "{rel} dispatches triage through `RemoteTriage`; record it in \
+                     KNOWN_SITES as `remote` (and use it only for remote payloads)"
+                );
+                found.push(rel);
+                continue;
+            }
             if text.contains("apply_decision(") {
                 assert!(
                     text.contains("with_origin("),
@@ -189,4 +209,37 @@ fn every_dispatch_site_scopes_an_origin() {
         "the set of triage dispatch sites changed; label the new one by provenance \
          and record it in KNOWN_SITES"
     );
+}
+
+/// `RemoteTriage` is the dispatch of every site that constructs it, so it
+/// must scope the remote origin, and never the local trust root.
+#[test]
+fn remote_triage_scopes_the_remote_origin() {
+    let root = std::path::Path::new(env!("OPENHUMAN_REPOSITORY_ROOT"));
+    let text =
+        std::fs::read_to_string(root.join("crates/openhuman-core/src/triage/runner.rs")).unwrap();
+    let apply = text
+        .split("impl TriageRunner for RemoteTriage")
+        .nth(1)
+        .expect("RemoteTriage implements TriageRunner");
+    assert!(apply.contains("remote_trigger_origin(envelope)"));
+    assert!(apply.contains("with_origin(origin, apply_decision("));
+    assert!(!apply.contains("local_trigger_origin"));
+}
+
+#[test]
+fn an_external_inbound_turn_parks_external_effects() {
+    match external_inbound_origin("x:mentions", "turn-1") {
+        AgentTurnOrigin::TrustedAutomation { job_id, source } => {
+            assert_eq!(job_id, "inbound:x:mentions:turn-1");
+            assert_eq!(
+                source,
+                TrustedAutomationSource::Workflow {
+                    require_approval: true
+                },
+                "pushed content must force a park, not auto-allow"
+            );
+        }
+        other => panic!("an inbound turn must not run as {}", other.class()),
+    }
 }

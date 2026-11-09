@@ -9,7 +9,7 @@ use super::*;
 /// ask for all of them in one shot instead of parking the run node-by-node.
 ///
 /// Mirrors — never re-implements — the runtime gating in
-/// `crate::flows::tinyflows::caps` (`OpenHumanTools::invoke` /
+/// `crate::flows::caps_host` (`OpenHumanTools::invoke` /
 /// `OpenHumanHttp` / `OpenHumanCode`) and `approval::gate`'s Workflow-origin
 /// branch. Because Rule 2 (`enforce_side_effect_approval`) forces
 /// `require_approval: true` onto every graph with outbound side-effect nodes,
@@ -33,67 +33,45 @@ use super::*;
 /// Curated Composio Read actions are excluded entirely: `CommandClass::Read`
 /// is `Allow` under every tier and the runtime skips the gate for them, so
 /// listing them would request grants that are never checked.
-pub async fn compute_approval_manifest(config: &Config, graph: &WorkflowGraph) -> Vec<Value> {
-    use crate::flows::tinyflows::caps::classify_composio_action_for_tier;
-    use crate::security::{GateDecision, SecurityPolicy};
-    use tinybox_bus::CommandClass;
-    use tinyflows_catalog::approval_manifest::{
-        assemble_manifest, manifest_candidates, ManifestCandidate, ManifestClass,
-    };
+pub async fn compute_approval_manifest(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    graph: &Value,
+) -> Result<Vec<Value>, String> {
+    compute_approval_manifest_json(ctx, config, graph.clone()).await
+}
 
-    let security =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
-    let gated = |class: CommandClass| {
-        Some(ManifestClass {
-            name: format!("{class:?}"),
-            blocked: security.gate_decision(class) == GateDecision::Block,
-            skip: false,
-        })
-    };
+async fn compute_approval_manifest_json(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    graph: Value,
+) -> Result<Vec<Value>, String> {
+    let registration =
+        crate::flows::authoring_host::register(std::sync::Arc::new(config.clone()), ctx.clone())
+            .await?;
+    let proxy = crate::modules::tinyflows::catalog_proxy(config).await?;
+    let entries: Vec<Value> = proxy
+        .call(
+            tinyflows_bus::catalog::members::APPROVAL_MANIFEST,
+            &(tinyflows_bus::catalog::ApprovalManifestRequest {
+                graph,
+                native_prefix: crate::flows::caps_host::NATIVE_TOOL_PREFIX.into(),
+                host: registration.catalog.clone(),
+            },),
+        )
+        .await
+        .map_err(|error| error.wire_message())?;
+    tracing::debug!(target: "flows", entries = entries.len(), "[flows] approval manifest computed");
+    Ok(entries)
+}
 
-    // The graph walk and the wire entries are `tinyflows-catalog`'s; only the
-    // classification of each candidate is the host's policy.
-    let candidates = manifest_candidates(graph, crate::flows::tinyflows::caps::NATIVE_TOOL_PREFIX);
-    let mut classes: Vec<Option<ManifestClass>> = Vec::with_capacity(candidates.len());
-    for candidate in &candidates {
-        let class = match candidate {
-            ManifestCandidate::Http { .. } => gated(CommandClass::Network),
-            ManifestCandidate::Code { .. } => gated(CommandClass::Write),
-            ManifestCandidate::NativeTool {
-                tool_name, args, ..
-            } => {
-                // Same classifier the runtime dispatch uses. Args may contain
-                // unresolved `=` bindings, so a classification error degrades
-                // conservatively to Network: over-asking is safe.
-                let class = crate::tools::native_ops::classify_tool_call(config, tool_name, args)
-                    .unwrap_or(CommandClass::Network);
-                gated(class)
-            }
-            ManifestCandidate::ConnectorTool { slug, .. } => {
-                let class = classify_composio_action_for_tier(slug).await;
-                if class == CommandClass::Read {
-                    // Curated read: runtime never gates it.
-                    Some(ManifestClass {
-                        name: format!("{class:?}"),
-                        blocked: false,
-                        skip: true,
-                    })
-                } else {
-                    gated(class)
-                }
-            }
-            ManifestCandidate::DynamicTool { .. } | ManifestCandidate::Agent { .. } => None,
-        };
-        classes.push(class);
-    }
-    let entries = assemble_manifest(&candidates, &classes);
-
-    tracing::debug!(
-        target: "flows",
-        entries = entries.len(),
-        "[flows] approval manifest computed"
-    );
-    entries
+/// Approval manifest for a portable graph payload from the Copilot bus.
+pub(crate) async fn approval_manifest_json(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    graph: Value,
+) -> Result<Vec<Value>, String> {
+    compute_approval_manifest_json(ctx, config, graph).await
 }
 
 /// RPC: the approval manifest for a saved flow (by `id`) or a candidate
@@ -105,6 +83,7 @@ pub async fn compute_approval_manifest(config: &Config, graph: &WorkflowGraph) -
 /// are both empty by definition and the card never shows — `gate_installed:
 /// false` is the only signal in that case.
 pub async fn flows_approval_manifest(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     id: Option<&str>,
     graph_json: Option<Value>,
@@ -116,13 +95,16 @@ pub async fn flows_approval_manifest(
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("flow not found: {id}"))?;
             // `store::get_flow` already returns a migrated, deserialized graph.
-            (flow.graph, Some(id.to_string()))
+            (
+                serde_json::to_value(flow.graph).map_err(|e| e.to_string())?,
+                Some(id.to_string()),
+            )
         }
-        (None, Some(graph_json)) => (tinyflows::migrate::deserialize_graph(graph_json)?, None),
+        (None, Some(graph_json)) => (graph_json, None),
         (None, None) => return Err("provide 'id' or 'graph'".to_string()),
     };
 
-    let entries = compute_approval_manifest(config, &graph).await;
+    let entries = compute_approval_manifest_json(ctx, config, graph).await?;
 
     let gate = crate::security::approval::ApprovalGate::try_global();
     let gate_installed = gate.is_some();
@@ -135,11 +117,22 @@ pub async fn flows_approval_manifest(
         _ => HashSet::new(),
     };
 
-    let (missing, already_trusted) = tinyflows_catalog::approval_manifest::split_manifest_trust(
-        &entries,
-        gate_installed,
-        &trusted,
-    );
+    let (mut missing, mut already_trusted) = (Vec::new(), Vec::new());
+    if gate_installed {
+        for entry in &entries {
+            if entry.get("kind").and_then(Value::as_str) != Some("approvable") {
+                continue;
+            }
+            let Some(tool_name) = entry.get("tool_name").and_then(Value::as_str) else {
+                continue;
+            };
+            if trusted.contains(tool_name) {
+                already_trusted.push(tool_name.to_string());
+            } else {
+                missing.push(tool_name.to_string());
+            }
+        }
+    }
 
     let log = format!(
         "[flows] approval manifest: {} entr{}, {} missing grant(s)",

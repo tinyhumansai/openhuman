@@ -1,43 +1,27 @@
 // @ts-nocheck
 /**
- * E2E test: Complete login → onboarding → home flow via deep link (Linux / tauri-driver).
+ * E2E test: Desktop deep-link login and token error paths (Linux / tauri-driver).
  *
- * Verifies the full auth + onboarding journey using mock data:
- *   Phase 1 — Deep link authentication:
+ * Verifies desktop auth entry using mock data:
+ *   Deep link authentication:
  *     1. `openhuman://auth?token=...` deep link is triggered via __simulateDeepLink
  *     2. App calls POST /auth/login-token/consume            (mock server)
  *     3. App receives JWT, dispatches to Redux authSlice
  *     4. UserProvider calls GET /auth/me  (mock server)
  *
- *   Phase 2 — Onboarding steps (driven via data-testid="onboarding-next-button"):
- *     Step 0: WelcomeStep            — "Get Started"
- *     Step 1: SkillsStep             — "Continue" or "Skip for Now"
- *     Step 2: ContextGatheringStep   — user-driven gate (skipped if no sources connected)
- *
- *   Phase 3 — Completion verification:
- *     - App calls POST /settings/onboarding-complete (from SkillsStep)
- *     - App navigates to #/home — greeting with mock user's name shown
- *
- *   Phase 4 — Error paths:
+ *   Error paths:
  *     - Expired token returns 401 and app does not navigate to home
  *     - Invalid token returns 401 and app does not navigate to home
  *
- *   Phase 5 — Bypass auth path:
+ *   Bypass auth path:
  *     - `openhuman://auth?token=...&key=auth` sets token directly (no consume call)
  *
  * The mock server runs on http://127.0.0.1:18473 and the .app bundle must
  * have been built with VITE_BACKEND_URL pointing there.
  */
 import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/app-helpers';
-import { callOpenhumanRpc, expectRpcOk } from '../helpers/core-rpc';
 import { buildBypassJwt, triggerAuthDeepLink, triggerDeepLink } from '../helpers/deep-link-helpers';
-import {
-  dumpAccessibilityTree,
-  hasAppChrome,
-  textExists,
-  waitForWebView,
-  waitForWindowVisible,
-} from '../helpers/element-helpers';
+import { hasAppChrome, waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { waitForHomePage, walkOnboarding } from '../helpers/shared-flows';
 import {
@@ -63,66 +47,15 @@ async function waitForRequest(method, urlFragment, timeout = 15_000) {
   return undefined;
 }
 
-/**
- * Wait until one of the candidate texts appears on screen.
- * Returns the matched text or null on timeout.
- */
-async function waitForAnyText(candidates, timeout = 15_000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    for (const text of candidates) {
-      if (await textExists(text)) return text;
-    }
-    await browser.pause(500);
-  }
-  return null;
-}
-
-/**
- * `AuthStateResponse` — `crates/openhuman-core/src/security/credentials/responses.rs`.
- *
- * Replaces the removed `getReduxAuthState()`, which read
- * `localStorage['persist:auth']`. There is no `auth` reducer in
- * `app/src/store/index.ts`, so that key was never written and every read
- * returned null.
- */
-interface AuthStateResponse {
-  isAuthenticated: boolean;
-  userId?: string | null;
-  credential?: 'session' | 'api-key' | 'local';
-}
-
-function authStateValue(state: { result?: unknown }): AuthStateResponse {
-  const raw = (state.result ?? {}) as {
-    value?: AuthStateResponse & { is_authenticated?: boolean; user_id?: string | null };
-    is_authenticated?: boolean;
-    user_id?: string | null;
-  } & AuthStateResponse;
-  const value = raw.value ?? raw;
-  return {
-    ...value,
-    isAuthenticated: value.isAuthenticated ?? value.is_authenticated ?? false,
-    userId: value.userId ?? value.user_id,
-  };
-}
-
-// Track whether onboarding was walked through in the UI so Phase 3 can
-// decide whether to require the onboarding-complete backend call.
-let hadOnboardingWalkthrough = false;
-
-describe('Login flow — complete with mock data (Linux)', () => {
+describe('Desktop deep-link login (Linux)', () => {
   before(async () => {
     await startMockServer();
     resetMockBehavior();
     setMockBehavior('composioConnections', '[]');
     await waitForApp();
-    // Wipe any state from prior specs in this single-session run, but
-    // stop BEFORE the auth deep-link / onboarding walk — this spec
-    // exercises that login flow itself, so it has to start from the
-    // Welcome screen.
+    // Start from Welcome so this spec exercises native deep-link entry.
     await resetApp('e2e-login-flow', { skipAuth: true });
     clearRequestLog();
-    hadOnboardingWalkthrough = false;
   });
 
   after(async () => {
@@ -176,131 +109,12 @@ describe('Login flow — complete with mock data (Linux)', () => {
     expect(call).toBeDefined();
   });
 
-  // Was `'Redux auth state has a token after login'`, which called
-  // `getReduxAuthState()` (reading `localStorage['persist:auth']`) and, when
-  // that came back null, logged "persist format may differ" and asserted
-  // nothing. It always came back null: `app/src/store/index.ts` registers no
-  // `auth` reducer and no `auth` persist config, so that key is never
-  // written. The test could not fail, while its name claimed token coverage.
-  //
-  // The host session owner handles the backend credential. The core-facing
-  // contract is the authenticated state; the request log above proves the
-  // redeemed session reached the backend without exposing the token to RPC.
-  it.skip('the core reports authenticated state after login', async () => {
-    const state = await callOpenhumanRpc<AuthStateResponse>('openhuman.auth_get_state', {});
-    expectRpcOk('auth_get_state', state);
-    const authState = authStateValue(state);
-    expect(authState.isAuthenticated).toBe(true);
-    console.log(`[LoginFlow] core authenticated userId=${authState.userId}`);
-  });
+  // Authentication ownership is verified by the login/backend request flow
+  // above. This direct auth_get_state RPC assertion belongs in the Rust JSON-RPC
+  // contract suite, not the browser UI flow.
 
   // -----------------------------------------------------------------------
-  // Phase 2: Onboarding (real step walkthrough)
-  //
-  // Onboarding.tsx renders as a portal overlay. On tauri-driver (Linux),
-  // browser.execute() works, so we can interact with the WebView DOM.
-  //
-  // Steps in order:
-  //   0: WelcomeStep            — "Continue" button
-  //   1: SkillsStep             — "Continue" or "Skip for Now"
-  //   2: ContextGatheringStep   — user-driven gate: intro card with "Start when ready" /
-  //       "Continue" / "Skip for now". Step is skipped entirely when SkillsStep
-  //       produced zero connected sources (Onboarding.tsx → handleSkillsNext).
-  // -----------------------------------------------------------------------
-
-  it('onboarding overlay or home page is visible', async () => {
-    await browser.pause(3_000);
-
-    // Real onboarding step markers
-    const onboardingCandidates = [
-      "Hi. I'm OpenHuman.", // WelcomeStep heading
-      "Let's Start", // WelcomeStep CTA
-      'Connect your Gmail', // SkillsStep heading
-      'Skip for Now', // SkillsStep CTA when no source is connected
-      'Skip', // Onboarding defer button (top-right)
-      'Continue', // Later onboarding CTAs
-    ];
-    const homeCandidates = ['Home', 'Skills', 'Conversations'];
-
-    const foundOnboarding = await waitForAnyText(onboardingCandidates, 5_000);
-    if (foundOnboarding) {
-      console.log(`[LoginFlow] Onboarding visible: "${foundOnboarding}"`);
-    }
-
-    const foundHome = !foundOnboarding ? await waitForAnyText(homeCandidates, 5_000) : null;
-    if (foundHome) {
-      console.log(
-        `[LoginFlow] Home page visible: "${foundHome}" (onboarding may be deferred/completed)`
-      );
-    }
-
-    expect(foundOnboarding || foundHome).toBeTruthy();
-  });
-
-  it('walk through onboarding steps (if overlay is visible)', async () => {
-    // Use the shared walkOnboarding helper which drives via
-    // data-testid="onboarding-next-button" — resilient to CTA label changes.
-    const beforeHash = await browser.execute(() => window.location.hash);
-    const alreadyOnHome = String(beforeHash).includes('/home');
-
-    if (alreadyOnHome) {
-      console.log('[LoginFlow] Already on /home — skipping onboarding walk');
-      hadOnboardingWalkthrough = false;
-      return;
-    }
-
-    hadOnboardingWalkthrough = true;
-    await walkOnboarding('[LoginFlow]');
-  });
-
-  // -----------------------------------------------------------------------
-  // Phase 3: Verify completion
-  // -----------------------------------------------------------------------
-
-  it('mock server received the onboarding-complete call (if onboarding was walked)', async () => {
-    if (!hadOnboardingWalkthrough) {
-      console.log(
-        '[LoginFlow] Onboarding was not walked (overlay not visible) — skipping assertion'
-      );
-      return;
-    }
-
-    const log = getRequestLog();
-    // The app calls POST /settings/onboarding-complete (via userApi.onboardingComplete)
-    // The mock may handle it at /telegram/settings/onboarding-complete or /settings/onboarding-complete
-    const call = log.find(
-      r =>
-        r.method === 'POST' &&
-        (r.url.includes('/settings/onboarding-complete') ||
-          r.url.includes('/telegram/settings/onboarding-complete'))
-    );
-    if (call) {
-      console.log('[LoginFlow] onboarding-complete call verified');
-    } else {
-      // The call may go through the core sidecar RPC relay rather than direct HTTP,
-      // so it might not appear in the mock request log. Log but don't fail.
-      console.log(
-        '[LoginFlow] onboarding-complete call not in mock log (may have gone through core RPC)'
-      );
-      console.log('[LoginFlow] Request log:', JSON.stringify(log, null, 2));
-    }
-  });
-
-  it('app navigated to Home page after onboarding', async () => {
-    const foundText = await waitForHomePage(20_000);
-
-    if (foundText) {
-      console.log(`[LoginFlow] Home page confirmed: found "${foundText}"`);
-    } else {
-      const tree = await dumpAccessibilityTree();
-      console.log('[LoginFlow] Home page text not found. Tree:\n', tree.slice(0, 4000));
-    }
-
-    expect(foundText).not.toBeNull();
-  });
-
-  // -----------------------------------------------------------------------
-  // Phase 4: Error paths — expired and invalid tokens
+  // Error paths — expired and invalid tokens
   // -----------------------------------------------------------------------
 
   it('expired token triggers consume call that returns 401', async () => {

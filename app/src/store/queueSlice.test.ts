@@ -10,6 +10,7 @@ import {
 import reducer, {
   clipQueuePreview,
   pendingFollowupAdded,
+  pendingFollowupCompleted,
   queueItemDelivered,
   queueItemQueued,
   queueItemRemoved,
@@ -67,7 +68,7 @@ describe('queueSlice — core run-queue items', () => {
     expect(state.itemsByThread.t1).toBeUndefined();
   });
 
-  it('keeps pending follow-ups when an item is delivered (they persist on turn end)', () => {
+  it('keeps pending follow-ups after the core delivers their queue item', () => {
     let state = reducer(
       undefined,
       pendingFollowupAdded({ threadId: 't1', message: message('m1', 'hi'), text: 'hi' })
@@ -151,13 +152,15 @@ describe('queueSlice — chat runtime lifecycle', () => {
     );
   };
 
-  it('endInferenceTurn clears the thread queue (its follow-ups are being dispatched)', () => {
+  it('keeps pending follow-ups until their own persisted terminal event', () => {
     let state = reducer(seeded(), beginInferenceTurn({ threadId: 't1' }));
     state = reducer(state, endInferenceTurn({ threadId: 't1' }));
 
     expect(state.itemsByThread.t1).toBeUndefined();
-    expect(state.pendingFollowupsByThread.t1).toBeUndefined();
+    expect(state.pendingFollowupsByThread.t1).toHaveLength(1);
     expect(state.itemsByThread.t2).toBeDefined();
+    state = reducer(state, pendingFollowupCompleted({ threadId: 't1', requestId: 'm1' }));
+    expect(state.pendingFollowupsByThread.t1).toBeUndefined();
   });
 
   it('clearRuntimeForThread clears one thread, clearAllChatRuntime clears all', () => {
@@ -214,5 +217,37 @@ describe('clipQueuePreview', () => {
     expect(clipQueuePreview('x'.repeat(81))).toBe(`${'x'.repeat(80)}…`);
     // Astral characters count once, as Rust's `chars()` does.
     expect(clipQueuePreview('😀'.repeat(81))).toBe(`${'😀'.repeat(80)}…`);
+  });
+});
+
+describe('clipQueuePreview with typed attachments', () => {
+  const file = (name?: string) => ({
+    kind: 'file' as const,
+    fileName: name ?? null,
+    caption: null,
+    media: {
+      kind: 'document' as const,
+      url: 'data:application/pdf;base64,AAA',
+      fileName: name ?? null,
+      contentType: null,
+      sizeBytes: null,
+      codec: null,
+      durationMs: null,
+      height: null,
+      localCachePath: null,
+      path: null,
+      platformMessageId: null,
+      transcribed: false,
+      width: null,
+    },
+  });
+
+  it('uses the caption when there is one', () => {
+    expect(clipQueuePreview('see this', [file('a.pdf')])).toBe('see this');
+  });
+
+  it('falls back to the attachment file names when there is no caption', () => {
+    expect(clipQueuePreview('', [file('a.pdf'), file('b.pdf')])).toBe('a.pdf, b.pdf');
+    expect(clipQueuePreview('', [file()])).toBe('attachment');
   });
 });

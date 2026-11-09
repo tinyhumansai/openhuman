@@ -2,6 +2,9 @@
 
 pub mod types;
 pub use types::*;
+#[cfg(feature = "flows")]
+pub(crate) mod flow_archetype;
+pub use crate::integrations::render_connected_identities;
 
 pub mod agents_md;
 pub use agents_md::{load_agents_md, load_agents_md_layers};

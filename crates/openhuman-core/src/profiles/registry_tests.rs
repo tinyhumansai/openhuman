@@ -1,5 +1,10 @@
 use super::*;
-use crate::storage::MemoryStorage;
+use crate::storage::test_support::memory_backend;
+#[cfg(feature = "storage-sqlite")]
+use crate::storage::test_support::sqlite_backend;
+#[cfg(feature = "storage-sqlite")]
+use tinystoragedrivers_types::Precondition;
+use tinystoragedrivers_types::{CollectionSpec, Scope};
 
 fn meta(id: &str, created_at: u64) -> ProfileMeta {
     ProfileMeta {
@@ -31,13 +36,13 @@ async fn exercise(registry: &ProfileRegistry) {
 
 #[tokio::test]
 async fn the_shared_registry_records_lists_and_forgets() {
-    let storage = MemoryStorage::new();
-    let registry = ProfileRegistry::cluster(&storage).unwrap();
+    let storage = memory_backend();
+    let registry = ProfileRegistry::cluster(storage.as_ref()).unwrap();
     assert!(registry.is_shared());
     exercise(&registry).await;
 
     // A second node over the same backend sees the same profiles.
-    let other = ProfileRegistry::cluster(&storage).unwrap();
+    let other = ProfileRegistry::cluster(storage.as_ref()).unwrap();
     assert_eq!(other.list().await.unwrap().len(), 2);
 
     let alice = ProfileId::parse("alice").unwrap();
@@ -76,4 +81,94 @@ async fn an_empty_root_lists_nothing() {
         .await
         .unwrap()
         .is_empty());
+}
+
+#[tokio::test]
+async fn doctor_lookup_of_an_unknown_profile_does_not_declare_cluster_schema() {
+    let storage = memory_backend();
+    let registry = ProfileRegistry::cluster(storage.as_ref()).unwrap();
+    let docs = storage
+        .for_scope(&Scope::new(crate::storage::lease::CLUSTER_SCOPE).unwrap())
+        .unwrap();
+    let registry_spec = CollectionSpec::new(REGISTRY_COLLECTION);
+    let lease_spec = CollectionSpec::new(crate::storage::lease::LEASE_COLLECTION);
+
+    assert!(registry
+        .get_readonly(&ProfileId::parse("alice").unwrap())
+        .await
+        .unwrap()
+        .is_none());
+
+    assert!(docs
+        .documents()
+        .validate_collection_spec(&registry_spec)
+        .await
+        .is_err());
+    assert!(docs
+        .documents()
+        .validate_collection_spec(&lease_spec)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+#[cfg(feature = "storage-sqlite")]
+async fn doctor_lookup_does_not_migrate_legacy_profile_or_lease_records() {
+    let storage = sqlite_backend().unwrap();
+    let registry = ProfileRegistry::cluster(storage.backend.as_ref()).unwrap();
+    let scoped = storage
+        .backend
+        .for_scope(&Scope::new(crate::storage::lease::CLUSTER_SCOPE).unwrap())
+        .unwrap();
+    let docs = scoped.documents();
+    let alice_key = crate::storage::schema_support::key_of("alice").unwrap();
+    docs.ensure_collection(&CollectionSpec::new("profiles"))
+        .await
+        .unwrap();
+    docs.put(
+        "profiles",
+        &alice_key,
+        serde_json::json!({ "profile_id": "alice", "created_at": 1, "layout_version": 2 }),
+        Precondition::Absent,
+    )
+    .await
+    .unwrap();
+    docs.ensure_collection(&CollectionSpec::new("leases"))
+        .await
+        .unwrap();
+    docs.put(
+        "leases",
+        "alice",
+        serde_json::json!({
+            "owner": "node-a",
+            "endpoint": null,
+            "epoch": 3,
+            "expires_at_ms": u64::MAX,
+            "released": false
+        }),
+        Precondition::Absent,
+    )
+    .await
+    .unwrap();
+
+    let result = registry
+        .get_readonly(&ProfileId::parse("alice").unwrap())
+        .await;
+    assert!(
+        result.is_err() || result.unwrap().is_some(),
+        "a legacy provisioned profile must not be misreported as unprovisioned"
+    );
+
+    assert!(docs.get("profiles", &alice_key).await.unwrap().is_some());
+    assert!(docs.get("leases", "alice").await.unwrap().is_some());
+    assert!(docs
+        .validate_collection_spec(&CollectionSpec::new(REGISTRY_COLLECTION))
+        .await
+        .is_ok());
+    assert!(docs
+        .validate_collection_spec(&CollectionSpec::new(
+            crate::storage::lease::LEASE_COLLECTION
+        ))
+        .await
+        .is_err());
 }

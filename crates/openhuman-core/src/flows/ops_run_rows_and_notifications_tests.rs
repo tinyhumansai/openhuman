@@ -18,7 +18,18 @@ async fn flows_resume_with_no_recorded_run_for_thread_id_errors_clearly() {
     )
     .await
     .expect_err("must error when no run is recorded for this thread_id");
-    assert!(err.contains("no paused run to resume"));
+    assert!(
+        err.contains("thread-that-was-never-started") && err.contains("not found"),
+        "unexpected missing-run error: {err}"
+    );
+    assert!(
+        flows_list_runs(&config, &created.value.id, 20)
+            .await
+            .unwrap()
+            .value
+            .is_empty(),
+        "rejecting an unknown thread must not admit a run"
+    );
 }
 
 // ── run history (flows_list_runs / flows_get_run) ────────────────────────
@@ -437,78 +448,51 @@ async fn flows_run_finished_event_skips_pending_approval_and_fires_once_on_resum
 }
 
 #[tokio::test]
-async fn observer_persists_each_step_incrementally() {
-    // The observer no-ops until the run's start row exists (mirrors
-    // `start_flow_run_row`), so seed a flow + a running run row first.
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let created = flows_create(&config, "obs".to_string(), passthrough_graph(), false)
-        .await
-        .unwrap();
-    let run_id = format!("flow:{}:run-under-test", created.value.id);
-    store::insert_flow_run(
-        &config,
-        &run_id,
-        &created.value.id,
-        &run_id,
-        "2026-01-01T00:00:00Z",
-    )
-    .unwrap();
-
-    let observer = FlowRunObserver::new(
-        StdArc::new(config.clone()),
-        created.value.id.clone(),
-        &run_id,
-    );
-    observer.on_step_finish(&ExecutionStep {
-        node_id: "a".to_string(),
-        status: StepStatus::Success,
-        output: json!([{ "json": { "ok": true } }]),
-        duration_ms: 7,
-        diagnostics: Vec::new(),
-        transcript: Vec::new(),
-    });
-    observer.on_step_finish(&ExecutionStep {
-        node_id: "b".to_string(),
-        status: StepStatus::Error,
-        output: Value::Null,
-        duration_ms: 3,
-        diagnostics: Vec::new(),
-        transcript: Vec::new(),
-    });
-
-    // The store now holds both live steps with real status + timing — proof of
-    // incremental persistence (post-hoc reconstruction leaves status None).
-    let row = store::get_flow_run(&config, &run_id).unwrap().unwrap();
-    assert_eq!(row.steps.len(), 2, "both live steps should be persisted");
-    let a = row.steps.iter().find(|s| s.node_id == "a").unwrap();
-    assert_eq!(a.status.as_deref(), Some("success"));
-    assert_eq!(a.duration_ms, Some(7));
-    let b = row.steps.iter().find(|s| s.node_id == "b").unwrap();
-    assert_eq!(b.status.as_deref(), Some("error"));
-    assert_eq!(b.duration_ms, Some(3));
-
-    // Re-firing the same node id replaces its entry rather than duplicating it.
-    observer.on_step_finish(&ExecutionStep {
-        node_id: "a".to_string(),
-        status: StepStatus::Success,
-        output: json!([{ "json": { "ok": true } }]),
-        duration_ms: 42,
-        diagnostics: Vec::new(),
-        transcript: Vec::new(),
-    });
-    let row = store::get_flow_run(&config, &run_id).unwrap().unwrap();
-    assert_eq!(row.steps.len(), 2, "re-firing a node must not duplicate it");
-    let a = row.steps.iter().find(|s| s.node_id == "a").unwrap();
-    assert_eq!(
-        a.duration_ms,
-        Some(42),
-        "the step should be replaced in place"
-    );
-}
-
-#[tokio::test]
 async fn flows_run_persists_live_steps_with_status_and_timing() {
+    use crate::core::bus::BUS;
+    use crate::core::events::DomainEvent;
+    use async_trait::async_trait;
+    use std::sync::{Arc, Mutex};
+    use tinybus::EventHandler;
+
+    #[derive(Default)]
+    struct ProgressCollector {
+        events: Arc<Mutex<Vec<(String, String, String)>>>,
+    }
+
+    #[async_trait]
+    impl EventHandler<DomainEvent> for ProgressCollector {
+        fn name(&self) -> &str {
+            "test::flows::module_run_progress_collector"
+        }
+
+        fn domains(&self) -> Option<&[&str]> {
+            Some(&["cron"])
+        }
+
+        async fn handle(&self, event: &DomainEvent) {
+            if let DomainEvent::FlowRunProgress {
+                run_id,
+                node_id,
+                status,
+            } = event
+            {
+                self.events
+                    .lock()
+                    .unwrap()
+                    .push((run_id.clone(), node_id.clone(), status.clone()));
+            }
+        }
+    }
+
+    crate::core::bus::init().await.expect("bus init");
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let _progress_subscription = BUS
+        .subscribe(Arc::new(ProgressCollector {
+            events: Arc::clone(&progress),
+        }))
+        .expect("progress subscriber installed");
+
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let created = flows_create(
@@ -535,8 +519,8 @@ async fn flows_run_persists_live_steps_with_status_and_timing() {
     let row = flows_get_run(&config, &thread_id).await.unwrap();
     assert_eq!(row.value.status, "completed");
 
-    // The non-trigger node 'p' was observed live: it carries a real status +
-    // timing that only the live observer (not post-hoc reconstruction) sets.
+    // The module's durable RunStep event writes real status and timing for the
+    // non-trigger node; host progress is projected from the same ordered stream.
     let p = row
         .value
         .steps
@@ -549,8 +533,8 @@ async fn flows_run_persists_live_steps_with_status_and_timing() {
         "a live-observed step should carry executor timing"
     );
 
-    // The trigger node emits no `on_step_finish`; `settle_steps` fills it in
-    // from the post-hoc reconstruction, so it carries no live status.
+    // The trigger node is reconstructed by the module's run summary and has no
+    // executor status of its own.
     let t = row
         .value
         .steps
@@ -559,8 +543,32 @@ async fn flows_run_persists_live_steps_with_status_and_timing() {
         .expect("the trigger step should be reconstructed at settle");
     assert!(
         t.status.is_none(),
-        "the trigger step is reconstructed post-hoc, not observed live"
+        "the trigger step has no executor status"
     );
+
+    let mut projected = Vec::new();
+    for _ in 0..20 {
+        projected = progress
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(run_id, node_id, _)| run_id == &thread_id && node_id == "p")
+            .map(|(_, _, status)| status.clone())
+            .collect::<Vec<_>>();
+        if projected.iter().any(|status| status == "success") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let running = projected
+        .iter()
+        .position(|status| status == "running")
+        .expect("PollRun step_started event projects running status");
+    let settled = projected
+        .iter()
+        .position(|status| status == "success")
+        .expect("PollRun step event projects its settled status");
+    assert!(running < settled, "module step events keep their order");
 }
 
 // ── flows_cancel_run (issue G4) ───────────────────────────────────────────
@@ -607,7 +615,7 @@ async fn flows_cancel_run_cancels_a_parked_pending_approval_run() {
     let run_row = flows_get_run(&config, &thread_id).await.unwrap();
     assert_eq!(run_row.value.status, "cancelled");
     assert!(run_row.value.pending_approvals.is_empty());
-    assert_eq!(run_row.value.error.as_deref(), Some("run cancelled"));
+    assert_eq!(run_row.value.error.as_deref(), Some("parked run cancelled"));
 
     let reloaded = flows_get(&config, &created.value.id).await.unwrap();
     assert_eq!(reloaded.value.last_status.as_deref(), Some("cancelled"));
@@ -623,7 +631,15 @@ async fn flows_cancel_run_cancels_a_parked_pending_approval_run() {
     )
     .await
     .expect_err("a cancelled run must not be resumable");
-    assert!(err.contains("not pending approval") || err.contains("no paused run"));
+    assert!(
+        err.contains(&format!(
+            "flow run '{thread_id}' is not waiting for approval"
+        )),
+        "unexpected cancelled-run resume error: {err}"
+    );
+    let unchanged = flows_get_run(&config, &thread_id).await.unwrap().value;
+    assert_eq!(unchanged.status, "cancelled");
+    assert!(unchanged.pending_approvals.is_empty());
 }
 
 #[tokio::test]
@@ -645,9 +661,13 @@ async fn flows_cancel_run_of_an_already_completed_run_errors() {
     .await
     .unwrap();
     let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
+    let before = flows_get_run(&config, &thread_id).await.unwrap().value;
+    assert_eq!(before.status, "completed");
 
     let err = flows_cancel_run(&config, &thread_id)
         .await
         .expect_err("cancelling an already-completed run must be a clear error");
-    assert!(err.contains("already terminal"), "got: {err}");
+    assert!(err.contains("cancellation was not accepted"), "got: {err}");
+    let after = flows_get_run(&config, &thread_id).await.unwrap().value;
+    assert_eq!(after.status, "completed", "owner terminal row is unchanged");
 }

@@ -62,11 +62,15 @@ impl TtsProvider for FakeTts {
     }
 }
 
-#[test]
-fn an_unregistered_slug_still_falls_through_to_the_built_in_error() {
+#[tokio::test]
+async fn an_unregistered_slug_still_falls_through_to_the_built_in_error() {
     let config = Config::default();
-    assert!(create_stt_provider("never-registered", "", &config).is_err());
-    assert!(create_tts_provider("never-registered", "", &config).is_err());
+    assert!(create_stt_provider("never-registered", "", &config)
+        .await
+        .is_err());
+    assert!(create_tts_provider("never-registered", "", &config)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
@@ -77,8 +81,12 @@ async fn a_registered_stt_slug_is_built_with_the_effective_model() {
         }))
     });
     let config = Config::default();
-    let default_model = create_stt_provider("fake-stt", "base", &config).unwrap();
-    let suffix_model = create_stt_provider("fake-stt:large", "base", &config).unwrap();
+    let default_model = create_stt_provider("fake-stt", "base", &config)
+        .await
+        .unwrap();
+    let suffix_model = create_stt_provider("fake-stt:large", "base", &config)
+        .await
+        .unwrap();
     unregister_stt_provider("fake-stt");
 
     let text = |p: Box<dyn SttProvider>| async move {
@@ -92,18 +100,22 @@ async fn a_registered_stt_slug_is_built_with_the_effective_model() {
     assert_eq!(text(suffix_model).await, "model=large");
 }
 
-#[test]
-fn a_registered_slug_answers_under_the_hosted_slug() {
+#[tokio::test]
+async fn a_registered_slug_answers_under_the_hosted_slug() {
     register_stt_provider("cloud", |_, _| {
         Ok(Box::new(FakeStt {
             model: String::new(),
         }))
     });
-    let provider = create_stt_provider("cloud", "", &Config::default()).unwrap();
+    let provider = create_stt_provider("cloud", "", &Config::default())
+        .await
+        .unwrap();
     unregister_stt_provider("cloud");
     assert_eq!(provider.name(), "fake-stt");
     // With the registration gone the core has no `cloud` provider of its own.
-    assert!(create_stt_provider("cloud", "", &Config::default()).is_err());
+    assert!(create_stt_provider("cloud", "", &Config::default())
+        .await
+        .is_err());
 }
 
 #[tokio::test]
@@ -114,8 +126,10 @@ async fn a_registered_tts_provider_gets_the_resolved_voice_and_returns_reply_spe
         }))
     });
     let config = Config::default();
-    let with_voice = create_tts_provider("fake-tts", "alloy", &config).unwrap();
-    let without_voice = create_tts_provider("fake-tts", "", &config).unwrap();
+    let with_voice = create_tts_provider("fake-tts", "alloy", &config)
+        .await
+        .unwrap();
+    let without_voice = create_tts_provider("fake-tts", "", &config).await.unwrap();
     unregister_tts_provider("fake-tts");
 
     let speech = with_voice

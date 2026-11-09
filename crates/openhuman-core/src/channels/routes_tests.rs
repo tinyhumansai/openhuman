@@ -8,11 +8,9 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use tinybus::EventHandler;
-use tinychannels::routes::resolve_provider_alias;
-use tinychannels_bus::context::ChatMessage;
 use tinychannels_bus::ChannelMessage;
 use tinytools::{Tool, ToolResult};
 
@@ -37,28 +35,9 @@ impl Tool for DummyTool {
     }
 }
 
-#[derive(Default)]
-struct RecordingChannel {
-    sent: Mutex<Vec<SendMessage>>,
-}
+use crate::channels::runtime::{ChannelHandle, TestChannel};
 
-#[async_trait]
-impl Channel for RecordingChannel {
-    fn name(&self) -> &str {
-        "recording"
-    }
-
-    async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
-        self.sent.lock().unwrap().push(message.clone());
-        Ok(())
-    }
-
-    async fn listen(&self, _tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-fn runtime_context(workspace_dir: PathBuf) -> ChannelRuntimeContext {
+pub(super) fn runtime_context(workspace_dir: PathBuf) -> ChannelRuntimeContext {
     let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
         Arc::new(tinyagents_harness::testkit::ScriptedModel::replies(vec![
             "ok",
@@ -66,6 +45,7 @@ fn runtime_context(workspace_dir: PathBuf) -> ChannelRuntimeContext {
     ChannelRuntimeContext {
         relay_thread: None,
         channels_by_name: Arc::new(HashMap::new()),
+        module_objects: Arc::new(HashMap::new()),
         turn_model_source: Some(crate::agent::tinyagents::TurnModelSource::from_model(model)),
         default_provider: Arc::new("openai".into()),
         tools_registry: Arc::new(vec![Box::new(DummyTool) as Box<dyn Tool>]),
@@ -73,13 +53,11 @@ fn runtime_context(workspace_dir: PathBuf) -> ChannelRuntimeContext {
         model: Arc::new("reasoning-v1".into()),
         temperature: 0.0,
         max_tool_iterations: 1,
-        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
         turn_model_source_cache: TurnModelSourceCacheMap::default(),
         route_overrides: RouteSelectionMap::default(),
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::config::ReliabilityConfig::default()),
-        provider_runtime_options: crate::inference::provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(workspace_dir),
         message_timeout_secs: 60,
         multimodal: crate::config::MultimodalConfig::default(),
@@ -87,6 +65,135 @@ fn runtime_context(workspace_dir: PathBuf) -> ChannelRuntimeContext {
         config: None,
         core: None,
     }
+}
+
+#[test]
+fn configured_control_channel_requires_the_prepared_account_identity() {
+    use tinychannels_bus::module_remote::RemoteSessionScope;
+
+    let mut ctx = runtime_context(PathBuf::from("/tmp"));
+    let mut scope = RemoteSessionScope {
+        channel: tinychannels_bus::ChannelRef {
+            id: "telegram".into(),
+            account_id: None,
+        },
+        conversation: tinychannels_bus::ConversationRef {
+            id: "chat-1".into(),
+            ..Default::default()
+        },
+        session_key: "session-1".into(),
+    };
+    let handle = |name: &str| Arc::new(ChannelHandle::Test(Arc::new(TestChannel::new(name))));
+
+    ctx.channels_by_name = Arc::new(HashMap::from([(
+        "telegram:bot-a".into(),
+        handle("telegram:bot-a"),
+    )]));
+    assert!(configured_control_channel(&ctx, Some(&scope)).is_none());
+
+    ctx.channels_by_name = Arc::new(HashMap::from([
+        ("telegram:bot-a".into(), handle("telegram:bot-a")),
+        ("telegram:bot-b".into(), handle("telegram:bot-b")),
+    ]));
+    assert!(configured_control_channel(&ctx, Some(&scope)).is_none());
+
+    scope.channel.account_id = Some("telegram:bot-b".into());
+    let configured = configured_control_channel(&ctx, Some(&scope));
+    assert_eq!(
+        configured.as_deref().map(|channel| channel.name.as_str()),
+        Some("telegram:bot-b")
+    );
+    scope.channel.account_id = Some("telegram:bot-a".into());
+    scope.channel.id = "discord".into();
+    assert!(configured_control_channel(&ctx, Some(&scope)).is_none());
+}
+
+async fn handle_linked_runtime_command(
+    ctx: &mut ChannelRuntimeContext,
+    msg: &ChannelMessage,
+    target_channel: Option<&Arc<ChannelHandle>>,
+    linked: &crate::channels::runtime::test_support::LinkedTelegramRuntime,
+    canonical_conversation_id: Option<&str>,
+) -> bool {
+    use tinychannels_bus::module_inbound::{ChannelInboundSource, PrepareChannelInboundRequest};
+    use tinychannels_bus::module_remote::RemoteSessionScope;
+
+    ctx.channels_by_name = linked.channels();
+    ctx.module_objects = linked.module_objects();
+    let core = match ctx.core.as_ref().and_then(std::sync::Weak::upgrade) {
+        Some(core) => core,
+        None => {
+            crate::channels::runtime::test_support::bind_test_core_context(ctx, linked.config())
+                .await
+        }
+    };
+    crate::core::runtime::CoreContext::scope(core, async {
+        let account_id = linked
+            .channels()
+            .keys()
+            .find(|name| tinychannels_bus::provider_id(name) == msg.channel)
+            .cloned()
+            .expect("linked runtime should expose the configured provider instance");
+        let prepared = crate::modules::channel_controller::prepare_inbound(
+            &crate::channels::context::module_client(ctx).await,
+            PrepareChannelInboundRequest {
+                source: ChannelInboundSource::Envelope {
+                    envelope: tinychannels_bus::ChannelInboundEnvelope {
+                        channel: tinychannels_bus::ChannelRef {
+                            id: msg.channel.clone(),
+                            account_id: Some(account_id),
+                        },
+                        message_id: msg.id.clone(),
+                        reply_to_id: msg.reply_to_id.clone(),
+                        conversation: tinychannels_bus::ConversationRef {
+                            id: canonical_conversation_id
+                                .unwrap_or(&msg.reply_target)
+                                .to_owned(),
+                            thread_id: msg.thread_ts.clone(),
+                            topic_id: msg.topic_id.clone(),
+                            ..Default::default()
+                        },
+                        sender: tinychannels_bus::SenderRef {
+                            id: msg.sender.clone(),
+                            name: msg.sender_name.clone(),
+                            ..Default::default()
+                        },
+                        timestamp_unix_ms: Some(msg.timestamp.saturating_mul(1000)),
+                        text: msg.content.clone(),
+                        parts: vec![tinychannels_bus::ContentPart::Text {
+                            text: msg.content.clone(),
+                            markdown_dialect: None,
+                        }],
+                        ..Default::default()
+                    },
+                    timestamp: msg.timestamp,
+                },
+                namespace: "main".into(),
+                session_policy: Default::default(),
+                preparation_mode: Default::default(),
+            },
+        )
+        .await
+        .expect("linked TinyChannels should prepare the command's trusted scope");
+        let session_key = prepared.session_key.clone();
+        let scope = RemoteSessionScope {
+            channel: prepared.envelope.channel,
+            conversation: prepared.envelope.conversation,
+            session_key: session_key.clone(),
+        };
+        handle_runtime_command_with_reset(
+            ctx,
+            &prepared.message,
+            target_channel,
+            &prepared.history_key,
+            Some(scope),
+            Some(session_key),
+            &prepared.message,
+            || async { Ok(()) },
+        )
+        .await
+    })
+    .await
 }
 
 #[cfg(feature = "modules")]
@@ -100,7 +207,14 @@ async fn module_route_help_response(
 
     let request = ChannelControlRequest::Route {
         workspace_dir: workspace_dir.to_string_lossy().into_owned(),
+        capabilities: Some(Box::new({
+            let mut capabilities = tinychannels_bus::ChannelCapabilities::unknown();
+            capabilities.remote_control = true;
+            capabilities
+        })),
         message: Box::new(ChannelMessage {
+            reply_to_id: None,
+            topic_id: None,
             id: "help-fixture".into(),
             sender: "operator".into(),
             reply_target: "chat".into(),
@@ -115,6 +229,8 @@ async fn module_route_help_response(
             model: "gpt-5".into(),
         },
         history_len: 0,
+        session_scope: None,
+        configured_channel: None,
         providers,
     };
     let response: ChannelControlResult = crate::channels::module_fixture::client()
@@ -135,17 +251,7 @@ async fn module_route_help_response(
 }
 
 #[test]
-fn provider_alias_and_route_selection_round_trip() {
-    let first_provider = provider::list_providers()
-        .into_iter()
-        .next()
-        .expect("provider registry should not be empty");
-    assert_eq!(
-        resolve_provider_alias(first_provider.name, &provider_descriptors()).as_deref(),
-        Some(first_provider.name)
-    );
-    assert!(resolve_provider_alias("   ", &provider_descriptors()).is_none());
-
+fn route_selection_round_trip() {
     let ctx = runtime_context(PathBuf::from("/tmp"));
     let sender_key = "telegram_alice_reply";
     assert_eq!(
@@ -178,19 +284,17 @@ fn provider_alias_and_route_selection_round_trip() {
 
 #[cfg(feature = "modules")]
 #[tokio::test]
-async fn cached_models_and_help_responses_render_expected_text() {
+async fn module_route_help_ignores_stale_model_cache_and_projects_providers() {
     let tempdir = tempfile::tempdir().unwrap();
     let state_dir = tempdir.path().join("state");
     std::fs::create_dir_all(&state_dir).unwrap();
     std::fs::write(
         state_dir.join("models_cache.json"),
         serde_json::json!({
-            "entries": [
-                {
-                    "provider": "openai",
-                    "models": ["gpt-5", "gpt-5-mini", "gpt-4.1"]
-                }
-            ]
+            "entries": [{
+                "provider": "openai",
+                "models": ["stale-model"]
+            }]
         })
         .to_string(),
     )
@@ -198,8 +302,13 @@ async fn cached_models_and_help_responses_render_expected_text() {
 
     let models = module_route_help_response(tempdir.path(), "/model", Vec::new()).await;
     assert!(models.contains("Current provider: `openai`"));
-    assert!(models.contains("Cached model IDs"));
-    assert!(models.contains("- `gpt-5-mini`"));
+    // The module no longer reads `models_cache.json` (tinychannels 0.1.38):
+    // a catalog-less channel points the user at the web UI instead of listing
+    // a possibly stale workspace file.
+    assert!(models.contains("Model catalog is unavailable in this channel"));
+    assert!(!models.contains("stale-model"));
+    assert!(!models.contains("gpt-5-mini"));
+    assert!(!models.contains("Cached model IDs"));
 
     let providers = module_route_help_response(
         tempdir.path(),
@@ -224,6 +333,8 @@ async fn cached_models_and_help_responses_render_expected_text() {
 #[test]
 fn model_command_messages_use_thread_aware_history_keys() {
     let msg = ChannelMessage {
+        reply_to_id: None,
+        topic_id: None,
         id: "1".into(),
         sender: "alice".into(),
         reply_target: "room".into(),
@@ -254,6 +365,7 @@ async fn sign_out_cancels_remote_invalidation_while_it_waits_for_the_session_tab
         let callback = RouteCallbacks::new(
             runtime_context(PathBuf::from("/tmp/channel-callback")),
             cancellation.clone(),
+            None,
         );
         assert!(Arc::ptr_eq(
             callback.core_context.as_ref().unwrap(),
@@ -301,15 +413,17 @@ async fn load_cached_model_preview_returns_empty_when_cache_json_is_invalid() {
     .unwrap();
 
     let response = module_route_help_response(tempdir.path(), "/model", Vec::new()).await;
-    assert!(response.contains("No cached model list found for `openai`"));
+    assert!(response.contains("Model catalog is unavailable in this channel for `openai`"));
 }
 
 #[tokio::test]
 async fn handle_runtime_command_unknown_provider_sends_helpful_error() {
     let ctx = runtime_context(PathBuf::from("/tmp"));
-    let channel_impl = Arc::new(RecordingChannel::default());
-    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let channel_state = Arc::new(TestChannel::new("recording"));
+    let channel = Arc::new(ChannelHandle::Test(Arc::clone(&channel_state)));
     let msg = ChannelMessage {
+        reply_to_id: None,
+        topic_id: None,
         id: "1".into(),
         sender: "alice".into(),
         reply_target: "room".into(),
@@ -329,7 +443,7 @@ async fn handle_runtime_command_unknown_provider_sends_helpful_error() {
     .await;
     assert!(handled);
 
-    let sent = channel_impl.sent.lock().unwrap();
+    let sent = channel_state.sent.lock().unwrap();
     assert_eq!(sent.len(), 1);
     assert!(sent[0]
         .content
@@ -338,16 +452,14 @@ async fn handle_runtime_command_unknown_provider_sends_helpful_error() {
 }
 
 #[tokio::test]
-async fn handle_runtime_command_set_model_clears_sender_history_and_persists_route_override() {
+async fn clear_history_command_uses_reset_callback_and_persists_route_override() {
     let ctx = runtime_context(PathBuf::from("/tmp"));
     let key = "telegram_alice_room";
-    ctx.conversation_histories
-        .lock()
-        .unwrap()
-        .insert(key.to_string(), vec![ChatMessage::user("old history")]);
-    let channel_impl = Arc::new(RecordingChannel::default());
-    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let channel_state = Arc::new(TestChannel::new("recording"));
+    let channel = Arc::new(ChannelHandle::Test(Arc::clone(&channel_state)));
     let msg = ChannelMessage {
+        reply_to_id: None,
+        topic_id: None,
         id: "1".into(),
         sender: "alice".into(),
         reply_target: "room".into(),
@@ -358,21 +470,25 @@ async fn handle_runtime_command_set_model_clears_sender_history_and_persists_rou
         sender_name: None,
     };
 
-    let handled = handle_runtime_command_if_needed(
+    let reset_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let callback_flag = Arc::clone(&reset_called);
+    let handled = handle_runtime_command_with_reset(
         &ctx,
         &msg,
         Some(&channel),
         &conversation_history_key(&msg),
+        None,
+        None,
+        &msg,
+        move || async move {
+            callback_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        },
     )
     .await;
     assert!(handled);
+    assert!(reset_called.load(std::sync::atomic::Ordering::SeqCst));
 
-    assert!(ctx
-        .conversation_histories
-        .lock()
-        .unwrap()
-        .get(key)
-        .is_none());
     assert_eq!(
         get_route_selection(&ctx, key),
         ChannelRouteSelection {
@@ -381,17 +497,64 @@ async fn handle_runtime_command_set_model_clears_sender_history_and_persists_rou
         }
     );
 
-    let sent = channel_impl.sent.lock().unwrap();
+    let sent = channel_state.sent.lock().unwrap();
     assert_eq!(sent.len(), 1);
     assert!(sent[0].content.contains("Model switched to `gpt-5-mini`"));
 }
 
 #[tokio::test]
-async fn handle_runtime_command_telegram_status_replies_without_agent() {
+async fn failed_history_reset_does_not_apply_requested_route() {
     let ctx = runtime_context(PathBuf::from("/tmp"));
-    let channel_impl = Arc::new(RecordingChannel::default());
-    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let key = "telegram_alice_room";
+    let before = ChannelRouteSelection {
+        provider: "openai".into(),
+        model: "reasoning-v1".into(),
+    };
+    set_route_selection(&ctx, key, before.clone());
+    let channel_state = Arc::new(TestChannel::new("recording"));
+    let channel = Arc::new(ChannelHandle::Test(Arc::clone(&channel_state)));
     let msg = ChannelMessage {
+        reply_to_id: None,
+        topic_id: None,
+        id: "reset-fails".into(),
+        sender: "alice".into(),
+        reply_target: "room".into(),
+        content: "/model gpt-5-mini".into(),
+        channel: "telegram".into(),
+        timestamp: 0,
+        thread_ts: None,
+        sender_name: None,
+    };
+
+    let handled = handle_runtime_command_with_reset(
+        &ctx,
+        &msg,
+        Some(&channel),
+        key,
+        None,
+        None,
+        &msg,
+        || async { Err("durable reset failed".to_owned()) },
+    )
+    .await;
+
+    assert!(handled);
+    assert_eq!(get_route_selection(&ctx, key), before);
+    let sent = channel_state.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].content, "Something went wrong. Please try again.");
+    assert!(!sent[0].content.contains("durable reset failed"));
+}
+
+#[tokio::test]
+async fn handle_runtime_command_telegram_status_replies_without_agent() {
+    let linked = crate::channels::runtime::test_support::linked_telegram_runtime().await;
+    let mut ctx = runtime_context(PathBuf::from("/tmp"));
+    let channel_state = Arc::new(TestChannel::new("recording"));
+    let channel = Arc::new(ChannelHandle::Test(Arc::clone(&channel_state)));
+    let msg = ChannelMessage {
+        reply_to_id: None,
+        topic_id: None,
         id: "1".into(),
         sender: "alice".into(),
         reply_target: "chat-remote".into(),
@@ -402,16 +565,11 @@ async fn handle_runtime_command_telegram_status_replies_without_agent() {
         sender_name: None,
     };
 
-    let handled = handle_runtime_command_if_needed(
-        &ctx,
-        &msg,
-        Some(&channel),
-        &conversation_history_key(&msg),
-    )
-    .await;
+    let handled =
+        handle_linked_runtime_command(&mut ctx, &msg, Some(&channel), &linked, None).await;
     assert!(handled);
 
-    let sent = channel_impl.sent.lock().unwrap();
+    let sent = channel_state.sent.lock().unwrap();
     assert_eq!(sent.len(), 1);
     assert!(
         sent[0].content.contains("**Status**"),
@@ -423,8 +581,11 @@ async fn handle_runtime_command_telegram_status_replies_without_agent() {
 
 #[tokio::test]
 async fn handle_runtime_command_without_target_channel_still_consumes_command() {
-    let ctx = runtime_context(PathBuf::from("/tmp"));
+    let linked = crate::channels::runtime::test_support::linked_telegram_runtime().await;
+    let mut ctx = runtime_context(PathBuf::from("/tmp"));
     let msg = ChannelMessage {
+        reply_to_id: None,
+        topic_id: None,
         id: "1".into(),
         sender: "alice".into(),
         reply_target: "chat-remote".into(),
@@ -435,17 +596,19 @@ async fn handle_runtime_command_without_target_channel_still_consumes_command() 
         sender_name: None,
     };
 
-    let handled =
-        handle_runtime_command_if_needed(&ctx, &msg, None, &conversation_history_key(&msg)).await;
+    let handled = handle_linked_runtime_command(&mut ctx, &msg, None, &linked, None).await;
     assert!(handled);
 }
 
 #[tokio::test]
 async fn handle_runtime_command_telegram_help_replies_with_remote_command_list() {
-    let ctx = runtime_context(PathBuf::from("/tmp"));
-    let channel_impl = Arc::new(RecordingChannel::default());
-    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let linked = crate::channels::runtime::test_support::linked_telegram_runtime().await;
+    let mut ctx = runtime_context(PathBuf::from("/tmp"));
+    let channel_state = Arc::new(TestChannel::new("recording"));
+    let channel = Arc::new(ChannelHandle::Test(Arc::clone(&channel_state)));
     let msg = ChannelMessage {
+        reply_to_id: None,
+        topic_id: None,
         id: "1".into(),
         sender: "alice".into(),
         reply_target: "chat-remote".into(),
@@ -456,16 +619,11 @@ async fn handle_runtime_command_telegram_help_replies_with_remote_command_list()
         sender_name: None,
     };
 
-    let handled = handle_runtime_command_if_needed(
-        &ctx,
-        &msg,
-        Some(&channel),
-        &conversation_history_key(&msg),
-    )
-    .await;
+    let handled =
+        handle_linked_runtime_command(&mut ctx, &msg, Some(&channel), &linked, None).await;
     assert!(handled);
 
-    let sent = channel_impl.sent.lock().unwrap();
+    let sent = channel_state.sent.lock().unwrap();
     assert_eq!(sent.len(), 1);
     assert!(sent[0].content.contains("Remote control:"));
     assert!(sent[0].content.contains("`/status`"));
@@ -478,208 +636,35 @@ async fn handle_runtime_command_telegram_help_replies_with_remote_command_list()
 
 #[tokio::test]
 async fn handle_runtime_command_telegram_sessions_reports_empty_store() {
+    let linked = crate::channels::runtime::test_support::linked_telegram_runtime().await;
     let tempdir = tempfile::tempdir().unwrap();
-    let ctx = runtime_context(tempdir.path().to_path_buf());
-    let channel_impl = Arc::new(RecordingChannel::default());
-    let channel: Arc<dyn Channel> = channel_impl.clone();
+    let mut ctx = runtime_context(tempdir.path().to_path_buf());
+    let channel_state = Arc::new(TestChannel::new("recording"));
+    let channel = Arc::new(ChannelHandle::Test(Arc::clone(&channel_state)));
     let msg = ChannelMessage {
+        reply_to_id: None,
+        topic_id: Some("42".into()),
         id: "1".into(),
         sender: "alice".into(),
         reply_target: "chat-remote".into(),
         content: "/sessions".into(),
         channel: "telegram".into(),
         timestamp: 0,
-        thread_ts: Some("42".into()),
+        thread_ts: None,
         sender_name: None,
     };
 
-    let handled = handle_runtime_command_if_needed(
-        &ctx,
-        &msg,
-        Some(&channel),
-        &conversation_history_key(&msg),
-    )
-    .await;
+    let handled =
+        handle_linked_runtime_command(&mut ctx, &msg, Some(&channel), &linked, None).await;
     assert!(handled);
 
-    let sent = channel_impl.sent.lock().unwrap();
+    let sent = channel_state.sent.lock().unwrap();
     assert_eq!(sent.len(), 1);
     assert!(sent[0]
         .content
         .contains("No conversation threads yet. Send `/new` to create one."));
-    assert_eq!(sent[0].thread_ts.as_deref(), Some("42"));
+    assert_eq!(sent[0].topic_id.as_deref(), Some("42"));
 }
 
-#[tokio::test]
-#[ignore = "the linked tinychannels-module is given no storage backend here, so /new fails to persist the chat binding (host storage is unavailable); needs a storage fixture"]
-async fn handle_runtime_command_telegram_new_status_and_sessions_round_trip() {
-    let tempdir = tempfile::tempdir().unwrap();
-    let ctx = runtime_context(tempdir.path().to_path_buf());
-    let channel_impl = Arc::new(RecordingChannel::default());
-    let channel: Arc<dyn Channel> = channel_impl.clone();
-    let sender_key = "telegram_alice_chat-remote";
-
-    ctx.conversation_histories.lock().unwrap().insert(
-        sender_key.to_string(),
-        vec![ChatMessage::user("old history")],
-    );
-
-    let new_msg = ChannelMessage {
-        id: "1".into(),
-        sender: "alice".into(),
-        reply_target: "chat-remote".into(),
-        content: "/new".into(),
-        channel: "telegram".into(),
-        timestamp: 0,
-        thread_ts: Some("42".into()),
-        sender_name: None,
-    };
-    assert!(
-        handle_runtime_command_if_needed(
-            &ctx,
-            &new_msg,
-            Some(&channel),
-            &conversation_history_key(&new_msg)
-        )
-        .await
-    );
-    assert!(ctx
-        .conversation_histories
-        .lock()
-        .unwrap()
-        .get(sender_key)
-        .is_none());
-
-    ctx.conversation_histories
-        .lock()
-        .unwrap()
-        .insert(sender_key.to_string(), vec![ChatMessage::user("after new")]);
-    set_route_selection(
-        &ctx,
-        sender_key,
-        ChannelRouteSelection {
-            provider: "anthropic".into(),
-            model: "claude-3".into(),
-        },
-    );
-
-    let subscriber = ChannelTurnStateSubscriber::new(tempdir.path().to_path_buf());
-    subscriber
-        .handle(&DomainEvent::ChannelMessageReceived {
-            channel: "telegram".into(),
-            message_id: "2".into(),
-            sender: "alice".into(),
-            reply_target: "chat-remote".into(),
-            content: "work".into(),
-            thread_ts: Some("42".into()),
-            inbound_envelope: None,
-            workspace_dir: tempdir.path().to_path_buf(),
-        })
-        .await;
-
-    let status_msg = ChannelMessage {
-        id: "3".into(),
-        sender: "alice".into(),
-        reply_target: "chat-remote".into(),
-        content: "/status".into(),
-        channel: "telegram".into(),
-        timestamp: 0,
-        thread_ts: Some("42".into()),
-        sender_name: None,
-    };
-    assert!(
-        handle_runtime_command_if_needed(
-            &ctx,
-            &status_msg,
-            Some(&channel),
-            &conversation_history_key(&status_msg)
-        )
-        .await
-    );
-
-    let sessions_msg = ChannelMessage {
-        id: "4".into(),
-        sender: "alice".into(),
-        reply_target: "chat-remote".into(),
-        content: "/sessions".into(),
-        channel: "telegram".into(),
-        timestamp: 0,
-        thread_ts: Some("42".into()),
-        sender_name: None,
-    };
-    assert!(
-        handle_runtime_command_if_needed(
-            &ctx,
-            &sessions_msg,
-            Some(&channel),
-            &conversation_history_key(&sessions_msg)
-        )
-        .await
-    );
-
-    let sent = channel_impl.sent.lock().unwrap();
-    assert_eq!(sent.len(), 3);
-    assert!(sent[0].content.contains("Started new session"));
-    assert!(sent[0]
-        .content
-        .contains("In-memory channel history cleared for this chat."));
-
-    assert!(sent[1].content.contains("**Status**"));
-    assert!(sent[1].content.contains("Thread: `Telegram"));
-    assert!(sent[1].content.contains("Provider: `anthropic`"));
-    assert!(sent[1].content.contains("Model: `claude-3`"));
-    assert!(sent[1].content.contains("In-memory turns: 1"));
-    assert!(sent[1].content.contains("Turn: in progress"));
-
-    assert!(sent[2].content.contains("**Recent sessions**"));
-    assert!(sent[2].content.contains("→ `Telegram"));
-    assert!(sent
-        .iter()
-        .all(|message| message.thread_ts.as_deref() == Some("42")));
-}
-
-#[tokio::test]
-async fn handle_runtime_command_telegram_new_reports_unavailable_storage() {
-    let tempdir = tempfile::tempdir().unwrap();
-    let ctx = runtime_context(tempdir.path().to_path_buf());
-    let channel_impl = Arc::new(RecordingChannel::default());
-    let channel: Arc<dyn Channel> = channel_impl.clone();
-    let sender_key = "telegram_alice_chat-remote";
-
-    ctx.conversation_histories.lock().unwrap().insert(
-        sender_key.to_string(),
-        vec![ChatMessage::user("old history")],
-    );
-
-    let msg = ChannelMessage {
-        id: "1".into(),
-        sender: "alice".into(),
-        reply_target: "chat-remote".into(),
-        content: "/new".into(),
-        channel: "telegram".into(),
-        timestamp: 0,
-        thread_ts: Some("42".into()),
-        sender_name: None,
-    };
-    assert!(
-        handle_runtime_command_if_needed(
-            &ctx,
-            &msg,
-            Some(&channel),
-            &conversation_history_key(&msg)
-        )
-        .await
-    );
-    let sent = channel_impl.sent.lock().unwrap();
-    assert_eq!(sent.len(), 1);
-    assert!(
-        sent[0].content.contains("Created thread"),
-        "{}",
-        sent[0].content
-    );
-    assert!(sent[0]
-        .content
-        .contains("failed to persist the chat binding"));
-    assert!(sent[0].content.contains("host storage is unavailable"));
-    assert_eq!(sent[0].thread_ts.as_deref(), Some("42"));
-}
+#[path = "routes_tests_telegram.rs"]
+mod telegram;

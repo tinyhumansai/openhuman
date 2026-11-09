@@ -2,7 +2,7 @@
 
 Provider transports and construction live in [`vendor/tinychannels`](../../../../../vendor/tinychannels/) and execute inside its separately loaded TinyBus module. OpenHuman sends credential-hydrated configuration through `modules::channel_runtime`, receives scoped callbacks, and owns product policy and turn orchestration. The provider re-exports in [`mod.rs`](./mod.rs) are test-only compatibility fixtures.
 
-The `channels` feature enables the module loader. It exposes Telegram, Discord, Slack, Signal, WhatsApp, iMessage, IRC, email and the other providers declared by the module. `whatsapp-web` also enables `channels`; its local provider export is used only by tests. The local CLI REPL is OpenHuman orchestration.
+The `channels` feature enables the module loader. It exposes Telegram, Discord, Slack, Signal, WhatsApp, iMessage, IRC, email and the other providers declared by the module. The local CLI REPL is OpenHuman orchestration.
 
 ## Relay
 

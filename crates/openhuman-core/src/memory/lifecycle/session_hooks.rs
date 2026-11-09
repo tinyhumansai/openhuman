@@ -2,8 +2,11 @@
 //!
 //! Before the model runs, [`OpenHumanTurnPrelude::memory_pre_turn`] logs the
 //! user turn and refreshes memory in the background, taking a completed cached
-//! pack immediately (`memory::lifecycle::prefetch::pre_turn`); `MemoryPackMiddleware` then adds the
-//! pack to the turn's requests without persisting it. After the durable
+//! pack immediately (`memory::lifecycle::prefetch::pre_turn`). When the
+//! config binds `[memory] recall_each_turn_ms`, it instead waits up to that
+//! long for the pack recalled for the current message, alongside the rest of
+//! turn setup. `MemoryPackMiddleware` then adds the pack to the turn's
+//! requests without persisting it. After the durable
 //! commit, [`OpenHumanTurnPrelude::memory_post_turn`] logs the reply with its
 //! tool calls. Both run under the session's own config, so a host binding set
 //! on a derived context (`[memory] agent_id` / `root`) is honoured, and both
@@ -25,19 +28,43 @@ use tinyinference_llm::message::Message;
 
 use super::OpenHumanTurnPrelude;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
-use crate::memory::lifecycle::hooks::{
-    self, MemoryTurn, PostTurnInput, PreTurnInput, ToolCallSummary,
-};
-use crate::memory::scope::ResolvedIdentity;
+use crate::memory::lifecycle::hooks::{self, MemoryTurn, ToolCallSummary};
+use crate::memory::lifecycle::prefetch::RecallEachTurn;
+use tinymemory_tools::layout::identity::ResolvedIdentity;
 
 /// The memory side of the turn in flight, held from pre-turn to commit.
 #[derive(Clone)]
 pub(super) struct PendingMemoryTurn {
     identity: ResolvedIdentity,
     user_index: u32,
+    channel: Option<String>,
     // The canonical runtime can commit on a different task. Restore the
     // authenticated profile captured at preparation, never infer it from config.
     profile_context: ProfileMemoryContext,
+}
+
+/// The provider channel that owns a logged conversation, if this turn came
+/// from an external channel. Event-context labels such as `cron`, `voice`, and
+/// `mcp_server` are not channel owners.
+fn logged_channel(
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
+) -> Option<String> {
+    let Some(crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
+        channel,
+        message_id,
+        ..
+    }) = origin
+    else {
+        return None;
+    };
+    if message_id.starts_with("cron:") {
+        return None;
+    }
+    let channel = channel.trim().to_ascii_lowercase();
+    if channel.is_empty() {
+        return None;
+    }
+    Some(channel)
 }
 
 // Missing profile authority must not be confused with an ordinary desktop turn.
@@ -83,7 +110,7 @@ impl OpenHumanTurnPrelude {
     }
     /// The config memory runs under: the session's own, else the
     /// workspace's on disk.
-    async fn memory_config(&self) -> Option<Arc<crate::config::Config>> {
+    pub(super) async fn memory_config(&self) -> Option<Arc<crate::config::Config>> {
         if let Some(config) = &self.runtime_config {
             return Some(config.clone());
         }
@@ -99,6 +126,44 @@ impl OpenHumanTurnPrelude {
         .ok()
     }
 
+    /// The identity this session's memory runs as: the host environment's
+    /// (a team member's), narrowed to this agent.
+    pub(super) fn memory_identity(&self, config: &crate::config::Config) -> ResolvedIdentity {
+        let acting = self.host_env.memory_identity.clone().unwrap_or_default();
+        acting
+            .child(&self.agent_definition_id)
+            .resolve(&crate::memory::scope::identity_pins(config))
+    }
+
+    /// Whether this session may read memory at all: a SaaS turn without an
+    /// authenticated profile may not (see `capture_profile_context`).
+    pub(super) fn memory_readable(&self) -> bool {
+        !matches!(
+            capture_profile_context(
+                &self.dispatch_ctx(),
+                crate::profiles::host::host().as_deref(),
+            ),
+            ProfileMemoryContext::Denied
+        )
+    }
+
+    /// Spawns `work` under the context this session's memory work runs in, so
+    /// it can outlive the turn that started it. Work of a retired profile is
+    /// dropped, like a deferred commit.
+    pub(super) fn spawn_memory_work(
+        &self,
+        work: impl std::future::Future<Output = ()> + Send + 'static,
+    ) {
+        let profile_context = capture_profile_context(
+            &self.dispatch_ctx(),
+            crate::profiles::host::host().as_deref(),
+        );
+        drop(
+            self.dispatch_ctx()
+                .spawn(deferred_memory_work(profile_context, work)),
+        );
+    }
+
     /// Takes completed memory and queues a user-authored turn's log and recall.
     /// Remembers the turn so the reply is logged under the same identity and
     /// index, and returns its memory for the run context without engine I/O.
@@ -111,7 +176,7 @@ impl OpenHumanTurnPrelude {
         history: &[Message],
         committed_turns: usize,
         current: Option<&Message>,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
     ) -> Option<Arc<MemoryTurn>> {
         let user_text = self
             .mutable
@@ -121,10 +186,7 @@ impl OpenHumanTurnPrelude {
             .clone()?;
         let thread_id = self.thread_id.clone()?;
         let config = self.memory_config().await?;
-        // The identity the turn's run context carries: the host environment's
-        // (a team member's), narrowed to this agent.
-        let acting = self.host_env.memory_identity.clone().unwrap_or_default();
-        let mut identity = acting.child(&self.agent_definition_id).resolve(&config);
+        let mut identity = self.memory_identity(&config);
         if self.omit_memory_context {
             identity.recall = false;
         }
@@ -137,37 +199,42 @@ impl OpenHumanTurnPrelude {
         }
         let user_index = hooks::user_turn_index(committed_turns);
         let (in_prompt_from, compacted) = in_prompt_window(history, committed_turns, current);
+        let memory_channel = logged_channel(origin.as_ref());
         self.mutable
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .pending_memory_turn = Some(PendingMemoryTurn {
             identity: identity.clone(),
             user_index,
+            channel: memory_channel.clone(),
             profile_context,
         });
         let pack = crate::memory::lifecycle::prefetch::pre_turn(
             &self.dispatch_ctx(),
             config.clone(),
             identity.clone(),
-            PreTurnInput {
-                thread_id: thread_id.clone(),
-                turn_index: user_index,
-                user_text,
-                in_prompt_from,
-                at: Utc::now(),
-                resumed_after_compaction: compacted && committed_turns > 0,
-                observed_actor: origin
-                    .as_ref()
-                    .and_then(crate::memory::lifecycle::sender::channel_actor),
-            },
-            Some(self.event_channel.clone()),
-        );
+            thread_id.clone(),
+            user_index,
+            user_text,
+            in_prompt_from,
+            Utc::now(),
+            compacted && committed_turns > 0,
+            origin
+                .as_ref()
+                .and_then(crate::memory::lifecycle::sender::channel_actor),
+            memory_channel,
+            config
+                .memory
+                .recall_each_turn_ms
+                .map(|ms| RecallEachTurn::new(std::time::Duration::from_millis(ms))),
+        )
+        .await;
         Some(Arc::new(MemoryTurn {
             config,
             identity,
             thread_id,
             pack,
-            in_prompt_from: Arc::new(crate::memory::lifecycle::window::InPromptFrom::new(
+            in_prompt_from: Arc::new(tinymemory_tools::lifecycle::window::InPromptFrom::new(
                 in_prompt_from,
                 user_index,
             )),
@@ -175,9 +242,14 @@ impl OpenHumanTurnPrelude {
         }))
     }
 
-    /// Logs the committed reply (spawned; never delays the commit) and
-    /// publishes `ConversationTurnCommitted`.
-    pub(super) fn memory_post_turn(&self, receipt: &CommitReceipt<OpenHumanRunContext>) {
+    /// Logs the committed reply (spawned; never delays the commit), queues a
+    /// plan that finished this turn's notes as learnings, and publishes
+    /// `ConversationTurnCommitted`.
+    pub(super) fn memory_post_turn(
+        &self,
+        receipt: &CommitReceipt<OpenHumanRunContext>,
+        finished_plan: Option<crate::agent::tinyagents::state_block::FinishedPlan>,
+    ) {
         let (user_text, pending) = {
             let mut mutable = self
                 .mutable
@@ -225,18 +297,29 @@ impl OpenHumanTurnPrelude {
             let Some(config) = prelude.memory_config().await else {
                 return;
             };
+            let dispatch = prelude.dispatch_ctx();
             hooks::post_turn(
+                &dispatch,
                 &config,
                 &pending.identity,
-                PostTurnInput {
-                    thread_id,
-                    turn_index: pending.user_index.saturating_add(1),
-                    assistant_text,
-                    tool_calls,
-                    at: Utc::now(),
-                },
+                thread_id,
+                pending.user_index.saturating_add(1),
+                assistant_text,
+                tool_calls,
+                Utc::now(),
+                pending.channel,
             )
             .await;
+            if let Some(finished) = finished_plan {
+                crate::memory::lifecycle::plan_notes::learn_plan_notes(
+                    config.clone(),
+                    &pending.identity,
+                    Some(prelude.action_dir.display().to_string()),
+                    &finished.plan,
+                    finished.goal.as_deref(),
+                )
+                .await;
+            }
         };
         self.dispatch_ctx()
             .spawn(deferred_memory_work(profile_context, work));

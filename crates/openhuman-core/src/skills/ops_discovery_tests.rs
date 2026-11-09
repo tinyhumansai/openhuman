@@ -311,6 +311,309 @@ async fn skills_component_off_yields_no_catalogue_and_skips_bundled_install() {
     assert!(!installed, "disabled skills materialize no bundled skills");
 }
 
+#[cfg(all(feature = "flows", feature = "skills"))]
+#[tokio::test]
+async fn flow_authoring_is_hidden_when_tinyflows_component_is_disabled() {
+    use crate::core::runtime::{ComponentSet, ContextOverlay, CoreContext, DomainSet};
+    use crate::tools::toolpacks::ToolGroups;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let profile = |profile_id: &str, enabled: bool| {
+        let mut components = ComponentSet::all();
+        let mut domains = DomainSet::full();
+        let mut config = crate::config::Config::default();
+        config.workspace_dir = workspace.path().to_path_buf();
+        if !enabled {
+            components.flows = false;
+            components.tinyflows = false;
+            config.components.flows = false;
+            config.components.tinyflows = false;
+            domains.flows = false;
+        }
+        let context = CoreContext::for_test_with_components(components).derive_with(
+            ContextOverlay::new(config.clone(), domains, ToolGroups::none())
+                .profile(profile_id)
+                .without_user_skill_roots(),
+        );
+        (context, config, domains)
+    };
+
+    let (enabled_ctx, enabled_config, enabled_domains) = profile("enabled", true);
+    crate::modules::tinyflows::copilot_proxy(&enabled_config)
+        .await
+        .expect("linked TinyFlows fixture is admitted and serving");
+    let visible = CoreContext::scope(enabled_ctx, async {
+        let dispatch = crate::core::runtime::DispatchCtx::ambient();
+        let gate = crate::skills::ops_discover::DiscoveryGate::from_config(
+            &dispatch,
+            &enabled_config,
+            Some(enabled_domains),
+        );
+        assert!(
+            gate.flow_authoring_enabled(),
+            "unexpected flow gate: {gate:?}"
+        );
+        crate::skills::bundled::flow_authoring::prewarm(
+            &dispatch,
+            &enabled_config,
+            Some(enabled_domains),
+        )
+        .await;
+        assert!(crate::modules::runtime::is_module_serving(
+            crate::modules::tinyflows::MODULE_ID
+        ));
+        crate::skills::load_workflow_metadata_for(&dispatch, &enabled_config)
+    })
+    .await;
+    let (disabled_ctx, disabled_config, _) = profile("disabled", false);
+    let hidden = CoreContext::scope(disabled_ctx, async {
+        let dispatch = crate::core::runtime::DispatchCtx::ambient();
+        crate::skills::load_workflow_metadata_for(&dispatch, &disabled_config)
+    })
+    .await;
+
+    assert!(
+        visible.iter().any(|skill| skill.id() == "flow-authoring"),
+        "the enabled profile sees its module-backed flow-authoring skill"
+    );
+    assert!(
+        !hidden.iter().any(|skill| skill.id() == "flow-authoring"),
+        "a profile with flows, TinyFlows, and the Flows domain disabled must not inherit another profile's flow-authoring builtin"
+    );
+}
+
+#[cfg(all(feature = "flows", feature = "skills"))]
+#[tokio::test]
+async fn module_builtin_gate_only_narrows_context_and_explicit_config() {
+    use crate::core::runtime::{ComponentSet, ContextOverlay, CoreContext, DomainSet};
+    use crate::tools::toolpacks::ToolGroups;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let mut enabled_config = crate::config::Config::default();
+    enabled_config.workspace_dir = workspace.path().to_path_buf();
+    let all = ComponentSet::all();
+    let base = CoreContext::for_test_with_components(all);
+    let enabled_context = base.derive_with(
+        ContextOverlay::new(
+            enabled_config.clone(),
+            DomainSet::full(),
+            ToolGroups::none(),
+        )
+        .profile("shared")
+        .without_user_skill_roots(),
+    );
+
+    let enabled = CoreContext::scope(enabled_context, async {
+        let dispatch = crate::core::runtime::DispatchCtx::ambient();
+        crate::skills::bundled::flow_authoring::prewarm(&dispatch, &enabled_config, None).await;
+        crate::skills::load_workflow_metadata_for(&dispatch, &enabled_config)
+    })
+    .await;
+    assert!(enabled.iter().any(|skill| skill.id() == "flow-authoring"));
+
+    let mut context_components = all;
+    context_components.tinyflows = false;
+    let context_component_context = CoreContext::for_test_with_components(context_components)
+        .derive_with(
+            ContextOverlay::new(
+                enabled_config.clone(),
+                DomainSet::full(),
+                ToolGroups::none(),
+            )
+            .profile("shared")
+            .without_user_skill_roots(),
+        );
+    let context_component_hidden = CoreContext::scope(context_component_context, async {
+        let dispatch = crate::core::runtime::DispatchCtx::ambient();
+        crate::skills::load_workflow_metadata_for(&dispatch, &enabled_config)
+    })
+    .await;
+    assert!(
+        !context_component_hidden
+            .iter()
+            .any(|skill| skill.id() == "flow-authoring"),
+        "an all-enabled Config cannot widen a context with TinyFlows disabled"
+    );
+
+    let mut narrowed_domains = DomainSet::full();
+    narrowed_domains.flows = false;
+    let context_domain_context = CoreContext::for_test_with_components(all).derive_with(
+        ContextOverlay::new(enabled_config.clone(), narrowed_domains, ToolGroups::none())
+            .profile("shared")
+            .without_user_skill_roots(),
+    );
+    let context_domain_hidden = CoreContext::scope(context_domain_context, async {
+        let dispatch = crate::core::runtime::DispatchCtx::ambient();
+        crate::skills::ops_discover::load_workflow_metadata_for_domains(
+            &dispatch,
+            &enabled_config,
+            Some(DomainSet::full()),
+        )
+    })
+    .await;
+    assert!(
+        !context_domain_hidden
+            .iter()
+            .any(|skill| skill.id() == "flow-authoring"),
+        "an all-enabled Config cannot widen a context without the Flows domain"
+    );
+
+    let mut disabled_config = enabled_config.clone();
+    disabled_config.components.tinyflows = false;
+    let config_hidden = CoreContext::scope(
+        CoreContext::for_test_with_components(all).derive_with(
+            ContextOverlay::new(
+                enabled_config.clone(),
+                DomainSet::full(),
+                ToolGroups::none(),
+            )
+            .profile("shared")
+            .without_user_skill_roots(),
+        ),
+        async {
+            let dispatch = crate::core::runtime::DispatchCtx::ambient();
+            crate::skills::load_workflow_metadata_for(&dispatch, &disabled_config)
+        },
+    )
+    .await;
+    assert!(
+        !config_hidden
+            .iter()
+            .any(|skill| skill.id() == "flow-authoring"),
+        "a narrower supplied Config hides resources from an enabled parent context"
+    );
+
+    let mut modules_disabled = enabled_config.clone();
+    modules_disabled.modules.enabled = false;
+    let modules_hidden = CoreContext::scope(
+        CoreContext::for_test_with_components(all).derive_with(
+            ContextOverlay::new(
+                enabled_config.clone(),
+                DomainSet::full(),
+                ToolGroups::none(),
+            )
+            .profile("shared")
+            .without_user_skill_roots(),
+        ),
+        async {
+            let dispatch = crate::core::runtime::DispatchCtx::ambient();
+            crate::skills::load_workflow_metadata_for(&dispatch, &modules_disabled)
+        },
+    )
+    .await;
+    assert!(
+        !modules_hidden
+            .iter()
+            .any(|skill| skill.id() == "flow-authoring"),
+        "a profile with modules disabled cannot reuse another profile's warmed snapshot"
+    );
+
+    let mut skills_disabled = all;
+    skills_disabled.skills = false;
+    let skills_context_hidden = CoreContext::scope(
+        CoreContext::for_test_with_components(skills_disabled).derive_with(
+            ContextOverlay::new(
+                enabled_config.clone(),
+                DomainSet::full(),
+                ToolGroups::none(),
+            )
+            .profile("shared")
+            .without_user_skill_roots(),
+        ),
+        async {
+            let dispatch = crate::core::runtime::DispatchCtx::ambient();
+            crate::skills::load_workflow_metadata_for(&dispatch, &enabled_config)
+        },
+    )
+    .await;
+    assert!(
+        !skills_context_hidden
+            .iter()
+            .any(|skill| skill.id() == "flow-authoring"),
+        "an all-enabled Config cannot widen a context with Skills disabled"
+    );
+
+    // Separate tenants can share one workspace. Tampering with and clearing
+    // one tenant's snapshot must not evict or authorize the other's bytes.
+    let tenant_snapshot = |profile_id: &'static str| {
+        let config = enabled_config.clone();
+        let ctx = CoreContext::for_test_with_components(all).derive_with(
+            ContextOverlay::new(config.clone(), DomainSet::full(), ToolGroups::none())
+                .profile(profile_id)
+                .without_user_skill_roots(),
+        );
+        (ctx, config)
+    };
+    let (tenant_a_ctx, tenant_a_config) = tenant_snapshot("tenant-a");
+    let tenant_a = CoreContext::scope(tenant_a_ctx.clone(), async {
+        let dispatch = crate::core::runtime::DispatchCtx::ambient();
+        crate::skills::bundled::flow_authoring::prewarm(&dispatch, &tenant_a_config, None).await;
+        crate::skills::load_workflow_metadata_for(&dispatch, &tenant_a_config)
+    })
+    .await;
+    let (tenant_b_ctx, tenant_b_config) = tenant_snapshot("tenant-b");
+    let tenant_b = CoreContext::scope(tenant_b_ctx.clone(), async {
+        let dispatch = crate::core::runtime::DispatchCtx::ambient();
+        crate::skills::bundled::flow_authoring::prewarm(&dispatch, &tenant_b_config, None).await;
+        crate::skills::load_workflow_metadata_for(&dispatch, &tenant_b_config)
+    })
+    .await;
+    let flow_a = tenant_a
+        .iter()
+        .find(|skill| skill.id() == "flow-authoring")
+        .expect("tenant A has its own warmed snapshot");
+    let flow_b = tenant_b
+        .iter()
+        .find(|skill| skill.id() == "flow-authoring")
+        .expect("tenant B has its own warmed snapshot");
+    assert_eq!(flow_a.scope, tinyskills::SkillScope::Builtin);
+    assert_eq!(flow_b.scope, tinyskills::SkillScope::Builtin);
+    let flow_a_document = flow_a.location.as_deref().expect("tenant A document");
+    assert!(
+        flow_a_document.starts_with(workspace.path()),
+        "tamper target must be inside the isolated temp workspace: {}",
+        flow_a_document.display()
+    );
+    let flow_b_document = flow_b.location.as_deref().expect("tenant B document");
+    assert!(flow_b_document.starts_with(workspace.path()));
+    let flow_a_file = flow_a
+        .location
+        .as_deref()
+        .expect("tenant A skill document")
+        .parent()
+        .expect("tenant A skill directory")
+        .join(&flow_a.resources[0]);
+    std::fs::write(&flow_a_file, "tampered tenant A snapshot").unwrap();
+    let tenant_a_after_tamper = CoreContext::scope(tenant_a_ctx, async {
+        let dispatch = crate::core::runtime::DispatchCtx::ambient();
+        crate::skills::load_workflow_metadata_for(&dispatch, &tenant_a_config)
+    })
+    .await;
+    assert!(!tenant_a_after_tamper
+        .iter()
+        .any(|skill| skill.id() == "flow-authoring"));
+    let tenant_b_after_tamper = CoreContext::scope(tenant_b_ctx, async {
+        let dispatch = crate::core::runtime::DispatchCtx::ambient();
+        let latest = crate::skills::load_workflow_metadata_for(&dispatch, &tenant_b_config);
+        let skill = latest
+            .iter()
+            .find(|skill| skill.id() == "flow-authoring")
+            .expect("tenant B snapshot remains visible");
+        crate::skills::read_workflow_resource_for(
+            &dispatch,
+            &tenant_b_config,
+            "flow-authoring",
+            &skill.resources[0],
+        )
+    })
+    .await;
+    assert!(
+        tenant_b_after_tamper.is_ok(),
+        "tenant A tampering must not evict tenant B"
+    );
+    let _ = flow_b;
+}
+
 #[test]
 fn skills_component_enabled_without_context_is_on() {
     assert!(crate::skills::skills_component_enabled());

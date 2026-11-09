@@ -6,17 +6,12 @@
  */
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
-export type ThreadGoalStatus = 'active' | 'paused' | 'budget_limited' | 'complete';
+import type { ThreadGoal as ThreadGoalWire } from '../types/threadWire.generated';
+
+export type ThreadGoalStatus = ThreadGoalWire['status'];
 
 /** Wire shape of `ThreadGoal` on `thread_goal_updated` / `threads_goal_get`. */
-export interface ThreadGoalView {
-  goal_id: string;
-  objective: string;
-  status: ThreadGoalStatus;
-  token_budget?: number;
-  tokens_used: number;
-  time_used_seconds: number;
-}
+export type ThreadGoalView = ThreadGoalWire;
 
 export interface ThreadGoalState {
   byThread: Record<string, ThreadGoalView | null>;

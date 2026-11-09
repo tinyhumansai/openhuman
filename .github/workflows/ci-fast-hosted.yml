@@ -1,12 +1,6 @@
 ---
-# CI Fast (hosted) — PRs from outside the tinyhumansai org run the same lane
-# flow as ci-fast.yml, split across GitHub-hosted runners and cached with
-# GitHub's Actions cache. The EX63 runners never run this code: their runner
-# group only admits ci-fast.yml / ci-lanes.yml at refs/heads/main, and a fork's
-# `pull_request` run resolves to refs/pull/N/merge.
-#
-# Org members skip this workflow; ci-fast.yml runs theirs on the EX63. The
-# route job follows ci-fast.yml's own decision, so the two never disagree.
+# CI Fast (hosted) — every PR runs the lane flow here, split across
+# GitHub-hosted runners and cached with GitHub's Actions cache.
 name: CI Fast (hosted)
 
 on:
@@ -24,37 +18,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  route:
-    name: Route (outsiders → GitHub-hosted)
-    runs-on: ubuntu-latest
-    timeout-minutes: 6
-    outputs:
-      outsider: ${{ steps.route.outputs.outsider }}
-    steps:
-      - name: Checkout the routing script
-        uses: actions/checkout@v7
-        with:
-          sparse-checkout: scripts/ci/ci-fast-route.sh
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-
-      - name: Follow ci-fast.yml's routing decision
-        id: route
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          AUTHOR: ${{ github.event.pull_request.user.login }}
-          ACTOR: ${{ github.actor }}
-          ASSOCIATION: ${{ github.event.pull_request.author_association }}
-        run: bash scripts/ci/ci-fast-route.sh
-
   lanes:
     name: Lanes
-    needs: route
-    if: needs.route.outputs.outsider == 'true'
     uses: ./.github/workflows/ci-lanes.yml
     with:
-      profile: hosted
       pr-number: ${{ github.event.pull_request.number }}
       base-ref: ${{ github.base_ref }}

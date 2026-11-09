@@ -27,12 +27,6 @@ const FORCED_RESPONSES = [
   { content: FINAL_RESPONSE },
 ];
 
-interface MockRequest {
-  method: string;
-  url: string;
-  body?: string;
-}
-
 async function resetMock(): Promise<void> {
   await fetch(`${MOCK_ADMIN_BASE}/__admin/reset`, {
     method: 'POST',
@@ -47,22 +41,6 @@ async function setMockBehavior(key: string, value: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key, value }),
   });
-}
-
-async function requests(): Promise<MockRequest[]> {
-  const response = await fetch(`${MOCK_ADMIN_BASE}/__admin/requests`);
-  const payload = (await response.json()) as { data?: MockRequest[] };
-  return Array.isArray(payload.data) ? payload.data : [];
-}
-
-function findToolInLlmLog(log: MockRequest[], toolName: string): boolean {
-  return log.some(
-    request =>
-      request.method === 'POST' &&
-      request.url.includes('/chat/completions') &&
-      typeof request.body === 'string' &&
-      request.body.includes(`"${toolName}"`)
-  );
 }
 
 async function openChat(page: Page): Promise<void> {
@@ -144,24 +122,16 @@ async function sendMessage(page: Page, prompt: string): Promise<void> {
   await page.getByTestId('send-message-button').click();
 }
 
-async function toolTimelineNames(page: Page, threadId: string): Promise<string[]> {
-  return page.evaluate(currentThreadId => {
-    const store = (
-      window as unknown as {
-        __OPENHUMAN_STORE__?: {
-          getState?: () => {
-            chatRuntime?: { toolTimelineByThread?: Record<string, Array<{ name?: string }>> };
-          };
-        };
-      }
-    ).__OPENHUMAN_STORE__;
-    const entries = store?.getState?.().chatRuntime?.toolTimelineByThread?.[currentThreadId] ?? [];
-    return entries.map(entry => entry.name ?? '');
-  }, threadId);
+async function openLatestActivityGroup(page: Page) {
+  const group = page.locator('[data-slot="tool-group-root"]').last();
+  await expect(group).toBeVisible({ timeout: 30_000 });
+  const trigger = group.locator('[data-slot="tool-group-trigger"]');
+  if ((await trigger.getAttribute('aria-expanded')) !== 'true') await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  return group;
 }
 
 test.describe('Chat Tool Call Flow', () => {
-  test.skip(true, 'legacy tool timeline selectors were replaced by grouped task insights');
   test('renders a terminal tool call, final answer, and clears in-flight state', async ({
     page,
   }) => {
@@ -187,39 +157,24 @@ test.describe('Chat Tool Call Flow', () => {
     // Tool activity belongs to assistant-ui and renders as a readable card,
     // never through the removed legacy Agentic task insights timeline.
     await expect(page.getByTestId('agent-task-insights')).toHaveCount(0);
-    await expect(page.getByTestId('assistant-ui-tool-call')).toHaveCount(1);
-    const toolCard = page.getByTestId('assistant-ui-tool-call');
+    const activityGroup = await openLatestActivityGroup(page);
+    const toolCard = activityGroup.locator(
+      '[data-testid="assistant-ui-tool-call"][data-tool-name="web_fetch"]'
+    );
+    await expect(toolCard).toHaveCount(1);
     await expect(toolCard).toBeVisible();
-    await expect(toolCard).toContainText('Fetching example.com');
-    // Web-channel turns retain supervised access even if the stored config is
-    // wider. The external fetch is therefore cancelled without an approval
-    // surface, and must render its actual terminal state instead of a false
-    // success or a forever-running card.
-    await expect(toolCard).toContainText('cancelled');
+    await expect(toolCard).toContainText('Read webpage');
+    await expect(toolCard).toContainText('example.com');
+    // The mock fetch completes successfully in this fixture. Assert the real
+    // terminal result, rather than assuming a cancellation that this flow does
+    // not exercise.
+    await expect(toolCard).toHaveAttribute('data-outcome', 'success');
+    await expect(toolCard.getByTestId('tool-call-status')).toHaveText('done');
     await expect(toolCard).not.toContainText('running');
     const toolTrigger = toolCard.getByRole('button').first();
     if ((await toolTrigger.getAttribute('aria-expanded')) !== 'true') await toolTrigger.click();
-    await expect(toolCard.getByText('Input', { exact: true })).toBeVisible();
-
-    await expect
-      .poll(
-        async () => {
-          const names = await toolTimelineNames(page, threadId);
-          if (names.some(name => name.includes('web_fetch'))) return true;
-          return findToolInLlmLog(await requests(), 'web_fetch');
-        },
-        { timeout: 20_000 }
-      )
-      .toBe(true);
-
-    await expect
-      .poll(async () => {
-        const log = await requests();
-        return log.filter(
-          entry => entry.method === 'POST' && entry.url.includes('/openai/v1/chat/completions')
-        ).length;
-      })
-      .toBeGreaterThanOrEqual(2);
+    await expect(toolTrigger).toHaveAttribute('aria-expanded', 'true');
+    await expect(toolCard.getByTestId('tool-body-fetch')).toBeVisible();
 
     expect(threadId.length).toBeGreaterThan(0);
   });

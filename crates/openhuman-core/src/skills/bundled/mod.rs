@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 
 use tinyskills::{BundledFile, BundledSkill, InstallReport};
 
+#[cfg(feature = "flows")]
+pub(crate) mod flow_authoring;
+
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod mod_tests;
@@ -18,8 +21,6 @@ pub const BUNDLED: &[BundledSkill] = &[
             contents: include_str!("../../desktop/control/WORKFLOW.md"),
         }],
     },
-    #[cfg(feature = "flows")]
-    crate::flows::skills::FLOW_AUTHORING,
 ];
 
 /// Product-owned root for materialized builtin skills.

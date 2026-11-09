@@ -1,44 +1,65 @@
 //! Tests for the channel approval-surface and turn-state subscribers.
 
 use super::*;
+use crate::channels::runtime::{ChannelHandle, TestChannel};
 use std::path::Path;
-use std::sync::Mutex as StdMutex;
 #[cfg(feature = "e2e-test-support")]
 use tempfile::tempdir;
-use tinychannels_bus::{ChannelMessage, SendMessage};
 
-struct RecordingChannel {
-    name: String,
-    sent: StdMutex<Vec<SendMessage>>,
+fn recording(name: &str) -> (Arc<ChannelHandle>, Arc<TestChannel>) {
+    let channel = Arc::new(TestChannel::new(name));
+    (Arc::new(ChannelHandle::Test(Arc::clone(&channel))), channel)
 }
 
-#[async_trait]
-impl Channel for RecordingChannel {
-    fn name(&self) -> &str {
-        &self.name
-    }
-    async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
-        self.sent.lock().unwrap().push(message.clone());
-        Ok(())
-    }
-    async fn listen(&self, _tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-fn recording(name: &str) -> Arc<RecordingChannel> {
-    Arc::new(RecordingChannel {
-        name: name.into(),
-        sent: StdMutex::new(Vec::new()),
-    })
-}
-
-fn approval_subscriber(channels: &[Arc<RecordingChannel>]) -> ChannelApprovalSurfaceSubscriber {
-    let map: HashMap<String, Arc<dyn Channel>> = channels
+fn approval_subscriber(
+    channels: &[(&str, Arc<ChannelHandle>)],
+) -> ChannelApprovalSurfaceSubscriber {
+    let map: HashMap<String, Arc<ChannelHandle>> = channels
         .iter()
-        .map(|c| (c.name.clone(), Arc::clone(c) as Arc<dyn Channel>))
+        .map(|(name, channel)| ((*name).to_owned(), Arc::clone(channel)))
         .collect();
     ChannelApprovalSurfaceSubscriber::new(Arc::new(map))
+}
+
+/// A turn-state subscriber routed through the module object the runtime lease
+/// opened, as production routes through the configured module objects, with
+/// an in-memory record of every mark and whether its dispatch succeeded.
+#[cfg(feature = "e2e-test-support")]
+fn turn_state_subscriber(
+    workspace_dir: PathBuf,
+    names: &[&str],
+    lease: &crate::modules::channel_runtime::ChannelRuntimeLease,
+) -> (ChannelTurnStateSubscriber, TurnStateMarks) {
+    let objects: HashMap<String, ModuleObjectClient> = names
+        .iter()
+        .map(|name| ((*name).to_owned(), lease.object().clone()))
+        .collect();
+    let mut subscriber = ChannelTurnStateSubscriber::with_objects(workspace_dir, Arc::new(objects));
+    let marks = Arc::new(Mutex::new(Vec::new()));
+    subscriber.test_marks = Some(Arc::clone(&marks));
+    (subscriber, marks)
+}
+
+#[cfg(feature = "e2e-test-support")]
+struct TurnStateHostCallback;
+
+#[cfg(feature = "e2e-test-support")]
+#[tinybus::interface(name = "ai.tinyhumans.tinychannels.ChannelsHost")]
+impl TurnStateHostCallback {
+    async fn dispatch_controller_backend(
+        &self,
+        _request: tinychannels_bus::ChannelBackendRequest,
+    ) -> tinybus::Result<tinychannels_bus::ChannelBackendResult> {
+        Err(tinybus::Error::failed("unused turn-state callback"))
+    }
+}
+
+#[cfg(feature = "e2e-test-support")]
+async fn open_turn_state_runtime() -> crate::modules::channel_runtime::ChannelRuntimeLease {
+    let client = crate::channels::module_fixture::client().await;
+    crate::modules::channel_runtime::ChannelRuntimeLease::open(client, TurnStateHostCallback)
+        .await
+        .expect("retain the host callback for remote turn-state calls")
 }
 
 fn received(channel: &str, reply_target: &str, thread_ts: Option<&str>, ws: &Path) -> DomainEvent {
@@ -72,38 +93,6 @@ fn processed(channel: &str, reply_target: &str, ws: &Path) -> DomainEvent {
     }
 }
 
-#[cfg(feature = "e2e-test-support")]
-async fn remote_status(ws: &Path, channel: &str, reply_target: &str) -> Option<String> {
-    let result: tinychannels_bus::module_remote::RemoteOperationResult =
-        crate::channels::module_fixture::client()
-            .await
-            .call_confidential(
-                "tinychannels",
-                tinychannels_bus::methods::EXECUTE_REMOTE,
-                (tinychannels_bus::module_remote::RemoteOperation::Execute {
-                    workspace_dir: ws.to_string_lossy().into_owned(),
-                    message: ChannelMessage {
-                        id: "status-1".into(),
-                        channel: channel.into(),
-                        sender: "alice".into(),
-                        reply_target: reply_target.into(),
-                        content: "/status".into(),
-                        timestamp: 0,
-                        thread_ts: None,
-                        sender_name: None,
-                    },
-                    route: tinychannels_bus::module_remote::RemoteRoute {
-                        provider: "openai".into(),
-                        model: "test-model".into(),
-                    },
-                    history_len: 0,
-                },),
-            )
-            .await
-            .expect("the linked module should answer the status command");
-    result.reply
-}
-
 fn approval(thread_id: Option<&str>, client_id: Option<&str>) -> DomainEvent {
     DomainEvent::ApprovalRequested {
         request_id: "req-1".into(),
@@ -126,8 +115,8 @@ async fn approval_prompts_reach_every_chat_channel() {
         ("discord", None, "discord_alice_chat-1"),
         ("slack", Some("1700.1"), "slack_alice_chat-1_thread:1700.1"),
     ] {
-        let ch = recording(channel);
-        let sub = approval_subscriber(&[Arc::clone(&ch)]);
+        let (handle, ch) = recording(channel);
+        let sub = approval_subscriber(&[(channel, handle)]);
         assert_eq!(sub.name(), "channels::approval_surface");
         assert_eq!(sub.domains(), Some(&["channel", "approval"][..]));
         sub.handle(&received(channel, "chat-1", thread_ts, &ws))
@@ -145,9 +134,9 @@ async fn approval_prompts_reach_every_chat_channel() {
 #[tokio::test]
 async fn approvals_for_web_email_or_unrouted_requests_are_ignored() {
     let ws = PathBuf::from("/tmp");
-    let email = recording("email");
-    let discord = recording("discord");
-    let sub = approval_subscriber(&[Arc::clone(&email), Arc::clone(&discord)]);
+    let (email_handle, email) = recording("email");
+    let (discord_handle, discord) = recording("discord");
+    let sub = approval_subscriber(&[("email", email_handle), ("discord", discord_handle)]);
     sub.handle(&received("email", "a@b.c", None, &ws)).await;
     sub.handle(&approval(Some("email_alice_a@b.c"), Some("email")))
         .await;
@@ -173,55 +162,60 @@ async fn approvals_for_web_email_or_unrouted_requests_are_ignored() {
 #[cfg(feature = "e2e-test-support")]
 async fn turn_state_marks_busy_for_every_remote_control_channel() {
     let _storage = crate::channels::module_fixture::install_memory_storage();
+    let lease = open_turn_state_runtime().await;
     let dir = tempdir().unwrap();
     let ws = dir.path().to_path_buf();
-    let sub = ChannelTurnStateSubscriber::new(ws.clone());
+    let (sub, marks) = turn_state_subscriber(ws.clone(), &["telegram", "discord"], &lease);
     assert_eq!(sub.name(), "channels::turn_state");
     assert_eq!(sub.domains(), Some(&["channel"][..]));
     for channel in ["telegram", "discord"] {
         sub.handle(&received(channel, "chat-99", None, &ws)).await;
-        let busy = remote_status(&ws, channel, "chat-99")
-            .await
-            .expect("/status should answer after a received event");
-        assert!(busy.contains("in progress"), "{channel}: {busy}");
+        assert_eq!(
+            marks.lock().unwrap().last(),
+            Some(&(channel.to_owned(), "chat-99".to_owned(), true, true))
+        );
 
         sub.handle(&processed(channel, "chat-99", &ws)).await;
-        let idle = remote_status(&ws, channel, "chat-99")
-            .await
-            .expect("/status should answer after a processed event");
-        assert!(idle.contains("idle"), "{channel}: {idle}");
+        assert_eq!(
+            marks.lock().unwrap().last(),
+            Some(&(channel.to_owned(), "chat-99".to_owned(), false, true))
+        );
     }
+    lease.close().await.unwrap();
 }
 
 #[tokio::test]
 #[cfg(feature = "e2e-test-support")]
 async fn turn_state_ignores_non_remote_channels_and_stale_workspaces() {
     let _storage = crate::channels::module_fixture::install_memory_storage();
+    let lease = open_turn_state_runtime().await;
     let dir = tempdir().unwrap();
     let ws = dir.path().to_path_buf();
-    let sub = ChannelTurnStateSubscriber::new(ws.clone());
+    let (sub, marks) = turn_state_subscriber(ws.clone(), &["telegram"], &lease);
     let other = tempdir().unwrap().path().to_path_buf();
     sub.handle(&received("email", "a@b.c", None, &ws)).await;
-    assert!(remote_status(&ws, "email", "a@b.c").await.is_none());
+    assert!(marks.lock().unwrap().is_empty());
 
     sub.handle(&received("telegram", "chat-1", None, &ws)).await;
-    let busy = remote_status(&ws, "telegram", "chat-1")
-        .await
-        .expect("/status should answer after a received event");
-    assert!(busy.contains("in progress"), "{busy}");
+    assert_eq!(
+        marks.lock().unwrap().as_slice(),
+        &[("telegram".into(), "chat-1".into(), true, true)]
+    );
 
     sub.handle(&processed("telegram", "chat-1", &other)).await;
-    let still_busy = remote_status(&ws, "telegram", "chat-1")
-        .await
-        .expect("/status should answer after a stale processed event");
-    assert!(
-        still_busy.contains("in progress"),
-        "a stale workspace must not clear turn state: {still_busy}"
+    assert_eq!(
+        marks.lock().unwrap().len(),
+        1,
+        "a stale workspace is ignored"
     );
 
     sub.handle(&processed("telegram", "chat-1", &ws)).await;
-    let idle = remote_status(&ws, "telegram", "chat-1")
-        .await
-        .expect("/status should answer after a matching processed event");
-    assert!(idle.contains("idle"), "{idle}");
+    assert_eq!(
+        marks.lock().unwrap().as_slice(),
+        &[
+            ("telegram".into(), "chat-1".into(), true, true),
+            ("telegram".into(), "chat-1".into(), false, true),
+        ]
+    );
+    lease.close().await.unwrap();
 }

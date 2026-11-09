@@ -163,7 +163,16 @@ mkdir -p "$output"
 
   execFileSync(
     "bash",
-    [path.join(repoRoot, "packages/deb/build.sh"), core, tui, "0.0.0", "amd64"],
+    [
+      "-c",
+      'umask 077; exec "$@"',
+      "bash",
+      path.join(repoRoot, "packages/deb/build.sh"),
+      core,
+      tui,
+      "0.0.0",
+      "amd64",
+    ],
     { cwd: work },
   );
   const contents = execFileSync(

@@ -112,7 +112,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 // Accepted spelling for callers that still send the historical
                 // `auth_store_session` shape through the legacy alias.
                 optional_string("user_id", "Alias of `userId`."),
-                optional_string("issuingBackend", "Backend origin used by the host to validate this session; binds future credential use to that deployment."),
+                optional_string(
+                    "issuingBackend",
+                    "Backend origin used by the host to validate this session; binds future credential use to that deployment.",
+                ),
                 optional_json(
                     "user",
                     "User payload (the host's /auth/me answer, or the local user).",

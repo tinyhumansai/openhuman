@@ -1,5 +1,64 @@
 use super::*;
 
+#[cfg(feature = "flows")]
+#[tokio::test]
+async fn flows_boot_reconcile_uses_the_runtime_captured_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let blocker = tmp.path().join("not-a-workspace-directory");
+    std::fs::write(&blocker, b"not a directory").unwrap();
+    let config = Config {
+        workspace_dir: blocker.clone(),
+        action_dir: blocker.clone(),
+        config_path: tmp.path().join("runtime-config.toml"),
+        ..Config::default()
+    };
+    crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
+    let core = crate::core::runtime::CoreContext::for_test_with_config(
+        crate::core::runtime::DomainSet::full(),
+        config,
+    );
+    let dispatch = crate::core::runtime::DispatchCtx::new(core);
+
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    let capture = Capture::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(capture.clone())
+        .with_ansi(false)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("install test tracing subscriber");
+
+    let swept = reconcile_flows_on_boot(&dispatch)
+        .await
+        .expect("captured runtime configuration loads");
+    assert_eq!(swept, 0);
+    let warning = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    assert!(
+        warning.contains(&blocker.display().to_string()),
+        "BootSweep must use the workspace captured by this runtime; got {warning:?}"
+    );
+}
+
 /// desktop() must enable every bootstrap job.
 #[test]
 fn desktop_plan_enables_every_job() {

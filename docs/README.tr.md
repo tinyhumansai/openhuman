@@ -320,7 +320,7 @@ Kısacası diğerleri, tek bir ajanla çalışan tek bir kişi için harikadır.
 
 [`CONTRIBUTING.md`](../CONTRIBUTING.md) dosyasını okuyun ya da bir yapay zeka kodlama ajanının sizi yönlendirmesi için [bu istemi](./CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) kullanın.
 
-1. Git, Node.js 24+, pnpm 10.10.0, Rust 1.96.1 (`rustfmt` ve `clippy` ile), CMake, Ninja, ripgrep ve platformunuzun masaüstü derleme önkoşullarını kurun.
+1. Git, Node.js 24+, pnpm 10.10.0, Rust 1.99.1 (`rustfmt` ve `clippy` ile), CMake, Ninja, ripgrep ve platformunuzun masaüstü derleme önkoşullarını kurun.
 2. Depoyu çatallayın ve klonlayın. `git submodule update --init --recursive` komutunu, ardından `pnpm install` komutunu çalıştırın.
 3. Arayüz çalışması için `pnpm dev`, masaüstü uygulaması için `pnpm dev:app` çalıştırın. PR açmadan önce `pnpm typecheck`, `pnpm format:check` ve `cargo check --manifest-path Cargo.toml` çalıştırın.
 

@@ -4,8 +4,38 @@ use std::sync::Arc;
 const RECORDS: &str = "\n- `list_directory` — ok\n  > three crates\n";
 const CLEAN_REPLY: &str = "The workspace holds three crates; the build is green.";
 
-#[test]
-fn classified_halt_returns_partial_work_without_provider_usage() {
+fn classified_halt(note: &str, class: &str) -> TinyagentsTurnOutcome {
+    TinyagentsTurnOutcome {
+        deferred_terminal: None,
+        text: String::new(),
+        resolved_route: None,
+        history: Vec::new(),
+        conversation: Vec::new(),
+        model_calls: 1,
+        tool_calls: 1,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_input_tokens: 0,
+        cost: tinyagents_harness::cost::CostTally::default(),
+        early_exit_tool: None,
+        hit_cap: false,
+        wrap_up_injected: false,
+        truncated: false,
+        breaker_halt: Some(note.into()),
+        failure_cause: Some(tinyagents_harness::no_progress::ClassifiedStopCause {
+            class: class.into(),
+            operation: "search".into(),
+            summary: note.into(),
+        }),
+        tool_outcomes: vec![],
+        compaction: None,
+    }
+}
+
+#[tokio::test]
+async fn classified_halt_returns_partial_work_without_provider_usage() {
+    crate::agent::session_host::test_support::with_native_security(async {
+
     use tinyagents_harness::turn_outcome::ToolCallOutcome;
     let outcome = TinyagentsTurnOutcome {
         deferred_terminal: None,
@@ -48,7 +78,8 @@ fn classified_halt_returns_partial_work_without_provider_usage() {
         "no raw tool output: {}",
         close.output
     );
-    assert!(close.output.contains("403 Forbidden"), "{}", close.output);
+    assert!(close.output.contains(if cfg!(feature = "security-module") { "403 Forbidden" } else { "[REDACTED]" }), "{}", close.output);
+    }).await;
 }
 
 /// The host adapter delegates generation and verification to TinyAgents while
@@ -121,6 +152,7 @@ async fn grounded_close_uses_the_selected_model_and_keeps_verifier_out_of_contex
         &outcome,
         None,
         None,
+        &SessionRunOptions::default(),
     )
     .await
     .expect("blank terminal reply needs a close");
@@ -167,6 +199,7 @@ async fn terminal_failed_close_requests_are_counted_without_usage() {
         &blank_outcome(false),
         None,
         None,
+        &SessionRunOptions::default(),
     )
     .await
     .expect("blank terminal reply needs a close");
@@ -213,6 +246,7 @@ async fn close_state_machine_calls_emit_correlated_native_model_events() {
             &blank_outcome(false),
             None,
             Some(&trace),
+            &SessionRunOptions::default(),
         )
         .await
         .expect("blank terminal reply needs a close");
@@ -356,6 +390,7 @@ async fn close_stream_eof_and_timeout_emit_terminal_traces_without_timeout_usage
             &blank_outcome(false),
             pending.then_some(std::time::Duration::from_secs(1)),
             Some(&trace),
+            &SessionRunOptions::default(),
         )
         .await
         .expect("blank terminal reply needs a close");
@@ -419,6 +454,7 @@ async fn required_output_repair_preserves_all_host_output_placements() {
             1,
             &mut usage,
             None,
+            &SessionRunOptions::default(),
         )
         .await
         .expect("reply lacks the required block");
@@ -544,6 +580,7 @@ async fn timed_out_repair_keeps_the_usage_of_its_answered_call() {
             2,
             &mut usage,
             None,
+            &SessionRunOptions::default(),
         ),
     )
     .await;
@@ -649,3 +686,9 @@ fn supplemental_free_route_uses_zero_catalog_rates() {
     assert_eq!(pricing.output_per_mtok_usd, Some(0.0));
     assert_eq!(enrichment.estimated_cost_usd, None);
 }
+
+#[path = "grounded_close_typed_stop_tests.rs"]
+mod typed_stop;
+
+#[path = "grounded_close_replay_tests.rs"]
+mod replay;

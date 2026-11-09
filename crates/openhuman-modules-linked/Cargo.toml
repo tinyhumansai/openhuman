@@ -16,7 +16,7 @@
 # `linked_module()` so several can share one executable without duplicate
 # `TINYBUS_MODULE_ABI_V1` symbols. They all resolve against the single
 # `vendor/tinybus` through the root `[patch]` tables: every module repo
-# requires `tinybus >=0.1.3, <0.2` and patches its nested copy for standalone
+# requires tinybus 0.3 (>=0.3.6) and patches its nested copy for standalone
 # builds only. `cargo build -p openhuman-modules-linked --features all` is the
 # proof (and `lib_tests.rs` admits each factory's module).
 
@@ -37,6 +37,7 @@ all = [
     "tinycomputer",
     "tinyconnectors",
     "tinydocs",
+    "tinyeventqueues",
     "tinyflows",
     "tinyhosts",
     "tinyjuice",
@@ -50,6 +51,7 @@ tinychannels = ["dep:tinychannels-module"]
 tinycomputer = ["dep:tinycomputer"]
 tinyconnectors = ["dep:tinyconnectors"]
 tinydocs = ["dep:tinydocs-module"]
+tinyeventqueues = ["dep:tinyeventqueues"]
 tinyflows = ["dep:tinyflows-module"]
 tinyhosts = ["dep:tinyhosts"]
 tinyjuice = ["dep:tinyjuice-module"]
@@ -64,10 +66,13 @@ openhuman-rpc = { path = "../openhuman-rpc", default-features = false, features 
 log = "0.4"
 
 tinybox-module = { path = "../../vendor/tinybox/crates/tinybox-module", features = ["static-link"], optional = true }
+# Default features stay on (including `whatsapp-web`): this is the local linked-modules
+# dev mode and mirrors the released module. CI never builds this crate.
 tinychannels-module = { path = "../../vendor/tinychannels/crates/tinychannels-module", features = ["static-link"], optional = true }
 tinycomputer = { path = "../../vendor/tinycomputer/crates/tinycomputer", features = ["static-link"], optional = true }
 tinyconnectors = { path = "../../vendor/tinyconnectors/crates/tinyconnectors", features = ["static-link"], optional = true }
 tinydocs-module = { path = "../../vendor/tinydocs/crates/tinydocs-module", features = ["static-link"], optional = true }
+tinyeventqueues = { path = "../../vendor/tinyeventqueues/crates/tinyeventqueues", features = ["static-link"], optional = true }
 tinyflows-module = { path = "../../vendor/tinyflows/crates/tinyflows-module", features = ["static-link"], optional = true }
 tinyhosts = { path = "../../vendor/tinyhosts", features = ["static-link"], optional = true }
 tinyjuice-module = { path = "../../vendor/tinyjuice/crates/tinyjuice-module", features = ["static-link"], optional = true }

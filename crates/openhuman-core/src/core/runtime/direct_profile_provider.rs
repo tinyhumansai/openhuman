@@ -51,6 +51,7 @@ impl DirectProfileProvider {
                 endpoint,
                 api_key,
                 headers: Vec::new(),
+                ..EphemeralRoute::default()
             },
             model,
         })

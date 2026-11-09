@@ -277,7 +277,7 @@ fn a_model_switch_in_a_thread_is_not_a_cold_call() {
 
 #[test]
 fn an_estimated_cost_lands_in_estimated_usd_not_charged() {
-    use crate::inference::provider::BilledUsage;
+    use tinyinference_llm::usage::BilledUsage;
     let estimated = BilledUsage::from_counts(100, 10).with_estimated_usd(0.25);
     let usage = crate::platform::cost::global::build_token_usage("model/a", &estimated).unwrap();
     assert_eq!(usage.cost_source, CostSource::Estimated);

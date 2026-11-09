@@ -403,7 +403,9 @@ impl Tool for RunWorkflowTool {
             wait_seconds,
             "[run_workflow] spawned; awaiting result inline"
         );
+        let workspace = resolve_workspace_dir().await;
         let outcome = await_run_outcome(
+            &workspace,
             &started.log_path,
             std::time::Duration::from_secs(wait_seconds),
         )
@@ -509,8 +511,12 @@ impl Tool for AwaitWorkflowTool {
             Err(e) => return Ok(ToolResult::error(format!("await_workflow: {e}"))),
         };
 
-        let outcome =
-            await_run_outcome(&log_path, std::time::Duration::from_secs(wait_seconds)).await;
+        let outcome = await_run_outcome(
+            &workspace,
+            &log_path,
+            std::time::Duration::from_secs(wait_seconds),
+        )
+        .await;
         Ok(outcome_to_result(
             &run_id,
             &visible_run.workflow_id,

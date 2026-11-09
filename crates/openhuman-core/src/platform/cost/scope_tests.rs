@@ -16,6 +16,7 @@ fn each_origin_maps_to_its_thread_and_label() {
         sender: None,
         sender_name: None,
         history_key: None,
+        channel_session: None,
         reply_target: "r".into(),
         message_id: "m".into(),
     };
@@ -29,6 +30,7 @@ fn each_origin_maps_to_its_thread_and_label() {
         sender: None,
         sender_name: None,
         history_key: Some("telegram:42".into()),
+        channel_session: None,
         reply_target: "r".into(),
         message_id: "m".into(),
     };
@@ -65,7 +67,7 @@ async fn ambient_scope_reads_the_turn_and_prefers_the_subagent() {
         crate::core::runtime::CoreContext::for_test(crate::core::runtime::DomainSet::full(), None);
     let (parent, child) = {
         let scope_ctx = crate::core::runtime::DispatchCtx::new(ctx);
-        crate::security::turn_origin::with_origin(origin, async {
+        crate::core::runtime::turn_origin::with_origin(origin, async {
             async {
                 (
                     UsageScope::in_ctx(&scope_ctx, Some("openhuman"), None)

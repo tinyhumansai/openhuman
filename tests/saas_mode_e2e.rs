@@ -298,7 +298,8 @@ fn gateway_requests_run_under_the_named_users_profile() {
         assert_eq!(status, 404, "{path}");
     }
 
-    // The credential lives in alice's own directory.
+    // The configured storage backend owns credentials, so they are not
+    // written beside the profile's workspace and sandbox.
     let profile_dir = d.root.join("users").join(alice.as_str());
     let stored: Vec<_> = std::fs::read_dir(&profile_dir)
         .unwrap()
@@ -306,8 +307,8 @@ fn gateway_requests_run_under_the_named_users_profile() {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     assert!(
-        stored.iter().any(|name| name.contains("auth")),
-        "credential store beside alice's config: {stored:?}"
+        !stored.iter().any(|name| name.contains("auth")),
+        "backend credentials must not create an on-disk sidecar: {stored:?}"
     );
     drop(server);
 }
@@ -661,32 +662,6 @@ fn a_profile_holds_web_and_relayed_channel_threads() {
         json!({ "client_id": "c1", "thread_id": "web-1", "message": "hello on the web" }),
     );
     assert_eq!(status, 200, "{body}");
-
-    // The web chat and relay share Alice's profile turn gate. Let the offline
-    // web turn reach a terminal snapshot before queuing the channel turn; this
-    // test covers profile/thread isolation, not same-profile turn scheduling.
-    let deadline = Instant::now() + Duration::from_secs(90);
-    let mut lifecycle = None;
-    while Instant::now() < deadline {
-        let (_, state) = call(
-            "alice",
-            "openhuman.threads_turn_state_get",
-            json!({ "thread_id": "web-1" }),
-        );
-        lifecycle = state
-            .pointer("/result/data/turnState/lifecycle")
-            .or_else(|| state.pointer("/result/result/data/turnState/lifecycle"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        if matches!(lifecycle.as_deref(), Some("completed" | "interrupted")) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    assert!(
-        matches!(lifecycle.as_deref(), Some("completed" | "interrupted")),
-        "Alice's web turn did not settle before relay: {lifecycle:?}"
-    );
 
     // ...and the gateway relays a Telegram message of hers.
     let relayed = json!({

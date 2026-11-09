@@ -2,11 +2,10 @@
 //! tinybox module's storage.
 //!
 //! A `JailRegistry` used to keep its metadata for every jail in
-//! `<base>/index.json` (the documented base is `<workspace>/jails/`). From
-//! v0.1.29 the index is one document per registry in the
-//! `tinybox_jail_index` collection of the module's own scope, with the same
-//! JSON shape, so a registry opened on the host's storage sees the jails an
-//! older install created.
+//! `<base>/index.json` (the documented base is `<workspace>/jails/`). The
+//! importer converts that registry JSON through the TinyBox bus contract and
+//! writes the current `box.jail_index` body, so a registry opened on the
+//! host's storage sees jails an older install created.
 //!
 //! * **The legacy file is never modified.** It is only read.
 //! * **Nothing is overwritten.** The document is written only when absent, so
@@ -21,11 +20,12 @@
 
 use std::path::Path;
 
+use crate::storage::{CollectionSpec, Storage};
 use anyhow::{Context, Result};
 use serde_json::Value;
-use tinystoragedrivers::{CollectionSpec, ScopedStorage};
+use tinystoragedrivers_types::WriteOptions;
 
-use super::storage_grant_schemas::tinybox::{JAIL_INDEX_COLLECTION, MODULE_ID};
+use super::storage_grant_schemas::tinybox::MODULE_ID;
 use super::storage_import_support as support;
 use crate::core::runtime::DispatchCtx;
 
@@ -53,18 +53,31 @@ pub(crate) enum Outcome {
 /// Imports the index under `<workspace_dir>/jails` into the module's scope of
 /// the installed backend.
 pub(crate) async fn import_legacy(ctx: &DispatchCtx, workspace_dir: &Path) -> Result<Outcome> {
-    let Some(scoped) = support::module_scope(ctx, MODULE_ID)? else {
+    if support::module_scope(ctx, MODULE_ID)?.is_none() {
+        return Ok(Outcome::NoBackend);
+    }
+    let base = workspace_dir.join(BASE_DIR);
+    let index = base.join(INDEX_FILE);
+    if !index.is_file() {
+        return Ok(Outcome::NoSource);
+    }
+    let marker = support::marker_id("tinybox", &base);
+    let result =
+        support::with_module_claim(ctx, MODULE_ID, MARKER_COLLECTION, &marker, move |scoped| {
+            crate::storage::block_on_anyhow(async move { import_into(&scoped, &base).await })
+        })?;
+    let Some(outcome) = result else {
         return Ok(Outcome::NoBackend);
     };
-    import_into(&scoped, &workspace_dir.join(BASE_DIR)).await
+    Ok(outcome)
 }
 
-async fn import_into(scoped: &ScopedStorage, base: &Path) -> Result<Outcome> {
-    let docs = scoped.documents();
+async fn import_into(scoped: &Storage, base: &Path) -> Result<Outcome> {
     let marker = support::marker_id("tinybox", base);
     if support::already_imported(scoped, MARKER_COLLECTION, &marker).await? {
         return Ok(Outcome::AlreadyDone);
     }
+    let docs = scoped.documents();
     let index = base.join(INDEX_FILE);
     if !index.is_file() {
         return Ok(Outcome::NoSource);
@@ -81,12 +94,20 @@ async fn import_into(scoped: &ScopedStorage, base: &Path) -> Result<Outcome> {
     let mut written = false;
     match serde_json::from_str::<Value>(&text) {
         Ok(doc) if doc.is_object() => {
-            docs.ensure_collection(&CollectionSpec::new(JAIL_INDEX_COLLECTION))
+            let collection = tinybox_bus::storage::JAIL_INDEX_COLLECTION;
+            docs.ensure_collection(&CollectionSpec::new(collection))
                 .await
-                .map_err(|error| {
-                    anyhow::anyhow!("declare {JAIL_INDEX_COLLECTION}: {:?}", error.kind())
-                })?;
-            written = support::put_absent(docs, JAIL_INDEX_COLLECTION, &registry, doc).await?;
+                .map_err(|error| anyhow::anyhow!("declare {collection}: {:?}", error.kind()))?;
+            let body = tinybox_bus::storage::jail_index::to_body(doc)
+                .context("convert the jail index into the current owner body")?;
+            written = support::put_absent_with(
+                docs,
+                collection,
+                &registry,
+                body,
+                WriteOptions::new().schema(tinybox_bus::storage::BODY_VERSION),
+            )
+            .await?;
         }
         _ => tracing::warn!("{LOG_PREFIX} skipped an index file that is not a JSON object"),
     }

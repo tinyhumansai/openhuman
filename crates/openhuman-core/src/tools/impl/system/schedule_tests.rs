@@ -310,3 +310,35 @@ fn schedule_unknown_action_treated_as_external_effect() {
     assert!(tool.external_effect_with_args(&json!({ "action": "explode" })));
     assert!(tool.external_effect_with_args(&json!({})));
 }
+
+#[test]
+fn shell_commands_and_natural_language_prompts_are_told_apart() {
+    for command in [
+        "/usr/bin/backup",
+        "./run.sh",
+        "~/bin/sync",
+        "ls -la",
+        "git status",
+        "curl https://example.test",
+        "echo hi | wc -l",
+        "make build && make test",
+        "date >> log.txt",
+    ] {
+        assert!(
+            looks_like_shell_command(command),
+            "{command:?} is a command"
+        );
+    }
+    for prompt in [
+        "",
+        "   ",
+        "remind me to call mom",
+        "find my notes from yesterday",
+        "make a summary of my inbox",
+        "sort out tomorrow's meetings",
+        "test whether the deploy finished",
+        "head to the gym",
+    ] {
+        assert!(!looks_like_shell_command(prompt), "{prompt:?} is a prompt");
+    }
+}

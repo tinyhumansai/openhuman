@@ -33,6 +33,13 @@ impl HookIdentity for OpenHumanRunContext {
         self.workspace
             .as_ref()
             .map(|workspace| workspace.root.clone())
+            // Without a per-turn descriptor the builtin tools run in the live
+            // policy's action dir (see `Shell::effective_action_dir_for_context`),
+            // so a hook must report that directory, not the internal workspace.
+            .or_else(|| {
+                crate::security::live_policy::effective_in(&self.dispatch_ctx())
+                    .map(|policy| policy.action_dir.clone())
+            })
             .or_else(|| {
                 self.dispatch_ctx()
                     .core()

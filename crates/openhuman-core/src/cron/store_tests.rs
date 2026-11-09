@@ -6,6 +6,16 @@ use super::*;
 use chrono::Duration as ChronoDuration;
 use tempfile::TempDir;
 
+/// Move one scheduled row into the past for scheduler tests. The document
+/// representation belongs to the module store; this helper is test-only.
+pub(crate) fn force_next_run_for_test(
+    config: &Config,
+    job_id: &str,
+    at: DateTime<Utc>,
+) -> Result<()> {
+    super::force_next_run_for_test(config, job_id, at)
+}
+
 fn test_config(tmp: &TempDir) -> Config {
     let config = Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -14,7 +24,57 @@ fn test_config(tmp: &TempDir) -> Config {
         ..Config::default()
     };
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
+    crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
     config
+}
+
+#[test]
+fn remove_job_does_not_write_to_stdout() {
+    use std::process::Command;
+
+    const CHILD: &str = "OPENHUMAN_CRON_REMOVE_STDOUT_CHILD";
+    if let Ok(workspace) = std::env::var(CHILD) {
+        let config = Config {
+            workspace_dir: workspace.into(),
+            action_dir: std::env::temp_dir(),
+            ..Config::default()
+        };
+        crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
+        println!("BEGIN_CRON_REMOVE_CAPTURE");
+        use std::io::Write;
+        std::io::stdout().flush().unwrap();
+        remove_job(
+            &config,
+            &std::env::var("OPENHUMAN_CRON_REMOVE_JOB").unwrap(),
+        )
+        .unwrap();
+        println!("END_CRON_REMOVE_CAPTURE");
+        std::io::stdout().flush().unwrap();
+        return;
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let job = add_job(&config, "*/5 * * * *", "echo remove").unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "cron::store::tests::remove_job_does_not_write_to_stdout",
+            "--nocapture",
+        ])
+        .env(CHILD, &config.workspace_dir)
+        .env("OPENHUMAN_CRON_REMOVE_JOB", &job.id)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let captured = stdout.split("BEGIN_CRON_REMOVE_CAPTURE\n").nth(1).unwrap();
+    let captured = captured.split("END_CRON_REMOVE_CAPTURE\n").next().unwrap();
+    assert!(captured.is_empty(), "unexpected stdout: {captured}");
 }
 
 #[cfg(feature = "storage-sqlite")]
@@ -24,18 +84,6 @@ fn jobs_live_in_the_workspace_default_database() {
     let config = test_config(&tmp);
     add_job(&config, "*/5 * * * *", "echo ok").unwrap();
     assert!(tmp.path().join("workspace/storage/storage.db").is_file());
-}
-
-#[test]
-fn due_jobs_batch_size_follows_scheduler_max_tasks() {
-    let tmp = TempDir::new().unwrap();
-    let mut config = test_config(&tmp);
-    config.scheduler.max_tasks = 2;
-    for i in 0..3 {
-        add_job(&config, "* * * * *", &format!("echo due-{i}")).unwrap();
-    }
-    let far_future = Utc::now() + ChronoDuration::days(365);
-    assert_eq!(due_jobs(&config, far_future).unwrap().len(), 2);
 }
 
 #[test]
@@ -49,6 +97,86 @@ fn run_history_cap_follows_cron_max_run_history() {
         record_run(&config, &job.id, t, t, "ok", Some("x"), 1).unwrap();
     }
     assert_eq!(list_runs(&config, &job.id, 10).unwrap().len(), 2);
+}
+
+#[test]
+fn a_stale_routing_patch_cannot_combine_with_a_newer_unvalidated_route() {
+    use tinyflows_bus::schedule::AgentJobSpec;
+
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp);
+    config.channels_config.telegram = Some(crate::config::TelegramConfig {
+        bot_token: "test-token".into(),
+        chat_id: None,
+        allowed_users: vec!["42".into()],
+        stream_mode: Default::default(),
+        draft_update_interval_ms: 1000,
+        silent_streaming: true,
+        mention_only: false,
+    });
+    let channel_origin = |target: &str| tinyflows_bus::schedule::types::JobOrigin::Channel {
+        channel: "telegram".into(),
+        reply_target: target.into(),
+        history_key: format!("telegram-target-{target}"),
+        sender: None,
+        thread_id: None,
+        channel_session: None,
+    };
+    let origin_42 = channel_origin("42");
+    let origin_999 = channel_origin("999");
+    let mut spec = AgentJobSpec::new(Schedule::Every { every_ms: 300_000 }, "remind me");
+    spec.delivery = Some(DeliveryConfig::default());
+    spec.origin = Some(origin_42.clone());
+    let job = add_agent_job_from_spec(&config, spec).unwrap();
+    let initial = get_job(&config, &job.id).unwrap();
+
+    // Both callers validate against the same initial row. A routes through
+    // the authorized chat 42; B changes only the origin while delivery is
+    // `none`. Pause before either request reaches the module store.
+    let stale_a = validate_and_complete_route_patch(
+        &config,
+        &initial,
+        CronJobPatch {
+            delivery: Some(DeliveryConfig {
+                mode: "origin".into(),
+                ..DeliveryConfig::default()
+            }),
+            ..CronJobPatch::default()
+        },
+        None,
+    )
+    .unwrap();
+    let stale_b = validate_and_complete_route_patch(
+        &config,
+        &initial,
+        CronJobPatch {
+            origin: Some(Some(origin_999.clone())),
+            ..CronJobPatch::default()
+        },
+        None,
+    )
+    .unwrap();
+
+    store_blocking::<CronJob>(
+        &config,
+        StoreOperation::Update {
+            job_id: job.id.clone(),
+            patch: stale_a,
+        },
+    )
+    .unwrap();
+    store_blocking::<CronJob>(
+        &config,
+        StoreOperation::Update {
+            job_id: job.id.clone(),
+            patch: stale_b,
+        },
+    )
+    .unwrap();
+
+    let saved = get_job(&config, &job.id).unwrap();
+    assert_eq!(saved.delivery.mode, "none");
+    assert_eq!(saved.origin.as_ref(), Some(&origin_999));
 }
 
 fn agent_context(
@@ -124,17 +252,23 @@ async fn a_job_whose_agent_is_not_live_stays_dormant() {
     );
 }
 
+#[cfg(feature = "legacy-import")]
 fn legacy_fixture() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src/storage/import/fixtures/tinyflows/workspace/cron/jobs.db")
 }
 
-#[cfg(feature = "storage-sqlite")]
+#[cfg(all(feature = "storage-sqlite", feature = "legacy-import"))]
 #[test]
 fn a_legacy_jobs_db_is_imported_by_the_storage_importer_and_left_untouched() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let legacy = legacy_db_path(&config);
+    // The importer binds its claim to atomic conditional writes, which the
+    // in-memory test default does not support: use the workspace's sqlite.
+    crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
+    let legacy = crate::storage::import::tinyflows::legacy_jobs_db(
+        &crate::core::runtime::agent_scope_dir(&config),
+    );
     std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
     std::fs::copy(legacy_fixture(), &legacy).unwrap();
     let before = std::fs::read(&legacy).unwrap();

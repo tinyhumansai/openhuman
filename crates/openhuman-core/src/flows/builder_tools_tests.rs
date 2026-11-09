@@ -37,9 +37,7 @@ fn valid_graph() -> Value {
 // share a toolkit key (same discipline the pre-fix required-args/response-
 // fields caches already required).
 
-use crate::flows::tinyflows::caps::{
-    seed_live_catalog_cache, seed_probe_cache, ProbedOutputSample, ToolContract,
-};
+use crate::integrations::composio::catalog::{seed_live_catalog_cache, ToolContract};
 
 fn seeded_gmail_send_contract() -> ToolContract {
     ToolContract {
@@ -88,20 +86,6 @@ fn seeded_ws6_contract(slug: &str, toolkit: &str) -> ToolContract {
 // search time. Uses `spotify` / `telegram` (real curated toolkits unused by
 // other tests) so these seeds can't race with the shared `gmail`/`slack` keys.
 
-fn spotify_curated_action() -> ToolContract {
-    ToolContract {
-        slug: "SPOTIFY_START_PLAYBACK".to_string(),
-        toolkit: "spotify".to_string(),
-        description: Some("Start playback".to_string()),
-        required_args: vec![],
-        input_schema: Some(json!({ "type": "object" })),
-        output_fields: vec![],
-        output_schema: None,
-        primary_array_path: None,
-        is_curated: true,
-    }
-}
-
 // ── WS5: per-token fallback ranking for zero-result multi-word queries ───────
 //
 // Transcript failure: `search_tool_catalog` behaved like near-exact matching —
@@ -110,34 +94,6 @@ fn spotify_curated_action() -> ToolContract {
 // concluded the action didn't exist. The primary pass is a strict case-
 // insensitive AND (every token must match); when that misses for a multi-word
 // query, a per-keyword OR fallback now returns the nearest matches + a note.
-
-fn twt_lookup() -> ToolContract {
-    ToolContract {
-        slug: "TWTFALLBACKTEST_TWEET_LOOKUP".to_string(),
-        toolkit: "twtfallbacktest".to_string(),
-        description: Some("Look up a tweet".to_string()),
-        required_args: vec!["id".to_string()],
-        input_schema: None,
-        output_fields: vec!["text".to_string()],
-        output_schema: None,
-        primary_array_path: None,
-        is_curated: true,
-    }
-}
-
-fn twt_replies() -> ToolContract {
-    ToolContract {
-        slug: "TWTFALLBACKTEST_LIST_REPLIES".to_string(),
-        toolkit: "twtfallbacktest".to_string(),
-        description: Some("List replies to a tweet".to_string()),
-        required_args: vec!["tweet_id".to_string()],
-        input_schema: None,
-        output_fields: vec!["replies".to_string()],
-        output_schema: None,
-        primary_array_path: None,
-        is_curated: true,
-    }
-}
 
 // ── save_workflow ────────────────────────────────────────────────────────────
 

@@ -15,16 +15,49 @@ use {
 
 async fn test_config(tmp: &TempDir) -> Config {
     let ws = tmp.path().join("workspace");
-    let config = Config {
+    let mut config = Config {
         workspace_dir: ws.clone(),
         action_dir: ws.clone(),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };
+    // Scheduler fixtures use a synthetic API key; secret-store encryption is
+    // exercised separately with an armed TinySecurity module.
+    config.secrets.encrypt = false;
+    config.modules.source = crate::config::schema::ModuleSourceMode::Source;
     tokio::fs::create_dir_all(&config.workspace_dir)
         .await
         .unwrap();
+    crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
+    crate::credentials::api_key::store_api_key(&config, "cron-scheduler-test-key")
+        .await
+        .expect("store the managed inference fixture credential");
     config
+}
+
+async fn run_job_command_in_test_context(
+    config: &Config,
+    security: &SecurityPolicy,
+    job: &CronJob,
+) -> (bool, String) {
+    let core = crate::core::runtime::CoreContext::for_test_with_config(
+        crate::core::runtime::DomainSet::full(),
+        config.clone(),
+    );
+    crate::core::runtime::CoreContext::scope(core, async {
+        crate::core::runtime::DispatchCtx::ambient()
+            .load_config()
+            .await
+            .expect("scoped scheduler fixture config");
+        run_job_command(
+            &crate::core::runtime::DispatchCtx::host_default(),
+            config,
+            security,
+            job,
+        )
+        .await
+    })
+    .await
 }
 
 fn test_job(command: &str) -> CronJob {
@@ -86,14 +119,18 @@ async fn cron_alerts(config: &Config) -> usize {
 /// #4169); only a terminal `Empty`/`Closed` — the matching event genuinely was
 /// not published — panics.
 fn next_user_error(
-    rx: &mut tokio::sync::broadcast::Receiver<crate::web_chat::WebChannelEvent>,
+    rx: &mut tokio::sync::broadcast::Receiver<crate::web_chat::ScopedWebEvent>,
     kind: &str,
-) -> crate::web_chat::WebChannelEvent {
+) -> crate::web_chat::ScopedWebEvent {
     use tokio::sync::broadcast::error::TryRecvError;
     loop {
         match rx.try_recv() {
-            Ok(ev) if ev.event == "user_error" && ev.error_type.as_deref() == Some(kind) => {
-                break ev
+            Ok(ev)
+                if matches!(ev.wire_event(), crate::web_chat::WebChannelEvent::UserError {
+                    error_type: Some(error_type), ..
+                } if error_type == kind) =>
+            {
+                break ev;
             }
             Ok(_) => continue,
             // Receiver fell behind a concurrent flood — the dropped slots can't
@@ -105,6 +142,9 @@ fn next_user_error(
     }
 }
 
+#[cfg(feature = "channels")]
+#[path = "scheduler_announce_delivery_tests.rs"]
+mod announce_delivery_tests;
 #[path = "scheduler_classifier_and_delivery_tests.rs"]
 mod classifier_and_delivery_tests;
 #[path = "scheduler_dispatch_tests.rs"]
@@ -113,6 +153,8 @@ mod dispatch_tests;
 mod frequency_tests;
 #[path = "scheduler_halt_and_persist_tests.rs"]
 mod halt_and_persist_tests;
+#[path = "scheduler_headless_descendants_tests.rs"]
+mod headless_descendants_tests;
 #[path = "scheduler_host_agent_tests.rs"]
 mod host_agent_tests;
 #[path = "scheduler_transcript_isolation_tests.rs"]
@@ -172,7 +214,16 @@ async fn retryable_shell_failure_consumes_the_whole_retry_budget() {
     config.reliability.provider_backoff_ms = 200;
 
     let counter = tmp.path().join("retryable-attempts.log");
-    let job = test_job(&counting_failure_command(&counter));
+    let command = counting_failure_command(&counter);
+    let job = cron::add_shell_job(
+        &config,
+        None,
+        tinyflows_bus::schedule::types::Schedule::Every {
+            every_ms: 3_600_000,
+        },
+        &command,
+    )
+    .unwrap();
 
     let (success, output) = execute_job_now(
         &crate::core::runtime::DispatchCtx::ambient(),
@@ -226,7 +277,16 @@ async fn security_policy_block_halts_without_spending_the_retry_budget() {
     config.autonomy.level = AutonomyLevel::ReadOnly;
 
     let counter = tmp.path().join("blocked-attempts.log");
-    let job = test_job(&counting_failure_command(&counter));
+    let command = counting_failure_command(&counter);
+    let job = cron::add_shell_job(
+        &config,
+        None,
+        tinyflows_bus::schedule::types::Schedule::Every {
+            every_ms: 3_600_000,
+        },
+        &command,
+    )
+    .unwrap();
     let security =
         SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
     // Fixture guard: if the policy still permits acting, the command would run
@@ -252,14 +312,25 @@ async fn security_policy_block_halts_without_spending_the_retry_budget() {
 
     assert!(!success, "a blocked job cannot succeed; got {output}");
     assert!(
-        output.starts_with("blocked by security policy:"),
-        "expected the security-policy refusal that the loop keys on, got {output}"
+        !output.trim().is_empty(),
+        "a refused job must return a reason"
     );
     assert_eq!(
         attempt_count(&counter),
         0,
         "a read-only policy must refuse before the command is spawned; the command ran {} times",
         attempt_count(&counter)
+    );
+    if output == crate::security::policy::Refusal::Unavailable.to_string() {
+        // A test runner without the TinySecurity module exercises its
+        // fail-closed path, which stays retryable (the module may come back).
+        return;
+    }
+    // Any other refusal is the policy's answer: final, whichever text it has
+    // (a read-only refusal used to read "[policy-blocked] …" and be retried).
+    assert!(
+        output.starts_with("blocked by security policy:"),
+        "a policy refusal must be marked final for the retry loop; got {output}"
     );
     assert!(
         elapsed < std::time::Duration::from_millis(config.reliability.provider_backoff_ms) * 2,
@@ -292,13 +363,7 @@ async fn a_shell_job_runs_on_this_platform() {
 
     let job = test_job("echo tinyhumans");
 
-    let (success, output) = run_job_command(
-        &crate::core::runtime::DispatchCtx::host_default(),
-        &config,
-        &security,
-        &job,
-    )
-    .await;
+    let (success, output) = run_job_command_in_test_context(&config, &security, &job).await;
 
     assert!(success, "the shell job did not succeed: {output}");
     assert!(
@@ -309,7 +374,7 @@ async fn a_shell_job_runs_on_this_platform() {
 
 #[cfg(feature = "modules")]
 #[tokio::test]
-async fn scheduled_shell_authorization_fails_closed_when_tinybox_is_disabled() {
+async fn scheduled_shell_authorization_uses_tinysecurity_without_tinybox() {
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp).await;
     config.modules.enabled = false;
@@ -318,7 +383,7 @@ async fn scheduled_shell_authorization_fails_closed_when_tinybox_is_disabled() {
 
     let result = authorize_shell_command(&config, &security, "echo must-not-run").await;
 
-    assert_eq!(result, Err("Command analysis is unavailable.".to_owned()));
+    assert_eq!(result, Ok(()));
 }
 
 /// A pipeline keeps the shell's own exit status, not `pipefail`'s.
@@ -348,13 +413,7 @@ async fn a_pipeline_reports_its_last_stage_rather_than_pipefail() {
 
     let job = test_job("false | true");
 
-    let (success, output) = run_job_command(
-        &crate::core::runtime::DispatchCtx::host_default(),
-        &config,
-        &security,
-        &job,
-    )
-    .await;
+    let (success, output) = run_job_command_in_test_context(&config, &security, &job).await;
 
     assert!(
         success,

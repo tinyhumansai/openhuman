@@ -9,20 +9,18 @@
 //! so every host seam receives the same explicit carrier rather than recovering
 //! product state from a task-local.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::time::Instant;
 
 use tokio::sync::mpsc::Sender;
 
-use crate::agent::harness::fork_context::{AgentContextPreparedSource, ParentExecutionContext};
 use crate::agent::subagent_host::SubagentUsage;
+use crate::agent::subagent_host::{AgentContextPreparedSource, ParentExecutionContext};
 use crate::agent::tinyagents::{
     middleware::turn_context::TurnContextMiddleware, turn_policy::ToolPolicyEnforcement,
 };
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::progress::AgentProgress;
-use crate::security::turn_origin::AgentTurnOrigin;
 use tinyagents_definition::SandboxMode;
 use tinyagents_harness::store::InMemoryStore as ToolResultArtifactIndexStore;
 use tinyagents_harness::turn_outcome::{ToolCallOutcome, ToolOutcomeSink};
@@ -130,6 +128,9 @@ pub(crate) struct SessionTurnSidecar {
     /// and the post-commit UI use the same complete ledger.
     pub subagents: Vec<SubagentUsageEntry>,
     pub duration: Option<Duration>,
+    /// Typed host refusal captured before the neutral runtime's string error
+    /// boundary. Read only by the same logical turn that populated it.
+    pub dispatch_refusal: Option<super::super::budget::DispatchRefusal>,
     pub tool_outcomes: Vec<ToolCallOutcome>,
     pub hit_cap: bool,
     pub wrap_up_injected: bool,
@@ -147,117 +148,83 @@ pub(crate) struct SessionTurnSidecar {
     pub stop: Option<tinyagents_harness::turn_stop::TurnStop>,
     /// Deferred native terminal finalized after transcript durability.
     pub deferred_terminal: Option<crate::agent::tinyagents::turn_outcome::DeferredTurnTerminal>,
+    /// The discovery options this turn starts its thread with, to be recorded
+    /// on the first row the commit writes. Set by the turn that prepares the
+    /// thread's first prompt and only when they differ from today's
+    /// behaviour; see `tinyagents::discovery::DiscoveryOptions`.
+    pub discovery_record: Option<crate::agent::tinyagents::discovery::DiscoveryOptions>,
+    /// The history-replay options this turn starts its thread with, recorded
+    /// like `discovery_record`; see `tinyagents::replay_pin::ReplayOptions`.
+    pub replay_record: Option<crate::agent::tinyagents::replay_pin::ReplayOptions>,
 }
 
-/// Immutable inputs to the host's pre-dispatch policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DispatchInputs {
-    pub pause_requested: bool,
-    pub pause_completed_calls: u64,
-    pub pause_cap: u64,
-    pub remaining: Option<Duration>,
-    pub observed_max: Option<Duration>,
-    pub observed_samples: u64,
+/// The per-run harness options a session sets on the `RunConfig` it hands its
+/// driver. The driver builds its own run config, so it copies these across, or
+/// the harness reads them empty and falls back to the process-wide policy.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SessionRunOptions {
+    pub discovery: tinyagents_harness::tool::discover::DiscoveryOverrides,
+    pub result_expiry: tinyagents_harness::result_expiry::ExpiryOverrides,
+    pub replay_reasoning: Option<tinyagents_harness::reasoning_replay::ReasoningReplay>,
 }
 
-/// Outcome of the host's pre-dispatch policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DispatchDecision {
-    Allow,
-    RefusePaused {
-        completed_model_calls: u64,
-        cap: u64,
-    },
-    RefuseBudget {
-        remaining_ms: u64,
-        observed_max_ms: u64,
-        observed_samples: u64,
-    },
-}
-
-/// Decide whether a child can be started using only evidence recorded on this
-/// turn. This stays host policy: TinyAgents owns the loop, not OpenHuman's
-/// pause and wall-clock refusal rules.
-pub fn decide_dispatch(inputs: DispatchInputs) -> DispatchDecision {
-    if inputs.pause_requested {
-        return DispatchDecision::RefusePaused {
-            completed_model_calls: inputs.pause_completed_calls,
-            cap: inputs.pause_cap,
-        };
-    }
-    let (Some(remaining), Some(observed_max)) = (inputs.remaining, inputs.observed_max) else {
-        return DispatchDecision::Allow;
-    };
-    if remaining < observed_max {
-        return DispatchDecision::RefuseBudget {
-            remaining_ms: remaining.as_millis().min(u128::from(u64::MAX)) as u64,
-            observed_max_ms: observed_max.as_millis().min(u128::from(u64::MAX)) as u64,
-            observed_samples: inputs.observed_samples,
-        };
-    }
-    DispatchDecision::Allow
-}
-
-/// Shared root-turn state used by all synchronous descendants and siblings to
-/// decide whether starting another delegate is still safe.
-#[derive(Debug)]
-pub struct TurnDispatchState {
-    pause_requested: AtomicBool,
-    pause_completed_calls: AtomicU64,
-    pause_cap: AtomicU64,
-    started: Instant,
-    budget: Option<Duration>,
-    observed_max_ms: AtomicU64,
-    observed_samples: AtomicU64,
-}
-
-impl TurnDispatchState {
-    pub fn new(budget: Option<Duration>) -> Self {
+impl SessionRunOptions {
+    /// The options `config` carries.
+    pub(crate) fn of(config: &tinyagents_harness::context::RunConfig) -> Self {
         Self {
-            pause_requested: AtomicBool::new(false),
-            pause_completed_calls: AtomicU64::new(0),
-            pause_cap: AtomicU64::new(0),
-            started: Instant::now(),
-            budget,
-            observed_max_ms: AtomicU64::new(0),
-            observed_samples: AtomicU64::new(0),
+            discovery: config.discovery,
+            result_expiry: config.result_expiry.clone(),
+            replay_reasoning: config.replay_reasoning,
         }
     }
 
-    pub fn record_pause_requested(&self, completed_model_calls: u64, cap: u64) {
-        self.pause_completed_calls
-            .store(completed_model_calls, Ordering::SeqCst);
-        self.pause_cap.store(cap, Ordering::SeqCst);
-        self.pause_requested.store(true, Ordering::SeqCst);
-    }
-
-    pub fn record_subagent_elapsed(&self, elapsed: Duration) {
-        let ms = elapsed.as_millis().min(u128::from(u64::MAX)) as u64;
-        self.observed_samples.fetch_add(1, Ordering::SeqCst);
-        self.observed_max_ms.fetch_max(ms, Ordering::SeqCst);
-    }
-
-    pub fn snapshot(&self) -> DispatchInputs {
-        let observed_max = match self.observed_max_ms.load(Ordering::SeqCst) {
-            0 => None,
-            ms => Some(Duration::from_millis(ms)),
-        };
-        DispatchInputs {
-            pause_requested: self.pause_requested.load(Ordering::SeqCst),
-            pause_completed_calls: self.pause_completed_calls.load(Ordering::SeqCst),
-            pause_cap: self.pause_cap.load(Ordering::SeqCst),
-            remaining: self
-                .budget
-                .map(|budget| budget.saturating_sub(self.started.elapsed())),
-            observed_max,
-            observed_samples: self.observed_samples.load(Ordering::SeqCst),
+    /// `history` as a model request under these options carries it: expired
+    /// tool results as notes, past turns' reasoning left out. For the requests
+    /// a driver builds after the run loop (a grounded close, a required-output
+    /// repair), which the harness's own request builder does not reach.
+    pub(crate) fn replayed(
+        &self,
+        history: &[tinyinference_llm::message::Message],
+    ) -> Vec<tinyinference_llm::message::Message> {
+        let mut messages = history.to_vec();
+        // Every field is set by a session that pinned options, so the
+        // harness-wide defaults only fill in for a run that pinned none.
+        let expiry = tinyagents_harness::result_expiry::ToolResultExpiryPolicy::default()
+            .with_overrides(&self.result_expiry);
+        if expiry.enabled {
+            tinyagents_harness::result_expiry::expire_tool_results(&mut messages, &expiry);
         }
+        if self.replay_reasoning
+            == Some(tinyagents_harness::reasoning_replay::ReasoningReplay::CurrentTurn)
+        {
+            tinyagents_harness::reasoning_replay::drop_past_turn_reasoning(&mut messages);
+        }
+        messages
     }
 
-    pub fn check(&self) -> DispatchDecision {
-        decide_dispatch(self.snapshot())
+    /// Whether no option is set.
+    pub(crate) fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// `config` with these options set. A config is left as it is when none are
+    /// set, so a run that carries its own (a sub-agent) keeps them.
+    pub(crate) fn apply_to(
+        &self,
+        mut config: tinyagents_harness::context::RunConfig,
+    ) -> tinyagents_harness::context::RunConfig {
+        if !self.is_empty() {
+            config.discovery = self.discovery;
+            config.result_expiry = self.result_expiry.clone();
+            config.replay_reasoning = self.replay_reasoning;
+        }
+        config
     }
 }
+
+#[path = "dispatch_control.rs"]
+mod dispatch_control;
+pub use dispatch_control::{decide_dispatch, DispatchDecision, DispatchInputs, TurnDispatchState};
 
 /// Explicit OpenHuman data carried by a top-level or child agent run.
 ///
@@ -268,7 +235,9 @@ impl TurnDispatchState {
 #[derive(Clone)]
 pub struct OpenHumanRunContext {
     /// Explicit shared model-call budget inherited by synchronous children.
-    pub model_budget: Option<super::super::budget::ModelBudget>,
+    pub model_budget: Option<tinyagents_harness::cost::ModelBudget>,
+    /// Host admission policy shared by this run and its synchronous descendants.
+    pub dispatch_admission: Option<Arc<dyn super::super::budget::PhysicalDispatchAdmission>>,
     /// The response format and output cap this root turn asks of every model
     /// call, and the slot its final call is reported into. Carried explicitly
     /// from the caller (`agent_chat`) through the session; children never
@@ -287,6 +256,10 @@ pub struct OpenHumanRunContext {
     pub progress: Option<Sender<AgentProgress>>,
     /// Stop policies evaluated after each model call.
     pub stop_hooks: Vec<Arc<dyn StopHook<tinyagents_harness::cost::TurnCost>>>,
+    /// The turn runs with `TurnOverrides::suppress_active_goal`: the thread
+    /// goal must not reach the model this turn. Set by the turn prelude; the
+    /// run-state block (which reads the goal from the store) follows it.
+    pub goal_suppressed: bool,
     /// Agent/turn tool callbacks, registered after the runtime's global ones.
     pub tool_hooks: Vec<Arc<dyn tinyagents_hooks::tool::ToolHook<OpenHumanRunContext>>>,
     /// Host cap on real tool invocations for this turn tree; `None` leaves the
@@ -305,10 +278,14 @@ pub struct OpenHumanRunContext {
     /// Context-preparation sources already consumed in this turn.
     pub prepared_context_sources: Arc<Vec<AgentContextPreparedSource>>,
     /// Who the run acts as on memory; `None` is the root identity.
-    pub memory_identity: Option<crate::memory::scope::MemoryIdentity>,
+    pub memory_identity: Option<tinymemory_tools::layout::identity::Identity>,
     /// The context the turn runs under, read by tools, middleware and the
     /// provider factory instead of the ambient scope. Children inherit it.
     pub core: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
+    /// Session-owned host capabilities used to authorize native child turns.
+    /// A child keeps the same authority boundary while retaining its native
+    /// run identity and lifecycle.
+    pub(crate) hosted_base: Option<Arc<super::OpenHumanHostBase>>,
     /// The turn tree's transcript store (the root session's locator), where
     /// sub-agent transcripts land under the parent's store key. Inherited.
     pub transcripts: Option<Arc<dyn tinyagents_session::transcript::TranscriptLocator>>,
@@ -316,8 +293,21 @@ pub struct OpenHumanRunContext {
     pub file_state_agent_id: Option<String>,
     /// Host-owned artifact index for tool-result references.
     pub(crate) tool_result_artifact_index: Option<Arc<ToolResultArtifactIndexStore>>,
+    /// This root run owns settlement of driver jobs before its host turn
+    /// returns. Inherited by recursive child contexts, never by ordinary chat.
+    pub(crate) headless_descendant_settlement: bool,
+    /// Stable owner scope for the whole headless descendant tree. Native child
+    /// runs get their own thread ids, but the root turn's settlement lease must
+    /// retain every descendant under one owner key.
+    pub(crate) headless_descendant_owner: Option<String>,
     /// Current-turn attachment placeholders forwarded to vision delegates.
     pub attachment_placeholders: Arc<Vec<String>>,
+    /// Opaque native media refs issued for this exact root channel turn.
+    pub(crate) native_staged_parts: Vec<tinychannels_bus::ContentPart>,
+    /// Final-owner cleanup state for root native refs; children never inherit it.
+    pub(crate) native_staged_lease: Option<crate::threads::attachments::NativeStagedLease>,
+    /// Provider message identity for durable post-commit claims.
+    pub(crate) native_message_id: Option<String>,
     /// Dispatch guard shared by synchronous delegates in this run.
     pub dispatch: Option<Arc<TurnDispatchState>>,
     /// Optional task recency restriction for integration tools.
@@ -385,6 +375,10 @@ pub struct OpenHumanRunContext {
     pub(crate) context_middleware: Option<TurnContextMiddleware>,
     /// Model/harness sidecars consumed only after a durable commit.
     pub(crate) session_sidecar: Arc<Mutex<SessionTurnSidecar>>,
+    /// The per-run harness options the owning session prepared on its
+    /// `RunConfig` (discovery, result expiry, reasoning replay), carried to the
+    /// `RunConfig` the turn driver builds. Empty for any turn without a session.
+    pub(crate) session_run_options: SessionRunOptions,
     /// Required structured-output contract for this exact host turn. The
     /// driver repairs it before returning a candidate to runtime validation.
     pub(crate) required_output: Option<tinyagents_harness::config::RequiredOutput>,
@@ -400,6 +394,9 @@ pub struct OpenHumanRunContext {
     /// binding the compaction summarizer recalls under. A child run has its
     /// own and does not inherit it.
     pub(crate) memory_turn: Option<Arc<crate::memory::lifecycle::hooks::MemoryTurn>>,
+    /// Shell commands this turn left running past their yield point. Each run,
+    /// including child runs, has its own registry; dropping the last copy stops them.
+    pub(crate) shell_processes: Arc<crate::sandbox::shell_processes::ShellProcesses>,
 }
 
 /// The host callbacks and caps a turn's harness assembly installs, taken from
@@ -414,331 +411,23 @@ pub(crate) struct HarnessHostPolicy {
     pub(crate) tool_call_cap: Option<usize>,
 }
 
-#[cfg(test)]
-pub(crate) use super::operation_context::tool_context_with_approval;
 pub use super::operation_context::{approval_for_tool, OpenHumanRunExt};
 pub(crate) use super::operation_context::{
     command_environment_for_tool, dispatch_ctx_for_tool, memory_identity_for_tool,
     memory_in_prompt_for_tool, parent_agent_id_for_tool, sandbox_mode_for_tool,
-    task_recency_window_for_tool, turn_origin_for_tool, HostOperationContext,
+    shell_processes_for_tool, task_recency_window_for_tool, turn_origin_for_tool,
+    HostOperationContext,
 };
+#[cfg(test)]
+pub(crate) use super::operation_context::{test_turn_run, tool_context_with_approval};
 
-impl Default for OpenHumanRunContext {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl OpenHumanRunContext {
-    /// Builds an unbound context. Entry points set only the values their turn
-    /// actually owns; `None` is an explicit absence, not an ambient fallback.
-    pub fn new() -> Self {
-        Self {
-            model_budget: None,
-            response_shape: None,
-            max_spawn_depth: None,
-            origin: None,
-            approval: Default::default(),
-            progress: None,
-            stop_hooks: Vec::new(),
-            tool_hooks: Vec::new(),
-            tool_call_limit: None,
-            untrusted_input_turn: false,
-            turn_deadline: None,
-            parent: None,
-            prepared_context_sources: Arc::new(Vec::new()),
-            memory_identity: None,
-            core: None,
-            transcripts: None,
-            file_state_agent_id: None,
-            tool_result_artifact_index: None,
-            attachment_placeholders: Arc::new(Vec::new()),
-            dispatch: None,
-            task_recency_window: None,
-            command_environment: None,
-            autonomous_iter_cap: None,
-            sandbox_mode: None,
-            spawn_depth: 0,
-            subagent_usage: Arc::new(Mutex::new(Vec::new())),
-            parent_subagent_usage: None,
-            resolved_route: Arc::new(Mutex::new(None)),
-            cancellation: tinyagents_harness::cancel::CancellationToken::default(),
-            thread_id: None,
-            root_run_id: None,
-            workspace: None,
-            tool_outcomes: None,
-            tool_policy: None,
-            current_tools: None,
-            current_synthesized_tools: None,
-            recorded_tool_names: Arc::new(std::collections::HashSet::new()),
-            deferred_tool_names: Arc::new(std::collections::HashSet::new()),
-            tool_rules: None,
-            context_middleware: None,
-            session_sidecar: Arc::new(Mutex::new(SessionTurnSidecar::default())),
-            required_output: None,
-            tool_dialect: tinyagents_harness::config::ToolDispatcher::Auto,
-            memory_turn: None,
-        }
-    }
-
-    /// Pins the harness tool dialect to the one the session prompt speaks.
-    #[must_use]
-    pub(crate) fn with_tool_dialect(
-        mut self,
-        dialect: tinyagents_harness::config::ToolDispatcher,
-    ) -> Self {
-        self.tool_dialect = dialect;
-        self
-    }
-
-    /// Binds the context this run acts under, held weakly so a run kept past its turn never pins the tenant.
-    #[must_use]
-    pub fn with_core(mut self, core: Option<Arc<crate::core::runtime::CoreContext>>) -> Self {
-        self.core = core.as_ref().map(Arc::downgrade);
-        self
-    }
-
-    /// The dispatch context this run's readers use: its own `core`, else the
-    /// calling task's (a run assembled by a caller that did not bind one).
-    pub fn dispatch_ctx(&self) -> crate::core::runtime::DispatchCtx {
-        crate::core::runtime::DispatchCtx::from_weak(self.core.as_ref())
-    }
-
-    /// The connected-identities prompt section, read under this run's context.
-    pub(crate) fn connected_identities_md(&self) -> String {
-        crate::integrations::render_connected_identities(&self.dispatch_ctx())
-    }
-
-    /// Sets the direct TinyTools workspace descriptor for this run.
-    pub fn with_workspace(mut self, workspace: tinytools::WorkspaceDescriptor) -> Self {
-        self.workspace = Some(workspace);
-        self
-    }
-
-    /// Creates (once) this host turn's durable-unique root config.
-    ///
-    /// The returned root id is stable across the session/runtime and hosted
-    /// harness boundaries for this one actual turn. Callers creating a new
-    /// root must call this once rather than construct a config from a repeated
-    /// literal; callers creating children must use [`direct_subagent_child`].
-    pub(crate) fn root_run_config(&mut self, kind: &str) -> tinyagents_harness::context::RunConfig {
-        let run_id = self
-            .root_run_id
-            .get_or_insert_with(|| fresh_root_run_config(kind).run_id.as_str().to_owned())
-            .clone();
-        tinyagents_harness::context::RunConfig::new(run_id)
-    }
-
-    /// Binds a direct runner to its explicit parent without exposing the
-    /// child-ledger link reserved for recursive [`Self::child`] calls.
-    pub(crate) fn with_parent(mut self, parent: ParentExecutionContext) -> Self {
-        self.parent = Some(parent);
-        self
-    }
-
-    /// Installs this turn's parent snapshot, binding the run's live progress
-    /// sink to it.
-    ///
-    /// The snapshot is built from a prelude that captured `on_progress` when
-    /// the runtime session was first created. A web-chat turn checks out a
-    /// cached session — so that build is a no-op — and only afterwards calls
-    /// `set_on_progress`, leaving the prelude's copy `None` for the rest of the
-    /// session's life. Sub-agent spawn and completion are the only progress
-    /// events that ride this parent sink instead of the harness event
-    /// projection, so a stale `None` drops them outright: no `subagent_spawned`
-    /// socket event, no run-ledger row, and a "Background tasks" panel that
-    /// reads "none running" while sub-agents are working. The run context's own
-    /// sink is the live one (it is what `driver.rs` hands the turn graph), so
-    /// prefer it and keep the snapshot as the fallback.
-    ///
-    /// Returns the installed parent so a caller that must launch a sub-agent
-    /// *before* the rest of the turn is assembled — `inject_triggered_memory_agent_context`
-    /// is the one such caller — hands it the bound context rather than the
-    /// stale snapshot it started from.
-    pub(crate) fn attach_parent(
-        &mut self,
-        mut parent: ParentExecutionContext,
-    ) -> &ParentExecutionContext {
-        parent.on_progress = self.progress.clone().or(parent.on_progress);
-        self.parent.insert(parent)
-    }
-
-    /// The callbacks and caps this turn's harness assembly installs.
-    pub(crate) fn harness_host_policy(&self) -> HarnessHostPolicy {
-        HarnessHostPolicy {
-            stop_hooks: self.stop_hooks.clone(),
-            tool_hooks: self.tool_hooks.clone(),
-            tool_call_cap: self.tool_call_limit,
-        }
-    }
-
-    /// The real tool invocation budget for a turn of `max_iterations`: the
-    /// product default, narrowed by the host's explicit cap.
-    pub(crate) fn tool_call_limit_for(&self, max_iterations: usize) -> usize {
-        crate::agent::tinyagents::turn_policy::tool_call_limit(max_iterations, self.tool_call_limit)
-    }
-
-    /// Applies the host environment an entry point handed to the session:
-    /// shared budget, delegation depth, cancellation, deadline and hooks.
-    #[must_use]
-    pub(crate) fn with_host_env(mut self, env: &crate::agent::turn_env::HostTurnEnv) -> Self {
-        self.model_budget = env.model_budget.clone().or(self.model_budget);
-        self.max_spawn_depth = env.spawn_depth_limit.or(self.max_spawn_depth);
-        if let Some(cancellation) = &env.cancellation {
-            self.cancellation = cancellation.clone();
-        }
-        self.turn_deadline = env.turn_deadline.or(self.turn_deadline);
-        self.tool_call_limit = env.tool_call_limit.or(self.tool_call_limit);
-        self.command_environment = env.command_environment.clone().or(self.command_environment);
-        self.memory_identity = env.memory_identity.clone().or(self.memory_identity);
-        self.core = env.core.clone().or(self.core);
-        self.stop_hooks
-            .extend(env.hooks.stop_hooks().iter().cloned());
-        self.tool_hooks
-            .extend(env.hooks.tool_hooks().iter().cloned());
-        self
-    }
-
-    /// Sets the same cancellation token on this context and its TinyAgents run.
-    pub fn with_cancellation(
-        mut self,
-        cancellation: tinyagents_harness::cancel::CancellationToken,
-    ) -> Self {
-        self.cancellation = cancellation;
-        self
-    }
-
-    /// Builds a child context that inherits authority, cancellation and shared
-    /// workspace policy while keeping route observation and usage isolated.
-    pub fn child(&self) -> Self {
-        let mut child = self.clone();
-        child.spawn_depth = self.spawn_depth.saturating_add(1);
-        child.file_state_agent_id = None;
-        child.parent_subagent_usage = Some(self.subagent_usage.clone());
-        child.subagent_usage = Arc::new(Mutex::new(Vec::new()));
-        child.resolved_route = Arc::new(Mutex::new(None));
-        child.memory_turn = None;
-        child.response_shape = None;
-        child
-    }
-
-    /// Builds the explicit carrier for detached background work.
-    ///
-    /// A detached task keeps the authority, thread and workspace descriptor it
-    /// needs to execute and deliver its own result, but it is no longer part of
-    /// the originating turn. In particular it cannot consume that turn's
-    /// dispatch budget, append to its usage ledger, or observe a cancellation
-    /// request that only stopped the interactive turn.
-    pub fn detached_child(&self) -> Self {
-        let mut child = self.child();
-        // The chat surface belongs to the turn that started it. A detached
-        // child's parks route through the origin and are marked detached, so
-        // their cards survive the parent turn's end (#5499).
-        child.approval = Default::default();
-        child.dispatch = None;
-        child.subagent_usage = Arc::new(Mutex::new(Vec::new()));
-        child.parent_subagent_usage = None;
-        child.cancellation = tinyagents_harness::cancel::CancellationToken::new();
-        child
-    }
-
-    /// Converts this host context into TinyAgents' canonical run context.
-    ///
-    /// The canonical context receives the exact same cancellation and direct
-    /// `tinytools::WorkspaceDescriptor`; no type alias, re-export or task-local
-    /// bridge is involved.
-    pub fn into_tinyagents(
-        mut self,
-        mut config: tinyagents_harness::context::RunConfig,
-    ) -> tinyagents_harness::context::RunContext<Self> {
-        // Imported transport facts and explicit child context must survive entry
-        // into the native driver, which scopes the depth recorded in RunConfig.
-        let depth = config
-            .depth()
-            .max(self.spawn_depth)
-            .max(tinyagents_harness::context::current_run_depth().map_or(0, |facts| facts.depth));
-        self.spawn_depth = depth;
-        config = config.with_depth(depth);
-        if config.thread_id.is_none() {
-            if let Some(thread_id) = self.thread_id.as_deref() {
-                config = config.with_thread(thread_id);
-            }
-        }
-        let cancellation = self.cancellation.clone();
-        let workspace = self.workspace.clone();
-        let run_ext = OpenHumanRunExt::from_run_context(&self);
-        let host_operations = Arc::new(HostOperationContext {
-            origin: self.origin.clone(),
-            approval: self.approval.clone(),
-            sandbox_mode: self.sandbox_mode,
-            parent_agent_id: self
-                .parent
-                .as_ref()
-                .map(|parent| parent.agent_definition_id.clone()),
-            memory_identity: self.memory_identity.clone(),
-            memory_turn: self.memory_turn.clone(),
-            core: self.core.clone(),
-        });
-        let context = tinyagents_harness::context::RunContext::new(config, self)
-            .with_cancellation(cancellation)
-            .with_state_view(host_operations)
-            .with_host(run_ext);
-        match workspace {
-            Some(workspace) => context.with_workspace(workspace),
-            None => context,
-        }
-    }
-
-    /// Records a child usage entry without relying on a task-local collector.
-    pub fn append_subagent_usage(&self, entry: SubagentUsageEntry) {
-        self.subagent_usage
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(entry);
-    }
-
-    /// Record a completed child on the immediate parent's ledger. This makes
-    /// completed children visible at the root without leaking siblings into one
-    /// another's in-flight ledger. Direct/root callers retain their own entry.
-    pub fn record_completed_subagent_usage(&self, entry: SubagentUsageEntry) {
-        let ledger = self
-            .parent_subagent_usage
-            .as_ref()
-            .unwrap_or(&self.subagent_usage);
-        ledger
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(entry);
-    }
-
-    /// Snapshot child totals after the child has returned. A snapshot, rather
-    /// than a task-local drain, preserves totals even when sibling futures are
-    /// cancelled or one child fails after another has completed.
-    pub fn subagent_usage_entries(&self) -> Vec<SubagentUsageEntry> {
-        self.subagent_usage
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-
-    /// Promote already-completed descendants when this run cannot produce its
-    /// own terminal outcome. This is intentionally a snapshot: callers invoke
-    /// it only from one terminal finalizer, so every completed descendant is
-    /// promoted once without exposing a shared, in-flight sibling ledger.
-    pub fn promote_completed_descendant_usage(&self) {
-        for entry in self.subagent_usage_entries() {
-            self.record_completed_subagent_usage(entry);
-        }
-    }
-
-    /// Resolves whether a file-state scope has been assigned to this context.
-    /// Keeping the conversion here makes file-state callers use the explicit
-    /// context instead of discovering an ambient identifier.
-    pub fn file_state_agent_id(&self) -> Option<String> {
-        self.file_state_agent_id.clone()
-    }
-}
+#[path = "run_context/behavior.rs"]
+mod behavior;
 
 #[cfg(test)]
 #[path = "run_context_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "run_context_carried_state_tests.rs"]
+mod carried_state_tests;

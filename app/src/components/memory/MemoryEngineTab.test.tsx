@@ -247,6 +247,13 @@ describe('MemoryEngineTab', () => {
       expect(hoisted.openUrl).toHaveBeenCalledWith('https://tinyhumans.ai/terms');
     });
 
+    it.each([['FREE'], ['BASIC'], ['PRO'], [null]])('keeps Use enabled on plan %s', plan => {
+      hoisted.plan = plan;
+      renderTab(OFF);
+      const panel = pick('builtin');
+      expect(within(panel).getByTestId('memory-engine-builtin-submit')).toBeEnabled();
+    });
+
     it('gives the Basic plan 1 GB of memory', () => {
       hoisted.plan = 'BASIC';
       renderTab(BUILTIN_ON);

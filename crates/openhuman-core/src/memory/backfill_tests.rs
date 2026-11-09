@@ -1,10 +1,10 @@
 use super::*;
+use chrono::Utc;
 
 use std::time::Duration;
 
 use tinymemory_api::{ItemKind, MetaFilter};
 
-use crate::memory::error::{INVALID_REQUEST, MEMORY_OFF};
 use crate::memory::test_fixtures::{bind_reference, config_in, stored};
 use crate::threads::store::{ConversationMessage, CreateConversationThread};
 
@@ -20,6 +20,16 @@ fn message(id: &str, sender: &str, content: &str, at: &str) -> ConversationMessa
 }
 
 async fn seed_thread(workspace: &Path, thread_id: &str, messages: &[(&str, &str)]) {
+    let backend = crate::storage::local::backend_for(workspace).expect("open test storage");
+    let scope = crate::storage::Scope::local();
+    let storage = backend.for_scope(&scope).expect("open test storage scope");
+    assert!(
+        storage
+            .streams()
+            .capabilities()
+            .contains(tinystoragedrivers_types::Capability::ConditionalStreamAppend),
+        "backfill thread fixture needs conditional stream append"
+    );
     threads::ensure_thread(
         crate::core::runtime::DispatchCtx::ambient(),
         workspace.to_path_buf(),
@@ -55,7 +65,7 @@ async fn seed_thread(workspace: &Path, thread_id: &str, messages: &[(&str, &str)
 async fn wait_done(config: &Config) -> BackfillView {
     for _ in 0..200 {
         let view = status(&DispatchCtx::ambient(), config).await.unwrap();
-        if view.state.phase != ImportPhase::Running {
+        if view.state.phase != BackfillPhase::Running {
             return view;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -74,7 +84,7 @@ async fn refuses_without_consent_and_with_memory_off() {
     )
     .await
     .unwrap_err();
-    assert_eq!(error.code(), INVALID_REQUEST);
+    assert_eq!(error.code(), "INVALID_REQUEST");
     let error = start(
         &DispatchCtx::ambient(),
         &config,
@@ -82,7 +92,11 @@ async fn refuses_without_consent_and_with_memory_off() {
     )
     .await
     .unwrap_err();
-    assert_eq!(error.code(), MEMORY_OFF);
+    assert_eq!(error.code(), "MEMORY_OFF");
+
+    let status = status(&DispatchCtx::ambient(), &config).await.unwrap();
+    assert_eq!(status.state.phase, BackfillPhase::Idle);
+    assert_eq!((status.pending_threads, status.pending_turns), (0, 0));
 }
 
 #[tokio::test]
@@ -115,25 +129,25 @@ async fn stores_past_chats_once_and_skips_what_live_logging_took() {
     )
     .await;
     // The lifecycle logged live-thread's second turn (user index 2).
-    let identity = MemoryIdentity::agent(MAIN_AGENT).resolve(&config);
-    crate::memory::lifecycle::hooks::pre_turn(
+    let identity = tinymemory_tools::layout::identity::Identity::agent(MAIN_AGENT)
+        .resolve(&crate::memory::scope::identity_pins(&config));
+    crate::memory::lifecycle::hooks::pre_turn_work(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &identity,
-        crate::memory::lifecycle::hooks::PreTurnInput {
-            thread_id: "live-thread".into(),
-            turn_index: 2,
-            user_text: "After logging".into(),
-            in_prompt_from: 0,
-            at: Utc::now(),
-            resumed_after_compaction: false,
-            observed_actor: None,
-        },
+        "live-thread".into(),
+        2,
+        "After logging".into(),
+        0,
+        Utc::now(),
+        false,
+        None,
+        None,
     )
     .await;
 
     let before = status(&DispatchCtx::ambient(), &config).await.unwrap();
-    assert_eq!(before.state.phase, ImportPhase::Idle);
+    assert_eq!(before.state.phase, BackfillPhase::Idle);
     assert_eq!((before.pending_threads, before.pending_turns), (2, 3));
 
     let started = start(
@@ -145,7 +159,7 @@ async fn stores_past_chats_once_and_skips_what_live_logging_took() {
     .unwrap();
     assert_eq!(started.state.threads_total, 2);
     let done = wait_done(&config).await;
-    assert_eq!(done.state.phase, ImportPhase::Done, "{:?}", done.state);
+    assert_eq!(done.state.phase, BackfillPhase::Done, "{:?}", done.state);
     assert_eq!(done.state.turns_stored, 3);
     assert_eq!(done.state.items_stored, 6);
     assert!(done.state.finished_at.is_some());
@@ -268,7 +282,7 @@ async fn batches_are_stored_accepted_and_the_last_one_visible() {
     .await
     .unwrap();
     let done = wait_done(&config).await;
-    assert_eq!(done.state.phase, ImportPhase::Done, "{:?}", done.state);
+    assert_eq!(done.state.phase, BackfillPhase::Done, "{:?}", done.state);
     assert_eq!(done.state.items_stored, 6);
 
     let waits = engine.waits.lock().unwrap().clone();
@@ -295,4 +309,81 @@ async fn batches_are_stored_accepted_and_the_last_one_visible() {
         6,
         "an engine without accepted writes still stores everything"
     );
+}
+
+#[tokio::test]
+async fn a_peer_driver_blocks_backfill_without_claiming_its_slot_or_state() {
+    #[derive(Clone, Copy)]
+    enum Peer {
+        Import,
+        Migration,
+    }
+
+    for (index, peer) in [Peer::Import, Peer::Migration].into_iter().enumerate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = config_in(&tmp);
+        crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
+        bind_reference(&config);
+        seed_thread(
+            &config.workspace_dir,
+            &format!("thread-{index}"),
+            &[("user", "past question"), ("agent", "past answer")],
+        )
+        .await;
+        let workspace = config.workspace_dir.clone();
+        let peer_guard = match peer {
+            Peer::Import => crate::memory::run_slots::reserve(
+                &crate::memory::run_slots::IMPORT,
+                &workspace,
+                &[
+                    &crate::memory::run_slots::BACKFILL,
+                    &crate::memory::run_slots::MIGRATION,
+                ],
+            ),
+            Peer::Migration => crate::memory::run_slots::reserve(
+                &crate::memory::run_slots::MIGRATION,
+                &workspace,
+                &[
+                    &crate::memory::run_slots::IMPORT,
+                    &crate::memory::run_slots::BACKFILL,
+                ],
+            ),
+        }
+        .expect("peer owns its driver-specific slot");
+        let blocked = start(
+            &DispatchCtx::ambient(),
+            &config,
+            BackfillStartParams { consent: true },
+        )
+        .await
+        .unwrap();
+        assert_eq!(blocked.state.phase, BackfillPhase::Idle);
+        assert_eq!((blocked.pending_threads, blocked.pending_turns), (1, 1));
+        assert!(!is_running(&workspace));
+        assert!(crate::memory::state_store::load::<BackfillFile>(
+            &workspace,
+            "conversations_backfill"
+        )
+        .unwrap()
+        .is_none());
+
+        drop(peer_guard);
+        let started = start(
+            &DispatchCtx::ambient(),
+            &config,
+            BackfillStartParams { consent: true },
+        )
+        .await
+        .unwrap();
+        assert_eq!(started.state.phase, BackfillPhase::Running);
+        let done = wait_done(&config).await;
+        assert_eq!(done.state.phase, BackfillPhase::Done, "{:?}", done.state);
+        assert_eq!(done.state.items_stored, 2);
+        assert!(crate::memory::state_store::load::<BackfillFile>(
+            &workspace,
+            "conversations_backfill"
+        )
+        .unwrap()
+        .is_some());
+    }
 }

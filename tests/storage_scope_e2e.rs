@@ -8,8 +8,8 @@
 //! recorded once it is gone (a restarted process).
 //!
 //! Its own test binary because it installs a backend into the process-wide
-//! storage slot and boots a core. Each driver is its own test case
-//! (`support/storage_drivers.rs`), and the cases take turns.
+//! storage slot and boots a core. The tests take turns on the slot
+//! (`support/storage_case.rs`).
 
 use std::sync::Arc;
 
@@ -24,11 +24,10 @@ use openhuman_core::HostKind;
 #[path = "support/tinyhumans_boot.rs"]
 mod tinyhumans_boot;
 
-#[macro_use]
-#[path = "support/storage_drivers.rs"]
-mod storage_drivers;
+#[path = "support/storage_case.rs"]
+mod storage_case;
 
-use storage_drivers::Case;
+use storage_case::Case;
 
 fn job_names(config: &Config) -> Vec<String> {
     cron::list_jobs(config)
@@ -38,7 +37,9 @@ fn job_names(config: &Config) -> Vec<String> {
         .collect()
 }
 
-async fn background_work_visits_every_agent_scope(case: Case) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn background_work_visits_every_agent_scope() {
+    let case = Case::open();
     let workspace = tempfile::tempdir().unwrap();
     let config = Config {
         workspace_dir: workspace.path().join("workspace"),
@@ -129,5 +130,3 @@ async fn background_work_visits_every_agent_scope(case: Case) {
     );
     assert!(recorded.contains(&(None, Vec::new())), "{recorded:?}");
 }
-
-driver_cases!(async background_work_visits_every_agent_scope);

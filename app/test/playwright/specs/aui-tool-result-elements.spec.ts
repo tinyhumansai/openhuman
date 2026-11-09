@@ -28,61 +28,13 @@
  * `llmKeywordRules`, and the Composio action's payload comes from the mock's own
  * `composioExecuteResponse_<ACTION>` behaviour knob.
  *
- * ## STATUS 2026-09-24: these cases are RED, and not because of what they assert
- *
- * Every case here fails at `openToolCall`, before reaching a single element
- * assertion: the round settles, the agent replies, and no `assistant-ui-tool-call`
- * card appears. Three independent legs say that is not a claim about this file.
- *
- * 1. **A control on a spec this file does not touch.**
- *    `test/playwright/specs/tool-call-presentation.spec.ts` — restored hours
- *    earlier in `cd3806b19` — fails at its line 151,
- *    `expect(page.getByTestId('tool-timeline')).toBeVisible()`, AFTER its canary
- *    assertion passes. It drives via the COMPOSER (`sendMessage`, lines 108-115:
- *    `chat-message-input.fill` then `send-message-button.click`), not this file's
- *    RPC driver, so it exercises the real send path.
- *
- * 2. **The `chat-drive.ts` lifecycle bug is NOT the cause.** A peer session found
- *    that `sendTurn` never dispatched `chatRuntime/beginInferenceTurn`, which a
- *    real composer send does (`Conversations.tsx:1161`), leaving `isRunning`
- *    false for RPC-driven turns. That was a genuine harness defect and it is
- *    fixed (`armTurnLifecycle`). **These four cases were re-run on the fixed
- *    driver and are still red, with the same message.** Leg 1 was never affected
- *    by it either, being composer-driven.
- *
- * 3. **A second element family, confound removed.** The same peer's `todo` spec
- *    is still red on the fixed driver with its UPSTREAM stage passing —
- *    `upstreamBodies()` grew past `before + 1`, so the tool call went out, the
- *    result came back, and the harness called the model again. Tool round trip
- *    yes, render no.
- *
- * ### Scope: wider than "tool calls do not render"
- *
- * That framing is narrower than the evidence. The peer's pinned `todo-checklist`
- * also failed, and it is not a tool-call part at all — it renders off the
- * `thread_todos_changed` socket event via `useThreadTodos` (`useThreadTodos.ts:3`;
- * `TodoListPart.tsx:68` contrasts the two paths explicitly). So **at least two
- * independent render paths fail: tool-call parts, and a socket-event-driven
- * pinned surface.** Whether they share a root cause is UNKNOWN and is not
- * asserted here.
- *
- * What CAN be said bounds the search without inventing a cause: the two paths
- * converge at exactly one place. `ChatRuntimeProvider.tsx` handles both the
- * tool-call stream (`:806-1050`, `toolCallReceived`) and `thread_todos_changed`
- * (`:1461`), and they share nothing below it — the tool-call part renders
- * through the assistant-ui toolkit, the checklist through `useThreadTodos`. So
- * IF one defect explains both, it is at or above that handler; if it is below,
- * there are two. That is a constraint on where to look, not a claim about which
- * is true. (Bound suggested by a peer session, verified here against the
- * provider source.)
- *
- * **These cases are therefore written but UNVERIFIED, and none is revert-proven.**
- * Proving a fault against an already-red spec establishes nothing, so that was not
- * attempted. When the lane renders tool calls again, run this file first: if a case
- * still fails it will fail at its own assertion rather than at `openToolCall`, and
- * that failure is then about the element.
+ * These assertions use the current shipped toolkit: FileBody renders edits,
+ * ToolDataView renders flat tabular results, and DocumentArtifactCall renders
+ * generated document titles. They remain separate from grouped task insights.
  */
 import { expect, type Locator, type Page, test } from '@playwright/test';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 import {
   resetMock,
@@ -99,6 +51,18 @@ import {
 } from '../helpers/core-rpc';
 
 const USER_ID = 'pw-aui-tool-result-elements';
+const GITHUB_REPOSITORY_ACTION = 'GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER';
+
+function makeComposioTool(name: string) {
+  return {
+    type: 'function',
+    function: {
+      name,
+      description: 'List repositories for the authenticated user',
+      parameters: { type: 'object', properties: {} },
+    },
+  };
+}
 
 async function openChat(page: Page): Promise<string> {
   await bootAuthenticatedPage(page, USER_ID, '/chat');
@@ -135,6 +99,90 @@ async function scriptToolCall(
   await setMockBehavior('llmStreamChunkDelayMs', '10');
 }
 
+function captureToolProgress(page: Page): { events: Record<string, unknown>[] } {
+  const events: Record<string, unknown>[] = [];
+  page.on('websocket', socket => {
+    socket.on('framereceived', ({ payload }) => {
+      if (typeof payload !== 'string') return;
+      const frame = payload.slice(payload.indexOf('['));
+      try {
+        const decoded: unknown = JSON.parse(frame);
+        if (!Array.isArray(decoded) || typeof decoded[0] !== 'string') return;
+        const name = decoded[0];
+        if (name !== 'tool_call' && name !== 'tool_result') return;
+        const data = decoded[1];
+        if (!data || typeof data !== 'object') return;
+        const event = data as Record<string, unknown>;
+        const sanitized = {
+          name,
+          request_id: event.request_id,
+          round: event.round,
+          tool_call_id: event.tool_call_id,
+          tool_name: event.tool_name,
+          success: event.success,
+        };
+        events.push(sanitized);
+        console.log('[epic235 socket tool progress]', JSON.stringify(sanitized));
+      } catch {
+        // Engine.IO control frames and non-JSON packets carry no tool progress.
+      }
+    });
+  });
+  return { events };
+}
+
+async function waitForTurnCompletion(page: Page, threadId: string): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(id => {
+          const store = (
+            window as unknown as {
+              __OPENHUMAN_STORE__?: {
+                getState?: () => {
+                  chatRuntime?: { inferenceTurnLifecycleByThread?: Record<string, string> };
+                };
+              };
+            }
+          ).__OPENHUMAN_STORE__;
+          return store?.getState?.().chatRuntime?.inferenceTurnLifecycleByThread?.[id] ?? null;
+        }, threadId),
+      { timeout: 45_000, message: 'the synthetic tool turn did not complete' }
+    )
+    .toBeNull();
+}
+
+async function captureToolTimeline(page: Page, threadId: string): Promise<unknown> {
+  return page.evaluate(id => {
+    const store = (
+      window as unknown as {
+        __OPENHUMAN_STORE__?: {
+          getState?: () => {
+            chatRuntime?: {
+              toolTimelineByThread?: Record<
+                string,
+                Array<{
+                  id: string;
+                  name: string;
+                  status: string;
+                  round: number;
+                  argsBuffer?: string;
+                  result?: string;
+                }>
+              >;
+            };
+          };
+        };
+      }
+    ).__OPENHUMAN_STORE__;
+    return store
+      ?.getState?.()
+      .chatRuntime?.toolTimelineByThread?.[
+        id
+      ]?.map(row => ({ id: row.id, name: row.name, status: row.status, round: row.round, argsLength: row.argsBuffer?.length ?? 0, resultLength: row.result?.length ?? 0 }));
+  }, threadId);
+}
+
 /**
  * Wait for the round to have produced a tool card at all, then open it.
  *
@@ -151,8 +199,28 @@ async function scriptToolCall(
  * "the first button in the card" — an earlier revision clicked by button order
  * and silently opened nothing.
  */
+async function openActivityGroup(page: Page): Promise<Locator> {
+  const group = page.locator('[data-slot="tool-group-root"]').last();
+  await expect(group, 'the assistant response has no activity disclosure').toBeVisible({
+    timeout: 30_000,
+  });
+  const trigger = group.locator('[data-slot="tool-group-trigger"]');
+  // sendTurn returns when the RPC is accepted, while this group is often still
+  // open because the turn is live. Toggle it closed and open again so the
+  // interaction records an explicit user choice; it then remains open when the
+  // response settles and ActivityGroup's live default changes to closed.
+  if ((await trigger.getAttribute('aria-expanded')) === 'true') {
+    await trigger.click();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false', { timeout: 10_000 });
+  }
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true', { timeout: 10_000 });
+  return group;
+}
+
 async function openToolCall(page: Page, expectedLabel: string | RegExp): Promise<Locator> {
-  const card = page.getByTestId('assistant-ui-tool-call').filter({ hasText: expectedLabel });
+  const group = await openActivityGroup(page);
+  const card = group.getByTestId('assistant-ui-tool-call').filter({ hasText: expectedLabel });
   await expect(
     card.first(),
     `the round settled but produced no tool card matching ${String(expectedLabel)} — ` +
@@ -171,12 +239,6 @@ async function openToolCall(page: Page, expectedLabel: string | RegExp): Promise
 }
 
 test.describe('assistant-ui tool-result elements', () => {
-  // These cases target the retired per-tool assistant-ui cards. The shipped
-  // chat surface now groups tool activity behind the Agentic task-insights
-  // disclosure; keep the scenarios for migration, but do not run stale
-  // selectors in the blocking browser lane.
-  test.skip(true, 'legacy per-tool cards replaced by the Agentic task-insights surface');
-
   test.beforeEach(async () => {
     await resetMock();
     // The Composio case below calls a GitHub action. Without a seeded toolkit
@@ -188,6 +250,10 @@ test.describe('assistant-ui tool-result elements', () => {
       'composioConnections',
       JSON.stringify([{ id: 'conn-github', toolkit: 'github', status: 'ACTIVE' }])
     );
+    await setMockBehavior(
+      'composioTools',
+      JSON.stringify([makeComposioTool(GITHUB_REPOSITORY_ACTION)])
+    );
   });
 
   // ── elements/code-diff.tsx ────────────────────────────────────────────
@@ -195,8 +261,14 @@ test.describe('assistant-ui tool-result elements', () => {
   test('an edit renders its added and removed lines through the code-diff element', async ({
     page,
   }) => {
+    const progress = process.env.EPIC235_CAPTURE_TOOL_PROGRESS ? captureToolProgress(page) : null;
     const threadId = await openChat(page);
     const PROMPT = 'AUI-DIFF-CASE raise the retry count and the timeout';
+    const actionDir = process.env.OPENHUMAN_ACTION_DIR;
+    if (!actionDir) throw new Error('The web E2E session did not provide OPENHUMAN_ACTION_DIR');
+    const fixturePath = path.join(actionDir, 'e2e/aui/diff-subject.ts');
+    await mkdir(path.dirname(fixturePath), { recursive: true });
+    await writeFile(fixturePath, 'const retries = 1;\nconst timeoutMs = 500;\n');
     await scriptToolCall('AUI-DIFF-CASE', [
       {
         name: 'edit',
@@ -209,6 +281,16 @@ test.describe('assistant-ui tool-result elements', () => {
     ]);
 
     await sendTurn(page, threadId, PROMPT);
+    await waitForTurnCompletion(page, threadId);
+    if (progress) {
+      console.log(
+        '[epic235 edit progress]',
+        JSON.stringify({
+          events: progress.events,
+          timeline: await captureToolTimeline(page, threadId),
+        })
+      );
+    }
     const card = await openToolCall(page, /Edit|edit/);
 
     const diff = card.getByTestId('tool-body-file-diff').first();
@@ -275,13 +357,14 @@ test.describe('assistant-ui tool-result elements', () => {
   test('a tabular tool result renders its rows and columns through the data-table element', async ({
     page,
   }) => {
+    const progress = process.env.EPIC235_CAPTURE_TOOL_PROGRESS ? captureToolProgress(page) : null;
     const threadId = await openChat(page);
     // `ToolDataView` renders `DataTable` only for a non-empty array of plain
     // objects that share one key set and hold only primitives
     // (`ToolDataView.tsx:isFlatObjectArray`). `result` is one of the semantic
     // keys it unwraps to before deciding, so this payload reaches the table.
     await setMockBehavior(
-      'composioExecuteResponse_GITHUB_LIST_REPOS',
+      `composioExecuteResponse_${GITHUB_REPOSITORY_ACTION}`,
       JSON.stringify({
         result: [
           { repo_name: 'openhuman', open_issues: 42, archived: false },
@@ -289,12 +372,37 @@ test.describe('assistant-ui tool-result elements', () => {
         ],
       })
     );
-    await scriptToolCall('AUI-TABLE-CASE', [
-      { name: 'GITHUB_LIST_REPOS', arguments: { limit: 2 } },
+    await setKeywordRules([
+      {
+        keyword: 'AUI-TABLE-CASE',
+        toolCalls: [{ name: 'tool_search', arguments: { query: 'list GitHub repositories' } }],
+      },
+      {
+        // Match the result's stable action identity, not a hit count. The
+        // query can legitimately return multiple nearby GitHub actions, and
+        // the count is a ranking detail rather than the action we intend to
+        // exercise.
+        keyword: GITHUB_REPOSITORY_ACTION,
+        toolCalls: [{ name: GITHUB_REPOSITORY_ACTION, arguments: { limit: 2 } }],
+      },
     ]);
+    await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendTurn(page, threadId, 'AUI-TABLE-CASE list my repositories');
-    const card = await openToolCall(page, /GITHUB_LIST_REPOS|repositor/i);
+    await waitForTurnCompletion(page, threadId);
+    if (progress) {
+      console.log(
+        '[epic235 tool progress]',
+        JSON.stringify({
+          events: progress.events,
+          timeline: await captureToolTimeline(page, threadId),
+        })
+      );
+    }
+    const card = await openToolCall(
+      page,
+      /GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER|repositor/i
+    );
 
     const table = card.locator('[data-slot="data-table"]').first();
     await expect(table).toBeVisible({ timeout: 20_000 });
@@ -332,9 +440,14 @@ test.describe('assistant-ui tool-result elements', () => {
     ]);
 
     await sendTurn(page, threadId, 'AUI-DOC-CASE write up the infrastructure review');
-    const toolCard = await openToolCall(page, /Document|document/);
-
-    const card = toolCard.locator('[data-slot="artifact-card"]').first();
+    // `generate_document` is registered as `display: standalone`; assistant-ui
+    // deliberately leaves it outside the normal activity disclosure group.
+    // Scope the element through its actual assistant-message content instead.
+    const artifactMessage = page
+      .locator('[data-slot="aui_assistant-message-content"]')
+      .filter({ has: page.locator('[data-slot="artifact-card"]') })
+      .last();
+    const card = artifactMessage.locator('[data-slot="artifact-card"]').last();
     await expect(card).toBeVisible({ timeout: 20_000 });
 
     // The point of this assertion. `DocumentArtifactCall` resolves the title as

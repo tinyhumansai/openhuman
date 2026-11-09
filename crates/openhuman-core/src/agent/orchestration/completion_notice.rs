@@ -147,7 +147,9 @@ fn display_task_id(record: &CompletionRecord) -> String {
     };
     let bytes = encoded
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let hex = std::str::from_utf8(pair).ok()?;
             u8::from_str_radix(hex, 16).ok()

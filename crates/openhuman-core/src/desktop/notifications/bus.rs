@@ -469,44 +469,72 @@ fn translate(event: &DomainEvent) -> Option<CoreNotificationEvent> {
     }
 }
 
-/// The agent whose storage scope a notification raised by `event` belongs
-/// in: the owner of the cron job a `CronJobCompleted` names, when a storage
-/// backend is installed and an agent's scope holds the job; `None` (`local`)
-/// otherwise — including a job found in `local` or found nowhere.
-///
-/// # Errors
-///
-/// When no scope reported the job and a scope's lookup failed.
-async fn event_owner(
-    ctx: &crate::core::runtime::DispatchCtx,
-    config: &crate::config::Config,
+/// The event's captured owner. Missing ownership on older wire events stays
+/// unknown; the bridge never guesses from whichever agent is currently live.
+fn event_owner(event: &DomainEvent) -> Option<String> {
+    match event {
+        DomainEvent::CronJobCompleted { job_id, tenant, .. } => tenant
+            .as_ref()
+            .and_then(|tenant| tenant.agent.clone())
+            .or_else(|| crate::cron::completion_owner::take(job_id)),
+        _ => None,
+    }
+}
+
+/// Apply the event's agent to its resolved profile context. Agent ids are
+/// profile-local, so consulting the process-wide agent registry here can
+/// select an identically named agent from a different profile.
+fn profile_agent_dispatch(
+    dispatch: crate::core::runtime::DispatchCtx,
     event: &DomainEvent,
-) -> Result<Option<String>, crate::storage::agents::LookupFailed> {
-    let DomainEvent::CronJobCompleted { job_id, .. } = event else {
-        return Ok(None);
+) -> Option<crate::core::runtime::DispatchCtx> {
+    let tenant = match event {
+        DomainEvent::CronJobCompleted { tenant, .. } => tenant.as_ref(),
+        _ => return Some(dispatch),
     };
-    // Noted by the scheduler as the job completed — the only record of a
-    // one-shot job, which is deleted before the event is published.
-    if let Some(agent) = crate::cron::completion_owner::take(job_id) {
-        return Ok(Some(agent));
+    let Some(tenant) = tenant else {
+        return Some(dispatch);
+    };
+    if tenant.profile.is_none() {
+        return Some(dispatch);
     }
-    if crate::storage::installed().is_none() {
-        return Ok(None);
+    let Some(agent) = event_owner(event) else {
+        return Some(dispatch);
+    };
+    let core = dispatch.core()?;
+    Some(crate::core::runtime::DispatchCtx::new(
+        core.for_agent(&agent),
+    ))
+}
+
+/// Rebuild the dispatch context captured by a cron completion. Older events
+/// without a tenant are handled only by single-tenant hosts; SaaS fails closed.
+fn event_dispatch(event: &DomainEvent) -> Option<crate::core::runtime::DispatchCtx> {
+    match event {
+        DomainEvent::CronJobCompleted { tenant, .. } => profile_agent_dispatch(
+            crate::core::runtime::DispatchCtx::for_event(tenant.as_ref())?,
+            event,
+        ),
+        _ => Some(crate::core::runtime::DispatchCtx::host_default()),
     }
-    let owner = crate::storage::agents::find_owner(ctx, "notification owner", |_| async {
-        match crate::cron::get_job(config, job_id) {
-            Ok(_) => Ok(true),
-            // tinyflows reports a missing job as `Cron job '<id>' not found`
-            // (an untyped `anyhow` error in the vendored crate); match that
-            // whole shape for this job rather than any message mentioning it.
-            Err(error) if error.to_string() == format!("Cron job '{job_id}' not found") => {
-                Ok(false)
-            }
-            Err(error) => Err(error.to_string()),
-        }
-    })
-    .await?;
-    Ok(owner.flatten())
+}
+
+/// Persist cron notifications in the context reconstructed from the event.
+/// `within_agent` is intentionally not used for these events: it resolves an
+/// agent id in the process-wide registry and loses the captured profile.
+async fn persist_in_event_context(
+    dispatch: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    event: &CoreNotificationEvent,
+) -> Option<anyhow::Result<bool>> {
+    let persist = async { super::store::insert_core_notification(config, event) };
+    match dispatch.core() {
+        Some(core) => Some(
+            crate::core::runtime::CoreContext::scope(std::sync::Arc::clone(core), persist).await,
+        ),
+        None if !crate::core::runtime::is_saas() => Some(persist.await),
+        None => None,
+    }
 }
 
 #[async_trait]
@@ -530,24 +558,47 @@ impl EventHandler<DomainEvent> for NotificationBridgeSubscriber {
             if let Some(config) = &self.config {
                 // A workspace-bound event is stored in ITS OWN workspace, not
                 // whichever one this bridge was registered with (#5931).
-                let config = self.store_target(config, event);
-                // The bridge serves the host's own notifications.
-                let dispatch = crate::core::runtime::DispatchCtx::host_default();
-                // Stored with the record that raised it: a cron job's
-                // completion goes to the agent the job belongs to
-                // (`crate::storage`), `local` otherwise.
-                let stored = match event_owner(&dispatch, &config, event).await {
-                    Ok(owner) => {
+                let dispatch = event_dispatch(event);
+                let tenant_config = if let DomainEvent::CronJobCompleted { tenant, .. } = event {
+                    match dispatch.as_ref() {
+                        Some(dispatch) if tenant.is_some() => match dispatch.load_config().await {
+                            Ok(config) => Some(config),
+                            Err(error) => {
+                                log::warn!(
+                                    "{LOG_PREFIX} cron notification tenant config unavailable ({error}); not persisted"
+                                );
+                                None
+                            }
+                        },
+                        Some(_) if !crate::core::runtime::is_saas() => Some(config.clone()),
+                        _ => None,
+                    }
+                } else {
+                    Some(config.clone())
+                };
+                let target_config = tenant_config
+                    .as_ref()
+                    .map(|config| self.store_target(config, event).into_owned());
+                // Store a completion under its captured tenant context and
+                // agent scope. Other notifications retain the bridge context.
+                let stored = match (dispatch, target_config) {
+                    (Some(dispatch), Some(config))
+                        if matches!(event, DomainEvent::CronJobCompleted { .. }) =>
+                    {
+                        persist_in_event_context(&dispatch, &config, &notification).await
+                    }
+                    (Some(dispatch), Some(config)) => {
+                        let owner = event_owner(event);
                         crate::storage::agents::within_agent(&dispatch, owner.as_deref(), async {
                             super::store::insert_core_notification(&config, &notification)
                         })
                         .await
                     }
-                    Err(failed) => {
+                    _ => {
                         // Unknown owner: not stored rather than stored in the
                         // wrong scope. The live broadcast below still goes out.
                         log::warn!(
-                            "{LOG_PREFIX} notification owner unknown ({failed}); not persisted"
+                            "{LOG_PREFIX} notification owner context unavailable; not persisted"
                         );
                         None
                     }
@@ -608,3 +659,7 @@ mod bus_tests;
 #[cfg(test)]
 #[path = "bus_tests_2_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "bus_tests_3_tests.rs"]
+mod profile_routing_tests;

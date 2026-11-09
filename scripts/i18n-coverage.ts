@@ -180,15 +180,18 @@ async function collectUsedKeys(): Promise<Set<string>> {
   }
   // The core supplies these keys on chat_error events; the UI translates
   // event.copy_key rather than spelling each key in a literal t() call.
-  const failureCopy = await fs.readFile(
-    path.join(
-      ROOT,
-      "crates/openhuman-core/src/inference/failure_copy/table.rs",
-    ),
-    "utf8",
-  );
-  for (const match of failureCopy.matchAll(/"(chat_error\.[a-z_]+)"/g)) {
-    used.add(match[1]);
+  // Generic inference failures are owned by TinyInference; OpenHuman's table
+  // adds product-specific overrides. Both sets are emitted through the same
+  // chat_error event and translated by the UI's dynamic copy_key lookup.
+  const failureCopySources = [
+    "crates/openhuman-core/src/inference/failure_copy/table.rs",
+    "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm/src/failure/copy.rs",
+  ];
+  for (const source of failureCopySources) {
+    const failureCopy = await fs.readFile(path.join(ROOT, source), "utf8");
+    for (const match of failureCopy.matchAll(/"(chat_error\.[a-z_]+)"/g)) {
+      used.add(match[1]);
+    }
   }
   return used;
 }

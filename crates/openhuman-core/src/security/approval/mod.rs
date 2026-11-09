@@ -13,18 +13,24 @@
 //! list-based `ApprovalManager` that consumed it was removed once the gate
 //! became the sole control.
 
+pub(crate) mod engine;
+#[cfg(test)]
+pub(crate) mod engine_stub;
 mod flow_surface;
 pub mod gate;
-pub mod redact;
+#[cfg(feature = "security-module")]
+pub(crate) mod native;
 mod registration_scope;
+mod summary;
 pub use registration_scope::ApprovalScope;
 pub mod rpc;
 pub mod schemas;
 mod storage_schema;
-pub mod store;
 mod store_documents;
+#[cfg(feature = "legacy-import")]
 mod store_import;
-pub(crate) use storage_schema::storage_schema;
+pub(crate) use storage_schema::{collection_specs, upgrade_records};
+#[cfg(feature = "legacy-import")]
 pub(crate) use store_documents::import_source;
 pub mod types;
 
@@ -32,9 +38,11 @@ pub use gate::{
     is_detached_request, is_unanswered_approval_reason, parse_approval_reply, ApprovalChatContext,
     ApprovalError, ApprovalGate, ApprovalTurnContext, FlowRunContext, APPROVAL_UNANSWERED_PHRASE,
 };
-pub use redact::{redact_args, summarize_action};
 pub use schemas::all_controller_schemas as all_approval_controller_schemas;
 pub use schemas::all_registered_controllers as all_approval_registered_controllers;
+#[cfg(test)]
+pub(crate) use schemas::approval_parameter_contracts;
+pub use summary::summarize_action;
 pub use types::{
     ApprovalAuditEntry, ApprovalDecision, ApprovalSourceContext, ExecutionOutcome, GateOutcome,
     PendingApproval,

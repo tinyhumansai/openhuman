@@ -21,10 +21,10 @@ pub(super) fn shell_description(flavor: ShellFlavor) -> &'static str {
              commands chain with `&&` (`;` is not a separator). For PowerShell run \
              `powershell -NoProfile -Command \"...\"`. Only stdout/stderr comes back, so a script \
              that computes silently or only writes a file returns nothing — print what you need, \
-             or read the file afterwards."
+             or read the file afterwards. A command still running after `timeout_secs` (default 120) comes back with its output so far and keeps running as a process: follow it with `shell_process` (wait for more, or kill it) instead of starting it again; it is stopped when the turn's time runs out. `timeout_secs` is when the call comes back, not a kill: to stop a command after a time, put `timeout N` in it. Don't pipe a long command through `tail`/`head` to shorten it: long output is kept and capped for you, and a pipe holds everything back until the command ends."
         }
         ShellFlavor::Posix => {
-            "Execute a shell command: run code, manipulate workspace files, or launch applications (`open -a Music`, `xdg-open music://`). Only stdout/stderr comes back, so a script that computes silently or only writes a file returns nothing — print what you need, or read the file afterwards."
+            "Execute a shell command: run code, manipulate workspace files, or launch applications (`open -a Music`, `xdg-open music://`). Only stdout/stderr comes back, so a script that computes silently or only writes a file returns nothing — print what you need, or read the file afterwards. A command still running after `timeout_secs` (default 120) comes back with its output so far and keeps running as a process: follow it with `shell_process` (wait for more, or kill it) instead of starting it again; it is stopped when the turn's time runs out. `timeout_secs` is when the call comes back, not a kill: to stop a command after a time, put `timeout N` in it. Don't pipe a long command through `tail`/`head` to shorten it: long output is kept and capped for you, and a pipe holds everything back until the command ends."
         }
     }
 }

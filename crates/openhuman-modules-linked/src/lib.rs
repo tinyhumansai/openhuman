@@ -73,6 +73,8 @@ pub fn linked_modules() -> Vec<(&'static str, LinkedFactory)> {
         ("tinyconnectors", tinyconnectors::linked_module),
         #[cfg(feature = "tinydocs")]
         ("tinydocs", tinydocs_module::linked_module),
+        #[cfg(feature = "tinyeventqueues")]
+        ("tinyeventqueues", tinyeventqueues::linked_module),
         #[cfg(feature = "tinyflows")]
         ("tinyflows", tinyflows_module::linked_module),
         #[cfg(feature = "tinyhosts")]

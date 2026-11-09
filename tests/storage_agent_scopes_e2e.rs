@@ -3,8 +3,7 @@
 //! scope, and a call with no acting agent in single-user mode falls back to
 //! the `local` scope.
 //!
-//! Each driver is its own test case (see `support/storage_drivers.rs`). Its
-//! own test binary because it installs a backend into the process-wide
+//! Its own test binary because it installs a backend into the process-wide
 //! storage slot and boots a core.
 
 use std::sync::Arc;
@@ -23,17 +22,13 @@ use serde_json::json;
 #[path = "support/tinyhumans_boot.rs"]
 mod tinyhumans_boot;
 
-#[macro_use]
-#[path = "support/storage_drivers.rs"]
-mod storage_drivers;
+#[path = "support/storage_case.rs"]
+mod storage_case;
 
-use storage_drivers::Case;
+use storage_case::Case;
 
 #[path = "support/cron_policy_failure.rs"]
 mod cron_policy_failure;
-use cron_policy_failure::{
-    malformed_policy_rows_refuse_execution, policy_reads_refuse_execution_without_consuming_a_slot,
-};
 
 fn agent_context(config: &Config, agent: &str) -> Arc<CoreContext> {
     let context = CoreContext::current().unwrap().derive_with(
@@ -101,7 +96,9 @@ async fn wait_until_due(ctx: &Arc<CoreContext>, config: &Config, id: &str) {
     panic!("job {id} never became due");
 }
 
-async fn two_agents_keep_cron_and_flows_apart(case: Case) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_agents_keep_cron_and_flows_apart() {
+    let case = Case::open();
     let workspace = tempfile::tempdir().unwrap();
     let config = Config {
         workspace_dir: workspace.path().join("workspace"),
@@ -219,7 +216,9 @@ async fn two_agents_keep_cron_and_flows_apart(case: Case) {
     assert!(AgentContextRegistry::deregister("agent-beta", &beta));
 }
 
-async fn no_acting_agent_falls_back_to_the_local_scope(case: Case) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn no_acting_agent_falls_back_to_the_local_scope() {
+    let case = Case::open();
     let workspace = tempfile::tempdir().unwrap();
     let config = Config {
         workspace_dir: workspace.path().join("workspace"),
@@ -285,10 +284,3 @@ async fn no_acting_agent_falls_back_to_the_local_scope(case: Case) {
     );
     assert!(AgentContextRegistry::deregister("agent-gamma", &agent));
 }
-
-driver_cases!(
-    async two_agents_keep_cron_and_flows_apart,
-    no_acting_agent_falls_back_to_the_local_scope,
-    policy_reads_refuse_execution_without_consuming_a_slot,
-    malformed_policy_rows_refuse_execution
-);

@@ -52,11 +52,11 @@ which translates selected `DomainEvent`s; it is registered at startup from
 apps through the `tinycomputer` module's accessibility layer, with Jev picking
 actions. It is opt-in per computer. The enabled flag lives in
 `<workspace>/state/desktop-control.json` and fails closed when the file is
-missing or corrupt. Control is only supported on macOS and Windows, and only
-when the core's HTTP listener is bound to loopback
+missing or corrupt. Control is only supported on macOS (the TinyComputer engine has no
+Windows or Linux desktop backend yet, #7164), and only when the core's HTTP listener is bound to loopback
 (`set_listener_is_loopback`, set from [`core/runtime/builder.rs`](../core/runtime/builder.rs) once the
-address is known). The tools refuse to run when the listener is not loopback
-or control is disabled.
+address is known). The tools refuse to run on an unsupported platform, when the listener is not
+loopback, or when control is disabled.
 
 The agent tools are `desktop_list_apps`, `desktop_list_windows`,
 `desktop_launch`, `desktop_snapshot`, `desktop_find`, `desktop_goal`, and

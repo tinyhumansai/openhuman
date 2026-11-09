@@ -12,8 +12,13 @@ import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../t
 import type { UserErrorScope } from '../types/userError';
 import { IS_DEV, IS_TEST } from '../utils/config';
 import { createSafeLogData, sanitizeError } from '../utils/sanitize';
-import { getCoreRpcToken, getCoreRpcUrl, resolveCoreSocketEndpoint } from './coreRpcClient';
-import { createCoreSocket } from './coreSocket';
+import {
+  clearCoreRpcTokenCache,
+  getCoreRpcToken,
+  getCoreRpcUrl,
+  resolveCoreSocketEndpoint,
+} from './coreRpcClient';
+import { createCoreSocket, lastHandshakeToken } from './coreSocket';
 
 // Socket service logger using debug package
 // To change these namespaces at runtime, set `localStorage.debug` — NOT the
@@ -56,12 +61,6 @@ interface ChannelConnectionUpdatedEvent {
   status: ChannelConnectionStatus;
   lastError?: string;
   capabilities?: string[];
-}
-
-interface PendingSocketListener {
-  event: string;
-  callback: (...args: unknown[]) => void;
-  once: boolean;
 }
 
 function normalizeChannelConnectionUpdatePayload(
@@ -111,13 +110,17 @@ class SocketService {
   private socket: Socket | null = null;
   private token: string | null = null;
   private mcpTransport: SocketIOMCPTransportImpl | null = null;
-  private pendingListeners: PendingSocketListener[] = [];
-  // Maps original caller callbacks → wrapped callbacks so off() can locate the
-  // exact function references that were registered with socket.io, scoped by event.
+  // Every subscription, as caller callback → wrapped callbacks per event: the
+  // registry each new socket is wired from, and how off() finds the exact
+  // functions registered with socket.io. Subscriptions outlive any one socket:
+  // a reconnect (a new session token, a stale socket) builds a new socket and
+  // re-attaches them all, so a subscriber never silently stops hearing events.
   private listenerMap = new Map<
     string,
     Map<(...args: unknown[]) => void, Set<(...args: unknown[]) => void>>
   >();
+  // Wrapped callbacks registered through once(), re-attached with once().
+  private onceWrapped = new WeakSet<(...args: unknown[]) => void>();
 
   /**
    * Connect to the socket server with authentication.
@@ -188,6 +191,14 @@ class SocketService {
     this.socket = createCoreSocket(endpoint.baseUrl, {
       coreToken,
       authExtras: { session: token },
+      // Only a bearer for the core this socket targets: after a gateway
+      // switch the fresh bearer belongs to another endpoint, so fall back to
+      // this socket's own instead of handing it to the old core.
+      resolveToken: async () => {
+        const fresh = await getCoreRpcToken();
+        // Checked after the read, so a switch during it can't leak the bearer.
+        return (await resolveCoreSocketBaseUrl()) === backendUrl ? fresh : null;
+      },
       overrides: {
         path: endpoint.path,
         ...(endpoint.transports ? { transports: endpoint.transports } : {}),
@@ -204,18 +215,9 @@ class SocketService {
       },
     });
 
-    // Flush any listeners that were registered before the socket existed.
-    if (this.pendingListeners.length > 0) {
-      socketLog('Flushing pending listeners', { count: this.pendingListeners.length });
-      for (const { event, callback, once } of this.pendingListeners) {
-        if (once) {
-          this.socket.once(event, callback);
-        } else {
-          this.socket.on(event, callback);
-        }
-      }
-      this.pendingListeners = [];
-    }
+    // Wire every subscription onto this socket: those made before any socket
+    // existed and those an earlier socket carried before this one replaced it.
+    this.attachRegisteredListeners(this.socket);
 
     this.socket.onAny((event, ...args) => {
       const firstArg = args.length > 0 ? args[0] : undefined;
@@ -265,15 +267,20 @@ class SocketService {
       socketError('Server error', { userId: uid, error: sanitizeError(error) });
     });
 
+    const socket = this.socket;
     this.socket.on('disconnect', (reason: string) => {
       const uid = getSocketUserId();
       socketLog('Disconnected', { userId: uid, reason });
       store.dispatch(setStatusForUser({ userId: uid, status: 'disconnected' }));
       store.dispatch(setSocketIdForUser({ userId: uid, socketId: null }));
       store.dispatch(setBackend({ value: 'disconnected', error: reason }));
+      if (reason === 'io server disconnect') void this.retryRejectedHandshake(socket, backendUrl);
     });
 
     this.socket.on('connect_error', (error: Error) => {
+      // The core may have restarted with a new bearer; make the next
+      // handshake's `auth` callback re-read it.
+      clearCoreRpcTokenCache();
       const uid = getSocketUserId();
       socketError('Connection error', { userId: uid, error: sanitizeError(error) });
       store.dispatch(setStatusForUser({ userId: uid, status: 'disconnected' }));
@@ -387,6 +394,24 @@ class SocketService {
   /**
    * Disconnect from the socket server
    */
+  /**
+   * The core refuses a stale bearer by disconnecting the namespace
+   * (`io server disconnect`), which socket.io never retries on its own. Re-read
+   * the bearer and reconnect — only when it changed, so a bearer the core
+   * genuinely rejects does not loop.
+   */
+  private async retryRejectedHandshake(socket: Socket, backendUrl: string): Promise<void> {
+    const used = lastHandshakeToken(socket);
+    clearCoreRpcTokenCache();
+    const fresh = await getCoreRpcToken();
+    // After a gateway switch this socket targets the old core; leave it be.
+    const sameCore = (await resolveCoreSocketBaseUrl()) === backendUrl;
+    if (this.socket === socket && sameCore && fresh && fresh !== used) {
+      socketLog('Core rejected the socket bearer; reconnecting with the refreshed one');
+      socket.connect();
+    }
+  }
+
   disconnect(): void {
     const uid = getSocketUserId();
     if (this.socket) {
@@ -397,8 +422,23 @@ class SocketService {
     }
     this.token = null;
     this.mcpTransport = null;
-    this.listenerMap.clear();
-    this.pendingListeners = [];
+    // Subscriptions are kept: the next socket re-attaches them. Subscribers
+    // remove their own with off().
+  }
+
+  /** Attach every registered subscription to `socket`. */
+  private attachRegisteredListeners(socket: Socket): void {
+    let count = 0;
+    for (const [event, byEvent] of this.listenerMap) {
+      for (const wrappedSet of byEvent.values()) {
+        for (const wrapped of wrappedSet) {
+          if (this.onceWrapped.has(wrapped)) socket.once(event, wrapped);
+          else socket.on(event, wrapped);
+          count += 1;
+        }
+      }
+    }
+    if (count > 0) socketLog('Attached registered listeners', { count });
   }
 
   /**
@@ -492,8 +532,7 @@ class SocketService {
     if (this.socket) {
       this.socket.on(event, wrappedCallback);
     } else {
-      socketLog('Socket not ready, queuing listener', { event });
-      this.pendingListeners.push({ event, callback: wrappedCallback, once: false });
+      socketLog('Socket not ready, listener attaches on connect', { event });
     }
   }
 
@@ -516,15 +555,10 @@ class SocketService {
         if (this.socket) {
           this.socket.off(event, wrapped);
         }
-        // Also remove from the pending queue in case the socket isn't up yet.
-        this.pendingListeners = this.pendingListeners.filter(
-          p => !(p.event === event && p.callback === wrapped)
-        );
       }
     } else {
       socketLog('Removing all listeners for event', { event });
       this.socket?.off(event);
-      this.pendingListeners = this.pendingListeners.filter(p => p.event !== event);
       this.listenerMap.delete(event);
     }
   }
@@ -558,11 +592,11 @@ class SocketService {
     wrappedSet.add(wrappedCallback);
     byEvent.set(callback, wrappedSet);
     this.listenerMap.set(event, byEvent);
+    this.onceWrapped.add(wrappedCallback);
     if (this.socket) {
       this.socket.once(event, wrappedCallback);
     } else {
-      socketLog('Socket not ready, queuing once listener', { event });
-      this.pendingListeners.push({ event, callback: wrappedCallback, once: true });
+      socketLog('Socket not ready, once listener attaches on connect', { event });
     }
   }
 }

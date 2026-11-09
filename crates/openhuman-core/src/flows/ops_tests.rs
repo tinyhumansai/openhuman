@@ -10,13 +10,29 @@ fn test_config(tmp: &TempDir) -> Config {
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };
+    config.default_model = Some("test/session-fixture".to_string());
     // These suites are about the approval gate and the tier, which only bind
     // with the policy on; the shipped config default is off. Without this the
     // manifest tests pass vacuously — a disabled policy answers `Allow` for
     // every class, so nothing is ever `blocked`.
     config.autonomy.enabled = true;
+    config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
+    crate::agent::session_host::test_support::install_managed_model_fixture_sync(&config);
     config
+}
+
+fn structurally_valid_graph(value: Value) -> Value {
+    let graph = tinyflows::migrate::deserialize_graph(value).expect("graph should deserialize");
+    tinyflows::validate::validate(&graph).expect("fixture should be structurally valid");
+    serde_json::to_value(graph).expect("graph serializes to portable JSON")
+}
+
+fn graph(value: Value) -> Value {
+    let graph = tinyflows::migrate::deserialize_graph(value).expect("graph should deserialize");
+    tinyflows::validate::validate(&graph).expect("fixture should be structurally valid");
+    tinyflows::compat::ensure_compatible(&graph).expect("fixture should be engine-compatible");
+    serde_json::to_value(graph).expect("graph serializes to portable JSON")
 }
 
 fn trigger_only_graph() -> Value {
@@ -73,10 +89,64 @@ fn referenced_child_graph(workflow_id: &str) -> Value {
     })
 }
 
-fn structurally_valid_graph(value: Value) -> WorkflowGraph {
-    let graph = tinyflows::migrate::deserialize_graph(value).expect("graph should deserialize");
-    tinyflows::validate::validate(&graph).expect("fixture should be structurally valid");
-    graph
+#[tokio::test]
+async fn flows_import_uses_the_tinyflows_authoring_module_in_a_cold_process() {
+    const CHILD_ENV: &str = "OPENHUMAN_FLOWS_IMPORT_AUTHORING_CHILD";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "flows::ops::tests::flows_import_uses_the_tinyflows_authoring_module_in_a_cold_process",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_ENV, "1")
+            .output()
+            .expect("run cold-process import test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        print!("{stdout}");
+        eprint!("{stderr}");
+        let child_output = format!("{stdout}{stderr}");
+        assert!(
+            output.status.success(),
+            "cold-process import test failed:\n{child_output}"
+        );
+        assert!(
+            child_output.contains("running 1 test")
+                && child_output.contains(
+                    "flows_import_uses_the_tinyflows_authoring_module_in_a_cold_process ... ok"
+                )
+                && child_output.contains("1 passed; 0 failed"),
+            "child must prove exactly one test ran:\n{child_output}"
+        );
+        return;
+    }
+
+    assert_eq!(
+        crate::modules::state_of("tinyflows"),
+        crate::modules::ModuleState::Available,
+        "the isolated process must start with TinyFlows unloaded"
+    );
+    let result = flows_import(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &Config::default(),
+        json!({
+            "name": "constant import",
+            "nodes": [{"id":"trigger","kind":"trigger","name":"Trigger"}],
+            "edges": []
+        }),
+        Some("native".to_string()),
+    )
+    .await
+    .expect("valid native graph imports")
+    .value;
+    assert_eq!(result.graph["name"], "constant import");
+    assert_eq!(
+        crate::modules::state_of("tinyflows"),
+        crate::modules::ModuleState::Ready,
+        "public import must dispatch through the Authoring module"
+    );
 }
 
 /// A graph declaring `repo` (required) and `depth` (defaulted), whose single
@@ -174,15 +244,8 @@ fn approval_gated_graph_with_error_port() -> Value {
     })
 }
 
-// ── Live run observation (issue G2) ───────────────────────────────────────
-
-use crate::flows::tinyflows::observability::FlowRunObserver;
-use std::sync::Arc as StdArc;
-// `RunObserver` must be in scope to call `on_step_finish` on the observer.
-use tinyflows::observability::{ExecutionStep, RunObserver as _, StepStatus};
-
-/// trigger -> output_parser passthrough: the parser is a non-trigger node, so
-/// the engine fires `on_step_finish` for it, exercising live persistence.
+/// trigger -> output_parser passthrough for the module-owned run integration
+/// tests in `ops_run_rows_and_notifications_tests.rs`.
 fn passthrough_graph() -> Value {
     json!({
         "name": "passthrough",
@@ -215,8 +278,8 @@ fn webhook_trigger_graph() -> Value {
 
 // ── flows_list_connections (picker source) ──────────────────────────────
 
+use crate::flows::http_credentials::{HttpCredential, HttpCredentialSummary, HttpCredentialsStore};
 use crate::integrations::composio::ComposioConnection;
-use crate::security::credentials::{HttpCredential, HttpCredentialSummary, HttpCredentialsStore};
 
 fn composio_conn(id: &str, toolkit: &str, status: &str, email: Option<&str>) -> ComposioConnection {
     ComposioConnection {
@@ -243,7 +306,7 @@ fn http_summary(name: &str, scheme: &str) -> HttpCredentialSummary {
 // ── Flow Scout suggestion lifecycle ──────────────────────────────────────────
 
 fn seed_suggestion(config: &Config, id: &str) {
-    let s = tinyflows_catalog::FlowSuggestion {
+    let s = tinyflows_bus::catalog::FlowSuggestion {
         id: id.to_string(),
         title: format!("Idea {id}"),
         one_liner: "does a thing".to_string(),
@@ -254,7 +317,7 @@ fn seed_suggestion(config: &Config, id: &str) {
         suggested_slugs: vec![],
         build_prompt: "Build a workflow…".to_string(),
         confidence: 0.5,
-        status: tinyflows_catalog::SuggestionStatus::New,
+        status: tinyflows_bus::catalog::SuggestionStatus::New,
         created_at: "2026-07-05T00:00:00Z".to_string(),
         source_run_id: None,
     };
@@ -262,12 +325,6 @@ fn seed_suggestion(config: &Config, id: &str) {
 }
 
 // ── validate_binding_resolvability ──────────────────────────────────────────
-
-/// Runs a candidate graph `Value` through the exact same migrate/validate
-/// path the builder tools use, for a [`WorkflowGraph`] test fixture.
-fn graph(value: Value) -> WorkflowGraph {
-    validate_and_migrate_graph(value).expect("structurally valid test graph")
-}
 
 // ── validate_inference_readiness (provider-connectivity author gate, B45) ──
 //
@@ -284,10 +341,8 @@ fn graph(value: Value) -> WorkflowGraph {
 // purely on a config lookup (`resolve_cloud_slug`'s "no cloud provider
 // configured for slug" branch), before any HTTP client is built.
 
-fn seed_app_session_for_gate_test(tmp: &TempDir) {
-    use crate::security::credentials::{
-        AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
-    };
+async fn seed_app_session_for_gate_test(tmp: &TempDir) {
+    use crate::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
     // `verify_session_active` reads from `config.config_path.parent()`, which
     // `test_config` sets to `tmp.path()` itself (distinct from
     // `tmp.path()/workspace`) — seed the session there.
@@ -299,6 +354,7 @@ fn seed_app_session_for_gate_test(tmp: &TempDir) {
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .expect("seed app-session token");
 }
 
@@ -308,7 +364,7 @@ fn seed_app_session_for_gate_test(tmp: &TempDir) {
 // test below seeds the exact toolkit it needs via `seed_live_catalog_cache`
 // so none of this touches a live Composio backend.
 
-use crate::flows::tinyflows::caps::{
+use crate::integrations::composio::catalog::{
     seed_live_catalog_cache, seed_probe_cache, ProbedOutputSample, ToolContract,
 };
 
@@ -333,63 +389,6 @@ fn seeded_slack_send_contract() -> ToolContract {
         // hallucinated-slug checks rather than the curation gate itself.
         is_curated: true,
     }
-}
-
-// ── validate_connection_refs (WS3) ──────────────────────────────────────────
-//
-// The transcript bug: the user's connections were twitter →
-// `composio:twitter:ca_JX6QU88UfSk4`, gmail → `composio:gmail:ca_vX_WA8FsqNmE`,
-// tiktok → `composio:tiktok:ca_LPCp3WQpaDma`. The agent wired
-// `composio:twitter:ca_LPCp3WQpaDma` (the TIKTOK id) onto a Twitter node and
-// every author-time gate returned ok. These tests exercise the pure matcher so
-// no live Composio backend is touched.
-
-/// Build a composio `FlowConnection` fixture (the exact shape
-/// `build_flow_connections` produces).
-fn ws3_flow_conn(toolkit: &str, id: &str) -> FlowConnection {
-    FlowConnection {
-        connection_ref: format!("composio:{toolkit}:{id}"),
-        kind: "composio".to_string(),
-        display: toolkit.to_string(),
-        toolkit: Some(toolkit.to_string()),
-        scheme: None,
-        platform_user_id: None,
-    }
-}
-
-/// The user's real connected set from the transcript.
-fn ws3_transcript_connections() -> Vec<FlowConnection> {
-    vec![
-        ws3_flow_conn("twitter", "ca_JX6QU88UfSk4"),
-        ws3_flow_conn("gmail", "ca_vX_WA8FsqNmE"),
-        ws3_flow_conn("tiktok", "ca_LPCp3WQpaDma"),
-    ]
-}
-
-/// A single tool_call node graph with `slug` + optional `connection_ref`.
-fn ws3_tool_call_graph(slug: &str, connection_ref: Option<&str>) -> WorkflowGraph {
-    let mut config = json!({ "slug": slug, "args": {} });
-    if let Some(cr) = connection_ref {
-        config["connection_ref"] = json!(cr);
-    }
-    graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "act", "kind": "tool_call", "name": "Act", "config": config }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "act" } ]
-    }))
-}
-
-fn upload_graph(path: Value) -> WorkflowGraph {
-    graph(json!({
-        "nodes": [
-            { "id": "t", "kind": "trigger", "name": "Manual" },
-            { "id": "up", "kind": "tool_call", "name": "Upload",
-              "config": { "slug": "oh:storage_upload_file", "args": { "path": path } } }
-        ],
-        "edges": [ { "from_node": "t", "to_node": "up" } ]
-    }))
 }
 
 // ── validate_tool_contracts: arg-NAME validation against the input schema
@@ -432,8 +431,8 @@ fn seeded_slack_send_message_contract_with_schema() -> ToolContract {
 // degrade_completed_status (PR2 — run honesty)
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn clean_step(node_id: &str) -> FlowRunStep {
-    FlowRunStep {
+fn clean_step(node_id: &str) -> tinyflows_bus::catalog::FlowRunStep {
+    tinyflows_bus::catalog::FlowRunStep {
         node_id: node_id.to_string(),
         output: Value::Null,
         port: None,
@@ -602,42 +601,6 @@ fn builder_tool_result(call_id: &str, content: &str) -> tinytools_agent::dialect
     }])
 }
 
-// ── Live-run reliability: drop-guard + boot sweep + detach (bugs B41/B42) ───
-
-/// Seeds a real flow plus an already-inserted `running` `flow_runs` row, and
-/// returns `(config, flow_id, run_id)`. The `TempDir` is returned so the caller
-/// keeps the on-disk store alive for the duration of the test.
-fn seed_running_run(tmp: &TempDir) -> (Config, String, String) {
-    let config = test_config(tmp);
-    let flow = store::create_flow(
-        &config,
-        "reliability".to_string(),
-        structurally_valid_graph(trigger_only_graph()),
-        false,
-        true,
-    )
-    .unwrap();
-    let run_id = format!("flow:{}:{}", flow.id, uuid::Uuid::new_v4());
-    // Stamped well before `PROCESS_RUN_FLOOR` so this row models what the boot
-    // sweep actually targets: a `running` row left behind by a *prior* process.
-    // Using `Utc::now()` here would make the sweep tests order-dependent — the
-    // floor is a process-wide `LazyLock`, so a sibling test that ran a real
-    // flow first would push it past a "now" seed and the row would (correctly)
-    // fall out of the candidate set.
-    store::insert_flow_run(
-        &config,
-        &run_id,
-        &flow.id,
-        &run_id,
-        PRIOR_PROCESS_STARTED_AT,
-    )
-    .unwrap();
-    (config, flow.id, run_id)
-}
-
-/// A `started_at` that provably predates this process's `PROCESS_RUN_FLOOR`.
-const PRIOR_PROCESS_STARTED_AT: &str = "2020-01-01T00:00:00+00:00";
-
 #[path = "ops_support_tests.rs"]
 mod support_tests;
 use support_tests::*;
@@ -650,8 +613,6 @@ mod approval_manifest_and_catalog_tests;
 mod builder_repair_tests;
 #[path = "ops_builder_trail_off_tests.rs"]
 mod builder_trail_off_tests;
-#[path = "ops_connection_ref_gate_tests.rs"]
-mod connection_ref_gate_tests;
 #[path = "ops_engine_compatibility_tests.rs"]
 mod engine_compatibility_tests;
 #[path = "ops_inference_gate_tests.rs"]
@@ -660,6 +621,12 @@ mod inference_gate_tests;
 mod migration_and_side_effect_tests;
 #[path = "ops_resume_checkpoint_tests.rs"]
 mod resume_checkpoint_tests;
+#[path = "ops_resume_compatibility_tests.rs"]
+mod resume_compatibility_tests;
+#[path = "ops_resume_decision_tests.rs"]
+mod resume_decision_tests;
+#[path = "ops_run_finalizer_tests.rs"]
+mod run_finalizer_tests;
 #[path = "ops_run_lifecycle_tests.rs"]
 mod run_lifecycle_tests;
 #[path = "ops_run_rows_and_notifications_tests.rs"]

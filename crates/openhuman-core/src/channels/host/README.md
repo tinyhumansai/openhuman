@@ -9,9 +9,9 @@ fails.
 
 `channel_events.rs` prepares inbound context and publishes turn-state and
 approval events. `remote_control.rs` answers module requests using OpenHuman's
-thread store and runtime context. `adapters.rs` implements host-owned voice,
-allowlist, and event operations. Its legacy portable provider-trait adapters
-and `build_channel_host` compatibility helper are compiled only for tests.
+thread store and runtime context. `adapters.rs` implements host-owned
+allowlist and event operations. Voice requests use `ChannelVoiceHost` directly;
+OpenHuman retains no provider host-builder or legacy trait adapter.
 
 Module callbacks must not serve or unserve TinyBus objects while handling a
 request. Runtime startup owns lease creation and shutdown, and closes the

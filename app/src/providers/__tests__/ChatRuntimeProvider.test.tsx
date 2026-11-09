@@ -105,6 +105,9 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
     vi.clearAllMocks();
     resetRuntimeState();
     vi.mocked(threadApi.appendMessage).mockImplementation(async (_tid, msg) => msg);
+    vi.mocked(threadApi.getThreadMessages).mockResolvedValue({ messages: [] } as unknown as Awaited<
+      ReturnType<typeof threadApi.getThreadMessages>
+    >);
     vi.mocked(threadApi.getThreads).mockResolvedValue({ threads: [], count: 0 });
     vi.mocked(threadApi.getTurnState).mockResolvedValue(null);
     vi.mocked(threadApi.listRuns).mockResolvedValue([]);
@@ -136,7 +139,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
             thread_id: 'unmounted-snapshot',
             request_id: 'unmounted-request',
             full_response: 'Delivered reply',
-            rounds_used: 1,
             total_input_tokens: 0,
             total_output_tokens: 0,
           });
@@ -159,7 +161,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         { id: 'ignored', name: 'search', round: 0, status: 'running' },
         {
           id: 'spawn',
-          name: 'spawn_async_subagent',
+          name: 'spawn_subagent',
           round: 0,
           status: 'running',
           argsBuffer: '{"prompt":"Archive preferences."}',
@@ -167,7 +169,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       ] as Parameters<typeof findPendingDelegationContext>[0];
 
       expect(findPendingDelegationContext(entries, 0)).toEqual({
-        sourceToolName: 'spawn_async_subagent',
+        sourceToolName: 'spawn_subagent',
         prompt: 'Archive preferences.',
         spawnEntryId: 'spawn',
       });
@@ -309,7 +311,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(timeline[0]?.subagent?.prompt).toContain('Research Q3 revenue');
     });
 
-    it('collapses a spawn_async_subagent tool-call row into the subagent row', () => {
+    it('collapses a spawn_subagent tool-call row into the subagent row', () => {
       const listeners = renderProvider();
 
       act(() => {
@@ -317,7 +319,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           thread_id: 't1',
           request_id: 'r1',
           round: 0,
-          tool_name: 'spawn_async_subagent',
+          tool_name: 'spawn_subagent',
           skill_id: 'orchestration',
           args: {},
           tool_call_id: 'call-spawn-async',
@@ -327,7 +329,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'r1',
           round: 0,
           tool_call_id: 'call-spawn-async',
-          tool_name: 'spawn_async_subagent',
+          tool_name: 'spawn_subagent',
           delta: '{"prompt":"Archive these preferences."}',
         });
         listeners.onSubagentSpawned?.({
@@ -344,7 +346,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       const timeline = store.getState().chatRuntime.toolTimelineByThread['t1'] ?? [];
       expect(timeline).toHaveLength(1);
       expect(timeline[0]?.name).toBe('subagent:archivist');
-      expect(timeline[0]?.sourceToolName).toBe('spawn_async_subagent');
+      expect(timeline[0]?.sourceToolName).toBe('spawn_subagent');
       expect(timeline[0]?.subagent?.prompt).toContain('Archive these preferences');
     });
 
@@ -460,7 +462,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           thread_id: 't-par',
           request_id: 'branch',
           full_response: 'branch done',
-          rounds_used: 1,
           total_input_tokens: 0,
           total_output_tokens: 0,
           segment_total: 0,
@@ -482,7 +483,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'branch-error',
           message: 'The provider refused this turn.',
           error_type: 'provider_error',
-          round: 0,
         });
       });
 
@@ -513,7 +513,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
             request_id: requestId,
             message: 'core english message',
             error_type: 'rate_limited',
-            round: 0,
             ...extra,
           });
         });
@@ -581,6 +580,48 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(store.getState().chatRuntime.inferenceHeartbeatByThread['t-par']).toBe(2);
     });
 
+    it('shows a primary turn compacting until its next iteration starts', () => {
+      const listeners = renderProvider();
+      const phase = () => store.getState().chatRuntime.inferenceStatusByThread['t-cmp']?.phase;
+
+      act(() => {
+        listeners.onContextCompacting?.({ thread_id: 't-cmp', request_id: 'primary', round: 1 });
+      });
+      expect(phase()).toBe('compacting');
+
+      act(() => {
+        listeners.onIterationStart?.({
+          thread_id: 't-cmp',
+          request_id: 'primary',
+          round: 1,
+          message: 'Iteration 1/200',
+        });
+      });
+      expect(phase()).toBe('thinking');
+    });
+
+    it('ignores a superseded turn compacting', () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onInferenceStart?.({ thread_id: 't-cmp-old', request_id: 'newer' });
+        listeners.onContextCompacting?.({ thread_id: 't-cmp-old', request_id: 'older', round: 1 });
+      });
+      expect(store.getState().chatRuntime.inferenceStatusByThread['t-cmp-old']?.phase).toBe(
+        'thinking'
+      );
+    });
+
+    it('ignores a parallel branch compacting', () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        store.dispatch(registerParallelRequest({ threadId: 't-cmp-par', requestId: 'branch' }));
+        listeners.onContextCompacting?.({ thread_id: 't-cmp-par', request_id: 'branch', round: 1 });
+      });
+      expect(store.getState().chatRuntime.inferenceStatusByThread['t-cmp-par']).toBeUndefined();
+    });
+
     it('drops duplicate chat_done events with the same thread/request', async () => {
       const listeners = renderProvider();
 
@@ -588,7 +629,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         thread_id: 't-done',
         request_id: 'r-done',
         full_response: 'hello',
-        rounds_used: 1,
         total_input_tokens: 5,
         total_output_tokens: 7,
         segment_total: 1,
@@ -618,7 +658,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'bgdeliver-1',
           client_id: 'system',
           full_response: 'Same two issues as before',
-          rounds_used: 1,
         });
       });
 
@@ -648,7 +687,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           client_id: 'system',
           message: 'Run failed: boom',
           error_type: 'inference',
-          round: null,
         });
       });
 
@@ -670,7 +708,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           client_id: 'system',
           message: 'Run failed: boom',
           error_type: 'inference',
-          round: null,
         });
       });
 
@@ -692,7 +729,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           client_id: 'system',
           message: 'Run failed: boom',
           error_type: 'inference',
-          round: null,
         });
       });
 
@@ -715,7 +751,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
             client_id: 'system',
             message: 'Run failed: boom',
             error_type: 'inference',
-            round: null,
           });
         });
 
@@ -736,12 +771,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       const listeners = renderProvider();
 
       act(() => {
-        listeners.onDone?.({
-          thread_id: 't-user',
-          request_id: 'r-user',
-          full_response: 'hi',
-          rounds_used: 1,
-        });
+        listeners.onDone?.({ thread_id: 't-user', request_id: 'r-user', full_response: 'hi' });
       });
 
       // The core stores an unsegmented reply before announcing it, so this
@@ -768,7 +798,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           thread_id: 't-gone',
           request_id: 'r-gone',
           full_response: 'an answer nobody stored',
-          rounds_used: 1,
         });
       });
 
@@ -790,7 +819,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'r-seg',
           full_response: 'one two',
           segment_total: 2,
-          rounds_used: 1,
         });
       });
 
@@ -824,7 +852,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           thread_id: 't-lost',
           request_id: 'r-lost',
           full_response: 'the answer the core stored',
-          rounds_used: 1,
         });
       });
 
@@ -859,6 +886,34 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       });
     });
 
+    it('clears a parked plan review when its decision event arrives', () => {
+      const listeners = renderProvider();
+      act(() => {
+        listeners.onPlanReviewRequest?.({
+          thread_id: 't-plan-decided',
+          request_id: 'pr-decided',
+          message: 'Ship the release',
+          args: { steps: ['build'] },
+        });
+      });
+      expect(
+        store.getState().chatRuntime.pendingPlanReviewByThread['t-plan-decided']?.requestId
+      ).toBe('pr-decided');
+
+      act(() => {
+        listeners.onPlanReviewDecided?.({
+          thread_id: 't-plan-decided',
+          request_id: 'pr-decided',
+          message: 'reject',
+          cancel_reason: 'cancelled',
+        });
+      });
+
+      expect(
+        store.getState().chatRuntime.pendingPlanReviewByThread['t-plan-decided']
+      ).toBeUndefined();
+    });
+
     it('clears a parked plan review when the turn ends or errors', () => {
       const listeners = renderProvider();
       const park = () =>
@@ -876,7 +931,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           thread_id: 't-plan',
           request_id: 'r-plan',
           full_response: 'done',
-          rounds_used: 1,
           total_input_tokens: 1,
           total_output_tokens: 1,
           segment_total: 1,
@@ -892,59 +946,95 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'r-plan',
           message: 'boom',
           error_type: 'inference',
-          round: 1,
         });
       });
       expect(store.getState().chatRuntime.pendingPlanReviewByThread['t-plan']).toBeUndefined();
     });
 
-    it('flushes queued upload originals through core staging and caches only returned references', async () => {
+    it('reloads a runner-persisted queued upload without appending a duplicate', async () => {
       const listeners = renderProvider();
-      const raw = '[FILE:data:application/zip;name=archive.zip;base64,AQID]';
-      const durable =
-        '[ATTACHMENT:%7B%22path%22%3A%22uploads%2Ft%2Fa%2Farchive.zip%22%2C%22name%22%3A%22archive.zip%22%2C%22mime%22%3A%22application%2Fzip%22%2C%22size_bytes%22%3A3%7D]';
-      vi.mocked(threadApi.appendMessage).mockImplementation(async (_tid, message) =>
-        message.sender === 'user' ? { ...message, content: durable } : message
-      );
+      const parts = [
+        {
+          kind: 'file' as const,
+          fileName: 'archive.zip',
+          caption: null,
+          media: {
+            kind: 'document' as const,
+            url: 'data:application/zip;name=archive.zip;base64,AQID',
+            contentType: null,
+            fileName: 'archive.zip',
+            sizeBytes: null,
+            codec: null,
+            durationMs: null,
+            height: null,
+            localCachePath: null,
+            path: null,
+            platformMessageId: null,
+            transcribed: false,
+            width: null,
+          },
+        },
+      ];
+      const stagedParts = [
+        { ...parts[0], media: { ...parts[0].media, url: null, opaqueId: 'opaque-upload' } },
+      ];
       store.dispatch(
         pendingFollowupAdded({
           threadId: 't-upload',
           message: {
             id: 'queued-upload',
-            content: raw,
+            content: '',
             type: 'text',
             extraMetadata: { attachmentNames: ['archive.zip'], attachmentKinds: ['file'] },
             sender: 'user',
             createdAt: '2026-01-01T00:00:00.000Z',
           },
-          text: raw,
+          text: '',
+          requestId: 'r-upload',
+          attachments: stagedParts,
         })
       );
+      expect(
+        JSON.stringify(store.getState().queue.pendingFollowupsByThread['t-upload'])
+      ).not.toContain('base64');
+      vi.mocked(threadApi.getThreadMessages).mockResolvedValueOnce({
+        messages: [
+          {
+            id: 'user:r-upload',
+            content: 'look',
+            type: 'text',
+            extraMetadata: {},
+            sender: 'user',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            attachments: stagedParts,
+          },
+        ],
+      } as never);
       await act(async () => {
         listeners.onDone?.({
           thread_id: 't-upload',
           request_id: 'r-upload',
           full_response: 'done',
-          rounds_used: 1,
           total_input_tokens: 1,
           total_output_tokens: 1,
         });
       });
-      await waitFor(() =>
-        expect(threadApi.appendMessage).toHaveBeenCalledWith(
-          't-upload',
-          expect.objectContaining({ content: raw, sender: 'user' })
-        )
-      );
-      const row = store
+      await waitFor(() => expect(threadApi.getThreadMessages).toHaveBeenCalledWith('t-upload'));
+      expect(
+        vi
+          .mocked(threadApi.appendMessage)
+          .mock.calls.some(([, message]) => message.sender === 'user')
+      ).toBe(false);
+      const persisted = store
         .getState()
-        .thread.messagesByThreadId['t-upload'].find(message => message.id === 'queued-upload');
-      expect(row?.content).toBe(durable);
-      expect(JSON.stringify(row?.extraMetadata)).not.toContain('base64');
+        .thread.messagesByThreadId['t-upload'].find(message => message.id === 'user:r-upload');
+      expect(persisted?.content).toBe('look');
+      expect(JSON.stringify(persisted?.attachments)).toContain('opaque-upload');
+      expect(JSON.stringify(persisted)).not.toMatch(/base64|\[(ATTACHMENT|IMAGE|FILE):/i);
       expect(store.getState().queue.pendingFollowupsByThread['t-upload']).toBeUndefined();
     });
 
-    it('flushes queued follow-ups into the transcript when a turn ends', async () => {
+    it('keeps a follow-up pending until its own terminal event reloads the persisted row', async () => {
       const listeners = renderProvider();
       store.dispatch(
         pendingFollowupAdded({
@@ -958,29 +1048,71 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
             createdAt: '2026-01-01T00:00:00.000Z',
           },
           text: 'queued follow-up text',
+          requestId: 'r-fup',
         })
       );
 
       await act(async () => {
         listeners.onDone?.({
           thread_id: 't-fup',
-          request_id: 'r-fup',
+          request_id: 'r-current',
           full_response: 'assistant reply',
-          rounds_used: 1,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        });
+      });
+      expect(store.getState().queue.pendingFollowupsByThread['t-fup']).toHaveLength(1);
+      expect(
+        vi
+          .mocked(threadApi.appendMessage)
+          .mock.calls.some(([, message]) => message.sender === 'user')
+      ).toBe(false);
+
+      await act(async () => {
+        listeners.onDone?.({
+          thread_id: 't-fup',
+          request_id: 'r-fup',
+          full_response: 'queued reply',
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        });
+      });
+      await waitFor(() => expect(threadApi.getThreadMessages).toHaveBeenCalledWith('t-fup'));
+      expect(store.getState().queue.pendingFollowupsByThread['t-fup']).toBeUndefined();
+    });
+
+    it('retains a queued follow-up if its terminal history reload fails', async () => {
+      const listeners = renderProvider();
+      store.dispatch(
+        pendingFollowupAdded({
+          threadId: 't-fup-failed-reload',
+          message: {
+            id: 'f1',
+            content: 'queued follow-up text',
+            type: 'text',
+            extraMetadata: {},
+            sender: 'user',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+          text: 'queued follow-up text',
+          requestId: 'r-fup-failed-reload',
+        })
+      );
+      vi.mocked(threadApi.getThreadMessages).mockRejectedValueOnce(new Error('reload failed'));
+
+      await act(async () => {
+        listeners.onDone?.({
+          thread_id: 't-fup-failed-reload',
+          request_id: 'r-fup-failed-reload',
+          full_response: 'queued reply',
           total_input_tokens: 1,
           total_output_tokens: 1,
         });
       });
 
-      // The queued prompt is persisted as a real user message (survives reload,
-      // appended AFTER the assistant reply) and the pills are cleared.
-      await waitFor(() =>
-        expect(threadApi.appendMessage).toHaveBeenCalledWith(
-          't-fup',
-          expect.objectContaining({ content: 'queued follow-up text', sender: 'user' })
-        )
+      expect(store.getState().queue.pendingFollowupsByThread['t-fup-failed-reload']).toHaveLength(
+        1
       );
-      expect(store.getState().queue.pendingFollowupsByThread['t-fup']).toBeUndefined();
     });
 
     it('stamps the assistant answer with the producing turn requestId on chat_done', async () => {
@@ -991,7 +1123,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           thread_id: 't-rid',
           request_id: 'req-abc',
           full_response: 'the answer',
-          rounds_used: 1,
           total_input_tokens: 1,
           total_output_tokens: 1,
         });
@@ -1546,7 +1677,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           thread_id: 't-segmented',
           request_id: 'r-segmented',
           full_response: 'Part one.\n\nPart two.',
-          rounds_used: 1,
           total_input_tokens: 10,
           total_output_tokens: 20,
           segment_total: 2,
@@ -1589,7 +1719,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           thread_id: 't-complete',
           request_id: 'r-complete',
           full_response: 'Part one.\n\nPart two.',
-          rounds_used: 1,
           total_input_tokens: 10,
           total_output_tokens: 20,
           segment_total: 2,
@@ -1635,7 +1764,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           // segments.join('') === 'Hello.World.' !== full_response, but
           // delivery is still complete.
           full_response: '\nHello.\n\nWorld.\n',
-          rounds_used: 1,
           total_input_tokens: 10,
           total_output_tokens: 20,
           segment_total: 2,
@@ -1667,7 +1795,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           thread_id: 't-missing',
           request_id: 'r-missing',
           full_response: 'Part one.\n\nPart two.',
-          rounds_used: 1,
           total_input_tokens: 10,
           total_output_tokens: 20,
           segment_total: 2,
@@ -1706,7 +1833,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
             thread_id: 't-stale',
             request_id: 'r-stale',
             full_response: 'Stale segment.',
-            rounds_used: 1,
             total_input_tokens: 10,
             total_output_tokens: 20,
             segment_total: 1,
@@ -1865,7 +1991,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           thread_id: 't-inv',
           request_id: 'r1',
           full_response: '',
-          rounds_used: 1,
           total_input_tokens: 0,
           total_output_tokens: 0,
         });
@@ -1901,7 +2026,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           thread_id: 't-inv',
           request_id: 'r1',
           full_response: '',
-          rounds_used: 1,
           total_input_tokens: 0,
           total_output_tokens: 0,
         });
@@ -1987,7 +2111,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'r1',
           message: 'timeout',
           error_type: 'timeout',
-          round: 0,
         });
       });
 
@@ -2014,7 +2137,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'old',
           message: 'Earlier turn failed',
           error_type: 'inference',
-          round: 0,
         });
       });
 
@@ -2046,7 +2168,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'r1',
           message: serverMessage,
           error_type: 'inference',
-          round: 0,
         });
       });
 
@@ -2068,7 +2189,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'r1',
           message: repeated,
           error_type: 'inference',
-          round: 0,
         });
       });
 
@@ -2085,7 +2205,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'r2',
           message: repeated,
           error_type: 'inference',
-          round: 0,
         });
       });
 
@@ -2546,7 +2665,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'r1',
           message: serverMessage,
           error_type,
-          round: 0,
         });
       });
 
@@ -2573,7 +2691,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'r1',
           message: serverMessage,
           error_type: 'inference',
-          round: 0,
         });
       });
 
@@ -2595,7 +2712,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'r1',
           message: '',
           error_type: 'inference',
-          round: 0,
         });
       });
 
@@ -2623,7 +2739,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'r1',
           message: 'request cancelled by user',
           error_type: 'cancelled',
-          round: 0,
         });
       });
 
@@ -2645,7 +2760,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           request_id: 'r1',
           message: '',
           error_type: 'network',
-          round: 0,
         });
       });
 
@@ -2735,7 +2849,6 @@ describe('ChatRuntimeProvider — chat_cancelled (wire-contract.md)', () => {
         request_id: 'r-stop',
         message: 'Cancelled',
         error_type: 'cancelled',
-        round: 0,
       });
       listeners.onCancelled?.({
         thread_id: threadId,
@@ -2780,7 +2893,6 @@ describe('ChatRuntimeProvider — chat_cancelled (wire-contract.md)', () => {
         request_id: 'r-thinking',
         message: 'Cancelled',
         error_type: 'cancelled',
-        round: 1,
       });
       listeners.onCancelled?.({
         thread_id: threadId,
@@ -2835,7 +2947,6 @@ describe('ChatRuntimeProvider — chat_cancelled (wire-contract.md)', () => {
         request_id: 'r-branch',
         message: 'Cancelled',
         error_type: 'cancelled',
-        round: 1,
       });
       listeners.onCancelled?.({
         thread_id: threadId,
@@ -2947,7 +3058,6 @@ describe('ChatRuntimeProvider — skill tool-chain latency (#4273 AC3)', () => {
       thread_id: thread,
       request_id: 'r1',
       full_response: '',
-      rounds_used: 1,
       total_input_tokens: 0,
       total_output_tokens: 0,
     }) as chatService.ChatDoneEvent;
@@ -3089,7 +3199,6 @@ describe('ChatRuntimeProvider — detached sub-agent approvals', () => {
     thread_id: threadId,
     request_id: 'parent-turn',
     full_response: 'I asked the image agent to make it.',
-    rounds_used: 1,
     total_input_tokens: 0,
     total_output_tokens: 0,
     segment_total: 0,

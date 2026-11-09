@@ -3,8 +3,7 @@ use super::*;
 use chrono::Utc;
 use tinyagents_harness::summarization::ConcatSummarizer;
 
-use crate::memory::lifecycle::hooks::{post_turn, pre_turn, PostTurnInput, PreTurnInput};
-use crate::memory::scope::MemoryIdentity;
+use crate::memory::lifecycle::hooks::{post_turn, pre_turn_work};
 use crate::memory::test_fixtures::{bind_reference, config_in};
 
 struct Failing;
@@ -21,32 +20,32 @@ impl Summarizer for Failing {
 async fn bound_turn(tmp: &tempfile::TempDir) -> Arc<MemoryTurn> {
     let config = config_in(tmp);
     bind_reference(&config);
-    let identity = MemoryIdentity::agent("orchestrator").resolve(&config);
-    pre_turn(
+    let identity = tinymemory_tools::layout::identity::Identity::agent("orchestrator")
+        .resolve(&crate::memory::scope::identity_pins(&config));
+    pre_turn_work(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &identity,
-        PreTurnInput {
-            thread_id: "t".into(),
-            turn_index: 0,
-            user_text: "our launch date is March 3rd".into(),
-            in_prompt_from: 0,
-            at: Utc::now(),
-            resumed_after_compaction: false,
-            observed_actor: None,
-        },
+        "t".into(),
+        0,
+        "our launch date is March 3rd".into(),
+        0,
+        Utc::now(),
+        false,
+        None,
+        None,
     )
     .await;
     post_turn(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &identity,
-        PostTurnInput {
-            thread_id: "t".into(),
-            turn_index: 1,
-            assistant_text: "Noted: launch on March 3rd.".into(),
-            tool_calls: Vec::new(),
-            at: Utc::now(),
-        },
+        "t".into(),
+        1,
+        "Noted: launch on March 3rd.".into(),
+        Vec::new(),
+        Utc::now(),
+        None,
     )
     .await;
     Arc::new(MemoryTurn {
@@ -54,7 +53,9 @@ async fn bound_turn(tmp: &tempfile::TempDir) -> Arc<MemoryTurn> {
         identity,
         thread_id: "t".into(),
         pack: None,
-        in_prompt_from: Arc::new(crate::memory::lifecycle::window::InPromptFrom::new(0, 20)),
+        in_prompt_from: Arc::new(tinymemory_tools::lifecycle::window::InPromptFrom::new(
+            0, 20,
+        )),
         core: None,
     })
 }
@@ -254,13 +255,16 @@ async fn a_held_memory_engine_does_not_delay_transcript_compaction() {
             inner: tinymemory_api::conformance::ReferenceEngine::new(),
         }),
     );
-    let identity = MemoryIdentity::agent("orchestrator").resolve(&config);
+    let identity = tinymemory_tools::layout::identity::Identity::agent("orchestrator")
+        .resolve(&crate::memory::scope::identity_pins(&config));
     let turn = Arc::new(MemoryTurn {
         config: Arc::new(config),
         identity,
         thread_id: "held".into(),
         pack: None,
-        in_prompt_from: Arc::new(crate::memory::lifecycle::window::InPromptFrom::new(0, 20)),
+        in_prompt_from: Arc::new(tinymemory_tools::lifecycle::window::InPromptFrom::new(
+            0, 20,
+        )),
         core: None,
     });
     let summarizer = MemoryRecallSummarizer::wrap(Box::new(ConcatSummarizer), Some(turn));

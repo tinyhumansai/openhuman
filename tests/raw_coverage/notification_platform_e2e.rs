@@ -23,10 +23,10 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use axum::extract::State;
-use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION};
 use axum::routing::get;
 use axum::{Json, Router};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::tempdir;
 
 use openhuman_core::config::rpc::load_config_with_timeout;
@@ -51,7 +51,8 @@ fn platform_e2e_env_lock() -> tokio::sync::MutexGuard<'static, ()> {
 async fn platform_e2e_env_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
     ENV_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock().await
+        .lock()
+        .await
 }
 
 const TEST_JWT: &str = "e2e-notification-platform-jwt";
@@ -904,8 +905,8 @@ async fn health_snapshot_and_system_info_report_this_process() {
 
 // ── doctor ───────────────────────────────────────────────────────────────────
 
-/// `doctor_report` returns a self-consistent diagnostics report, and `doctor_models` reports one
-/// entry per registered provider.
+/// `doctor_report` returns a self-consistent v2 report, and `doctor_models` returns its catalog
+/// inspection result.
 ///
 /// Covers: `openhuman.doctor_report`, `openhuman.doctor_models`.
 #[tokio::test]
@@ -916,77 +917,97 @@ async fn doctor_report_and_models_are_internally_consistent() {
     let report = post_json_rpc(&h.rpc_base, 9301, "openhuman.doctor_report", json!({})).await;
     let result = peel(assert_no_jsonrpc_error(&report, "doctor_report"));
 
-    let items = result
-        .get("items")
+    assert_eq!(
+        result.get("schema_version").and_then(Value::as_u64),
+        Some(2),
+        "doctor_report must return the v2 schema: {result}"
+    );
+    let findings = result
+        .get("findings")
         .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("doctor_report must return items: {result}"));
+        .unwrap_or_else(|| panic!("doctor_report must return findings: {result}"));
     assert!(
-        !items.is_empty(),
+        !findings.is_empty(),
         "the doctor always runs at least the config and workspace checks: {result}"
     );
-    for item in items {
+    for finding in findings {
         assert!(
             matches!(
-                item.get("severity").and_then(Value::as_str),
-                Some("Ok" | "Warn" | "Error")
+                finding.get("severity").and_then(Value::as_str),
+                Some("pass" | "info" | "warn" | "error" | "skipped")
             ),
-            "every item carries one of the three severities: {item}"
+            "every finding carries a v2 severity: {finding}"
         );
         assert!(
-            item.get("category")
+            finding
+                .get("check_id")
                 .and_then(Value::as_str)
-                .map(|c| !c.is_empty())
+                .map(|id| !id.is_empty())
                 .unwrap_or(false),
-            "every item is attributed to a category: {item}"
+            "every finding is attributed to a stable check id: {finding}"
         );
         assert!(
-            item.get("message")
+            finding
+                .get("message")
                 .and_then(Value::as_str)
                 .map(|m| !m.is_empty())
                 .unwrap_or(false),
-            "every item carries a human-readable message: {item}"
+            "every finding carries a human-readable message: {finding}"
+        );
+        assert!(
+            finding
+                .get("fix_hint")
+                .and_then(Value::as_str)
+                .map(|hint| !hint.is_empty())
+                .unwrap_or(false),
+            "every finding carries a fix hint: {finding}"
         );
     }
     assert!(
-        items
+        findings
             .iter()
-            .any(|i| i.get("category").and_then(Value::as_str) == Some("config")),
+            .any(|finding| finding.get("check_id").and_then(Value::as_str)
+                == Some("config/parse")),
         "the config check always runs: {result}"
     );
     assert!(
-        items
+        findings
             .iter()
-            .any(|i| i.get("category").and_then(Value::as_str) == Some("workspace")),
+            .any(|finding| finding.get("check_id").and_then(Value::as_str)
+                == Some("workspace/layout")),
         "the workspace check always runs: {result}"
     );
+    assert!(
+        findings.iter().all(
+            |finding| finding.get("check_id").and_then(Value::as_str) != Some("runtime/daemon")
+        ),
+        "the report must not include a check backed by an unwritten daemon state file: {result}"
+    );
 
-    // The summary is derived from the items — if the tally drifts, this is what catches it.
+    // The summary is derived from the findings — if the tally drifts, this catches it.
     let summary = result
         .get("summary")
         .unwrap_or_else(|| panic!("doctor_report must return a summary: {result}"));
     let count_of = |severity: &str| {
-        items
+        findings
             .iter()
-            .filter(|i| i.get("severity").and_then(Value::as_str) == Some(severity))
+            .filter(|finding| finding.get("severity").and_then(Value::as_str) == Some(severity))
             .count() as u64
     };
+    for severity in ["pass", "info", "warn", "error", "skipped"] {
+        assert_eq!(
+            summary.get(severity).and_then(Value::as_u64),
+            Some(count_of(severity)),
+            "summary.{severity} must equal the number of matching findings: {result}"
+        );
+    }
     assert_eq!(
-        summary.get("ok").and_then(Value::as_u64),
-        Some(count_of("Ok")),
-        "summary.ok must equal the number of Ok items: {result}"
-    );
-    assert_eq!(
-        summary.get("warnings").and_then(Value::as_u64),
-        Some(count_of("Warn")),
-        "summary.warnings must equal the number of Warn items: {result}"
-    );
-    assert_eq!(
-        summary.get("errors").and_then(Value::as_u64),
-        Some(count_of("Error")),
-        "summary.errors must equal the number of Error items: {result}"
+        result.get("ok").and_then(Value::as_bool),
+        Some(count_of("error") == 0),
+        "doctor_report.ok must be false exactly when a finding is an error: {result}"
     );
 
-    // ── models: one entry per registered inference provider, summary consistent with them.
+    // ── models: a successful empty report is the honest result when no provider is configured.
     let models = post_json_rpc(
         &h.rpc_base,
         9302,
@@ -994,48 +1015,19 @@ async fn doctor_report_and_models_are_internally_consistent() {
         json!({ "use_cache": false }),
     )
     .await;
-    let result = peel(assert_no_jsonrpc_error(&models, "doctor_models"));
-    let entries = result
-        .get("entries")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("doctor_models must return entries: {result}"));
-    assert!(
-        !entries.is_empty(),
-        "the provider registry is never empty, and an empty target list is a hard error: {result}"
-    );
-    for entry in entries {
-        assert!(
-            entry
-                .get("provider")
-                .and_then(Value::as_str)
-                .map(|p| !p.is_empty())
-                .unwrap_or(false),
-            "every probe entry names its provider: {entry}"
-        );
-        assert!(
-            matches!(
-                entry.get("outcome").and_then(Value::as_str),
-                Some("Ok" | "Skipped" | "AuthOrAccess" | "Error")
-            ),
-            "every probe entry carries a known outcome: {entry}"
-        );
-    }
-    let summary = result
-        .get("summary")
-        .unwrap_or_else(|| panic!("doctor_models must return a summary: {result}"));
-    let total: u64 = ["ok", "skipped", "auth_or_access", "errors"]
-        .iter()
-        .map(|k| {
-            summary
-                .get(*k)
-                .and_then(Value::as_u64)
-                .unwrap_or_else(|| panic!("summary must carry {k}: {result}"))
-        })
-        .sum();
+    let model_result = assert_no_jsonrpc_error(&models, "doctor_models");
     assert_eq!(
-        total,
-        entries.len() as u64,
-        "the summary buckets must add up to the number of entries: {result}"
+        model_result
+            .get("entries")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    assert_eq!(
+        model_result
+            .pointer("/summary/errors")
+            .and_then(Value::as_u64),
+        Some(0)
     );
 
     // `use_cache` is optional and defaults to true; a non-bool must be rejected, not coerced.

@@ -26,14 +26,13 @@ use std::path::Path;
 
 use anyhow::Result;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
-use tinystoragedrivers::{
-    CollectionSpec, DocumentStore, DocumentStoreExt, Key, Kv, ScopedStorage, StorageError,
-};
+use tinystoragedrivers_types::{Capability, Query, StorageError};
 
 use crate::storage::documents::Repo;
 use crate::storage::import_state;
+use crate::storage::{state_kv::StateKv, DocumentStoreExt, Storage};
 
 /// The `tsd.kv` owner and namespace of the state values.
 const KV_OWNER: &str = "composio";
@@ -46,28 +45,6 @@ const IMPORT_KIND: &str = "composio_state_import";
 const LEGACY_STATE: &str = "composio_state";
 const DOMAIN: &str = "composio::file_store";
 
-fn collections() -> Vec<CollectionSpec> {
-    tinystoragedrivers::primitives::collection_specs()
-}
-
-/// The body of a `tsd.kv` document (`{owner, ns, key, value}`), as `Kv` writes it.
-#[derive(Serialize, Deserialize)]
-struct KvEntry {
-    owner: String,
-    ns: String,
-    key: String,
-    value: Value,
-}
-
-/// The `tsd.kv` document id of value `name`, as `Kv` derives it.
-fn kv_id(name: &str) -> Result<String, StorageError> {
-    Ok(Key::of([KV_OWNER, KV_NS, name])?.as_str().to_owned())
-}
-
-fn kv(docs: &std::sync::Arc<dyn DocumentStore>) -> Result<Kv, StorageError> {
-    Kv::ns(docs, KV_OWNER, KV_NS)
-}
-
 /// The document store for this call: the installed backend, else the
 /// workspace default, in the acting scope.
 pub(super) fn current(workspace_dir: &Path) -> Result<Docs> {
@@ -75,7 +52,10 @@ pub(super) fn current(workspace_dir: &Path) -> Result<Docs> {
     if let Some(docs) = TEST_OVERRIDE.with(|slot| slot.borrow().clone()) {
         return Ok(docs);
     }
-    Ok(Docs(Repo::current_for(workspace_dir, DOMAIN, collections)?))
+    Ok(Docs {
+        repo: Repo::current_for(workspace_dir, DOMAIN, Vec::new)?,
+        state: StateKv::open(workspace_dir, KV_OWNER, KV_NS)?,
+    })
 }
 
 #[cfg(test)]
@@ -85,20 +65,34 @@ thread_local! {
 
 /// The composio state over one scoped document handle.
 #[derive(Clone)]
-pub(super) struct Docs(Repo);
+pub(super) struct Docs {
+    repo: Repo,
+    state: StateKv,
+}
 
 impl Docs {
     #[cfg(test)]
-    pub(super) fn over(scoped: &crate::storage::ScopedStorage) -> Self {
-        Self(Repo::over(scoped, DOMAIN, collections))
+    pub(super) fn over(scoped: &Storage) -> Self {
+        Self {
+            repo: Repo::over(scoped, DOMAIN, Vec::new),
+            state: StateKv::over(scoped, KV_OWNER, KV_NS),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn on_backend(
+        backend: &std::sync::Arc<dyn crate::storage::StorageBackend>,
+        scope: &crate::storage::Scope,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            repo: Repo::on(backend, scope, DOMAIN, Vec::new)?,
+            state: StateKv::on_backend(backend, scope, KV_OWNER, KV_NS)?,
+        })
     }
 
     /// The value stored stored under `name`, or `T::default()`.
     pub(super) fn load<T: DeserializeOwned + Default>(&self, name: &str) -> Result<T> {
-        let name = name.to_string();
-        let stored: Option<Value> = self
-            .0
-            .run(|docs| async move { kv(&docs)?.get::<Value>(&name).await })?;
+        let stored: Option<Value> = self.state.get(name)?;
         match stored {
             Some(value) => Ok(serde_json::from_value(value)?),
             None => Ok(T::default()),
@@ -119,41 +113,13 @@ impl Docs {
         T: DeserializeOwned + Serialize + Default + Send + 'static,
         R: Send + 'static,
     {
-        let name = name.to_string();
-        self.0.run(|docs| async move {
-            let repo = tinystoragedrivers::Repo::<KvEntry>::new(
-                &docs,
-                tinystoragedrivers::primitives::KV,
-            )?;
-            let mut result = None;
-            repo.update(&kv_id(&name)?, |current| {
-                let mut value: T = match &current {
-                    Some(entry) => serde_json::from_value(entry.value.clone())
-                        .map_err(|e| StorageError::invalid_input(e.to_string()))?,
-                    None => T::default(),
-                };
-                let (outcome, changed) = change(&mut value);
-                result = Some(outcome);
-                if !changed {
-                    return Ok(None);
-                }
-                Ok(Some(KvEntry {
-                    owner: KV_OWNER.to_owned(),
-                    ns: KV_NS.to_owned(),
-                    key: name.clone(),
-                    value: serde_json::to_value(&value)
-                        .map_err(|e| StorageError::invalid_input(e.to_string()))?,
-                }))
-            })
-            .await?;
-            result.ok_or_else(|| StorageError::backend("composio state update produced no result"))
-        })
+        self.state.update(name, change)
     }
 
     /// Whether the one-time import of the legacy `integrations/<name>` file
     /// finished in this scope.
     pub(super) fn legacy_imported(&self, name: &str) -> Result<bool> {
-        import_state::is_done(&self.0, IMPORT_OWNER, &import_step(name))
+        import_state::is_done(&self.repo, IMPORT_OWNER, &import_step(name))
     }
 
     /// Stores `value` under `name` only when no value is stored there yet
@@ -163,30 +129,14 @@ impl Docs {
     pub(super) fn import_if_absent(&self, name: &str, value: serde_json::Value) -> Result<bool> {
         log::debug!("[composio:store] document import id={name}");
         let step = import_step(name);
-        let claimed = import_state::with_claim(&self.0, IMPORT_OWNER, &step, || {
-            let (id, entry) = (
-                kv_id(name)?,
-                KvEntry {
-                    owner: KV_OWNER.to_owned(),
-                    ns: KV_NS.to_owned(),
-                    key: name.to_owned(),
-                    value: value.clone(),
-                },
-            );
-            let wrote = self.0.run(|docs| async move {
-                let repo = tinystoragedrivers::Repo::<KvEntry>::new(
-                    &docs,
-                    tinystoragedrivers::primitives::KV,
-                )?;
-                match repo.insert(&id, &entry).await {
-                    Ok(_) => Ok(true),
-                    Err(error) if error.kind() == tinystoragedrivers::ErrorKind::Conflict => {
-                        Ok(false)
-                    }
-                    Err(error) => Err(error),
-                }
-            })?;
-            import_state::set_done(&self.0, IMPORT_OWNER, &step)?;
+        let repo = self.repo.clone();
+        let body_repo = repo.clone();
+        let body_step = step.clone();
+        let claimed = import_state::with_claim(&repo, IMPORT_OWNER, &step, move |condition| {
+            let claimed_repo = body_repo.conditioned(condition)?;
+            let state = StateKv::over(claimed_repo.scoped(), KV_OWNER, KV_NS);
+            let wrote = state.insert_if_absent(name, &value)?;
+            import_state::set_done(&claimed_repo, IMPORT_OWNER, &body_step)?;
             Ok(wrote)
         })?;
         Ok(claimed.unwrap_or(false))
@@ -194,11 +144,8 @@ impl Docs {
 
     #[cfg(test)]
     pub(super) fn save<T: Serialize>(&self, name: &str, value: &T) -> Result<()> {
-        let name = name.to_string();
-        let value = serde_json::to_value(value)?;
         log::debug!("[composio:store] document save id={name}");
-        self.0
-            .run(|docs| async move { kv(&docs)?.put(&name, &value).await.map(|_| ()) })
+        self.state.put(name, value)
     }
 }
 
@@ -217,8 +164,7 @@ fn import_step(name: &str) -> String {
 /// # Errors
 ///
 /// A storage error; the values not yet moved stay in place for the next boot.
-pub(crate) async fn migrate_legacy_state(scoped: &ScopedStorage) -> Result<usize, StorageError> {
-    use tinystoragedrivers::Capability;
+pub(crate) async fn migrate_legacy_state(scoped: &Storage) -> Result<usize, StorageError> {
     let docs = scoped.documents();
     if !docs
         .capabilities()
@@ -231,20 +177,20 @@ pub(crate) async fn migrate_legacy_state(scoped: &ScopedStorage) -> Result<usize
     {
         return Ok(0);
     }
-    for spec in collections() {
-        docs.ensure_collection(&spec).await?;
-    }
-    let store = kv(docs)?;
+    let store = StateKv::over(scoped, KV_OWNER, KV_NS);
     let mut moved = 0;
-    for legacy in docs
-        .query_all(LEGACY_STATE, &tinystoragedrivers::Query::all())
-        .await?
-    {
+    for legacy in docs.query_all(LEGACY_STATE, &Query::all()).await? {
         let Some(value) = legacy.doc.get("value") else {
             continue;
         };
-        if store.get::<Value>(&legacy.id).await?.is_none() {
-            store.put(&legacy.id, value).await?;
+        if store
+            .get::<Value>(&legacy.id)
+            .map_err(|error| StorageError::backend(error.to_string()))?
+            .is_none()
+        {
+            store
+                .put(&legacy.id, value)
+                .map_err(|error| StorageError::backend(error.to_string()))?;
             moved += 1;
         }
     }

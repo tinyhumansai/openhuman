@@ -1,13 +1,12 @@
 ---
 # CI Gate — the single PR check branch protection should require.
 #
-# CI Fast (EX63, org members), CI Fast (hosted, outsiders) and CI Lite
-# (GitHub-hosted, everyone) all run on a PR. This workflow posts one commit
-# status, "CI Gate", on the PR head commit: success as soon as any of them
-# passes, pending while any is still running, failure once all have finished
-# without a pass. On success it cancels the GitHub-hosted runs still working on
-# that commit, so a member PR that passed on the EX63 stops burning hosted
-# minutes. The decision is scripts/ci/ci-gate.mjs.
+# CI Fast (hosted) runs on every PR; CI Lite is a deleted workflow whose
+# historical runs still count. This workflow posts one commit status, "CI Gate",
+# on the PR head commit: success as soon as either passes, pending while any is
+# still running, failure once all have finished without a pass. On success it
+# cancels the other runs still working on that commit. The decision is
+# scripts/ci/ci-gate.mjs.
 #
 # Why workflow_run: it runs from the default branch with a write token for
 # every PR, forks included, and never runs PR code. The checkout below is the
@@ -16,11 +15,11 @@ name: CI Gate
 
 on:
   workflow_run:
-    workflows: ["CI Fast", "CI Fast (hosted)", "CI Lite"]
+    workflows: ["CI Fast (hosted)", "CI Lite"]
     types: [requested, completed]
 
 permissions:
-  actions: write # cancel the superseded GitHub-hosted runs
+  actions: write # cancel the superseded runs
   contents: read
   statuses: write # post the "CI Gate" commit status
 

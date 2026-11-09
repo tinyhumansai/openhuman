@@ -26,13 +26,6 @@ use tinyflows_bus::schedule::{AgentJobSpec, StoreOperation};
 use super::client::store_blocking;
 use super::limits;
 
-/// The cron database tinyflows used to write, imported on first use.
-pub fn legacy_db_path(config: &Config) -> std::path::PathBuf {
-    crate::storage::import::tinyflows::legacy_jobs_db(&crate::core::runtime::agent_scope_dir(
-        config,
-    ))
-}
-
 pub fn add_job(config: &Config, expression: &str, command: &str) -> Result<CronJob> {
     let schedule = Schedule::Cron {
         expr: expression.to_string(),
@@ -66,33 +59,7 @@ pub fn add_shell_job(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn add_agent_job(
-    config: &Config,
-    name: Option<String>,
-    schedule: Schedule,
-    prompt: &str,
-    session_target: SessionTarget,
-    model: Option<String>,
-    delivery: Option<DeliveryConfig>,
-    delete_after_run: bool,
-) -> Result<CronJob> {
-    add_agent_job_with_definition(
-        config,
-        name,
-        schedule,
-        prompt,
-        session_target,
-        model,
-        delivery,
-        delete_after_run,
-        None,
-        true,
-    )
-}
-
-/// Like [`add_agent_job`] but accepts an optional built-in agent definition
-/// ID and the initial enabled state.
+/// Adds an agent job with an optional built-in definition and enabled state.
 #[allow(clippy::too_many_arguments)]
 pub fn add_agent_job_with_definition(
     config: &Config,
@@ -175,7 +142,7 @@ pub fn remove_job(config: &Config, id: &str) -> Result<()> {
             job_id: id.to_string(),
         },
     )?;
-    println!("✅ Removed cron job {id}");
+    tracing::info!(job_id = %id, "removed cron job");
     Ok(())
 }
 
@@ -189,12 +156,24 @@ pub fn dedup_named_jobs(config: &Config) -> Result<usize> {
     store_blocking(config, StoreOperation::Dedup)
 }
 
-pub fn due_jobs(config: &Config, now: DateTime<Utc>) -> Result<Vec<CronJob>> {
-    store_blocking(config, StoreOperation::Due { now })
+pub fn update_job(config: &Config, job_id: &str, patch: CronJobPatch) -> Result<CronJob> {
+    update_job_with_origin(config, job_id, patch, None)
 }
 
-pub fn update_job(config: &Config, job_id: &str, patch: CronJobPatch) -> Result<CronJob> {
+/// Update a job, using only a host-verified conversation origin for delivery
+/// validation. Raw origins stored on jobs or supplied by RPC are not trusted.
+pub(crate) fn update_job_with_origin(
+    config: &Config,
+    job_id: &str,
+    mut patch: CronJobPatch,
+    trusted_origin: Option<tinyflows_bus::schedule::types::JobOrigin>,
+) -> Result<CronJob> {
     limits::check_patch(config, &patch)?;
+    if patch.delivery.is_some() || patch.origin.is_some() {
+        let existing = get_job(config, job_id)?;
+        patch =
+            validate_and_complete_route_patch(config, &existing, patch, trusted_origin.as_ref())?;
+    }
     store_blocking(
         config,
         StoreOperation::Update {
@@ -202,6 +181,38 @@ pub fn update_job(config: &Config, job_id: &str, patch: CronJobPatch) -> Result<
             patch,
         },
     )
+}
+
+/// Validate routing changes against the row snapshot and return the patch to
+/// persist. Route completion is performed alongside validation so a delayed
+/// store write cannot combine the caller's route with a newer counterpart.
+fn validate_and_complete_route_patch(
+    config: &Config,
+    existing: &CronJob,
+    mut patch: CronJobPatch,
+    trusted_origin: Option<&tinyflows_bus::schedule::types::JobOrigin>,
+) -> Result<CronJobPatch> {
+    let delivery = patch
+        .delivery
+        .clone()
+        .unwrap_or_else(|| existing.delivery.clone());
+    let effective_origin = patch
+        .origin
+        .clone()
+        .unwrap_or_else(|| existing.origin.clone());
+    crate::cron::job_builder::validate_delivery_for_config_with_trusted_origin(
+        config,
+        &delivery,
+        effective_origin.as_ref(),
+        trusted_origin,
+    )
+    .map_err(anyhow::Error::msg)?;
+
+    // Persist exactly the pair that was validated. A stale write containing
+    // only one route field must not combine with a newer counterpart.
+    patch.delivery = Some(delivery);
+    patch.origin = Some(effective_origin);
+    Ok(patch)
 }
 
 pub fn record_last_run(
@@ -216,23 +227,6 @@ pub fn record_last_run(
         StoreOperation::RecordLastRun {
             job_id: job_id.to_string(),
             finished_at,
-            success,
-            output: output.to_string(),
-        },
-    )
-    .map(|_| ())
-}
-
-pub fn reschedule_after_run(
-    config: &Config,
-    job: &CronJob,
-    success: bool,
-    output: &str,
-) -> Result<()> {
-    store_blocking::<serde_json::Value>(
-        config,
-        StoreOperation::Reschedule {
-            job: job.clone(),
             success,
             output: output.to_string(),
         },
@@ -349,4 +343,4 @@ pub(crate) fn force_next_run_for_test(
 
 #[cfg(test)]
 #[path = "store_tests.rs"]
-mod tests;
+pub(crate) mod tests;

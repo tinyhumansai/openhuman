@@ -54,7 +54,7 @@ async fn a_seeded_system_job_fires_through_the_module_and_records_its_handler() 
         .into_iter()
         .find(|job| system_jobs::system_job_name(job) == Some(BACKGROUND_JOB))
         .expect("the memory background job is seeded");
-    store::force_next_run_for_test(
+    store::tests::force_next_run_for_test(
         &config,
         &job.id,
         chrono::Utc::now() - chrono::Duration::seconds(1),
@@ -111,7 +111,7 @@ async fn a_flow_schedule_row_is_answered_by_the_flow_handler_on_a_tick() {
         },
     )
     .unwrap();
-    store::force_next_run_for_test(
+    store::tests::force_next_run_for_test(
         &config,
         &row.id,
         chrono::Utc::now() - chrono::Duration::seconds(1),

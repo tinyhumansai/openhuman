@@ -2,4 +2,4 @@
 
 mod speech;
 
-pub use speech::{transcribe, transcribe_with_prompt, tts};
+pub use speech::{transcribe, transcribe_bytes, transcribe_with_prompt, tts};

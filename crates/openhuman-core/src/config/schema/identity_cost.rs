@@ -213,33 +213,19 @@ fn default_alert_threshold() -> f64 {
 
 impl Default for CostConfig {
     fn default() -> Self {
+        let prices = crate::inference::registry::provider_default_pricing(
+            crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+        )
+        .map(|(model, input, output)| HashMap::from([(model, ModelPricing { input, output })]))
+        .unwrap_or_default();
         Self {
             enabled: default_cost_enabled(),
             monthly_limit_usd: default_monthly_limit(),
-            prices: get_default_pricing(),
+            prices,
             dashboard: CostDashboardConfig::default(),
             budgets: Vec::new(),
         }
     }
-}
-
-/// Default pricing for the managed default model (USD per 1M tokens).
-///
-/// DeepSeek V4 Flash through the managed OpenRouter passthrough. Other catalog
-/// models the user pins are priced from the catalog the backend serves
-/// (`inference_list_models`), not from here.
-fn get_default_pricing() -> HashMap<String, ModelPricing> {
-    use super::types::MODEL_MANAGED_DEFAULT;
-
-    let mut prices = HashMap::new();
-    prices.insert(
-        MODEL_MANAGED_DEFAULT.into(),
-        ModelPricing {
-            input: 0.0886,
-            output: 0.1772,
-        },
-    );
-    prices
 }
 
 #[cfg(test)]

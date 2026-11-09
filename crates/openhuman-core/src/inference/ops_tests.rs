@@ -1,10 +1,43 @@
 use super::*;
+use crate::config::Config;
 use crate::core::runtime::DispatchCtx;
-use crate::security::credentials::openai_oauth::{OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY};
-use crate::security::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
 use axum::{routing::post, Json, Router};
-use chrono::{Duration, Utc};
 use tempfile::tempdir;
+
+#[tokio::test]
+async fn inference_list_models_uses_the_dispatch_context_config() {
+    use crate::core::runtime::{context::CoreContext, DispatchCtx, DomainSet};
+    use crate::inference::provider::model_listing_test_support::{
+        configure_generic_workspace, spawn_static_models_server,
+    };
+
+    let models_a = r#"{"data":[{"id":"tenant-a-model","owned_by":"fixture"}]}"#;
+    let models_b = r#"{"data":[{"id":"tenant-b-model","owned_by":"fixture"}]}"#;
+    let endpoint_a = spawn_static_models_server(axum::http::StatusCode::OK, models_a).await;
+    let endpoint_b = spawn_static_models_server(axum::http::StatusCode::OK, models_b).await;
+    let workspace_a = tempdir().expect("tenant A workspace");
+    let workspace_b = tempdir().expect("tenant B workspace");
+    let config_a = configure_generic_workspace(&workspace_a, endpoint_a).await;
+    let config_b = configure_generic_workspace(&workspace_b, endpoint_b).await;
+    let ctx_a = DispatchCtx::new(CoreContext::for_test_with_config(
+        DomainSet::full(),
+        config_a,
+    ));
+    let ctx_b = DispatchCtx::new(CoreContext::for_test_with_config(
+        DomainSet::full(),
+        config_b,
+    ));
+
+    let result_a = inference_list_models(&ctx_a, "p_generic_test")
+        .await
+        .expect("tenant A catalog request succeeds");
+    let result_b = inference_list_models(&ctx_b, "p_generic_test")
+        .await
+        .expect("tenant B catalog request succeeds");
+
+    assert_eq!(result_a.value["models"][0]["id"], "tenant-a-model");
+    assert_eq!(result_b.value["models"][0]["id"], "tenant-b-model");
+}
 
 fn disabled_config() -> (Config, tempfile::TempDir) {
     let tmp = tempdir().expect("tempdir");
@@ -160,109 +193,13 @@ async fn inference_get_client_config_returns_safe_snapshot() {
     );
 }
 
-#[tokio::test]
-async fn inference_openai_oauth_start_returns_authorize_payload() {
-    let (config, _tmp) = disabled_config();
-
-    let outcome = inference_openai_oauth_start(&config)
-        .await
-        .expect("oauth start");
-
-    assert!(outcome.value["authUrl"]
-        .as_str()
-        .unwrap()
-        .contains("auth.openai.com"));
-    assert_eq!(
-        outcome.value["redirectUri"].as_str(),
-        Some("http://127.0.0.1:1455/auth/callback")
-    );
-    assert_eq!(outcome.logs, vec!["openai oauth authorize url ready"]);
-}
-
-#[tokio::test]
-async fn inference_openai_oauth_complete_surfaces_state_errors() {
-    let (config, _tmp) = disabled_config();
-    let start = inference_openai_oauth_start(&config)
-        .await
-        .expect("oauth start");
-    let state = start.value["state"].as_str().unwrap();
-    let callback = format!("http://127.0.0.1:1455/auth/callback?code=fake&state=wrong-{state}");
-
-    let err = inference_openai_oauth_complete(&config, &callback)
-        .await
-        .expect_err("state mismatch should fail");
-
-    assert!(err.contains("state mismatch"));
-}
-
-#[tokio::test]
-async fn inference_openai_oauth_status_returns_connected_payload() {
-    let (config, tmp) = disabled_config();
-    let store = AuthProfilesStore::new(tmp.path(), false);
-    store
-        .upsert_profile(
-            AuthProfile::new_oauth(
-                OPENAI_PROVIDER_KEY,
-                OPENAI_OAUTH_PROFILE_NAME,
-                TokenSet {
-                    access_token: "oauth-access".into(),
-                    refresh_token: None,
-                    id_token: None,
-                    expires_at: Some(Utc::now() + Duration::hours(1)),
-                    token_type: Some("Bearer".into()),
-                    scope: None,
-                },
-            ),
-            true,
-        )
-        .unwrap();
-
-    let outcome = inference_openai_oauth_status(&config)
-        .await
-        .expect("oauth status");
-
-    assert_eq!(outcome.value["connected"], true);
-    assert_eq!(outcome.value["authMethod"], "oauth");
-    assert_eq!(outcome.logs, vec!["openai oauth status"]);
-}
-
-#[tokio::test]
-async fn inference_openai_oauth_disconnect_returns_removed_flag() {
-    let (config, tmp) = disabled_config();
-    let store = AuthProfilesStore::new(tmp.path(), false);
-    store
-        .upsert_profile(
-            AuthProfile::new_oauth(
-                OPENAI_PROVIDER_KEY,
-                OPENAI_OAUTH_PROFILE_NAME,
-                TokenSet {
-                    access_token: "oauth-access".into(),
-                    refresh_token: None,
-                    id_token: None,
-                    expires_at: None,
-                    token_type: Some("Bearer".into()),
-                    scope: None,
-                },
-            ),
-            true,
-        )
-        .unwrap();
-
-    let outcome = inference_openai_oauth_disconnect(&config)
-        .await
-        .expect("oauth disconnect");
-
-    assert_eq!(outcome.value["disconnected"], true);
-    assert_eq!(outcome.logs, vec!["openai oauth disconnected"]);
-}
-
 // ── is_unknown_provider_user_config (TAURI-RUST-X) ───────────────────────
 //
-// `inference_list_models` calls `providers::ops::list_configured_models`,
+// `inference_list_models` calls `provider::models::catalog_listing::list_configured_models`,
 // which surfaces a `String` error when the user-selected provider id isn't
 // registered in the cloud-provider list (e.g. picking "ollama" — a local
 // runtime — as a cloud provider). The error string is emitted at
-// `crates/openhuman-core/src/inference/provider/ops.rs:54`. Before this fix the emit
+// `crates/openhuman-core/src/inference/provider/models/catalog_listing.rs:54`. Before this fix the emit
 // site at `inference/ops.rs:248` escalated every such error to `error!`,
 // which sentry-tracing ships to Sentry as `"[inference::ops]
 // list_models:error"` — 5740+ events with the underlying error hidden in
@@ -272,7 +209,7 @@ async fn inference_openai_oauth_disconnect_returns_removed_flag() {
 
 #[test]
 fn is_unknown_provider_user_config_matches_canonical_emit_site_string() {
-    // Verbatim shape from `provider/ops.rs:54`:
+    // Verbatim shape from `provider/models/catalog_listing.rs:54`:
     //   format!("no cloud provider with id or slug '{}' found", provider_id)
     // Latest TAURI-RUST-X event (Sentry id 95) carried provider_id="ollama";
     // every well-formed provider id slug must trigger the demote.
@@ -295,9 +232,9 @@ fn is_unknown_provider_user_config_rejects_other_list_models_failures() {
     // strictly anchored on the "no cloud provider with id or slug" phrase
     // so it can't accidentally silence them.
     for raw in [
-        // TAURI-RUST-12 (362 events) — provider/ops.rs JSON decode failure
+        // TAURI-RUST-12 (362 events) — provider/models/catalog_listing.rs JSON decode failure
         "[providers][list_models] failed to parse JSON: error decoding response",
-        // TAURI-RUST-2W (100 events) — provider/ops.rs reqwest builder failure
+        // TAURI-RUST-2W (100 events) — provider/models/catalog_listing.rs reqwest builder failure
         "[providers][list_models] HTTP request failed: builder error",
         // TAURI-RUST-JP (8 events) — local_ai ollama_admin transport failure
         "[local_ai:ollama_admin] list_models: request send failed",

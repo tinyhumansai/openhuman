@@ -82,6 +82,7 @@ const hoisted = vi.hoisted(() => ({ getCoreRpcUrlMock: vi.fn<() => Promise<strin
 vi.mock('../coreRpcClient', () => ({
   getCoreRpcUrl: hoisted.getCoreRpcUrlMock,
   clearCoreRpcUrlCache: vi.fn(),
+  clearCoreRpcTokenCache: vi.fn(),
   // socketService now reads the per-process bearer for the Socket.IO
   // handshake `auth.token` payload; the test value is irrelevant — the
   // mock just needs to resolve so the connect flow proceeds.
@@ -275,6 +276,53 @@ describe('socketService — resolveCoreSocketBaseUrl uses getCoreRpcUrl', () => 
       expect(latestSocket.on).toHaveBeenCalledWith('queued-on-event', expect.any(Function))
     );
     expect(latestSocket.once).not.toHaveBeenCalledWith('queued-on-event', expect.any(Function));
+  });
+
+  it('keeps subscriptions when a new session token replaces the socket', async () => {
+    const { io } = await import('socket.io-client');
+    const ioMock = vi.mocked(io);
+    ioMock.mockClear();
+    hoisted.getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.disconnect();
+
+    type MockSocket = {
+      on: ReturnType<typeof vi.fn>;
+      once: ReturnType<typeof vi.fn>;
+      onAny: ReturnType<typeof vi.fn>;
+    };
+    const latest = () => ioMock.mock.results[ioMock.mock.results.length - 1].value as MockSocket;
+
+    socketService.connect('first-session-token');
+    await pollUntil(() => expect(ioMock).toHaveBeenCalledTimes(1));
+    const first = latest();
+    // Subscribed while the first socket is live (as the chat runtime does on mount).
+    const onDelta = vi.fn();
+    const onOnce = vi.fn();
+    socketService.on('reconnect-survivor', onDelta);
+    socketService.once('reconnect-survivor-once', onOnce);
+    expect(first.on).toHaveBeenCalledWith('reconnect-survivor', expect.any(Function));
+
+    // The session token changes: the service drops the socket and builds a new one.
+    socketService.connect('second-session-token');
+    await pollUntil(() => expect(ioMock).toHaveBeenCalledTimes(2));
+    const second = latest();
+    expect(second).not.toBe(first);
+    await pollUntil(() =>
+      expect(second.on).toHaveBeenCalledWith('reconnect-survivor', expect.any(Function))
+    );
+    expect(second.once).toHaveBeenCalledWith('reconnect-survivor-once', expect.any(Function));
+
+    // A removed subscription stays off later sockets.
+    socketService.off('reconnect-survivor', onDelta);
+    socketService.off('reconnect-survivor-once', onOnce);
+    socketService.connect('third-session-token');
+    await pollUntil(() => expect(ioMock).toHaveBeenCalledTimes(3));
+    const third = latest();
+    await pollUntil(() => expect(third.onAny).toHaveBeenCalled());
+    expect(third.on).not.toHaveBeenCalledWith('reconnect-survivor', expect.any(Function));
+    expect(third.once).not.toHaveBeenCalledWith('reconnect-survivor-once', expect.any(Function));
   });
 
   it('reconnects when a stale disconnected socket exists for the same token', async () => {

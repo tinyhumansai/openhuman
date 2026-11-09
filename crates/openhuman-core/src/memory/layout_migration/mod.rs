@@ -1,29 +1,18 @@
 //! Moving memory from the legacy CortexDB tree into the per-user tree.
 //!
-//! The engine-to-engine migration (copy, placement, cleanup, the job and its
-//! service) lives in `tinymemory_tools::layout_migration`; this module is the
-//! OpenHuman host adapter over its two ports:
-//!
-//! - [`state`]: the [`MigrationStateStore`] backed by the memory state KV port.
-//! - [`app_host`]: the [`LayoutHost`] for one account (engine binding,
-//!   placement, the layout switch, the free period), with [`claim`] naming the
-//!   account that takes a legacy tree several accounts share.
-//! - [`service`]: running in the background (one run per workspace, gated on
-//!   the import) and mapping the module's errors to [`MemoryError`].
-//!
-//! [`MemoryError`]: crate::memory::error::MemoryError
+//! TinyMemory owns the migration job and service. These modules bind the host
+//! ports, file-backed state, and RPC/background scheduler.
 
 pub mod app_host;
-pub mod claim;
-pub mod service;
+pub mod ops;
 pub mod state;
 
-#[cfg(test)]
-mod test_host;
+// Only the storage-sqlite tests (see `ops.rs`) drive the fake host.
+#[cfg(all(test, feature = "storage-sqlite"))]
+pub(crate) mod test_host;
 
 pub use app_host::AppHost;
-pub use service::{retry, scan, start, status, tick, StartParams};
-#[allow(deprecated)]
+pub use ops::{retry, scan, start, status, tick, StartParams};
 pub use state::FileStateStore;
 pub use state::StateKvMigrationStore;
 pub use tinymemory_tools::layout_migration::{

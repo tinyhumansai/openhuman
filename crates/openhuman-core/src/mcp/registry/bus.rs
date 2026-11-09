@@ -76,8 +76,7 @@ impl EventHandler<DomainEvent> for McpClientEventSubscriber {
 
 /// Register the MCP client event subscriber at startup.
 ///
-/// Call this from wherever other domain subscribers are registered
-/// (e.g. alongside `CronDeliverySubscriber::new(...)` in core startup).
+/// Call this from wherever other domain subscribers are registered.
 pub fn init() {
     use crate::core::bus::BUS;
     use std::sync::Arc;

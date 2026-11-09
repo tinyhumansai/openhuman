@@ -631,7 +631,7 @@ fn does_not_classify_genuine_backend_500_without_cloudflare_body() {
 
 #[test]
 fn classifies_list_models_404_as_provider_user_state() {
-    // OPENHUMAN-TAURI-YJ: `inference/provider/ops.rs::list_models` probed
+    // OPENHUMAN-TAURI-YJ: `inference/provider/models/catalog_listing.rs::list_models` probed
     // a custom-provider's `/models` endpoint and the upstream server
     // returned 404 because the base URL is wrong / doesn't host a models
     // listing. User-config state — the model-dropdown probe already

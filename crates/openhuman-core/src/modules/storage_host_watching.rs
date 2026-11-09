@@ -10,10 +10,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
-use tinystoragedrivers::{
-    async_trait, Capabilities, Capability, CollectionSpec, DocumentStore, DocumentWatch, Filter,
-    MemoryStorage, Page, Precondition, Query, Result, Scope, ScopedStorage, Sort, StorageBackend,
-    Version, Versioned, WatchNotice, WatchOptions, WriteOp, WriteResult,
+use tinystoragedrivers_api::{async_trait, DocumentStore, DocumentWatch, Storage, StorageBackend};
+use tinystoragedrivers_testkit::MemoryBackend;
+use tinystoragedrivers_types::{
+    Capabilities, Capability, CollectionSpec, Filter, Page, Precondition, Query, Result, Scope,
+    Sort, Version, Versioned, WatchNotice, WatchOptions, WriteOp, WriteResult,
 };
 use tokio::sync::broadcast;
 
@@ -22,7 +23,7 @@ type Hub = Arc<Mutex<HashMap<String, broadcast::Sender<()>>>>;
 /// Memory storage with a native document watch.
 #[derive(Debug, Default)]
 pub(super) struct WatchingStorage {
-    inner: MemoryStorage,
+    inner: MemoryBackend,
     hub: Hub,
 }
 
@@ -33,32 +34,44 @@ impl WatchingStorage {
 }
 
 impl StorageBackend for WatchingStorage {
-    fn driver(&self) -> &'static str {
-        "memory"
-    }
-
     fn capabilities(&self) -> Capabilities {
         self.inner.capabilities().with(Capability::Watch)
     }
 
-    fn for_scope(&self, scope: &Scope) -> Result<ScopedStorage> {
+    fn for_scope(&self, scope: &Scope) -> Result<Storage> {
         let scoped = self.inner.for_scope(scope)?;
+        Ok(self.wrap_scope(scope, scoped))
+    }
+
+    fn for_scope_conditioned(
+        &self,
+        scope: &Scope,
+        condition: &tinystoragedrivers_types::WriteCondition,
+    ) -> Result<Storage> {
+        let scoped = self.inner.for_scope_conditioned(scope, condition)?;
+        Ok(self.wrap_scope(scope, scoped))
+    }
+}
+
+impl WatchingStorage {
+    fn wrap_scope(&self, scope: &Scope, scoped: Storage) -> Storage {
         let sender = {
             let mut hub = self.hub.lock().unwrap();
             hub.entry(scope.as_str().to_string())
                 .or_insert_with(|| broadcast::channel(64).0)
                 .clone()
         };
-        Ok(ScopedStorage::new(
-            scope.clone(),
-            "memory",
+        Storage::new(
             Arc::new(Documents {
                 inner: Arc::clone(scoped.documents()),
                 changed: sender,
             }),
             Arc::clone(scoped.streams()),
+            Arc::clone(scoped.kv()),
             Arc::clone(scoped.blobs()),
-        ))
+            Arc::clone(scoped.queues()),
+            Arc::clone(scoped.secrets()),
+        )
     }
 }
 
@@ -102,6 +115,10 @@ impl DocumentStore for Documents {
         self.inner.ensure_collection(spec).await
     }
 
+    async fn validate_collection_spec(&self, spec: &CollectionSpec) -> Result<()> {
+        self.inner.validate_collection_spec(spec).await
+    }
+
     async fn get(&self, c: &str, id: &str) -> Result<Option<Versioned<Value>>> {
         self.inner.get(c, id).await
     }
@@ -118,7 +135,7 @@ impl DocumentStore for Documents {
         id: &str,
         doc: Value,
         p: Precondition,
-        options: tinystoragedrivers::WriteOptions,
+        options: tinystoragedrivers_types::WriteOptions,
     ) -> Result<Version> {
         let version = self.inner.put_with(c, id, doc, p, options).await?;
         let _ = self.changed.send(());

@@ -9,6 +9,11 @@ impl Config {
         if let Some(val) = env.get("OPENHUMAN_MEMORY_EMBED_RATE_LIMIT") {
             if let Ok(per_min) = val.trim().parse::<u32>() {
                 self.memory.embedding_rate_limit_per_min = per_min;
+                self.record_env_override(
+                    env,
+                    "memory.embedding_rate_limit_per_min",
+                    &["OPENHUMAN_MEMORY_EMBED_RATE_LIMIT"],
+                );
             }
         }
     }

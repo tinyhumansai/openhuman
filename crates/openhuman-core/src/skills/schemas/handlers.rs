@@ -14,7 +14,7 @@ use crate::core::all::ControllerFuture;
 use crate::core::Outcome;
 use crate::skills::ops::{
     create_workflow, discover_automations, discover_workflows, install_workflow_from_url,
-    is_workspace_trusted, read_workflow_resource, uninstall_workflow, CreateWorkflowParams,
+    is_workspace_trusted, read_workflow_resource_for, uninstall_workflow, CreateWorkflowParams,
     UninstallWorkflowParams,
 };
 use crate::skills::ops_install::ScanAcknowledgement;
@@ -132,7 +132,7 @@ pub(super) fn handle_skills_read_run_log(
         // RPC response sane; the FE re-issues with the returned offset
         // to page through larger logs.
         let max_bytes = payload.max_bytes.unwrap_or(64 * 1024).min(256 * 1024) as usize;
-        match run_log::read_run_log_slice(&path, offset, max_bytes) {
+        match run_log::read_run_log_slice(&workspace, &path, offset, max_bytes) {
             Ok(slice) => to_json(Outcome::new(slice, Vec::new())),
             Err(e) => Err(format!("skills_read_run_log: read failed: {e}")),
         }
@@ -167,8 +167,8 @@ pub(super) fn handle_skills_run(ctx: DispatchCtx, params: Map<String, Value>) ->
         let payload = deserialize_params::<WorkflowsRunParams>(params)?;
         let origin = ctx
             .turn_origin_or_scoped()
-            .unwrap_or(crate::security::turn_origin::AgentTurnOrigin::Cli);
-        let started = match crate::security::turn_origin::with_origin(
+            .unwrap_or(crate::core::runtime::turn_origin::AgentTurnOrigin::Cli);
+        let started = match crate::core::runtime::turn_origin::with_origin(
             origin.clone(),
             spawn_workflow_run_background(&ctx, payload.workflow_id, payload.inputs, Some(origin)),
         )
@@ -209,7 +209,7 @@ pub(super) fn handle_skills_cancel(
 }
 
 pub(super) fn handle_skills_read_resource(
-    _ctx: DispatchCtx,
+    ctx: DispatchCtx,
     params: Map<String, Value>,
 ) -> ControllerFuture {
     Box::pin(async move {
@@ -219,9 +219,9 @@ pub(super) fn handle_skills_read_resource(
             relative_path = %payload.relative_path,
             "[skills][rpc] read_resource"
         );
-        let workspace = resolve_workspace_dir().await;
+        let config = ctx.load_config().await?;
         let relative = Path::new(&payload.relative_path);
-        match read_workflow_resource(workspace.as_path(), &payload.workflow_id, relative) {
+        match read_workflow_resource_for(&ctx, &config, &payload.workflow_id, relative) {
             Ok(content) => {
                 let bytes = content.len();
                 to_json(Outcome::new(

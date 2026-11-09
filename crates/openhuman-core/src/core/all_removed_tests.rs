@@ -32,7 +32,7 @@ fn memory_diff_controllers_are_gone_and_memory_survives() {
 /// queried a session index that nothing in `src/` ever writes (permanently
 /// empty in production, no frontend consumer). The three `run_ledger`
 /// controllers live in the same module and read a table that *is* written
-/// (from `web_chat::progress_bridge` and `core::observability::progress_tracing`), so they
+/// (from `web_chat::progress` and `core::observability::progress_tracing`), so they
 /// must stay fully registered.
 ///
 /// `run_ledger` is asserted present in the same test on purpose: the removal

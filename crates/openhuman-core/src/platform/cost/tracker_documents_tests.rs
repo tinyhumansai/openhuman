@@ -1,10 +1,10 @@
 use super::*;
-use crate::storage::{MemoryStorage, Scope, StorageBackend};
+use crate::storage::{test_support::memory_backend, Scope, StorageBackend};
 use chrono::{Duration, Utc};
 
 use super::super::types::TokenUsage;
 
-fn docs_in(storage: &MemoryStorage, scope: &str) -> CostDocs {
+fn docs_in(storage: &dyn StorageBackend, scope: &str) -> CostDocs {
     CostDocs::over(&storage.for_scope(&Scope::new(scope).unwrap()).unwrap())
 }
 
@@ -17,7 +17,8 @@ fn record(model: &str, cost: f64, secs_ago: i64) -> CostRecord {
 
 #[test]
 fn records_round_trip_oldest_first() {
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let storage = memory_backend();
+    let docs = docs_in(storage.as_ref(), "local");
     let newer = record("b/model", 0.5, 1);
     let older = record("a/model", 0.25, 60);
     docs.add(&newer).unwrap();
@@ -32,7 +33,8 @@ fn records_round_trip_oldest_first() {
 
 #[test]
 fn a_record_is_written_once() {
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let storage = memory_backend();
+    let docs = docs_in(storage.as_ref(), "local");
     let rec = record("a/model", 0.1, 0);
     docs.add(&rec).unwrap();
     assert!(docs.add(&rec).is_err());
@@ -41,9 +43,9 @@ fn a_record_is_written_once() {
 
 #[test]
 fn scopes_do_not_see_each_others_costs() {
-    let storage = MemoryStorage::new();
-    let alice = docs_in(&storage, "alice");
-    let bob = docs_in(&storage, "bob");
+    let storage = memory_backend();
+    let alice = docs_in(storage.as_ref(), "alice");
+    let bob = docs_in(storage.as_ref(), "bob");
     alice.add(&record("a/model", 1.0, 0)).unwrap();
     assert_eq!(alice.all().unwrap().len(), 1);
     assert!(bob.all().unwrap().is_empty());
@@ -64,7 +66,8 @@ fn a_legacy_jsonl_ledger_is_imported_once_and_set_aside() {
         ),
     )
     .unwrap();
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let storage = memory_backend();
+    let docs = docs_in(storage.as_ref(), "local");
     assert_eq!(docs.import_legacy(&path).unwrap(), 2);
     assert_eq!(docs.all().unwrap().len(), 2);
     assert!(!path.exists());
@@ -86,7 +89,8 @@ fn a_legacy_import_skips_ids_already_stored_or_repeated() {
         format!("{}\n{}\n{}\n", line(&first), line(&second), line(&second)),
     )
     .unwrap();
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let storage = memory_backend();
+    let docs = docs_in(storage.as_ref(), "local");
     docs.add(&first).unwrap();
     assert_eq!(docs.import_legacy(&path).unwrap(), 1);
     assert_eq!(docs.all().unwrap().len(), 2);
@@ -104,7 +108,8 @@ fn an_earlier_set_aside_ledger_is_kept_and_bad_utf8_lines_are_skipped() {
     let earlier = dir.path().join("costs.jsonl.migrated");
     std::fs::write(&earlier, "earlier").unwrap();
 
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let storage = memory_backend();
+    let docs = docs_in(storage.as_ref(), "local");
     assert_eq!(docs.import_legacy(&path).unwrap(), 1);
     assert!(!path.exists());
     assert_eq!(std::fs::read_to_string(&earlier).unwrap(), "earlier");
@@ -118,6 +123,7 @@ fn a_ledger_another_core_already_set_aside_counts_as_done() {
     assert!(set_aside(&path).is_ok());
     // An unreadable ledger (here a directory) fails the import instead.
     std::fs::create_dir_all(&path).unwrap();
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let storage = memory_backend();
+    let docs = docs_in(storage.as_ref(), "local");
     assert!(docs.import_legacy(&path).is_err());
 }

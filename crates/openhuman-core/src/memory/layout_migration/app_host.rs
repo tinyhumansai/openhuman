@@ -6,14 +6,16 @@
 use async_trait::async_trait;
 use tinymemory_api::Error as EngineError;
 use tinymemory_tools::layout_migration as lm;
-use tinymemory_tools::layout_migration::{Engines, FlowPlacement, LegacyClaim, Placement};
+use tinymemory_tools::layout_migration::{
+    Engines, FlowPlacement, FsLegacyClaim, LegacyClaim, Placement,
+};
 
-use super::claim::ClaimKey;
 use super::state::StateKvMigrationStore;
 use crate::config::{Config, MemoryLayoutMode};
 use crate::memory::engine::{self, CORTEXDB_ENGINE};
-use crate::memory::error::{MemoryError, MemoryResult};
-use crate::memory::scope::{self, MemoryIdentity};
+use crate::memory::scope;
+use crate::memory::MemoryError;
+use tinymemory_api::{Error, Result};
 
 /// The app's [`lm::LayoutHost`], bound to one account's config.
 pub struct AppHost {
@@ -37,29 +39,27 @@ const RECHECK_DELAY: std::time::Duration = std::time::Duration::from_secs(45);
 const RECHECK_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// The host's error as the module's: the engine's variants keep their codes.
-pub(super) fn to_module(error: MemoryError) -> lm::Error {
+pub(super) fn to_module(error: Error) -> lm::Error {
     match error {
-        MemoryError::Off(message) => lm::Error::Off(message),
-        MemoryError::InvalidRequest(message) => lm::Error::InvalidRequest(message),
-        MemoryError::Unsupported(message) => EngineError::Unsupported(message).into(),
-        MemoryError::Unauthorized(message) => EngineError::Unauthorized(message).into(),
-        MemoryError::Unavailable(message) => EngineError::Unavailable(message).into(),
-        // The backend's `[CODE] ` prefix stays on the message, which is how
-        // the module tells an exhausted balance.
-        MemoryError::InsufficientCredits(message) | MemoryError::Engine(message) => {
-            EngineError::Engine(message).into()
-        }
-        MemoryError::ConfigConflict(error) => EngineError::Engine(error.message).into(),
+        Error::Off(message) => lm::Error::Off(message),
+        Error::InvalidRequest(message) => lm::Error::InvalidRequest(message),
+        Error::NotFound(message) | Error::Config(message) => lm::Error::InvalidRequest(message),
+        Error::Conflict(message) => EngineError::Conflict(message).into(),
+        Error::Unsupported(message) => EngineError::Unsupported(message).into(),
+        Error::Unauthorized(message) => EngineError::Unauthorized(message).into(),
+        Error::Unavailable(message) => EngineError::Unavailable(message).into(),
+        Error::InsufficientCredits(message) => EngineError::InsufficientCredits(message).into(),
+        Error::Engine(message) => EngineError::Engine(message).into(),
     }
 }
 
 /// The module's error as the host's wire taxonomy.
-pub(super) fn from_module(error: lm::Error) -> MemoryError {
+pub(super) fn from_module(error: lm::Error) -> Error {
     match error {
-        lm::Error::Engine(error) => error.into(),
-        lm::Error::Off(message) => MemoryError::Off(message),
-        lm::Error::InvalidRequest(message) => MemoryError::InvalidRequest(message),
-        lm::Error::State(message) => MemoryError::Engine(message),
+        lm::Error::Engine(error) => error,
+        lm::Error::Off(message) => Error::Off(message),
+        lm::Error::InvalidRequest(message) => Error::InvalidRequest(message),
+        lm::Error::State(message) => Error::Engine(message),
     }
 }
 
@@ -69,16 +69,16 @@ impl lm::LayoutHost for AppHost {
         &self.store
     }
 
-    fn engines(&self) -> lm::Result<Engines> {
+    async fn engines(&self) -> lm::Result<Engines> {
         let config = &self.config;
-        let bind = || -> MemoryResult<Engines> {
-            let root = signed_in_root(config)?;
-            Ok(Engines {
-                legacy: engine::bind_with_root(config, None)?.engine,
-                tree: engine::bind_with_root(config, Some(&root))?.engine,
-            })
-        };
-        bind().map_err(to_module)
+        let root = signed_in_root(config).map_err(to_module)?;
+        Ok(Engines {
+            legacy: bind_engine(config, None).await.map_err(to_module)?.engine,
+            tree: bind_engine(config, Some(&root))
+                .await
+                .map_err(to_module)?
+                .engine,
+        })
     }
 
     fn placement(&self) -> lm::Result<Placement> {
@@ -86,8 +86,10 @@ impl lm::LayoutHost for AppHost {
         // switch.
         let mut v3 = self.config.clone();
         v3.memory.layout = MemoryLayoutMode::V3;
-        let layout = MemoryIdentity::root().resolve(&v3).layout;
-        let chat_node = scope::chat_node(&layout);
+        let layout = tinymemory_tools::layout::identity::Identity::root()
+            .resolve(&crate::memory::scope::identity_pins(&v3))
+            .layout;
+        let chat_node = tinymemory_tools::layout::identity::chat_node(&layout);
         Ok(Placement {
             layout,
             chat_node,
@@ -97,7 +99,7 @@ impl lm::LayoutHost for AppHost {
     }
 
     fn is_switched(&self) -> bool {
-        scope::layout_is_v3(&self.config)
+        self.config.memory.layout == MemoryLayoutMode::V3
     }
 
     async fn switch(&self) -> lm::Result<()> {
@@ -110,9 +112,10 @@ impl lm::LayoutHost for AppHost {
         crate::memory::billing::free_period_active(&self.config).await
     }
 
-    fn legacy_claim(&self) -> lm::Result<Option<Box<dyn LegacyClaim>>> {
-        claim_key(&self.config)
-            .map(|key| key.map(|key| Box::new(key) as Box<dyn LegacyClaim>))
+    async fn legacy_claim(&self) -> lm::Result<Option<Box<dyn LegacyClaim>>> {
+        claim(&self.config)
+            .await
+            .map(|claim| claim.map(|claim| Box::new(claim) as Box<dyn LegacyClaim>))
             .map_err(to_module)
     }
 
@@ -127,7 +130,7 @@ impl lm::LayoutHost for AppHost {
 
 /// The claim on the legacy tree `config`'s account would move, if it is
 /// shared by every account on the machine.
-pub(super) fn claim_key(config: &Config) -> MemoryResult<Option<ClaimKey>> {
+pub(super) async fn claim(config: &Config) -> Result<Option<FsLegacyClaim>> {
     // A self-hosted key is the operator's: every local account using it
     // shares one legacy tree. The hosted engine is one tenant per person.
     if config.memory.engine.trim() != CORTEXDB_ENGINE {
@@ -135,7 +138,7 @@ pub(super) fn claim_key(config: &Config) -> MemoryResult<Option<ClaimKey>> {
     }
     // The account, by its actor (`user:<id>`): a claim made before
     // `org:` roots named the same string, so it stays this account's.
-    let owner = scope::actor_of_root(&signed_in_root(config)?);
+    let owner = tinymemory_tools::layout::identity::actor_of_root(&signed_in_root(config)?);
     // `<app>/users/<id>/config.toml`: the app directory every account shares.
     let app_dir = config
         .config_path
@@ -143,16 +146,38 @@ pub(super) fn claim_key(config: &Config) -> MemoryResult<Option<ClaimKey>> {
         .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .ok_or_else(signed_out)?;
-    let endpoint = engine::bind_with_root(config, None)?.endpoint;
-    Ok(Some(ClaimKey::new(app_dir, &endpoint, &owner)))
+    let endpoint = bind_engine(config, None).await?.endpoint;
+    Ok(Some(FsLegacyClaim::new(app_dir, &endpoint, &owner)))
 }
 
-fn signed_in_root(config: &Config) -> MemoryResult<String> {
+fn signed_in_root(config: &Config) -> Result<String> {
     scope::user_root(config).ok_or_else(signed_out)
 }
 
-fn signed_out() -> MemoryError {
-    MemoryError::Off("sign in to move memory into its own layout".to_string())
+fn signed_out() -> Error {
+    Error::Off("sign in to move memory into its own layout".to_string())
+}
+
+async fn bind_engine(config: &Config, root: Option<&str>) -> Result<engine::BoundEngine> {
+    engine::bind_with_root(config, root)
+        .await
+        .map_err(memory_error_to_engine)
+}
+
+fn memory_error_to_engine(error: MemoryError) -> Error {
+    match error {
+        MemoryError::Off(message) => Error::Off(message),
+        MemoryError::Unsupported(message) => Error::Unsupported(message),
+        MemoryError::InvalidRequest(message) => Error::InvalidRequest(message),
+        MemoryError::Unauthorized(message) => Error::Unauthorized(message),
+        MemoryError::InsufficientCredits(message) => Error::InsufficientCredits(message),
+        // TinyMemory has no plan-specific API variant. Preserve the stable
+        // marker so the host can recover OpenHuman's PLAN_REQUIRED category.
+        MemoryError::PlanRequired(message) => Error::Engine(message),
+        MemoryError::Unavailable(message) => Error::Unavailable(message),
+        MemoryError::Engine(message) => Error::Engine(message),
+        MemoryError::ConfigConflict(error) => Error::Conflict(error.message),
+    }
 }
 
 #[cfg(test)]

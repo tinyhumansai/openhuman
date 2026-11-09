@@ -146,7 +146,7 @@ pub(crate) async fn start_selected_services(
     // a background service — runs can be started without cron in the
     // ServiceSet, so their orphans must be reconcilable without it too.
     if ctx.domains().flows {
-        spawn_flows_boot_reconcile();
+        spawn_flows_boot_reconcile(std::sync::Arc::clone(ctx));
     }
     if services.channels {
         if let Some(handle) = spawn_channels_service(&crate::core::runtime::DispatchCtx::new(
@@ -183,7 +183,7 @@ pub fn spawn_login_gated_services(embedded_core: bool) -> tokio::task::JoinHandl
                 if already_logged_in {
                     // User has an active session — start all services now.
                     log::info!("[services] existing session found, starting services");
-                    crate::security::credentials::ops::start_credential_gated_services(
+                    crate::credentials::ops::start_credential_gated_services(
                         &crate::core::runtime::DispatchCtx::host_default(),
                         &config,
                     )
@@ -215,11 +215,10 @@ pub fn spawn_update_scheduler() -> tokio::task::JoinHandle<()> {
     })
 }
 
-/// Boot-time flow-run reconciliation (bug B42): reconciles any `flow_runs` row
-/// left at `running` by a prior process (crash/SIGKILL/power loss — where the
-/// in-process `RunRowFinalizer` drop-guard never got to run) to a terminal
-/// `interrupted`, so the run-details sidebar never shows a perpetual blank
-/// spinner for a run nothing is executing.
+/// Boot-time flow-run reconciliation: asks the TinyFlows Runs module to mark
+/// eligible local orphan rows left at `running` by a prior process as
+/// `interrupted`. The module owns the boot floor, live-actor checks, CAS,
+/// summary, checkpoint and terminal-event cleanup.
 ///
 /// Owned by the flows domain rather than piggybacked on cron bootstrap: runs
 /// can be started by the RPC "Run" control, the agent `run_flow` tool and the
@@ -227,19 +226,18 @@ pub fn spawn_update_scheduler() -> tokio::task::JoinHandle<()> {
 /// [`ServiceSet`]. Gating this on cron would silently skip reconciliation on any
 /// cron-less selection (`headless_api()`, embedders), leaving prior-process
 /// orphans wedged forever. Selected by the `flows` **domain** flag instead, and
-/// safe at any point in boot — the sweep's own `PROCESS_RUN_FLOOR` guard means
-/// it can never touch a run this process started, so it carries no ordering
-/// requirement against the cron scheduler or any agent turn.
-pub fn spawn_flows_boot_reconcile() {
+/// safe at any point in boot — the module's boot-floor and live-actor guards
+/// keep it off runs this process owns, so it carries no ordering requirement
+/// against the cron scheduler or any agent turn.
+pub fn spawn_flows_boot_reconcile(ctx: std::sync::Arc<crate::core::runtime::CoreContext>) {
     #[cfg(feature = "flows")]
     {
         log::debug!("[flows] boot reconcile: scheduling orphaned-run sweep");
-        tokio::spawn(async {
+        tokio::spawn(async move {
             log::debug!("[flows] boot reconcile: loading config");
-            match crate::config::Config::load_or_init().await {
-                Ok(config) => {
-                    let swept =
-                        crate::flows::ops::sweep_orphaned_running_runs_on_boot(&config).await;
+            let dispatch = crate::core::runtime::DispatchCtx::new(ctx);
+            match reconcile_flows_on_boot(&dispatch).await {
+                Ok(swept) => {
                     // Logged unconditionally: a silent success and a task that
                     // never ran are otherwise indistinguishable in a boot log.
                     log::debug!("[flows] boot reconcile: completed; reconciled_runs={swept}");
@@ -249,17 +247,28 @@ pub fn spawn_flows_boot_reconcile() {
                         );
                     }
                 }
-                Err(err) => {
-                    log::warn!("[core] config load failed, skipping flows boot reconcile: {err}");
+                Err(error) => {
+                    log::warn!("[core] config load failed, skipping flows boot reconcile: {error}");
                 }
             }
         });
-    }
+    };
     #[cfg(not(feature = "flows"))]
     log::debug!("[flows] flows feature disabled at compile time — no boot run reconciliation");
 }
 
-/// Cron scheduler — polls `due_jobs()` every ~5s and executes them
+#[cfg(feature = "flows")]
+async fn reconcile_flows_on_boot(
+    dispatch: &crate::core::runtime::DispatchCtx,
+) -> Result<usize, String> {
+    let config = dispatch
+        .load_config()
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(crate::flows::recovery::sweep_orphaned_runs_on_boot(dispatch, &config).await)
+}
+
+/// Cron scheduler — ticks the schedule module every ~5s and executes due jobs
 /// automatically. Gated by `config.cron.enabled`.
 ///
 /// Runs under `ctx`, the runtime's own context: the config is read through
@@ -421,7 +430,6 @@ pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
     // jobs (idempotent) and mark sources a killed process left `syncing` idle.
     if plan.memory_jobs {
         crate::memory::sources::state::reset_interrupted(&config.workspace_dir);
-        crate::memory::sources::state::remove_orphaned_connector_files(&config.workspace_dir);
         if let Err(error) = crate::cron::system_jobs::ensure_memory_jobs(config) {
             log::warn!("[runtime.bootstrap] seeding memory cron jobs failed: {error}");
         }
@@ -497,7 +505,7 @@ pub(crate) async fn run_legacy_migrations(config: &Config) {
 /// Auto-connect Socket.IO to the backend when enabled by the service selection.
 pub fn spawn_socket_auto_connect(
     services: ServiceSet,
-    socket_mgr: std::sync::Arc<crate::platform::socket::SocketManager>,
+    socket_mgr: std::sync::Arc<dyn crate::platform::socket::SocketPort>,
 ) {
     if services.socketio {
         tokio::spawn(async move {
@@ -513,22 +521,22 @@ pub fn spawn_socket_auto_connect(
                 log::debug!("[socket] No resolved control plane — skipping auto-connect");
                 return;
             };
-            let initial_token =
-                match crate::security::credentials::session_support::get_session_token(&config) {
-                    Ok(Some(t)) => t,
-                    Ok(None) => {
-                        log::info!(
-                        "[socket] No session token stored — skipping auto-connect (will connect after login)"
-                    );
-                        return;
-                    }
-                    Err(e) => {
-                        log::warn!("[socket] Failed to read session token: {e}");
-                        return;
-                    }
-                };
-            if crate::security::credentials::session_support::is_local_session_token(&initial_token)
+            let initial_token = match crate::credentials::session_state::get_session_token(&config)
+                .await
             {
+                Ok(Some(t)) => t,
+                Ok(None) => {
+                    log::info!(
+                            "[socket] No session token stored — skipping auto-connect (will connect after login)"
+                        );
+                    return;
+                }
+                Err(e) => {
+                    log::warn!("[socket] Failed to read session token: {e}");
+                    return;
+                }
+            };
+            if crate::credentials::session_state::is_local_session_token(&initial_token) {
                 log::debug!("[socket] Offline local session — skipping auto-connect");
                 return;
             }

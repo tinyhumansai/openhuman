@@ -9,7 +9,7 @@ server. Updating the pin is an explicit dependency change with host tests.
 
 The supported bootstrap generates a fresh consumer workspace. A checkout
 containing the script is enough; its own submodules need not be initialized.
-With Python 3.11+, Git and Rust 1.96.1 installed:
+With Python 3.11+, Git and Rust 1.99.1 installed:
 
 ```sh
 python3 scripts/bootstrap-embed-consumer.py \
@@ -74,7 +74,7 @@ to it, as the generated entry point does. The core does not contact a service
 merely because its HTTP libraries are linked; runtime configuration and the
 chosen operation determine requests.
 
-The supported toolchain is Rust 1.96.1, matching `rust-toolchain.toml`.
+The supported toolchain is Rust 1.99.1, matching `rust-toolchain.toml`.
 Dependencies use `cfg_select!`, stabilized in Rust 1.96; older toolchains are
 not supported by this source pin. Pinning the exact toolchain also makes
 consumer diagnostics reproducible.

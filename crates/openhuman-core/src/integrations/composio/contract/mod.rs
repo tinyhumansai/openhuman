@@ -10,6 +10,7 @@
 
 pub mod curated;
 pub mod identity;
+pub mod validation;
 
 pub use identity::{
     canonicalize_values, normalize_connection_identifiers, render_connected_identities_section,

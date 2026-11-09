@@ -112,7 +112,7 @@ pub(super) async fn finalize_turn_outcome(
             // model has a list price, else the turn's cost is unknown.
             let estimate = crate::agent::cost::estimate_call_cost_usd(
                 model,
-                &crate::inference::provider::BilledUsage::from_counts(input, output)
+                &tinyinference_llm::usage::BilledUsage::from_counts(input, output)
                     .with_cached_input_tokens(cached),
             );
             crate::agent::tinyagents::turn_outcome::record_unobserved_turn_usage(
@@ -161,9 +161,10 @@ pub(super) async fn finalize_turn_outcome(
     // A run the harness stopped (breaker / cap) is traced as stopped, not as a
     // clean completion. No deadline wind-down on this path: only the session
     // turn carries one, and it records the stop through its sidecar.
-    let stop = crate::agent::session_host::stop_summary::classify_stop_with_cause(
+    let failure_cause = run.failure_cause.clone();
+    let stop = crate::agent::session_host::stop_policy::classify_stop_with_cause(
         breaker_halt.as_deref(),
-        run.failure_cause.clone(),
+        failure_cause.clone(),
         false,
         hit_cap,
     );
@@ -320,7 +321,7 @@ pub(super) async fn finalize_turn_outcome(
         hit_cap,
         wrap_up_injected,
         breaker_halt,
-        failure_cause: run.failure_cause,
+        failure_cause,
         truncated,
         tool_outcomes,
         compaction,

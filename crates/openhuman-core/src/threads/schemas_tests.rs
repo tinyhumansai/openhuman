@@ -23,49 +23,90 @@ const ALL_FUNCTIONS: &[&str] = &[
     "transcript_get",
     "goal_get",
     "todos_get",
+    "state_get",
     "edit_message",
     "regenerate",
     "search",
 ];
 
 #[test]
-fn all_controller_schemas_has_entry_per_function() {
-    let names: Vec<_> = all_controller_schemas()
+fn schema_and_handler_catalogs_preserve_threads_wire_methods() {
+    for catalog in [
+        all_controller_schemas(),
+        all_registered_controllers()
+            .into_iter()
+            .map(|controller| controller.schema)
+            .collect(),
+    ] {
+        let names: Vec<_> = catalog
+            .iter()
+            .map(|schema| {
+                assert_eq!(schema.namespace, "threads", "{}", schema.function);
+                schema.function
+            })
+            .collect();
+        assert_eq!(names.len(), ALL_FUNCTIONS.len());
+        for expected in ALL_FUNCTIONS {
+            assert!(names.contains(expected), "missing method {expected}");
+        }
+    }
+}
+
+#[test]
+fn upsert_bound_parser_accepts_owned_examples_and_requires_declared_fields() {
+    let entry = all_controller_entries()
         .into_iter()
-        .map(|s| s.function)
+        .find(|controller| controller.schema.method_name() == "threads.upsert")
+        .expect("threads.upsert is registered");
+    let required = ["id", "title", "created_at"];
+    let required_in_schema: Vec<_> = entry
+        .schema
+        .inputs
+        .iter()
+        .filter(|field| field.required)
+        .map(|field| field.name)
         .collect();
-    assert_eq!(names.len(), ALL_FUNCTIONS.len());
-    for expected in ALL_FUNCTIONS {
-        assert!(names.contains(expected), "missing schema for {expected}");
-    }
-}
+    assert_eq!(required_in_schema, required);
 
-#[test]
-fn all_registered_controllers_has_handler_per_schema() {
-    let controllers = all_registered_controllers();
-    assert_eq!(controllers.len(), ALL_FUNCTIONS.len());
-    let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
-    for expected in ALL_FUNCTIONS {
-        assert!(names.contains(expected), "missing handler for {expected}");
+    let examples = [
+        json!({"id":"t1", "title":"Hello", "created_at":"2026-04-22T00:00:00Z"}),
+        json!({"id":"t2", "title":"Thread", "created_at":"2026-04-22T00:00:00Z", "labels":["work"]}),
+    ];
+    for example in examples {
+        let params = obj(example);
+        crate::core::all::validate_params(&entry.schema, &params)
+            .expect("registered schema accepts the independent example");
+        entry
+            .decode_params(params)
+            .expect("the runtime-bound parser accepts the same example");
     }
-}
 
-#[test]
-fn every_schema_uses_threads_namespace() {
-    for s in all_controller_schemas() {
-        assert_eq!(
-            s.namespace, "threads",
-            "schema {} wrong namespace",
-            s.function
-        );
-    }
-}
+    let mut missing_schema_field = entry.schema.clone();
+    missing_schema_field
+        .inputs
+        .retain(|field| field.name != "created_at");
+    let missing_required: Vec<_> = missing_schema_field
+        .inputs
+        .iter()
+        .filter(|field| field.required)
+        .map(|field| field.name)
+        .collect();
+    assert_ne!(missing_required, required);
 
-#[test]
-fn unknown_function_returns_fallback() {
-    let s = schemas("no_such_fn");
-    assert_eq!(s.function, "unknown");
-    assert_eq!(s.namespace, "threads");
+    let mut optional_schema_field = entry.schema.clone();
+    optional_schema_field
+        .inputs
+        .iter_mut()
+        .find(|field| field.name == "created_at")
+        .expect("the contract field is declared")
+        .required = false;
+    let optional_required: Vec<_> = optional_schema_field
+        .inputs
+        .iter()
+        .filter(|field| field.required)
+        .map(|field| field.name)
+        .collect();
+    assert_ne!(optional_required, required);
 }
 
 // ── parse::<T>(params) contract ─────────────────────────────────────

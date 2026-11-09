@@ -1,209 +1,150 @@
-//! Role → configured provider-string resolution (`provider_for_role`) plus the
-//! managed-credits bypass check and the `<model>[@<temp>]` suffix parser.
+//! Host facts supplied to TinyAgents' generic workload router.
 
 use super::*;
-use crate::inference::provider::fallback_diagnostics;
+use tinyagents_registry::router::{
+    DefaultModelRoute, FallbackDiagnostics, RouteSource, WorkloadRouter,
+};
 
-/// The provider route a role has **explicitly** configured, before any
-/// fallback.
-///
-/// Split out of [`provider_for_role`] so the fallback machinery can ask the
-/// same question the router asks — "did the user route this role anywhere?" —
-/// without re-deriving the role→config-field mapping and drifting from it.
+static WORKLOAD_ROUTER: std::sync::LazyLock<WorkloadRouter> =
+    std::sync::LazyLock::new(|| WorkloadRouter::from_workload_routes("hint:vision"));
+
+/// Config-backed facts that the generic router needs from the host.
+pub(crate) struct ConfigRouteSource<'a> {
+    config: &'a Config,
+    provider_id: &'a str,
+    extensions: Option<Option<&'a crate::core::slots::Extensions>>,
+    primary_cloud_route: String,
+    managed_default_model: Option<String>,
+}
+
+impl<'a> ConfigRouteSource<'a> {
+    pub(crate) fn new(config: &'a Config, provider_id: &'a str) -> Self {
+        Self::with_extension_selection(config, provider_id, None)
+    }
+
+    pub(crate) fn with_extension_selection(
+        config: &'a Config,
+        provider_id: &'a str,
+        extensions: Option<Option<&'a crate::core::slots::Extensions>>,
+    ) -> Self {
+        Self {
+            config,
+            provider_id,
+            extensions,
+            primary_cloud_route: crate::config::ops::resolve_primary_cloud_provider_string(config),
+            managed_default_model: None,
+        }
+    }
+
+    pub(crate) fn with_managed_default_model(mut self, model: Option<String>) -> Self {
+        self.managed_default_model = model;
+        self
+    }
+}
+
+impl RouteSource for ConfigRouteSource<'_> {
+    fn configured_route_for_role(&self, role: &str) -> Option<&str> {
+        configured_route_for_role(role, self.config)
+    }
+
+    fn primary_cloud_route(&self) -> &str {
+        &self.primary_cloud_route
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        self.config.default_model.as_deref()
+    }
+
+    fn classify_default_model_route(&self, model: &str) -> DefaultModelRoute {
+        if is_explicit_provider_default(model, self.config) {
+            DefaultModelRoute::ExplicitProvider
+        } else if model.trim().starts_with("openrouter/") {
+            DefaultModelRoute::ManagedCatalog
+        } else {
+            DefaultModelRoute::Other
+        }
+    }
+
+    fn is_managed_route(&self, route: &str) -> bool {
+        let route = route.trim();
+        route.is_empty()
+            || route == "cloud"
+            || route == PROVIDER_OPENHUMAN
+            || route == BYOK_INCOMPLETE_SENTINEL
+            || route == self.provider_id
+    }
+
+    fn managed_default_model(&self) -> Option<&str> {
+        self.managed_default_model.as_deref()
+    }
+
+    fn legacy_tier_role(&self, tier: &str) -> Option<&str> {
+        let role = match self.extensions {
+            None => crate::inference::registry::provider_model_role(self.provider_id, tier),
+            Some(extensions) => crate::inference::registry::provider_model_role_for(
+                extensions,
+                self.provider_id,
+                tier,
+            ),
+        };
+        role.and_then(|role| {
+            crate::config::WORKLOAD_ROLES
+                .iter()
+                .copied()
+                .find(|known| *known == role)
+        })
+    }
+}
+
+/// Explicit route configured for a workload role, before fallback resolution.
 pub(super) fn configured_route_for_role<'a>(role: &str, config: &'a Config) -> Option<&'a str> {
     match role {
         "chat" => config.chat_provider.as_deref(),
         "reasoning" => config.reasoning_provider.as_deref(),
-        "agentic" => config.agentic_provider.as_deref(),
+        "agentic" | "burst" => config.agentic_provider.as_deref(),
         "coding" => config.coding_provider.as_deref(),
-        // Burst uses the existing Agentic workload route for BYOK/local parity.
-        // If unset, it falls through to the managed backend and is pinned to
-        // `hint:burst` by `managed_tier_for_role`.
-        "burst" => config.agentic_provider.as_deref(),
-        // Tier-specific multimodal model; when unset it falls through to
-        // `primary_cloud` (→ managed `hint:vision`), as every unset route now does.
         "vision" => config.vision_provider.as_deref(),
-        // `memory_provider` routes the summarizer sub-agent (whose definition
-        // declares `hint = "summarization"`): "produce a condensed
-        // representation of input text".
         "memory" | "summarization" => config.memory_provider.as_deref(),
         "embeddings" => config.embeddings_provider.as_deref(),
         _ => None,
     }
 }
 
-/// Whether `role` reached a cloud slug by *implicit fallback* rather than by an
-/// explicit route.
-///
-/// True only when the role is one of the cloud-fallback background roles **and**
-/// its own route is unset (or the literal `"cloud"`). An explicitly configured
-/// cloud route — say `vision_provider = "anthropic:claude-…"` — is not a
-/// fallback, so a credential failure there must not be explained as "your local
-/// chat model cannot do this".
-pub(crate) fn role_uses_implicit_cloud_fallback(role: &str, config: &Config) -> bool {
-    if !fallback_diagnostics::role_falls_back_to_cloud(role) {
-        return false;
-    }
-    let route = configured_route_for_role(role, config).unwrap_or("").trim();
-    route.is_empty() || route == "cloud"
+/// Shared workload routing policy, with product-specific facts supplied here.
+pub(crate) fn workload_router() -> &'static WorkloadRouter {
+    &WORKLOAD_ROUTER
 }
 
-/// Return the configured provider string for a named workload role.
-///
-/// Empty / `"cloud"` resolves through `primary_cloud`. **Every** role behaves
-/// this way, and no role uses a sibling's BYOK provider as a fallback.
-///
-/// "Resolves through `primary_cloud`" is not the same as "goes to the managed
-/// backend": [`resolve_primary_cloud_provider_string`] may yield a legacy
-/// external `inference_url` (see below), or the fail-closed sentinel for a
-/// half-migrated BYOK config. The guarantee here is narrower and exact — an
-/// unset route does not borrow a *sibling's* configured provider.
-///
-/// The deliberate *aliases* in [`configured_route_for_role`] are unaffected and
-/// remain: `burst` reads `agentic_provider` and `summarization` reads
-/// `memory_provider`. Those are two names for one configured route, which is a
-/// different thing from an unset route borrowing a set one.
-///
-/// Until #6109 the three chat-tier roles (`chat`, `reasoning`, `coding`) took a
-/// configured BYOK provider from *any* sibling first, so setting one route moved
-/// the other two onto that key — a user who pointed only `coding_provider` at
-/// their own OpenRouter account found ordinary chat billed there too, with no
-/// setting saying so. Each route now stands alone.
-///
-/// For backwards compatibility, a legacy external `inference_url` takes
-/// precedence when `primary_cloud` still points at OpenHuman because
-/// migration 1→2 preserved the URL as a custom provider entry but older
-/// configs did not explicitly set per-workload routes.
-// keep until v0.66 (review after 2027-01-11): inference_url remains a supported
-// config.update input, and unfinished BYOK upgrades must not change billing route.
+/// Route a role through the native workload router.
 pub fn provider_for_role(role: &str, config: &Config) -> String {
-    let opt = configured_route_for_role(role, config);
-    let s = opt.unwrap_or("").trim();
-    if s.is_empty() || s == "cloud" {
-        // #6109: an unset chat-tier route no longer inherits a sibling's BYOK
-        // provider. Setting only `coding_provider` used to move `chat` and
-        // `reasoning` onto that key too — ordinary conversations silently billed
-        // to the user's own account, with no settings field saying so. Each
-        // route now stands alone and an unset one falls through to the managed
-        // backend, the same as every other workload.
-
-        // #6938: the Chat UI model picker records its selection in
-        // `config.default_model` (the web-chat turn path stores the per-turn
-        // `model_override` there — see `build_session_agent`), but role
-        // resolution never consulted it, so a picked BYOK/local model still
-        // fell through to the managed backend and 401'd as "session expired".
-        // When the default names an explicit provider route, honour it here
-        // instead of the managed fallback.
-        if let Some(route) = default_model_route_for_role(role, config) {
+    let source = ConfigRouteSource::new(config, PROVIDER_OPENHUMAN);
+    let resolved = WORKLOAD_ROUTER.provider_for_role(role, &source);
+    if let Some(diagnostic) = WORKLOAD_ROUTER.fallback_diagnostics(role, &source) {
+        if let Some(chat) = config
+            .chat_provider
+            .as_deref()
+            .filter(|chat| tinyinference_local::profile::is_local_provider_string(chat))
+        {
             log::info!(
-                "[providers][default-model-route] role={} route={}",
+                "[providers][local-fallback] role={} {}",
                 role,
-                route
+                crate::inference::provider::fallback_diagnostics::cloud_fallback_notice(
+                    &diagnostic,
+                    chat,
+                )
             );
-            return route;
         }
-
-        let resolved = resolve_primary_cloud_provider_string(config);
-
-        // #5146 §2.1: the fallback itself is correct and stays — background
-        // workloads run tier-specific models that local runtimes don't serve,
-        // and a local-chat + managed-subscription user genuinely wants them on
-        // the cloud. What was missing is the *explanation*: when this route
-        // later fails for want of a key, the user saw a bare slug-level auth
-        // error naming a provider they never configured. Emit the same
-        // user-facing sentence the error path uses, so the routing decision is
-        // visible in logs and support transcripts before anything goes wrong.
-        if fallback_diagnostics::role_falls_back_to_cloud(role) {
-            if let Some(chat) = config.chat_provider.as_deref() {
-                if tinyinference_local::profile::is_local_provider_string(chat) {
-                    log::info!(
-                        "[providers][local-fallback] role={} {}",
-                        role,
-                        fallback_diagnostics::cloud_fallback_notice(role, chat, &resolved)
-                    );
-                }
-            }
-        }
-
-        resolved
-    } else {
-        s.to_string()
     }
+    resolved
 }
 
-/// #6938: the provider route named by `config.default_model`, if it names an
-/// explicit provider rather than a model for the managed backend.
-///
-/// The Chat UI model picker (both the composer's per-turn pick, stored in
-/// `default_model` by `build_session_agent`, and a hand-set `default_model`
-/// in `config.toml`) records selections like `my-openai:gpt-4o` there, but
-/// role resolution never consulted it — the turn fell through to the managed
-/// backend regardless. Only the chat-tier roles consult the default: a
-/// chat-model pick says nothing about which model should do vision or
-/// summarization, so the background specialist roles keep their managed
-/// fallback.
-///
-/// Returns `None` (managed fallback unchanged) for everything that is not an
-/// explicit route: tier hints (`hint:chat`), the AI settings row's managed
-/// catalog pin (`openrouter/<author>/<slug>[:tag]` — a model name for the
-/// managed backend, see `DefaultModelRow.tsx`), bare model ids, and slugs
-/// that name no configured provider. The one bare provider name that is
-/// honoured is `claude_agent_sdk`: unlike local runtimes and cloud slugs,
-/// which need a `:model` part to construct, the SDK falls back to
-/// `config.claude_agent_sdk.default_model` (see
-/// `claude_agent_sdk_model_from_string`).
-fn default_model_route_for_role(role: &str, config: &Config) -> Option<String> {
-    match role {
-        "chat" | "reasoning" | "agentic" | "coding" | "burst" => {}
-        _ => return None,
-    }
-    let dm = config.default_model.as_deref()?.trim();
-    if dm.is_empty() || dm.starts_with("hint:") || dm.starts_with("openrouter/") {
-        return None;
-    }
-    // Bare `claude_agent_sdk` is the only bare provider name honoured here:
-    // the SDK resolves its model from `config.claude_agent_sdk.default_model`
-    // (see `claude_agent_sdk_model_from_string`), while bare local runtimes
-    // (`ollama`, ...) and bare cloud slugs carry no `:model` part and fail
-    // at construction — they keep the managed fallback rather than erroring
-    // (tinysweeper review on #6996; CodeRabbit review on #6996).
-    if !dm.contains(':') {
-        return (dm == CLAUDE_AGENT_SDK_PROVIDER).then(|| dm.to_string());
-    }
-    let (slug, rest) = dm.split_once(':')?;
-    let slug = slug.trim();
-    if slug.is_empty() || slug == PROVIDER_OPENHUMAN || rest.trim().is_empty() {
-        return None;
-    }
-    let known = config.cloud_providers.iter().any(|e| e.slug == slug)
-        || tinyinference_local::profile::is_local_provider_string(dm)
-        || dm.starts_with(tinyagents_harness::providers::claude_code::PROVIDER_PREFIX)
-        || dm.starts_with(CLAUDE_AGENT_SDK_PREFIX);
-    known.then(|| dm.to_string())
-}
-
-/// #3767: Whether the OpenHuman managed-credits gate should be bypassed for a
-/// single workload role.
-///
-/// Returns true when `role` resolves (via [`provider_for_role`]) to a non-managed
-/// provider the user funds themselves — a BYO cloud key (incl. OpenAI OAuth), a
-/// local runtime, or claude-code — with usable credentials. When the role is on
-/// the OpenHuman managed backend, or a BYO route has no usable key, it returns
-/// false (the gate stays on; #3767: "BYO key present but invalid/unverified →
-/// still gated").
-///
-/// The gate is evaluated per-tier so the UI can check the tier the user actually
-/// selected: the chat header's "Quick" mode runs on the `chat` tier and
-/// "Reasoning" mode on the `reasoning` tier, so each is checked respectively.
-/// These per-role results are surfaced under `credits_bypass` in the
-/// client-config snapshot. Tiers that stay managed and run anyway surface the
-/// per-call `USER_INSUFFICIENT_CREDITS` (402) error reactively.
-pub fn role_bypasses_managed_credits(role: &str, config: &Config) -> bool {
+/// Whether the role's selected provider can be funded directly by the user.
+pub async fn role_bypasses_managed_credits(role: &str, config: &Config) -> bool {
     let resolved = provider_for_role(role, config);
     let r = resolved.trim();
     let is_managed =
         r.is_empty() || r == "cloud" || r == PROVIDER_OPENHUMAN || r == BYOK_INCOMPLETE_SENTINEL;
-    let usable_byo = !is_managed && route_has_usable_credentials(r, config);
+    let usable_byo = !is_managed && route_has_usable_credentials(r, config).await;
     log::debug!(
         "[billing] role_bypasses_managed_credits role={role} resolved={resolved} \
          is_managed={is_managed} usable_byo={usable_byo}"
@@ -211,14 +152,47 @@ pub fn role_bypasses_managed_credits(role: &str, config: &Config) -> bool {
     usable_byo
 }
 
+/// Native route metadata drives the branded explanation; this helper only
+/// determines whether the host should attach that explanation to an error.
+pub(crate) fn fallback_diagnostics_for_role(
+    role: &str,
+    config: &Config,
+) -> Option<FallbackDiagnostics> {
+    let source = ConfigRouteSource::new(config, PROVIDER_OPENHUMAN);
+    WORKLOAD_ROUTER.fallback_diagnostics(role, &source)
+}
+
+/// Kept until v0.66; review after 2027-01-11 before removing legacy
+/// `inference_url` route compatibility from the host's route source.
+fn is_explicit_provider_default(model: &str, config: &Config) -> bool {
+    let model = model.trim();
+    if model.is_empty() || model.starts_with("hint:") || model.starts_with("openrouter/") {
+        return false;
+    }
+    if !model.contains(':') {
+        return model == CLAUDE_AGENT_SDK_PROVIDER;
+    }
+    let Some((slug, rest)) = model.split_once(':') else {
+        return false;
+    };
+    let slug = slug.trim();
+    !slug.is_empty()
+        && slug != PROVIDER_OPENHUMAN
+        && !rest.trim().is_empty()
+        && (config
+            .cloud_providers
+            .iter()
+            .any(|entry| entry.slug == slug)
+            || tinyinference_local::profile::is_local_provider_string(model)
+            || model.starts_with(tinyagents_harness::providers::claude_code::PROVIDER_PREFIX)
+            || model.starts_with(CLAUDE_AGENT_SDK_PREFIX))
+}
+
 /// True when a resolved chat-tier provider string can actually run on the
 /// user's own funding: local runtimes / claude-code carry their own creds; a
-/// concrete cloud slug requires a non-empty stored key. Managed/sentinel
-/// strings are filtered by the caller and never reach here as "usable".
-pub(super) fn route_has_usable_credentials(resolved: &str, config: &Config) -> bool {
+/// concrete cloud slug requires a non-empty stored key.
+pub(super) async fn route_has_usable_credentials(resolved: &str, config: &Config) -> bool {
     let r = resolved.trim();
-    // Local runtimes (ollama/lmstudio/mlx/local-openai) and the local CLI
-    // delegates carry their own credentials / run on-device.
     if tinyinference_local::profile::is_local_provider_string(r)
         || r.starts_with(tinyagents_harness::providers::claude_code::PROVIDER_PREFIX)
         || r == CLAUDE_AGENT_SDK_PROVIDER
@@ -226,14 +200,10 @@ pub(super) fn route_has_usable_credentials(resolved: &str, config: &Config) -> b
     {
         return true;
     }
-    // Concrete cloud slug "<slug>:<model>" — require a usable stored key.
     if let Some((slug, _)) = r.split_once(':') {
         let slug = slug.trim();
         if !slug.is_empty() {
-            // Don't silently swallow auth-store / OAuth lookup failures — a
-            // transient Err would otherwise keep the credits gate on for a
-            // valid BYO setup with no diagnostics. Log and treat as not-usable.
-            match lookup_key_for_slug(slug, config) {
+            match lookup_key_for_slug(slug, config).await {
                 Ok(key) => {
                     let usable = !key.trim().is_empty();
                     log::debug!(
@@ -241,9 +211,9 @@ pub(super) fn route_has_usable_credentials(resolved: &str, config: &Config) -> b
                     );
                     return usable;
                 }
-                Err(e) => {
+                Err(error) => {
                     log::debug!(
-                        "[billing] route_has_usable_credentials slug={slug} lookup_error={e}"
+                        "[billing] route_has_usable_credentials slug={slug} lookup_error={error}"
                     );
                     return false;
                 }
@@ -251,6 +221,26 @@ pub(super) fn route_has_usable_credentials(resolved: &str, config: &Config) -> b
         }
     }
     false
+}
+
+/// `provider` with its model replaced by `model`, when one is given: the same
+/// provider (and so the same credentials, endpoint and route temperature)
+/// serving another model. A provider string with no model of its own (a
+/// routing sentinel such as `cloud`, or the managed backend's bare
+/// `openhuman`) is returned as is; those routes take the model from the
+/// request's pin instead.
+pub(super) fn route_with_model(provider: String, model: Option<&str>) -> String {
+    use tinyinference_providers::route::{ProviderRoute, RouteKind};
+    let Some(model) = model else {
+        return provider;
+    };
+    match ProviderRoute::parse(&provider) {
+        Some(route) if route.kind() != RouteKind::Sentinel => match route.temperature {
+            Some(temperature) => format!("{}:{model}@{temperature}", route.provider),
+            None => format!("{}:{model}", route.provider),
+        },
+        _ => provider,
+    }
 }
 
 #[cfg(test)]

@@ -3,9 +3,8 @@
 //!
 //! Each profile runs the hosted `tinyhumans` engine with its own credential,
 //! confined to `user:<id>` on the legacy layout (`profiles::layout`). The
-//! mock keeps one store for every bearer, so nothing but the core's own
-//! confinement keeps the profiles apart: the case `memory::user_scope`
-//! defends, users sharing one engine.
+//! mock keeps one store for every bearer, so the core's `Policy::Clamp`
+//! boundary in `memory::ops` keeps users sharing one engine apart.
 //!
 //! `ann` and `anna` are deliberate: one root is a string prefix of the
 //! other, and a scope listing is a string-prefix match.

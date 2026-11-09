@@ -32,6 +32,13 @@ channels
 # The media_generate_* agent tools.
 media
 
+# WhatsApp Web (linked-device) channel provider. The adapter itself lives in the
+# loaded tinychannels module and is a native v2 adapter (typed media, push-to-talk
+# voice notes, reactions, quoted replies, read receipts, edit and unsend); this
+# gate marks the product as shipping it, and reports it in the runtime feature
+# list. Implies `channels`. WhatsApp Cloud needs no gate of its own: its webhook
+# POSTs reach the module through the host's HTTP route.
+
 # Compatibility marker for inference-backed features. Native microphone
 # permission checks execute through TinyComputer; `voice` requires this gate.
 inference
@@ -54,6 +61,7 @@ documents
 # this build trusts, and the `modules` RPC namespace. Required by `documents` —
 # without it the document tools have nothing to call.
 modules
+security-module
 
 # Saved automation graphs: create/run/schedule + the workflow_builder and
 # flow_discovery agents.
@@ -95,16 +103,23 @@ hosting
 # Memory v2 has no gate: the `memory` domain is always compiled, and with no
 # usable engine (signed out, no CortexDB key) it reports itself off at runtime.
 
-# TinyMemes final-reply remix (region slang, reaction memes). Compiled in so a
-# release can turn it on; still off at runtime until OPENHUMAN_TINYMEMES (or a
-# build-time OPENHUMAN_TINYMEMES_DEFAULT) enables it.
-tinymemes
+# Inbound event queues: Composio triggers and agent webhooks are ingested into
+# the tinyeventqueues module, which persists, deduplicates, filters and paces
+# them and calls the host back to run triage. Runtime switches:
+# [components] eventqueues and [inbound] enabled.
+inbound-queues
 
-# Storage driver for the default backend, `sqlite:<workspace>/storage`: every
+# Storage drivers for the default backend, `sqlite:<workspace>/storage`: every
 # store, the session store included, lives in it, and older installs' per-domain
 # databases and transcript files are imported into it once. Also serves
-# `sqlite:` in `[storage] url`. MongoDB is not part of the product.
+# `sqlite:` in `[storage] url`. Plain file storage supports local blobs.
+# MongoDB, S3 and RabbitMQ are opt-in deployment features.
 storage-sqlite
+storage-file
+
+# The process keyring's encrypted file backend is independent from storage-file.
+secret-file
+legacy-import
 
 # OS keychain providers owned by the RPC host layer.
 os-keyring

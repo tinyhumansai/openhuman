@@ -38,7 +38,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 | Git                     | Current stable                                             | Required for cloning and updating vendored submodules.                                                                                                       |
 | Node.js                 | `>=24.0.0` from [`app/package.json`](app/package.json)     | Install the current Node 24 release or newer.                                                                                                                |
 | pnpm                    | `pnpm@10.10.0` from [`package.json`](package.json)         | The repo enforces pnpm via the root `packageManager` field.                                                                                                  |
-| Rust                    | `1.96.1` from [`rust-toolchain.toml`](rust-toolchain.toml) | Install with `rustup`; `rustfmt` and `clippy` are required components.                                                                                       |
+| Rust                    | `1.99.1` from [`rust-toolchain.toml`](rust-toolchain.toml) | Install with `rustup`; `rustfmt` and `clippy` are required components.                                                                                       |
 | CMake                   | Current stable                                             | Optional. Only `aws-lc-sys` (via `rustls`) needs it, and only when the root workspace is built with non-default features; default builds do not use it.      |
 | Ninja                   | Current stable                                             | Required on Windows: `scripts/run-dev-win.sh` exits if `ninja` is not on PATH (it pins `CMAKE_GENERATOR=Ninja` for any CMake-driven crate).                  |
 | ripgrep (`rg`)          | Current stable                                             | Used by the `lint:commands-tokens` pre-push step (scans `app/src/components/commands/`). Without it, `git push` fails the hook with `rg: command not found`. |
@@ -59,8 +59,8 @@ Rust's `cargo` needs a linker on Windows. The easiest way to get one is during `
 Install the pinned toolchain and required components with `rustup`:
 
 ```powershell
-rustup toolchain install 1.96.1 --profile minimal
-rustup component add rustfmt clippy --toolchain 1.96.1
+rustup toolchain install 1.99.1 --profile minimal
+rustup component add rustfmt clippy --toolchain 1.99.1
 ```
 
 **3. CMake and Ninja**
@@ -109,8 +109,8 @@ Example macOS bootstrap with Homebrew:
 
 ```bash
 brew install node@24 pnpm rustup-init ripgrep
-rustup toolchain install 1.96.1 --profile minimal
-rustup component add rustfmt clippy --toolchain 1.96.1
+rustup toolchain install 1.99.1 --profile minimal
+rustup component add rustfmt clippy --toolchain 1.99.1
 ```
 
 ### 2. Clone and install

@@ -40,13 +40,15 @@ mod contract_tests;
 
 mod records_computer;
 mod records_docs_wallet;
+#[cfg(feature = "inbound-queues")]
+mod records_eventqueues;
 mod records_extra;
 mod records_flows;
 mod records_mcp_connectors;
-#[cfg(feature = "tinymemes")]
-mod records_memes;
 mod records_memory_juice;
 mod records_search;
+#[cfg(feature = "security-module")]
+mod records_security;
 mod records_voice;
 
 use crate::modules::types::ModuleRecord;
@@ -55,6 +57,8 @@ use records_computer::TINYCOMPUTER;
 use records_docs_wallet::TINYDOCS;
 #[cfg(feature = "web3")]
 use records_docs_wallet::TINYWALLET;
+#[cfg(feature = "inbound-queues")]
+use records_eventqueues::TINYEVENTQUEUES;
 #[cfg(feature = "modules")]
 use records_extra::TINYBOX;
 use records_extra::TINYCHANNELS;
@@ -62,19 +66,21 @@ use records_extra::TINYCHANNELS;
 use records_extra::TINYHOSTS;
 use records_flows::TINYFLOWS;
 use records_mcp_connectors::{TINYCONNECTORS, TINYMCP};
-#[cfg(feature = "tinymemes")]
-use records_memes::TINYMEMES;
 use records_memory_juice::TINYJUICE;
 use records_search::TINYSEARCH;
+#[cfg(feature = "security-module")]
+use records_security::TINYSECURITY;
 #[cfg(feature = "voice")]
 use records_voice::TINYVOICE;
 
 /// Every module this build can load. The records whose contract crate is an
-/// optional dependency (`documents`, `web3`, `voice`, `hosting`, `tinymemes`) exist only when
-/// that gate is on; a product-feature build carries all thirteen.
+/// optional dependency (`documents`, `web3`, `voice`, `hosting`, `inbound-queues`) exist
+/// only when that gate is on; a product-feature build carries all thirteen.
 pub const ALL: &[ModuleRecord] = &[
     TINYCOMPUTER,
     TINYSEARCH,
+    #[cfg(feature = "security-module")]
+    TINYSECURITY,
     #[cfg(feature = "documents")]
     TINYDOCS,
     #[cfg(feature = "web3")]
@@ -90,8 +96,8 @@ pub const ALL: &[ModuleRecord] = &[
     TINYFLOWS,
     #[cfg(feature = "hosting")]
     TINYHOSTS,
-    #[cfg(feature = "tinymemes")]
-    TINYMEMES,
+    #[cfg(feature = "inbound-queues")]
+    TINYEVENTQUEUES,
 ];
 
 /// The record for `id`, if this build knows it.
@@ -115,8 +121,9 @@ pub fn release_records() -> Vec<&'static tinybus::module::ReleaseRecord> {
 
 /// Which `[components]` switch owns each module id.
 ///
-/// Every record in [`ALL`] has an entry (`registry_tests` enforces it), so a
-/// module is never exempt from a disabled component by omission.
+/// Every component-owned record in [`ALL`] has an entry (`registry_tests`
+/// enforces it). TinySecurity is controlled by the global module switch until
+/// a product component owns its caller migration.
 pub const COMPONENT_OF: &[(&str, &str)] = &[
     ("tinycomputer", "computer"),
     ("tinysearch", "search"),
@@ -130,7 +137,7 @@ pub const COMPONENT_OF: &[(&str, &str)] = &[
     ("tinychannels", "channels"),
     ("tinyflows", "tinyflows"),
     ("tinyhosts", "hosting"),
-    ("tinymemes", "memes"),
+    ("tinyeventqueues", "eventqueues"),
 ];
 
 /// The `[components]` name that owns module `id`, if the table knows it.

@@ -27,21 +27,24 @@ pub mod auth_error_registry;
 pub(crate) mod context_window;
 pub mod embedding_host;
 pub(crate) mod failure_copy;
+pub(crate) mod host_controls;
 pub mod host_runtime;
 pub mod http;
 pub mod model_context;
 pub mod ops;
 pub mod provider;
+pub mod provider_model;
+pub mod readiness;
 pub(crate) mod reasoning;
 pub mod registry;
+pub(crate) mod schema_fields;
 mod schemas;
 pub mod tokenjuice;
 pub mod turn_models;
 
-pub use ops as rpc;
 pub use schemas::{
     all_controller_schemas as all_inference_controller_schemas,
-    all_registered_controllers as all_inference_registered_controllers, INFERENCE_AGENT_CHAT,
+    all_registered_controllers as all_inference_registered_controllers,
 };
 
 // Re-export the types that external callers (voice, agent, etc.) import from inference
@@ -119,10 +122,6 @@ impl tinyinference_local::models::LocalModelConfig for crate::config::Config {
         &self.local_ai.tts_voice_id
     }
 }
-
-#[cfg(test)]
-#[path = "registry_test_support_tests.rs"]
-pub(crate) mod registry_test_support;
 
 // Test helpers (re-exported for sibling test files that use inference_test_guard)
 #[cfg(test)]

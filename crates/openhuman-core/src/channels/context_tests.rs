@@ -32,6 +32,7 @@ fn runtime_context() -> ChannelRuntimeContext {
     ChannelRuntimeContext {
         relay_thread: None,
         channels_by_name: Arc::new(HashMap::new()),
+        module_objects: Arc::new(HashMap::new()),
         turn_model_source: Some(crate::agent::tinyagents::TurnModelSource::from_model(model)),
         default_provider: Arc::new("default".into()),
         tools_registry: Arc::new(vec![Box::new(DummyTool) as Box<dyn Tool>]),
@@ -39,13 +40,11 @@ fn runtime_context() -> ChannelRuntimeContext {
         model: Arc::new("model".into()),
         temperature: 0.0,
         max_tool_iterations: 1,
-        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
         turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: None,
         inference_url: None,
         reliability: Arc::new(crate::config::ReliabilityConfig::default()),
-        provider_runtime_options: crate::inference::provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(PathBuf::from("/tmp")),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::config::MultimodalConfig::default(),
@@ -57,6 +56,8 @@ fn runtime_context() -> ChannelRuntimeContext {
 
 fn channel_message(channel: &str) -> traits::ChannelMessage {
     traits::ChannelMessage {
+        reply_to_id: None,
+        topic_id: None,
         channel: channel.into(),
         sender: "alice".into(),
         content: "hello".into(),
@@ -70,11 +71,7 @@ fn channel_message(channel: &str) -> traits::ChannelMessage {
 
 #[test]
 fn timeout_and_history_keys_respect_channel_rules() {
-    assert_eq!(
-        effective_channel_message_timeout_secs(10),
-        MIN_CHANNEL_MESSAGE_TIMEOUT_SECS
-    );
-    assert_eq!(effective_channel_message_timeout_secs(120), 120);
+    const { assert!(CHANNEL_MESSAGE_TIMEOUT_SECS >= MIN_CHANNEL_MESSAGE_TIMEOUT_SECS) };
 
     let telegram = channel_message("telegram");
     let discord = channel_message("discord");
@@ -83,38 +80,6 @@ fn timeout_and_history_keys_respect_channel_rules() {
         conversation_history_key(&discord),
         "discord_alice_reply_thread:thread-1"
     );
-}
-
-#[test]
-fn clear_and_compact_sender_history_update_cached_messages() {
-    let ctx = runtime_context();
-    let sender = "discord_alice_reply_thread:thread-1";
-    let mut history = Vec::new();
-    history.push(tinychannels_bus::context::ChatMessage::user("short"));
-    history.extend(
-        (0..20).map(|idx| tinychannels_bus::context::ChatMessage::assistant("x".repeat(700 + idx))),
-    );
-    ctx.conversation_histories
-        .lock()
-        .unwrap()
-        .insert(sender.into(), history);
-
-    assert!(compact_sender_history(&ctx.conversation_histories, sender));
-    {
-        let compacted = ctx.conversation_histories.lock().unwrap();
-        let compacted = compacted.get(sender).unwrap();
-        assert_eq!(compacted.len(), CHANNEL_HISTORY_COMPACT_KEEP_MESSAGES);
-        assert!(compacted.iter().all(|msg| {
-            msg.content.chars().count() <= CHANNEL_HISTORY_COMPACT_CONTENT_CHARS + 3
-        }));
-    }
-
-    clear_sender_history(&ctx.conversation_histories, sender);
-    assert!(!ctx
-        .conversation_histories
-        .lock()
-        .unwrap()
-        .contains_key(sender));
 }
 
 #[tokio::test]

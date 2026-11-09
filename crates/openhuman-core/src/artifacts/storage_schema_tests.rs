@@ -73,5 +73,7 @@ fn a_versioned_record_gets_snake_case_keys_and_ms_times() {
 
 #[test]
 fn the_schema_composes_under_its_owner() {
-    tinystoragedrivers::schema::Registry::compose([storage_schema()]).unwrap();
+    for spec in collection_specs() {
+        spec.validate().unwrap();
+    }
 }

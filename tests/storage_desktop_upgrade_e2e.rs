@@ -15,9 +15,7 @@
 //! * no file of the workspace was modified, created or removed.
 //!
 //! Its own binary: it installs a storage backend into the process-wide slot and
-//! sets the keyring master key. Each driver is its own case
-//! (`support/storage_drivers.rs`), so the MongoDB case runs in the
-//! `storage-mongodb` workflow against the replica set.
+//! sets the keyring master key.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -25,21 +23,33 @@ use std::time::{Duration, SystemTime};
 
 use openhuman_core::config::Config;
 use openhuman_core::storage::import::{self, Outcome};
-use openhuman_core::storage::{rusqlite, DocumentStoreExt, Scope, ScopedStorage, StorageBackend};
+use openhuman_core::storage::{rusqlite, DocumentStoreExt, Scope, Storage, StorageBackend};
 use sha2::Digest;
 use tinyagents_session::transcript::{session_stem, SessionRef, TranscriptMessage, TranscriptMeta};
 use tinyagents_session::turn_state::TurnState;
-use tinystoragedrivers_core::{Capability, Query};
+use tinystoragedrivers::Query;
 
 // The classic-transcript fixture writer, shared with the core's unit tests.
 #[path = "../crates/openhuman-core/src/util/classic_transcript_fixture.rs"]
 mod classic_transcript_fixture;
 
-#[macro_use]
-#[path = "support/storage_drivers.rs"]
-mod storage_drivers;
+#[path = "support/linked_modules.rs"]
+mod linked_modules;
+#[path = "support/storage_case.rs"]
+mod storage_case;
 
-use storage_drivers::Case;
+use storage_case::Case;
+
+#[cfg(unix)]
+fn make_workspace_private(workspace: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(workspace, std::fs::Permissions::from_mode(0o700))
+        .expect("make the test workspace private");
+}
+
+#[cfg(not(unix))]
+fn make_workspace_private(_workspace: &Path) {}
 
 /// The committed tinyflows workspace (written by the retired tinyflows-sqlite
 /// writers): flows, revisions, runs, drafts, checkpoints and cron jobs.
@@ -120,6 +130,7 @@ fn legacy_sessions(workspace: &Path) {
         updated: "2026-01-01T00:00:00Z".into(),
         turn_count: 1,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,
@@ -331,7 +342,7 @@ fn desktop_workspace(workspace: &Path) -> Fixture {
     // x402 payment ledger: a payment that changed status appears twice.
     let payment = |id: &str, status: &str| {
         format!(
-            r#"{{"id":"{id}","url":"https://api.example/x","asset":"0xusdc","amountAtomic":2500,"amountDisplay":"0.002500 USDC","recipient":"0xpayee","network":"eip155:8453","txSignature":null,"status":"{status}","timestamp":"2026-10-12T10:00:00Z"}}"#
+            r#"{{"id":"{id}","url":"https://api.example/x","asset":"0xusdc","amountAtomic":2500,"amountDisplay":"0.002500 USDC","recipient":"0xpayee","network":"eip155:8453","txSignature":null,"status":"{status}","timestamp":"2026-10-12T10:00:00Z","sessionId":"s1"}}"#
         )
     };
     write(
@@ -382,13 +393,13 @@ fn desktop_workspace(workspace: &Path) -> Fixture {
     }
 }
 
-fn module_storage(backend: &dyn StorageBackend, module: &str) -> ScopedStorage {
+fn module_storage(backend: &dyn StorageBackend, module: &str) -> Storage {
     backend
         .for_scope(&Scope::local().module(module).unwrap())
         .unwrap()
 }
 
-async fn count(scoped: &ScopedStorage, collection: &str) -> usize {
+async fn count(scoped: &Storage, collection: &str) -> usize {
     scoped
         .documents()
         .query_all(collection, &Query::all())
@@ -402,19 +413,16 @@ async fn host_documents(backend: &dyn StorageBackend) -> usize {
     let docs = backend.for_scope(&Scope::local()).unwrap();
     let mut total = 0;
     // The importers write the v2 collections of the owners behind each source.
-    let owners: Vec<&str> = import::sources()
-        .iter()
-        .map(|source| source.owner)
-        .collect();
-    for schema in openhuman_core::storage::schema::owner_schemas() {
-        if !owners.contains(&schema.owner.as_str()) {
-            continue;
-        }
-        for item in &schema.items {
-            if let tinystoragedrivers_core::schema::Item::Collection { spec, .. } = item {
-                docs.documents().ensure_collection(spec).await.unwrap();
-                total += count(&docs, &spec.name).await;
-            }
+    let owners = openhuman_core::storage::schema::collection_owners().unwrap();
+    for source in import::sources() {
+        let prefix = format!("{}.", source.owner);
+        for spec in owners
+            .iter()
+            .flat_map(|owner| &owner.collections)
+            .filter(|spec| spec.name.starts_with(&prefix))
+        {
+            docs.documents().ensure_collection(spec).await.unwrap();
+            total += count(&docs, &spec.name).await;
         }
     }
     total
@@ -423,47 +431,33 @@ async fn host_documents(backend: &dyn StorageBackend) -> usize {
 async fn import_modules(workspace: &Path) {
     use openhuman_core::modules;
     let ctx = openhuman_core::core::runtime::DispatchCtx::process_default();
-    modules::import_legacy_mcp(&ctx, workspace).await;
+    modules::import_legacy_mcp(&ctx, workspace)
+        .await
+        .expect("import the legacy TinyMCP records");
     modules::import_legacy_connectors(&ctx, workspace).await;
     #[cfg(feature = "web3")]
     assert!(modules::import_legacy_x402(&ctx, workspace).await);
     modules::import_legacy_tinybox(&ctx, workspace).await;
-    modules::import_legacy_tinyjuice(
-        &ctx,
-        &workspace.join("ccr"),
-        Some(Duration::from_secs(3600)),
-    )
-    .await;
+    modules::import_legacy_tinyjuice(&ctx, &workspace.join("ccr"), None).await;
 }
 
-async fn a_desktop_upgrade_is_lossless_and_leaves_the_legacy_files_untouched(case: Case) {
-    // TinyAgents' run ledger imports `sessions.db` (and appends to it) with
-    // checked batches, which a driver without `ValidatedBatch` refuses.
-    let local = case.backend().for_scope(&Scope::local()).unwrap();
-    if !local
-        .documents()
-        .capabilities()
-        .contains(Capability::ValidatedBatch)
-    {
-        // Written to the stderr handle, not with `eprintln!`, which the test
-        // harness captures for a passing test: the skip must show in the log.
-        use std::io::Write;
-        let _ = writeln!(
-            std::io::stderr(),
-            "skipped {}: the driver lacks the validated_batch capability the \
-             tinyagents run ledger needs to import sessions.db",
-            case.driver.name()
-        );
-        return;
-    }
-
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_desktop_upgrade_is_lossless_and_leaves_the_legacy_files_untouched() {
+    let _ = env_logger::builder().is_test(true).try_init();
+    let case = Case::open();
     std::env::set_var("OPENHUMAN_KEYRING_BACKEND", "file");
     std::env::set_var("OPENHUMAN_KEYRING_MASTER_KEY", "33".repeat(32));
 
+    let home_dir = tempfile::tempdir().unwrap();
     let workspace_dir = tempfile::tempdir().unwrap();
     let workspace = workspace_dir.path();
+    std::env::set_var("HOME", home_dir.path());
+    std::env::set_var("USERPROFILE", home_dir.path());
     std::env::set_var("OPENHUMAN_WORKSPACE", workspace);
+    std::env::set_var("OPENHUMAN_MODULE_SOURCE", "linked");
+    linked_modules::install_if_requested();
     let fixture = desktop_workspace(workspace);
+    make_workspace_private(workspace);
     let before = tree(workspace);
     assert!(
         before.len() > 15,
@@ -472,10 +466,11 @@ async fn a_desktop_upgrade_is_lossless_and_leaves_the_legacy_files_untouched(cas
 
     case.install();
     let backend = case.backend();
-    let config = Config {
+    let mut config = Config {
         workspace_dir: workspace.to_path_buf(),
         ..Config::default()
     };
+    config.modules.source = openhuman_core::config::schema::ModuleSourceMode::Linked;
 
     // First boot: every host importer runs and none is left without a source.
     let reports = import::run(
@@ -492,6 +487,7 @@ async fn a_desktop_upgrade_is_lossless_and_leaves_the_legacy_files_untouched(cas
                 assert!(*found > 0, "{} found nothing", report.domain);
                 assert_eq!(found, written, "{} lost records", report.domain);
             }
+            Outcome::NoSource if report.domain == "scope_move" => {}
             other => panic!("{}: expected an import, got {other:?}", report.domain),
         }
     }
@@ -509,15 +505,15 @@ async fn a_desktop_upgrade_is_lossless_and_leaves_the_legacy_files_untouched(cas
     // tinymcp: both servers (plus their name claims), the audit log and the
     // env secret, which is never a document.
     let mcp = module_storage(backend.as_ref(), "tinymcp");
-    assert_eq!(count(&mcp, "mcp.servers").await, fixture.mcp_servers);
-    assert_eq!(count(&mcp, "mcp.server_names").await, fixture.mcp_servers);
+    assert_eq!(count(&mcp, "mcp_servers").await, fixture.mcp_servers);
+    assert_eq!(count(&mcp, "mcp_server_names").await, fixture.mcp_servers);
     assert_eq!(
-        mcp.streams().len("mcp.audit").await.unwrap(),
+        mcp.streams().len("mcp_audit").await.unwrap(),
         fixture.mcp_audit as u64
     );
     let stored = mcp
         .documents()
-        .get("mcp.servers", "srv-1")
+        .get("mcp_servers", "srv-1")
         .await
         .unwrap()
         .unwrap();
@@ -546,7 +542,7 @@ async fn a_desktop_upgrade_is_lossless_and_leaves_the_legacy_files_untouched(cas
     {
         let wallet = module_storage(backend.as_ref(), "tinywallet");
         assert_eq!(
-            wallet.streams().len("wallet.payments").await.unwrap(),
+            wallet.streams().len("x402.payments").await.unwrap(),
             fixture.x402_payments as u64
         );
     }
@@ -589,9 +585,14 @@ async fn a_desktop_upgrade_is_lossless_and_leaves_the_legacy_files_untouched(cas
     .await;
     assert_eq!(again.len(), reports.len());
     for report in &again {
+        let expected = if report.domain == "scope_move" {
+            Outcome::NoSource
+        } else {
+            Outcome::AlreadyDone
+        };
         assert_eq!(
             report.outcome.as_ref().unwrap(),
-            &Outcome::AlreadyDone,
+            &expected,
             "{} imported twice",
             report.domain
         );
@@ -604,5 +605,3 @@ async fn a_desktop_upgrade_is_lossless_and_leaves_the_legacy_files_untouched(cas
     // The user's files were only ever read.
     assert_eq!(tree(workspace), before, "the legacy files changed");
 }
-
-driver_cases!(async a_desktop_upgrade_is_lossless_and_leaves_the_legacy_files_untouched);

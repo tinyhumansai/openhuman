@@ -3,18 +3,17 @@
 //!
 //! Its own test binary because it installs a backend into the process-wide
 //! storage slot and sets the keyring master-key environment, which would
-//! reroute every other suite's secrets in a shared process. Each driver is its
-//! own test case (`support/storage_drivers.rs`), and the cases take turns.
+//! reroute every other suite's secrets in a shared process. The tests take
+//! turns on the slot (`support/storage_case.rs`).
 
-use openhuman_core::security::credentials::http_creds::{HttpCredential, HttpCredentialsStore};
-use openhuman_core::security::credentials::profiles::{AuthProfile, AuthProfilesStore};
+use openhuman_core::credentials::profiles::{AuthProfile, AuthProfilesStore};
+use openhuman_core::flows::http_credentials::{HttpCredential, HttpCredentialsStore};
 use openhuman_core::security::secret_storage;
 
-#[macro_use]
-#[path = "support/storage_drivers.rs"]
-mod storage_drivers;
+#[path = "support/storage_case.rs"]
+mod storage_case;
 
-use storage_drivers::Case;
+use storage_case::Case;
 
 /// The workspace every case shares. The process keyring caches the backend it
 /// first resolves (a `dev-keychain.json` under the workspace in effect then),
@@ -27,7 +26,9 @@ fn keyring_workspace() -> &'static std::path::Path {
         .path()
 }
 
-fn a_configured_backend_holds_keyring_and_credential_secrets(case: Case) {
+#[tokio::test]
+async fn a_configured_backend_holds_keyring_and_credential_secrets() {
+    let case = Case::open();
     let workspace = keyring_workspace();
     // Keep any process-backend fallback inside the temp workspace, and give
     // the storage secrets a master key without touching an OS keychain.
@@ -42,12 +43,13 @@ fn a_configured_backend_holds_keyring_and_credential_secrets(case: Case) {
             AuthProfile::new_token("legacy", "default", "sk-legacy".to_string()),
             true,
         )
+        .await
         .unwrap();
     HttpCredentialsStore::new(&state, false)
         .upsert(&HttpCredential::bearer("legacy-http", "ghp-legacy"))
+        .await
         .unwrap();
     secret_storage::set("legacy-user", "old_token", "old-value").unwrap();
-    let profiles_file = std::fs::read(state.join("auth-profiles.json")).unwrap();
     let http_file = std::fs::read(state.join("http-credentials.json")).unwrap();
 
     let before: std::collections::HashMap<&str, Option<Vec<u8>>> =
@@ -90,22 +92,23 @@ fn a_configured_backend_holds_keyring_and_credential_secrets(case: Case) {
             AuthProfile::new_token("openai", "default", "sk-test".to_string()),
             true,
         )
+        .await
         .unwrap();
     // The pre-existing profile was adopted, not replaced.
-    let loaded = profiles.load().unwrap();
+    let loaded = profiles.load().await.unwrap();
     assert_eq!(loaded.profiles.len(), 2);
 
     let http = HttpCredentialsStore::new(&state, false);
     http.upsert(&HttpCredential::bearer("github", "ghp-test"))
+        .await
         .unwrap();
-    assert!(http.get("github").unwrap().is_some());
-    assert!(http.get("legacy-http").unwrap().is_some());
+    assert!(http.get("github").await.unwrap().is_some());
+    assert!(http.get("legacy-http").await.unwrap().is_some());
 
-    // The legacy files are left untouched by the backend path.
-    assert_eq!(
-        std::fs::read(state.join("auth-profiles.json")).unwrap(),
-        profiles_file
-    );
+    // The profile document is kept in its encrypted local store; the HTTP
+    // credential compatibility file remains untouched by the configured
+    // secret backend path.
+    assert!(state.join("auth-profiles/secrets.enc").exists());
     assert_eq!(
         std::fs::read(state.join("http-credentials.json")).unwrap(),
         http_file
@@ -120,11 +123,10 @@ fn a_configured_backend_holds_keyring_and_credential_secrets(case: Case) {
     let dev = std::fs::read_to_string(workspace.join("dev-keychain.json")).unwrap();
     assert!(!dev.contains("user-1") && !dev.contains("tok-123"), "{dev}");
 
-    // Without a backend the files are back in use.
+    // Clearing the configured backend returns the HTTP store to its legacy
+    // file. Auth profiles have their own encrypted local store and remain.
     assert!(openhuman_core::storage::clear());
-    assert!(http.get("github").unwrap().is_none());
-    assert!(http.get("legacy-http").unwrap().is_some());
-    assert_eq!(profiles.load().unwrap().profiles.len(), 1);
+    assert!(http.get("github").await.unwrap().is_none());
+    assert!(http.get("legacy-http").await.unwrap().is_some());
+    assert_eq!(profiles.load().await.unwrap().profiles.len(), 2);
 }
-
-driver_cases!(sync a_configured_backend_holds_keyring_and_credential_secrets);

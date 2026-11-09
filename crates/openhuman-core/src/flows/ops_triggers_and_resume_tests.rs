@@ -72,6 +72,42 @@ async fn flows_delete_unbinds_schedule_cron_job() {
 }
 
 #[tokio::test]
+async fn failed_flow_removal_preserves_the_schedule_binding() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let created = flows_create(
+        &config,
+        "retained-scheduled".to_string(),
+        schedule_trigger_graph("0 9 * * *"),
+        false,
+    )
+    .await
+    .unwrap();
+    flows_set_enabled(&config, &created.value.id, true)
+        .await
+        .unwrap();
+
+    let result = flows_delete_with_remove(&config, &created.value.id, |_, _| {
+        Err("injected flow document removal failure".to_string())
+    })
+    .await;
+
+    assert!(result.is_err(), "the storage failure must be returned");
+    assert!(
+        store::get_flow(&config, &created.value.id)
+            .unwrap()
+            .is_some(),
+        "the failed delete must leave its flow definition in place"
+    );
+    assert!(
+        crate::cron::find_flow_schedule_job(&config, &created.value.id)
+            .unwrap()
+            .is_some(),
+        "a retained enabled flow must retain its automatic-dispatch schedule"
+    );
+}
+
+#[tokio::test]
 async fn reconcile_schedule_triggers_on_boot_survives_a_corrupt_row() {
     // R-M4: `reconcile_schedule_triggers_on_boot` is driven by
     // `list_enabled_flows`, which used to hard-fail its entire query on the
@@ -104,7 +140,11 @@ async fn reconcile_schedule_triggers_on_boot_survives_a_corrupt_row() {
     flows_set_enabled(&config, &bad.value.id, true)
         .await
         .unwrap();
-    store::force_corrupt_graph_json_for_test(&config, &bad.value.id, "{ not valid json").unwrap();
+    super::resume_checkpoint_tests::corrupt_saved_flow_graph_for_test(
+        &config,
+        &bad.value.id,
+        "{ not valid json",
+    );
 
     // Remove the cron job `flows_set_enabled` already bound for the good flow
     // above, so the post-reconcile assertion proves
@@ -181,6 +221,75 @@ async fn flows_update_rebinds_schedule_cron_job_when_trigger_schedule_changes() 
         .filter(|j| j.command == created.value.id)
         .collect();
     assert_eq!(flow_jobs.len(), 1);
+}
+
+#[tokio::test]
+async fn flows_update_does_not_rebind_schedule_for_pinned_input_changes() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let created = flows_create(
+        &config,
+        "scheduled".to_string(),
+        schedule_trigger_graph("0 9 * * *"),
+        false,
+    )
+    .await
+    .unwrap();
+    flows_set_enabled(&config, &created.value.id, true)
+        .await
+        .unwrap();
+    let job = crate::cron::find_flow_schedule_job(&config, &created.value.id)
+        .unwrap()
+        .expect("cron job bound on enable");
+    crate::cron::update_job(
+        &config,
+        &job.id,
+        crate::cron::CronJobPatch {
+            enabled: Some(false),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let original_job = crate::cron::find_flow_schedule_job(&config, &created.value.id)
+        .unwrap()
+        .expect("paused schedule job remains registered");
+    assert!(
+        !original_job.enabled,
+        "precondition: schedule job is paused"
+    );
+
+    let mut graph = schedule_trigger_graph("0 9 * * *");
+    graph["nodes"][0]["config"]["inputs"] = json!({"team": "platform"});
+    let updated = flows_update(&config, &created.value.id, None, Some(graph), None, None)
+        .await
+        .unwrap();
+    assert!(
+        updated.value.enabled,
+        "the flow remains enabled during the edit"
+    );
+    assert_eq!(
+        updated.value.graph["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["kind"] == "trigger")
+            .expect("schedule trigger exists")["config"]["inputs"]["team"],
+        "platform",
+        "the input edit must be persisted for this rebind regression"
+    );
+
+    let job = crate::cron::find_flow_schedule_job(&config, &created.value.id)
+        .unwrap()
+        .expect("schedule job remains bound after input-only edit");
+    assert_eq!(
+        job.id, original_job.id,
+        "input edits must preserve the binding"
+    );
+    assert!(
+        !job.enabled,
+        "input-only edits must preserve a paused schedule job"
+    );
+    assert_eq!(job.expression, original_job.expression);
 }
 
 #[tokio::test]
@@ -531,7 +640,7 @@ async fn flows_resume_refuses_when_the_graph_changed_after_park() {
     .await
     .expect_err("resume must refuse once the graph changed after park");
     assert!(
-        error.contains("changed after this run was paused"),
+        error.contains("workflow graph changed after the run parked"),
         "{error}"
     );
 
@@ -547,7 +656,7 @@ async fn flows_resume_refuses_when_the_graph_changed_after_park() {
         run_row
             .error
             .as_deref()
-            .is_some_and(|e| e.contains("changed after this run was paused")),
+            .is_some_and(|e| e.contains("workflow graph changed after the run parked")),
         "the terminal run row should retain the refusal reason: {run_row:?}"
     );
     let flow = flows_get(&config, &created.value.id).await.unwrap().value;
@@ -568,4 +677,34 @@ async fn flows_resume_refuses_when_the_graph_changed_after_park() {
         second.is_err(),
         "a settled/refused run must not be resumable again"
     );
+}
+
+/// Resume guard: a parked run resumes only under the flow it belongs to.
+#[tokio::test]
+async fn flows_resume_refuses_a_run_from_another_flow() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let gated = |name: &str| flows_create(&config, name.into(), approval_gated_graph(), false);
+    let (a, b) = (
+        gated("a").await.unwrap().value.id,
+        gated("b").await.unwrap().value.id,
+    );
+    let run = flows_run(
+        &ctx,
+        &config,
+        &a,
+        json!({ "x": 1 }),
+        Default::default(),
+        FlowRunTrigger::Rpc,
+    )
+    .await
+    .unwrap();
+    let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
+    let pending = vec!["gate".to_string()];
+
+    let error = flows_resume(&ctx, &config, &b, &thread_id, pending, vec![])
+        .await
+        .expect_err("run A resumed under flow B");
+    assert!(error.contains("does not belong to flow"), "{error}");
 }

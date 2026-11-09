@@ -5,10 +5,11 @@ use async_trait::async_trait;
 use openhuman_core::cron::{CronJobPatch, JobPolicy};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
-use tinystoragedrivers_core::{
-    Capabilities, CollectionSpec, DocumentStore, Filter, Page, Precondition, Query, ReadCheck,
-    ScopedStorage, Sort, StorageBackend, StorageError, Version, Versioned, WriteOp, WriteResult,
+use tinystoragedrivers::{
+    Capabilities, CollectionSpec, Filter, Page, Precondition, Query, ReadCheck, Scope as TsdScope,
+    Sort, StorageError, Version, Versioned, WriteOp, WriteResult,
 };
+use tinystoragedrivers_api::{DocumentStore, Storage, StorageBackend};
 use tinytools::Tool;
 
 type StoreResult<T> = Result<T, StorageError>;
@@ -38,8 +39,9 @@ mod policy {
         set_policy(config, job_id, JobPolicy::default())
     }
 }
-/// A job's policy is a field of its job document.
-const JOBS: &str = "cron_jobs";
+/// A job's policy is a field of its job document, in the schedule module's
+/// `cron.jobs` collection (`cron_jobs` is only the retired v1 source).
+const JOBS: &str = "cron.jobs";
 const BACKEND_DETAIL: &str = "mongodb://policy-user:secret@backend/private-payload";
 
 #[derive(Debug, Default)]
@@ -58,24 +60,22 @@ struct Backend {
 }
 
 impl StorageBackend for Backend {
-    fn driver(&self) -> &'static str {
-        self.inner.driver()
-    }
     fn capabilities(&self) -> Capabilities {
         self.inner.capabilities()
     }
-    fn for_scope(&self, scope: &Scope) -> StoreResult<ScopedStorage> {
+    fn for_scope(&self, scope: &TsdScope) -> StoreResult<Storage> {
         let inner = self.inner.for_scope(scope)?;
-        Ok(ScopedStorage::new(
-            scope.clone(),
-            inner.driver(),
+        Ok(Storage::new(
             Arc::new(Documents {
                 inner: Arc::clone(inner.documents()),
-                scope: scope.to_string(),
+                scope: scope.as_str().to_string(),
                 faults: Arc::clone(&self.faults),
             }),
             Arc::clone(inner.streams()),
+            Arc::clone(inner.kv()),
             Arc::clone(inner.blobs()),
+            Arc::clone(inner.queues()),
+            Arc::clone(inner.secrets()),
         ))
     }
 }
@@ -226,7 +226,7 @@ fn next_run_of(config: &Config, job_id: &str) -> chrono::DateTime<chrono::Utc> {
 
 /// Writes `policy` as the raw `policy` field of `job_id`'s document, bypassing
 /// the store's own validation.
-async fn put_raw_policy(docs: &ScopedStorage, job_id: &str, policy: serde_json::Value) {
+async fn put_raw_policy(docs: &Storage, job_id: &str, policy: serde_json::Value) {
     let mut stored = docs.documents().get(JOBS, job_id).await.unwrap().unwrap();
     stored.doc["policy"] = policy;
     docs.documents()
@@ -235,7 +235,9 @@ async fn put_raw_policy(docs: &ScopedStorage, job_id: &str, policy: serde_json::
         .unwrap();
 }
 
-pub(super) async fn policy_reads_refuse_execution_without_consuming_a_slot(case: Case) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn policy_reads_refuse_execution_without_consuming_a_slot() {
+    let case = Case::open();
     let workspace = tempfile::tempdir().unwrap();
     let config = Config {
         workspace_dir: workspace.path().join("workspace"),
@@ -324,18 +326,13 @@ pub(super) async fn policy_reads_refuse_execution_without_consuming_a_slot(case:
     // Force the persisted occurrence into the past through its actual document port.
     CoreContext::scope(Arc::clone(&alpha), async {
         let docs = storage::current_scoped().unwrap().unwrap();
-        let mut stored = docs
-            .documents()
-            .get("cron_jobs", &job.id)
-            .await
-            .unwrap()
-            .unwrap();
+        let mut stored = docs.documents().get(JOBS, &job.id).await.unwrap().unwrap();
         let due = chrono::Utc::now() - chrono::Duration::seconds(1);
         stored.doc["next_run"] = json!(due.to_rfc3339());
         stored.doc["next_run_ms"] = json!(due.timestamp_millis());
         stored.doc["next_run_ns"] = json!(due.timestamp_nanos_opt().unwrap());
         docs.documents()
-            .put("cron_jobs", &job.id, stored.doc, Precondition::None)
+            .put(JOBS, &job.id, stored.doc, Precondition::None)
             .await
             .unwrap();
     })
@@ -449,7 +446,9 @@ pub(super) async fn policy_reads_refuse_execution_without_consuming_a_slot(case:
     assert!(AgentContextRegistry::deregister("policy-beta", &beta));
 }
 
-pub(super) async fn malformed_policy_rows_refuse_execution(case: Case) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn malformed_policy_rows_refuse_execution() {
+    let case = Case::open();
     let workspace = tempfile::tempdir().unwrap();
     let config = Config {
         workspace_dir: workspace.path().join("workspace"),

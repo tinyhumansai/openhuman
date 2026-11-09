@@ -19,12 +19,12 @@ fn seeds_the_attributed_model_from_config() {
     let mut config = Config::default();
     config.default_model = Some("pinned-model".into());
     let gate = OpenHumanBudgetGate::new(Arc::new(config));
-    assert_eq!(gate.attributed_model(), "pinned-model");
+    assert_eq!(gate.attributed_model(), Some("pinned-model".to_string()));
 
     let mut unpinned = Config::default();
     unpinned.default_model = None;
     let gate = OpenHumanBudgetGate::new(Arc::new(unpinned));
-    assert_eq!(gate.attributed_model(), DEFAULT_MODEL);
+    assert_eq!(gate.attributed_model(), None);
 }
 
 #[tokio::test]
@@ -35,7 +35,7 @@ async fn acquire_stamps_the_model_that_record_will_attribute() {
     gate.acquire(&CallEstimate::new("some/model", 10, 5))
         .await
         .expect("no tracker in tests, so nothing can refuse");
-    assert_eq!(gate.attributed_model(), "some/model");
+    assert_eq!(gate.attributed_model(), Some("some/model".to_string()));
 }
 
 #[tokio::test]
@@ -46,7 +46,7 @@ async fn an_empty_model_does_not_erase_the_attribution() {
     gate.acquire(&CallEstimate::new("   ", 1, 1))
         .await
         .expect("grants");
-    assert_eq!(gate.attributed_model(), "pinned-model");
+    assert_eq!(gate.attributed_model(), Some("pinned-model".to_string()));
 }
 
 #[tokio::test]
@@ -310,7 +310,7 @@ fn a_call_is_checked_against_its_own_model() {
     }];
     let gate = OpenHumanBudgetGate::new(Arc::new(config));
     // Another call left a different model in the shared attribution.
-    *gate.last_model.write() = "other".into();
+    *gate.last_model.write() = Some("other".into());
     let policies = gate.live_budgets();
     assert!(gate
         .check_budgets_against(&estimate_for("planner"), &policies, &tracker)
@@ -333,4 +333,55 @@ async fn acquire_refuses_an_over_budget_call() {
     }
     // The same gate admits an agent the budget does not cover.
     assert!(gate.acquire(&estimate_for("orchestrator")).await.is_ok());
+}
+
+/// With no `default_model` and an estimate that names none, the call still
+/// counts against budgets that don't depend on the model; skipping them let
+/// every configured cap through.
+#[test]
+fn a_call_with_no_model_is_still_checked_against_its_budgets() {
+    let (_tmp, tracker) = ledger_with(2.0, "planner");
+    let gate = budgeted_gate(crate::config::BudgetAction::Refuse);
+    let gate = OpenHumanBudgetGate::new(Arc::new(Config {
+        default_model: None,
+        ..(*gate.config).clone()
+    }));
+    let estimate = CallEstimate {
+        model: String::new(),
+        ..estimate_for("planner")
+    };
+    let refusal = gate
+        .check_budgets_against(&estimate, &gate.live_budgets(), &tracker)
+        .expect("planner is over its cap whatever the model");
+    assert!(refusal.starts_with("BUDGET_EXCEEDED:"), "{refusal}");
+}
+
+/// ...but a model-scoped budget, which has no model to match, does not count it.
+#[test]
+fn a_call_with_no_model_is_outside_model_scoped_budgets() {
+    let (_tmp, tracker) = ledger_with(0.0, "planner");
+    let mut config = config_without_file();
+    config.default_model = None;
+    config.cost.budgets = vec![crate::config::BudgetPolicy {
+        name: Some("per-model token cap".into()),
+        scope: crate::config::BudgetScope::Model,
+        matches: None,
+        period: crate::config::BudgetPeriod::Month,
+        max_usd: None,
+        max_tokens: Some(1),
+        warn_fraction: 0.8,
+        action: crate::config::BudgetAction::Refuse,
+    }];
+    let gate = OpenHumanBudgetGate::new(Arc::new(config));
+    let estimate = CallEstimate {
+        model: String::new(),
+        estimated_input_tokens: 10,
+        estimated_output_tokens: 10,
+        ..estimate_for("planner")
+    };
+    assert!(
+        gate.check_budgets_against(&estimate, &gate.live_budgets(), &tracker)
+            .is_none(),
+        "a model budget refused a call that names no model"
+    );
 }

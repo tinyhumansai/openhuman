@@ -35,6 +35,13 @@ use serde::{Deserialize, Serialize};
 
 use super::cloud_providers::{AuthStyle, CloudProviderCreds};
 
+/// Select only the endpoint origin for diagnostics, then apply TinyInference's
+/// canonical URL sanitizer so paths, credentials, and query values stay out of logs.
+fn redacted_endpoint_origin_for_log(endpoint: &str) -> String {
+    let origin = url::Url::parse(endpoint.trim()).map(|url| url.origin().ascii_serialization());
+    tinyinference_core::sanitize::redact_url(origin.as_deref().unwrap_or(endpoint))
+}
+
 /// The `cloud_providers` slug [`apply`] registers the route under.
 ///
 /// Hyphenated and prefixed so it cannot collide with a provider slug a user
@@ -48,7 +55,7 @@ pub const EPHEMERAL_ROUTE_SLUG: &str = "ephemeral-route";
 ///
 /// Never serialized — see the module docs. `JsonSchema` is derived only because
 /// [`Config`](crate::config::Config) derives it for the whole struct.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EphemeralRoute {
     /// OpenAI-compatible base URL, as a `cloud_providers` endpoint would be
     /// spelled (`/chat/completions` is appended to it).
@@ -63,6 +70,13 @@ pub struct EphemeralRoute {
     /// Custom headers scoped to this endpoint, never copied to unrelated providers.
     #[serde(default)]
     pub headers: Vec<(String, String)>,
+    /// Provider-specific options used as defaults for this route's requests.
+    /// A request's own options are merged over these values.
+    #[serde(default)]
+    pub provider_options: Option<serde_json::Value>,
+    /// Reasoning effort pinned to this route's model, when configured.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 impl std::fmt::Debug for EphemeralRoute {
@@ -70,10 +84,12 @@ impl std::fmt::Debug for EphemeralRoute {
         f.debug_struct("EphemeralRoute")
             .field(
                 "endpoint",
-                &crate::inference::provider::factory::redact_endpoint(&self.endpoint),
+                &redacted_endpoint_origin_for_log(&self.endpoint),
             )
             .field("api_key", &"[redacted]")
             .field("header_count", &self.headers.len())
+            .field("provider_options", &self.provider_options.is_some())
+            .field("reasoning_effort", &self.reasoning_effort)
             .finish()
     }
 }
@@ -91,12 +107,26 @@ impl EphemeralRoute {
             endpoint,
             api_key,
             headers: Vec::new(),
+            provider_options: None,
+            reasoning_effort: None,
         })
     }
 
     /// Attach the embedding host's per-route headers.
     pub fn with_headers(mut self, headers: Vec<(String, String)>) -> Self {
         self.headers = headers;
+        self
+    }
+
+    /// Set provider-specific defaults for this route.
+    pub fn with_provider_options(mut self, options: Option<serde_json::Value>) -> Self {
+        self.provider_options = options;
+        self
+    }
+
+    /// Set the route model's reasoning effort.
+    pub fn with_reasoning_effort(mut self, effort: Option<String>) -> Self {
+        self.reasoning_effort = effort;
         self
     }
 }
@@ -109,7 +139,8 @@ impl EphemeralRoute {
 /// already set. Any explicit pin on those roles is replaced, because the route
 /// *is* the caller's statement about where this turn runs and
 /// [`provider_for_role`](crate::inference::provider::factory::provider_for_role)
-/// consults the pins first.
+/// consults the pins first. Reapplying an unchanged route with matching role
+/// pins is a no-op; other same-route calls repair the pins and log at debug.
 ///
 /// A blank `default_model` leaves the roles alone and registers nothing: the
 /// slug grammar has no model to carry, and pinning a role to `"<slug>:"` would
@@ -124,10 +155,36 @@ pub fn apply(config: &mut crate::config::Config, route: EphemeralRoute) {
     let Some(model) = model else {
         log::warn!(
             "[config][ephemeral-route] ignoring route to {} — no model resolved for this call",
-            crate::inference::provider::factory::redact_endpoint(&route.endpoint)
+            redacted_endpoint_origin_for_log(&route.endpoint)
         );
         return;
     };
+
+    let provider_string = format!("{EPHEMERAL_ROUTE_SLUG}:{model}");
+    if let Some(effort) = route.reasoning_effort.as_deref() {
+        config
+            .runtime
+            .reasoning_effort_by_model
+            .insert(model.clone(), effort.to_string());
+    }
+    let route_is_unchanged = config.ephemeral_route.as_ref() == Some(&route);
+    let roles_match = [
+        config.chat_provider.as_deref(),
+        config.reasoning_provider.as_deref(),
+        config.agentic_provider.as_deref(),
+        config.coding_provider.as_deref(),
+    ]
+    .into_iter()
+    .all(|provider| provider == Some(provider_string.as_str()));
+
+    if route_is_unchanged && roles_match {
+        tracing::debug!(
+            "[config][ephemeral-route] route already applied to {} model={}",
+            redacted_endpoint_origin_for_log(&route.endpoint),
+            model
+        );
+        return;
+    }
 
     // Replace rather than append: a second call on the same `Config` copy is not
     // expected, but two entries sharing a slug would make which one resolves an
@@ -147,17 +204,24 @@ pub fn apply(config: &mut crate::config::Config, route: EphemeralRoute) {
         default_model: Some(model.clone()),
     });
 
-    let provider_string = format!("{EPHEMERAL_ROUTE_SLUG}:{model}");
     config.chat_provider = Some(provider_string.clone());
     config.reasoning_provider = Some(provider_string.clone());
     config.agentic_provider = Some(provider_string.clone());
     config.coding_provider = Some(provider_string);
 
-    log::info!(
-        "[config][ephemeral-route] this call routed to {} model={}",
-        crate::inference::provider::factory::redact_endpoint(&route.endpoint),
-        model
-    );
+    if route_is_unchanged {
+        tracing::debug!(
+            "[config][ephemeral-route] this call routed to {} model={}",
+            redacted_endpoint_origin_for_log(&route.endpoint),
+            model
+        );
+    } else {
+        tracing::info!(
+            "[config][ephemeral-route] this call routed to {} model={}",
+            redacted_endpoint_origin_for_log(&route.endpoint),
+            model
+        );
+    }
 
     config.ephemeral_route = Some(route);
 }

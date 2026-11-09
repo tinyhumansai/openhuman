@@ -60,11 +60,10 @@ fn control_plane_does_not_exempt_user_data_paths() {
 }
 
 #[test]
-fn local_only_keeps_control_plane_flowing_and_blocks_user_data() {
-    use openhuman_embed::__host::config::PrivacyMode;
-    use openhuman_embed::__host::egress::local_only_blocks;
+fn integration_egress_descriptors_classify_control_plane_and_user_content() {
+    use openhuman_embed::__host::egress::{data_class, PrivacyClass};
     let pricing = backend_egress_descriptor("/agent-integrations/pricing");
-    assert!(!local_only_blocks(PrivacyMode::LocalOnly, &pricing));
+    assert_eq!(data_class(&pricing), PrivacyClass::ControlPlane);
     let execute = backend_egress_descriptor("/agent-integrations/composio/execute");
-    assert!(local_only_blocks(PrivacyMode::LocalOnly, &execute));
+    assert_eq!(data_class(&execute), PrivacyClass::UserContent);
 }

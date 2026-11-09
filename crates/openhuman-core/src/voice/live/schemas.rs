@@ -9,7 +9,11 @@ use serde_json::{Map, Value};
 
 use super::ops;
 use super::types::LiveSettingsPatch;
-use crate::core::all::{ControllerFuture, RegisteredController};
+use crate::config::Config;
+use crate::core::all::{
+    BoundRegisteredController, ControllerEntry, ControllerFuture, ControllerTask,
+    RegisteredController,
+};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
@@ -117,33 +121,65 @@ struct TestParams {
     provider: String,
 }
 
-fn handle_live_providers(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = ctx.load_config().await?;
-        to_value(ops::live_providers(&config).value)
-    })
+fn load_config(ctx: DispatchCtx) -> ControllerTask<Config> {
+    Box::pin(async move { ctx.load_config().await })
 }
 
-fn handle_live_settings_get(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = ctx.load_config().await?;
-        to_value(ops::live_settings_get(&config).value)
-    })
+fn ignored_params(_params: Map<String, Value>) -> Result<(), String> {
+    Ok(())
 }
 
-fn handle_live_settings_set(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+fn live_providers_controller() -> BoundRegisteredController {
+    BoundRegisteredController::after_gate(
+        live_schemas("voice_live_providers"),
+        load_config,
+        ignored_params,
+        run_live_providers,
+    )
+}
+
+fn live_settings_get_controller() -> BoundRegisteredController {
+    BoundRegisteredController::after_gate(
+        live_schemas("voice_live_settings_get"),
+        load_config,
+        ignored_params,
+        run_live_settings_get,
+    )
+}
+
+fn live_settings_set_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(
+        live_schemas("voice_live_settings_set"),
+        parse_params::<LiveSettingsPatch>,
+        run_live_settings_set,
+    )
+}
+
+fn live_test_provider_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(
+        live_schemas("voice_live_test_provider"),
+        parse_params::<TestParams>,
+        run_live_test_provider,
+    )
+}
+
+fn run_live_providers(_ctx: DispatchCtx, config: Config, (): ()) -> ControllerFuture {
+    Box::pin(async move { to_value(ops::live_providers(&config).await.value) })
+}
+
+fn run_live_settings_get(_ctx: DispatchCtx, config: Config, (): ()) -> ControllerFuture {
+    Box::pin(async move { to_value(ops::live_settings_get(&config).value) })
+}
+
+fn run_live_settings_set(ctx: DispatchCtx, patch: LiveSettingsPatch) -> ControllerFuture {
     Box::pin(async move {
-        let patch: LiveSettingsPatch = serde_json::from_value(Value::Object(params))
-            .map_err(|e| format!("invalid params: {e}"))?;
         let mut config = ctx.load_config().await?;
         to_value(ops::live_settings_set(&mut config, patch).await?.value)
     })
 }
 
-fn handle_live_test_provider(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+fn run_live_test_provider(ctx: DispatchCtx, params: TestParams) -> ControllerFuture {
     Box::pin(async move {
-        let params: TestParams = serde_json::from_value(Value::Object(params))
-            .map_err(|e| format!("invalid params: {e}"))?;
         let config = ctx.load_config().await?;
         to_value(
             ops::live_test_provider(&config, &params.provider)
@@ -151,6 +187,34 @@ fn handle_live_test_provider(ctx: DispatchCtx, params: Map<String, Value>) -> Co
                 .value,
         )
     })
+}
+
+pub(crate) fn bound_live_controller_entries() -> Vec<ControllerEntry> {
+    vec![
+        live_providers_controller(),
+        live_settings_get_controller(),
+        live_settings_set_controller(),
+        live_test_provider_controller(),
+    ]
+    .into_iter()
+    .map(ControllerEntry::bound)
+    .collect()
+}
+
+fn handle_live_providers(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    live_providers_controller().invoke(ctx, params)
+}
+
+fn handle_live_settings_get(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    live_settings_get_controller().invoke(ctx, params)
+}
+
+fn handle_live_settings_set(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    live_settings_set_controller().invoke(ctx, params)
+}
+
+fn handle_live_test_provider(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    live_test_provider_controller().invoke(ctx, params)
 }
 
 /// Every live voice controller.
@@ -186,3 +250,13 @@ pub fn live_controller_schemas() -> Vec<ControllerSchema> {
 #[cfg(test)]
 #[path = "schemas_tests.rs"]
 mod tests;
+
+fn parse_params<T: serde::de::DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
+    serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
+}
+
+#[cfg(test)]
+#[path = "schema_parameter_contracts.rs"]
+mod parameter_contracts;
+#[cfg(test)]
+pub(crate) use parameter_contracts::contracts as parameter_contracts;

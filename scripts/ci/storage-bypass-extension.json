@@ -111,26 +111,6 @@
   },
   {
     "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/artifacts/tiny_store.rs",
-    "line": 146,
-    "text": "tokio::fs::copy(source, owned).await?",
-    "occurrence": 1,
-    "classification": "external-export",
-    "reason": "Materializes versioned artifact bytes in the user-visible artifact file; the versioned record and native blob storage remain separate from this local deliverable.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
-  },
-  {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/artifacts/tiny_store.rs",
-    "line": 180,
-    "text": "tokio::fs::copy(&source, &dest).await?",
-    "occurrence": 1,
-    "classification": "external-export",
-    "reason": "Materializes versioned artifact bytes in the user-visible artifact file; the versioned record and native blob storage remain separate from this local deliverable.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
-  },
-  {
-    "rule": "file-mutation",
     "path": "crates/openhuman-core/src/attachments/legacy.rs",
     "line": 156,
     "text": "let linked = tokio::fs::hard_link(&temp, &path).await;",
@@ -260,26 +240,6 @@
     "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
   },
   {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/memory/layout_migration/claim.rs",
-    "line": 111,
-    "text": "serde_json::to_writer(temp.as_file(), &marker).map_err(std::io::Error::other)?;",
-    "occurrence": 1,
-    "classification": "classic",
-    "reason": "Legacy memory layout migration claim/state marker publication; historical source capture and native migration admission remain separate.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7427"
-  },
-  {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/memory/layout_migration/claim.rs",
-    "line": 114,
-    "text": "std::fs::hard_link(temp.path(), &key.marker)",
-    "occurrence": 1,
-    "classification": "classic",
-    "reason": "Legacy memory layout migration claim/state marker publication; historical source capture and native migration admission remain separate.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7427"
-  },
-  {
     "rule": "writer-helper",
     "path": "crates/openhuman-core/src/modules/browser_task_report.rs",
     "line": 297,
@@ -371,27 +331,7 @@
   },
   {
     "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/audit.rs",
-    "line": 330,
-    "text": "let _ = std::fs::rename(&old_name, &new_name);",
-    "occurrence": 1,
-    "classification": "unmigrated",
-    "reason": "Canonical security audit file rotation; native scoped stream migration must retain captured producer authority.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7431"
-  },
-  {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/audit.rs",
-    "line": 334,
-    "text": "std::fs::rename(&self.log_path, &rotated)?;",
-    "occurrence": 1,
-    "classification": "unmigrated",
-    "reason": "Canonical security audit file rotation; native scoped stream migration must retain captured producer authority.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7431"
-  },
-  {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/credentials/http_creds.rs",
+    "path": "crates/openhuman-core/src/flows/http_credentials.rs",
     "line": 426,
     "text": "if let Err(e) = fs::rename(&tmp_path, &self.path) {",
     "occurrence": 1,
@@ -401,29 +341,9 @@
   },
   {
     "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/credentials/profiles.rs",
-    "line": 577,
+    "path": "crates/openhuman-core/src/credentials/profiles.rs",
+    "line": 281,
     "text": "fs::rename(path, &candidate).with_context(|| {",
-    "occurrence": 1,
-    "classification": "classic",
-    "reason": "Historical encrypted credential persistence/quarantine publication; native secret port and trusted source/key ownership are separate.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
-  },
-  {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/credentials/profiles/persistence.rs",
-    "line": 277,
-    "text": "fs::rename(&tmp_path, &self.path).context(\"rename auth profile tmp -> store\")",
-    "occurrence": 1,
-    "classification": "classic",
-    "reason": "Classic encrypted credential profile fallback persists AuthProfilesData and token fields; native SecretStore routing requires trusted machine key and source admission, not directory rollback authority.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
-  },
-  {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/secret_storage/encrypted_file_backend.rs",
-    "line": 580,
-    "text": "std::fs::rename(legacy_path, &archive_path)",
     "occurrence": 1,
     "classification": "classic",
     "reason": "Historical encrypted credential persistence/quarantine publication; native secret port and trusted source/key ownership are separate.",
@@ -468,16 +388,6 @@
     "classification": "classic",
     "reason": "Owner-only atomic encrypted-secret/bootstrap file helper; native SecretStore and machine master-key policy have separate admission.",
     "issue": "https://github.com/tinyhumansai/openhuman/issues/7421"
-  },
-  {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/tinymemes/docs.rs",
-    "line": 81,
-    "text": "match std::fs::rename(&path, &migrated) {",
-    "occurrence": 1,
-    "classification": "classic",
-    "reason": "Retires the legacy JSON document by renaming it only after the native document-port write succeeds; the native document remains authoritative after adoption.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7431"
   },
   {
     "rule": "file-mutation",

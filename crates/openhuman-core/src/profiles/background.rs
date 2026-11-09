@@ -25,7 +25,8 @@ use std::time::Duration;
 
 use super::host::ProfileHost;
 use crate::core::runtime::CoreContext;
-use crate::memory::lifecycle::jobs::{self, Selection};
+use crate::memory::lifecycle::jobs;
+use tinymemory_tools::queue::Selection;
 
 /// How often the loop visits the profiles.
 pub const TICK_INTERVAL: Duration = Duration::from_secs(60);

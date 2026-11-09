@@ -19,7 +19,7 @@ We take security seriously. If you believe you have found a security vulnerabili
 ### How to Report
 
 1. **Do not** open a public GitHub issue for security vulnerabilities.
-2. Email the maintainers with a clear description of the issue, steps to reproduce, and impact. You can reach us via the contact details listed in the [OpenHuman organization](https://github.com/openhumanxyz) or repository.
+2. Email [security@tinyhumans.ai](mailto:security@tinyhumans.ai) with a clear description of the issue, steps to reproduce, and impact. This is also the primary contact for automated security reports, including OSS Scanner findings.
 3. Include as much detail as possible (platform, version, configuration) so we can reproduce and triage quickly.
 
 ### What to Expect

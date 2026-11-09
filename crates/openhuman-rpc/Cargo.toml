@@ -53,8 +53,9 @@ http-server = ["openhuman-tinyhumans/http-server"]
 inference = ["openhuman-tinyhumans/inference"]
 documents = ["openhuman-tinyhumans/documents"]
 hosting = ["openhuman-tinyhumans/hosting"]
-tinymemes = ["openhuman-tinyhumans/tinymemes"]
+inbound-queues = ["openhuman-tinyhumans/inbound-queues"]
 modules = ["openhuman-tinyhumans/modules"]
+security-module = ["openhuman-tinyhumans/security-module"]
 voice = ["openhuman-tinyhumans/voice"]
 web3 = ["openhuman-tinyhumans/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain and
@@ -63,6 +64,9 @@ storage-sqlite = ["openhuman-tinyhumans/storage-sqlite"]
 storage-mongodb = ["openhuman-tinyhumans/storage-mongodb"]
 storage-s3 = ["openhuman-tinyhumans/storage-s3"]
 storage-file = ["openhuman-tinyhumans/storage-file"]
+storage-rabbitmq = ["openhuman-tinyhumans/storage-rabbitmq"]
+secret-file = ["openhuman-tinyhumans/secret-file"]
+legacy-import = ["openhuman-tinyhumans/legacy-import"]
 media = ["openhuman-tinyhumans/media"]
 flows = ["openhuman-tinyhumans/flows"]
 skills = ["openhuman-tinyhumans/skills"]
@@ -71,7 +75,6 @@ mcp = ["openhuman-tinyhumans/mcp"]
 # to Sentry.
 crash-reporting = ["openhuman-tinyhumans/crash-reporting"]
 channels = ["openhuman-tinyhumans/channels"]
-whatsapp-web = ["openhuman-tinyhumans/whatsapp-web"]
 file-logging = ["openhuman-tinyhumans/file-logging"]
 scheduler-gate = ["openhuman-tinyhumans/scheduler-gate"]
 # E2E builds only (`openhuman.test_reset`); default-OFF. The desktop app
@@ -80,7 +83,7 @@ e2e-test-support = ["openhuman-tinyhumans/e2e-test-support"]
 
 [dependencies]
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"], optional = true }
-tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v1.0.0", default-features = false, features = ["secrets", "keyring"], optional = true }
+tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", default-features = false, features = ["keyring"], optional = true }
 zeroize = { version = "1", optional = true }
 hex = { version = "0.4", optional = true }
 # The only openhuman crate this layer depends on. Core internals the server
@@ -119,9 +122,13 @@ tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness
 proptest = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 sentry = { version = "0.47.0", default-features = false, features = ["test"] }
+serde_json = { version = "1", features = ["raw_value"] }
+sha2 = "0.10"
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
 tower = { version = "0.5", default-features = false }
 # Same spelling as embed's, tinyhumans' and cli's dev-dependency, so the dev
 # graphs unify and `cargo test -p openhuman-rpc` reuses their core build.
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+engineioxide = "0.17.7"
+socketioxide = { version = "0.18.7", features = ["extensions", "__test_harness"] }

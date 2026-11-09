@@ -1,7 +1,5 @@
 //! `storage.status`: where a profile is in the layout move, read-only.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
 use super::state::{LayoutError, LayoutState, Step};
@@ -62,7 +60,15 @@ pub async fn status(
     };
     let meta = std::fs::metadata(&database).ok();
     let (schema_versions, last_migration_ms) = if meta.is_some() {
-        read_versions(&database).await.unwrap_or_default()
+        let (versions, last) =
+            crate::storage::import::layout_status::read(&database).unwrap_or_default();
+        (
+            versions
+                .into_iter()
+                .map(|(owner, version)| OwnerVersion { owner, version })
+                .collect(),
+            last,
+        )
     } else {
         (Vec::new(), None)
     };
@@ -80,43 +86,4 @@ pub async fn status(
             crate::storage::config::StorageMode::Url(_)
         ),
     })
-}
-
-async fn read_versions(
-    db: &std::path::Path,
-) -> Result<(Vec<OwnerVersion>, Option<i64>), LayoutError> {
-    use tinystoragedrivers::schema::Progress;
-    use tinystoragedrivers::{DocumentStoreExt, Query, MIGRATIONS_COLLECTION};
-    let url = crate::storage::StorageUrl::parse(&format!("sqlite:{}", db.display()))
-        .map_err(|e| LayoutError::Other(anyhow::anyhow!("{e}")))?;
-    let backend = tinystoragedrivers::open(&url)
-        .await
-        .map_err(|e| LayoutError::Other(anyhow::anyhow!("{e}")))?;
-    let scoped = backend
-        .for_scope(&crate::storage::Scope::local())
-        .map_err(|e| LayoutError::Other(anyhow::anyhow!("{e}")))?;
-    let rows = scoped
-        .documents()
-        .query_all(MIGRATIONS_COLLECTION, &Query::all())
-        .await
-        .map_err(|e| LayoutError::Other(anyhow::anyhow!("{e}")))?;
-    let mut owners: BTreeMap<String, u32> = BTreeMap::new();
-    let mut last = None::<i64>;
-    for row in rows {
-        let Ok(progress) = serde_json::from_value::<Progress>(row.doc) else {
-            continue;
-        };
-        if progress.done && progress.to > 0 {
-            let version = owners.entry(progress.owner).or_default();
-            *version = (*version).max(progress.to);
-            last = last.max(Some(row.meta.updated_ms).filter(|ms| *ms > 0));
-        }
-    }
-    Ok((
-        owners
-            .into_iter()
-            .map(|(owner, version)| OwnerVersion { owner, version })
-            .collect(),
-        last,
-    ))
 }

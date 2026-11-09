@@ -44,7 +44,7 @@ fn the_config_is_rooted_in_the_profile_and_bound_to_its_memory() {
 
 #[test]
 fn the_memory_root_is_a_valid_layout_root() {
-    crate::memory::scope::validate_root(&memory_root(&id())).unwrap();
+    tinymemory_tools::layout::identity::validate_root(&memory_root(&id())).unwrap();
 }
 
 /// Under `users/<id>`, `memory::scope::user_root` reads an account id out of
@@ -53,7 +53,7 @@ fn the_memory_root_is_a_valid_layout_root() {
 /// ignore `user:<id>`. The pin keeps a profile on the root it is forced to.
 #[test]
 fn a_profile_binds_its_user_root_never_an_org_root() {
-    use crate::memory::scope::{self, MemoryIdentity};
+    use crate::memory::scope;
     let id = ProfileId::for_user("65f1c0ffee0123456789abcd", ProfileIdMode::Raw).unwrap();
     assert_eq!(id.as_str(), "65f1c0ffee0123456789abcd");
     let layout = profile_layout(Path::new("/srv/oh"), &id);
@@ -67,26 +67,24 @@ fn a_profile_binds_its_user_root_never_an_org_root() {
     // The pin: legacy layout, so `memory::engine::resolve` binds no org root
     // and every operation is confined to `user:<id>`.
     assert_eq!(config.memory.layout, MemoryLayoutMode::Legacy);
-    assert!(!scope::layout_is_v3(&config));
-    let bound = MemoryIdentity::root().resolve(&config);
+    assert_ne!(config.memory.layout, MemoryLayoutMode::V3);
+    let bound = tinymemory_tools::layout::identity::Identity::root()
+        .resolve(&crate::memory::scope::identity_pins(&config));
     assert_eq!(bound.root().to_string(), "user:65f1c0ffee0123456789abcd");
     assert_eq!(bound.agent_id, id.as_str());
-    let confined = crate::memory::user_scope::confinement_in(true, &config)
-        .unwrap()
-        .unwrap();
-    assert_eq!(confined.to_string(), "user:65f1c0ffee0123456789abcd");
+    assert_eq!(bound.root().to_string(), "user:65f1c0ffee0123456789abcd");
 }
 
 #[test]
 fn the_memory_binding_wins_over_pins_and_teams() {
-    use crate::memory::scope::MemoryIdentity;
     let layout = profile_layout(Path::new("/srv/oh"), &id());
     let mut config = profile_config(&layout, &id());
     config.memory.agents.insert(
         "planner".into(),
         toml::from_str("agent_id = \"other\"\nroot = \"team:shared\"").unwrap(),
     );
-    let resolved = MemoryIdentity::team_member("shared", "planner").resolve(&config);
+    let resolved = tinymemory_tools::layout::identity::Identity::team_member("shared", "planner")
+        .resolve(&crate::memory::scope::identity_pins(&config));
     assert_eq!(resolved.agent_id, id().as_str());
     assert_eq!(resolved.root().to_string(), memory_root(&id()));
 }

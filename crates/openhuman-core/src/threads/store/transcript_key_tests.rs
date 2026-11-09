@@ -2,6 +2,7 @@ use super::*;
 use crate::core::runtime::DispatchCtx;
 
 fn store(dir: &tempfile::TempDir) -> ConversationStore {
+    crate::storage::local::use_persistent_default_for_test(dir.path());
     ConversationStore::new(DispatchCtx::unbound(), dir.path().to_path_buf())
 }
 
@@ -78,6 +79,7 @@ fn deleting_a_thread_forgets_its_key() {
 #[tokio::test]
 async fn bind_returns_the_recorded_key_and_records_the_first_one() {
     let dir = tempfile::tempdir().unwrap();
+    crate::storage::local::use_persistent_default_for_test(dir.path());
     let ctx = DispatchCtx::unbound();
     let first = bind_transcript_key(&ctx, dir.path(), "thread-a", "orchestrator".into()).await;
     let second = bind_transcript_key(&ctx, dir.path(), "thread-a", "researcher".into()).await;

@@ -158,8 +158,10 @@ impl std::fmt::Debug for SaasConfig {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SaasCronConfig {
-    /// Allow only agent jobs bound to the conversation that created them:
-    /// no shell or flow jobs, no chosen delivery destination.
+    /// Allow agent jobs bound to their creating conversation and the memory
+    /// domain's two code-owned maintenance jobs. Shell and user-owned flow
+    /// jobs remain disabled; delivery is limited to `origin` and `none`, the
+    /// recurrence interval still applies, and memory jobs consume the cap.
     #[serde(default)]
     pub agent_jobs_only: bool,
     /// With `agent_jobs_only`: seconds between runs of a recurring job, at least.
@@ -523,9 +525,13 @@ pub async fn build_with_profile_capabilities(
         );
     }
     let host = Arc::new(
-        crate::profiles::ProfileHost::with_backend(config, runtime.context().clone(), backend)
-            .map_err(|e| anyhow::anyhow!("[saas] {e}"))?
-            .with_capabilities(capabilities),
+        crate::profiles::ProfileHost::with_fenced_backend(
+            config,
+            runtime.context().clone(),
+            backend,
+        )
+        .map_err(|e| anyhow::anyhow!("[saas] {e}"))?
+        .with_capabilities(capabilities),
     );
     crate::profiles::host::install(Arc::clone(&host));
     crate::profiles::lease::heartbeat(Arc::clone(&host), runtime.context().clone());

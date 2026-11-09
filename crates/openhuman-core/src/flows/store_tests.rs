@@ -1,26 +1,6 @@
-//! The catalog's storage and the import of the files tinyflows used to write
-//! (`flows.db`, `checkpoints.db`, `drafts/*.json`) by the storage importer.
-
 use super::*;
+use serde_json::json;
 use tempfile::TempDir;
-
-fn fixture_workspace() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src/storage/import/fixtures/tinyflows/workspace")
-}
-
-fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.path().is_dir() {
-            copy_tree(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), target).unwrap();
-        }
-    }
-}
 
 fn config(tmp: &TempDir) -> Config {
     Config {
@@ -29,61 +9,88 @@ fn config(tmp: &TempDir) -> Config {
     }
 }
 
-#[test]
-fn the_catalog_lives_in_the_workspace_default_database() {
-    let tmp = TempDir::new().unwrap();
-    let config = config(&tmp);
-    assert!(crate::storage::installed().is_none());
-    assert!(list_flows(&config).unwrap().0.is_empty());
-    assert!(tmp.path().join("storage/storage.db").is_file());
+fn graph() -> serde_json::Value {
+    json!({
+        "nodes": [{"id":"trigger","name":"Trigger","kind":"trigger","config":{"trigger_kind":"manual"}}],
+        "edges": []
+    })
 }
 
 #[test]
-fn legacy_flows_drafts_and_checkpoints_are_imported_and_left_untouched() {
+fn catalog_clients_preserve_definition_revisions_and_suggestion_semantics() {
     let tmp = TempDir::new().unwrap();
     let config = config(&tmp);
-    copy_tree(&fixture_workspace(), tmp.path());
-    let flows_db = dir(&config).join("flows.db");
-    let before = std::fs::read(&flows_db).unwrap();
+    let flow = create_flow(&config, "before".into(), graph(), false, true)
+        .unwrap()
+        .workflow;
+    assert_eq!(get_flow(&config, &flow.id).unwrap().unwrap().name, "before");
+    let (listed, skipped) = list_flows(&config).unwrap();
+    assert_eq!(skipped, 0);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, flow.id);
 
-    let backend = crate::storage::local::backend_for(&config.workspace_dir).unwrap();
-    for report in crate::storage::import::tinyflows::run_with(&backend, &config) {
-        report.outcome.unwrap();
-    }
+    let updated = update_flow_graph(
+        &config,
+        &flow.id,
+        "after".into(),
+        graph(),
+        true,
+        None,
+        false,
+        Some(&flow.updated_at),
+    )
+    .unwrap()
+    .workflow;
+    assert_eq!(updated.name, "after");
+    assert_eq!(list_revisions(&config, &flow.id, 10).unwrap().len(), 1);
+    assert!(matches!(
+        update_flow_graph(
+            &config,
+            &flow.id,
+            "stale".into(),
+            graph(),
+            true,
+            None,
+            false,
+            Some(&flow.updated_at),
+        ),
+        Err(BusUpdateError::VersionConflict { .. })
+    ));
 
-    let (flows, _) = list_flows(&config).unwrap();
-    let mut ids: Vec<_> = flows.iter().map(|flow| flow.id.clone()).collect();
-    ids.sort();
-    assert_eq!(ids, ["flow-alpha", "flow-beta"]);
+    let disabled = set_enabled(&config, &flow.id, false).unwrap();
+    assert!(!disabled.enabled);
+    assert!(list_enabled_flows(&config).unwrap().0.is_empty());
+
+    let suggestion = FlowSuggestion {
+        id: "suggestion-1".into(),
+        title: "Send a daily report".into(),
+        one_liner: "Send a daily report.".into(),
+        rationale: "It saves time.".into(),
+        trigger_hint: Some("schedule".into()),
+        steps_outline: vec!["Read the report".into()],
+        suggested_connections: vec![],
+        suggested_slugs: vec![],
+        build_prompt: "Create the report workflow".into(),
+        confidence: 0.8,
+        status: SuggestionStatus::New,
+        created_at: flow.created_at,
+        source_run_id: None,
+    };
     assert_eq!(
-        super::super::draft_store::list_drafts(&config)
+        upsert_suggestions(&config, std::slice::from_ref(&suggestion)).unwrap(),
+        1
+    );
+    assert_eq!(
+        list_suggestions(&config, Some(SuggestionStatus::New), 10)
             .unwrap()
             .len(),
-        2
+        1
     );
-    assert_eq!(list_revisions(&config, "flow-alpha", 10).unwrap().len(), 2);
+    assert!(set_suggestion_status(&config, &suggestion.id, SuggestionStatus::Built).unwrap());
     assert_eq!(
-        get_flow_run(&config, "run-done").unwrap().unwrap().flow_id,
-        "flow-alpha"
+        list_suggestions(&config, Some(SuggestionStatus::New), 10)
+            .unwrap()
+            .len(),
+        0
     );
-
-    let checkpointer = crate::flows::tinyflows::open_flow_checkpointer(&config).unwrap();
-    let thread = crate::storage::block_on_anyhow(async move {
-        Ok(checkpointer.get_thread("run-1").await?.len())
-    })
-    .unwrap();
-    assert!(thread > 0, "the interrupted run's checkpoints came across");
-
-    assert_eq!(
-        std::fs::read(&flows_db).unwrap(),
-        before,
-        "flows.db was modified"
-    );
-
-    // Imported once: a flow removed afterwards stays removed after a restart.
-    remove_flow(&config, "flow-alpha").unwrap();
-    for report in crate::storage::import::tinyflows::run_with(&backend, &config) {
-        report.outcome.unwrap();
-    }
-    assert_eq!(list_flows(&config).unwrap().0.len(), 1);
 }

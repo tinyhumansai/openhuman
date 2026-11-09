@@ -62,7 +62,11 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 FieldSchema {
                     name: "inputs",
                     ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
-                    comment: "Values for the flow's declared workflow inputs, keyed by name                               (read the flow's `graph.inputs` for the declarations). Validated                               synchronously, so a bad set is refused here rather than surfacing                               later as a failed background run. Distinct from `input`, which is                               the free-form trigger payload.",
+                    comment: "Values for the flow's declared workflow inputs, keyed by name \
+                              (read the flow's `graph.inputs` for the declarations). Validated \
+                              synchronously, so a bad set is refused here rather than surfacing \
+                              later as a failed background run. Distinct from `input`, which is \
+                              the free-form trigger payload.",
                     required: false,
                 },
             ],

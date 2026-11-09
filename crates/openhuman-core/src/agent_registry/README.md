@@ -60,11 +60,12 @@ the harness runs come from [`agents/`](agents/) below.
 
 Each built-in agent owns a subfolder with an `agent.toml` (id, `when_to_use`,
 model, tool scope, sandbox mode, iteration cap, tier, `omit_*` flags, parsed
-through `tinyagents_definition::parse_str` into `AgentDefinition`), a
-`prompt.md` holding the static archetype body, and a `prompt.rs` that
-`include_str!`s that body and exposes
-`pub fn build(&PromptContext) -> anyhow::Result<String>`, appending
-runtime-dependent sections (rendered tool list, workspace) to it.
+through `tinyagents_definition::parse_str` into `AgentDefinition`), and a
+`prompt.rs` that exposes `pub fn build(&PromptContext) -> anyhow::Result<String>`.
+Most builders include their archetype from a sibling `prompt.md`; the two flow
+builders receive their archetype text from TinyFlows Copilot through an
+explicit prompt context value. Builders append runtime-dependent sections such
+as the rendered tool list and workspace to that archetype.
 Every archetype uses the shared sub-agent turn graph.
 
 [`agents/loader.rs`](agents/loader.rs) owns the `BUILTINS` slice and
@@ -78,24 +79,22 @@ owner definition crate; unknown subagent ids are tolerated here).
 `BUILTINS` is also the registration point for archetypes that live with
 other domains: `skill_setup`
 ([`skills/catalog/agent/`](../../skills/catalog/agent/), feature `skills`), and
-`workflow_builder` and `flow_discovery` ([`flows/agents/`](../../flows/agents/), feature `flows`).
+`workflow_builder` and `flow_discovery` ([`agents/`](./agents/), feature `flows`).
 Workspace-level overrides (`<workspace_dir>/agents/*.toml`, with a
 `~/.openhuman/agents/` fallback) are loaded separately by
 `tinyagents_definition::DefinitionSet::load_dirs` and replace built-ins on id collision;
 `AgentDefinitionRegistry::load` re-runs the owner validation after that
 merge.
 
-The 12 archetypes in this directory:
+The shipped archetypes in this directory:
 
 | Archetype | Role |
 | --- | --- |
-| `critic` | Workflow-run worker: adversarial, read-only cross-check of claims, diffs and code. Not a chat delegate |
 | `image_agent` | Image generation/edit specialist |
 | `morning_briefing` | Proactive scheduled daily summary (tasks, calendar, email, skills) on a named, read-only tool belt |
 | `orchestrator` | Default user-facing `chat`-tier agent; direct-first, delegates only when it materially helps |
-| `planner` | Workflow-run worker (`reasoning` tier): decomposes a question into research angles, or researches one angle. Read-only; not a chat delegate |
 | `presentation_agent` (feature `documents`) | Builds decks from evidence; owns grounding/citations/image verification |
-| `summarizer` | Runtime-dispatched only: compresses oversized tool results for the orchestrator, and synthesizes workflow-run reports |
+| `summarizer` | Runtime-dispatched only: compresses oversized tool results for the orchestrator |
 | `task_manager_agent` | Task-source/workflow/artifact specialist: proactive feeds, workflow bundles, artifacts |
 | `trigger_reactor` | One or two tool calls in direct reaction to an external trigger, no planning |
 | `trigger_triage` | Classifies an external trigger into drop/acknowledge/react/escalate; never acts |
@@ -105,11 +104,8 @@ The 12 archetypes in this directory:
 The orchestrator's chat delegates (its `[subagents]` allowlist) are
 `task_manager_agent`, `vision_agent`,
 `image_agent`, `video_agent`, `presentation_agent`, `skill_setup`,
-`workflow_builder` and `flow_discovery`. `planner` and `critic` stay
-registered only for the `parallel_research_cross_check` workflow-run template
-([`agent/orchestration/workflow_runs/ops.rs`](../orchestration/workflow_runs/ops.rs): decompose = `planner`, research
-= `planner` x2, cross_check = `critic`, synthesize = `summarizer`); the
-orchestrator does not list them. Everything else is runtime-only.
+`workflow_builder` and `flow_discovery`. The retired workflow-run planner and
+critic archetypes are no longer built-ins. Everything else is runtime-only.
 
 The single-belt specialists that used to sit here (`code_executor`,
 `crypto_agent`, `settings_agent`, `scheduler_agent`, `mcp_agent`,
@@ -143,7 +139,7 @@ ranking works.
 - [`agent/session_host/builder/factory.rs`](../agent/session_host/builder/factory.rs):
   `Agent::from_config_for_agent` falls back to `find_custom_in_config` +
   `definition_from_registry_entry` when an id is not in the harness registry.
-- [`agent_runs/schemas.rs`](../agent_runs/schemas.rs): `agent.graph_topologies` and `agent.registry_snapshot`
+- [`agent_runs/schemas.rs`](../agent_runs/schemas.rs): `agent.registry_snapshot`
   enumerate `load_builtins()`.
 - `flows/` (`ops/inference_readiness.rs`, `ops/builder_gates.rs`,
   `builder_tools/kind_reads.rs`, `tinyflows/caps/agent.rs`): resolve a flow

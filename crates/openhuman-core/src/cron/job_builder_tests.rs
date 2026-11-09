@@ -39,6 +39,7 @@ fn channel() -> JobOrigin {
         history_key: "telegram_alice_42".into(),
         sender: Some("alice".into()),
         thread_id: None,
+        channel_session: None,
     }
 }
 
@@ -111,6 +112,42 @@ fn announce(channel_name: &str, to: &str) -> DeliveryConfig {
         to: Some(to.into()),
         best_effort: true,
     }
+}
+
+#[test]
+fn update_rejects_disallowed_announce_target_without_persisting_patch() {
+    let tmp = TempDir::new().unwrap();
+    let mut cfg = config(&tmp);
+    cfg.channels_config.telegram = Some(crate::config::TelegramConfig {
+        bot_token: "t".into(),
+        chat_id: None,
+        allowed_users: vec!["alice".into()],
+        stream_mode: Default::default(),
+        draft_update_interval_ms: 1000,
+        silent_streaming: true,
+        mention_only: false,
+    });
+    let mut spec = tinyflows_bus::schedule::AgentJobSpec::new(
+        Schedule::Every { every_ms: 300_000 },
+        "check inbox",
+    );
+    spec.name = Some("inbox".into());
+    spec.session_target = SessionTarget::Isolated;
+    spec.delivery = Some(DeliveryConfig::default());
+    let job = crate::cron::add_agent_job_from_spec(&cfg, spec).unwrap();
+    let result = crate::cron::update_job(
+        &cfg,
+        &job.id,
+        tinyflows_bus::schedule::types::CronJobPatch {
+            name: Some("must not land".into()),
+            delivery: Some(announce("telegram", "42")),
+            ..Default::default()
+        },
+    );
+    assert!(result.unwrap_err().to_string().contains("allowed"));
+    let saved = crate::cron::get_job(&cfg, &job.id).unwrap();
+    assert_eq!(saved.name.as_deref(), Some("inbox"));
+    assert_eq!(saved.delivery.mode, "none");
 }
 
 #[test]

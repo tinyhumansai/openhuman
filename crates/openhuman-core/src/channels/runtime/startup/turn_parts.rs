@@ -26,7 +26,6 @@ use tinytools::Tool;
 pub(crate) struct ChannelTurnParts {
     pub(crate) model: String,
     pub(crate) provider_name: String,
-    pub(crate) provider_runtime_options: provider::ProviderRuntimeOptions,
     pub(crate) tools_registry: Arc<Vec<Box<dyn Tool>>>,
     pub(crate) system_prompt: ChannelSystemPrompt,
     pub(crate) skills: Vec<Workflow>,
@@ -80,30 +79,18 @@ fn default_tool_descs(config: &Config) -> Vec<(&'static str, &'static str)> {
         "pushover",
         "Send a Pushover notification to your device. Requires PUSHOVER_TOKEN and PUSHOVER_USER_KEY in .env file.",
     ));
-    if !config.agents.is_empty() {
-        tool_descs.push((
-            "delegate",
-            "Delegate a subtask to a specialized agent. Use when: a task benefits from a different model (e.g. fast summarization, deep reasoning, code generation). The sub-agent runs a single prompt and returns its response.",
-        ));
-    }
     tool_descs
 }
 
 /// Build the model, tools and prompt of a channel turn from `config`, under
 /// `security`. Side-effect free apart from the workspace's audit logger: it
 /// installs no process-global policy and registers no subscriber.
-pub(crate) fn build_channel_turn_parts(
+pub(crate) async fn build_channel_turn_parts(
     dispatch: &DispatchCtx,
     config: &Config,
     security: &Arc<SecurityPolicy>,
     descs: PromptToolDescs,
 ) -> Result<ChannelTurnParts> {
-    let provider_runtime_options = provider::ProviderRuntimeOptions {
-        auth_profile_override: None,
-        openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
-        secrets_encrypt: config.secrets.encrypt,
-        reasoning_enabled: config.runtime.reasoning_enabled,
-    };
     let (model, provider_name) = match resolve_chat_workload(config) {
         ChatWorkloadResolution::Cloud => {
             let (_chat, model) = provider::create_chat_model_with_model_id_in(
@@ -111,8 +98,9 @@ pub(crate) fn build_channel_turn_parts(
                 "chat",
                 config,
                 config.default_temperature,
-            )?;
-            (model, provider::INFERENCE_BACKEND_ID.to_string())
+            )
+            .await?;
+            (model, provider::factory::INFERENCE_BACKEND_ID.to_string())
         }
         ChatWorkloadResolution::Workload {
             provider_string,
@@ -128,7 +116,8 @@ pub(crate) fn build_channel_turn_parts(
                 "chat",
                 config,
                 config.default_temperature,
-            )?;
+            )
+            .await?;
             (model_id, slug)
         }
     };
@@ -137,11 +126,10 @@ pub(crate) fn build_channel_turn_parts(
         &config.runtime,
         config.shell.hide_window,
     )?);
-    // Phase 1 of #1401: audit logger is wired with defaults so emission paths
-    // are exercised at runtime. The logger is workspace-scoped and shared, so
-    // concurrent sessions append to one `audit.log` without racing on rotation.
-    let audit = crate::security::get_or_create_workspace_audit_logger(
-        crate::config::AuditConfig::default(),
+    // The audit handle is workspace-scoped and shared; event persistence is
+    // delegated to TinySecurity's ordered `AuditSink2` stream.
+    let audit = crate::security::get_or_create_workspace_audit_sink(
+        config.audit.clone(),
         config.workspace_dir.clone(),
     )?;
     let workspace = config.workspace_dir.clone();
@@ -161,16 +149,16 @@ pub(crate) fn build_channel_turn_parts(
             &config.browser,
             &config.http_request,
             &config.action_dir,
-            &config.agents,
             config,
             None,
         )
+        .await
     });
 
     let skills = if capabilities.is_some() {
         Vec::new()
     } else {
-        crate::skills::load_workflow_metadata(&workspace)
+        crate::skills::load_workflow_metadata_for(dispatch, config)
     };
 
     let tool_descs: Vec<(String, String)> = if capabilities.is_some() {
@@ -223,7 +211,6 @@ pub(crate) fn build_channel_turn_parts(
     Ok(ChannelTurnParts {
         model,
         provider_name,
-        provider_runtime_options,
         tools_registry,
         system_prompt,
         skills,
@@ -236,12 +223,14 @@ pub(crate) fn runtime_context(
     dispatch: &DispatchCtx,
     config: &Config,
     parts: ChannelTurnParts,
-    channels_by_name: Arc<HashMap<String, Arc<dyn crate::channels::Channel>>>,
+    channels_by_name: Arc<HashMap<String, Arc<crate::channels::runtime::ChannelHandle>>>,
+    module_objects: Arc<HashMap<String, tinybus::module::ModuleObjectClient>>,
     message_timeout_secs: u64,
 ) -> ChannelRuntimeContext {
     ChannelRuntimeContext {
         relay_thread: None,
         channels_by_name,
+        module_objects,
         turn_model_source: None,
         default_provider: Arc::new(parts.provider_name),
         tools_registry: parts.tools_registry,
@@ -249,13 +238,11 @@ pub(crate) fn runtime_context(
         model: Arc::new(parts.model),
         temperature: config.default_temperature,
         max_tool_iterations: config.agent.max_tool_iterations,
-        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
         turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: config.api_url.clone(),
         inference_url: config.inference_url.clone(),
         reliability: Arc::new(config.reliability.clone()),
-        provider_runtime_options: parts.provider_runtime_options,
         workspace_dir: Arc::new(config.workspace_dir.clone()),
         message_timeout_secs,
         multimodal: config.multimodal.clone(),

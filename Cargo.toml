@@ -30,7 +30,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.64.18"
+version = "0.64.20"
 edition = "2021"
 license = "GPL-3.0-only"
 repository = "https://github.com/tinyhumansai/openhuman"
@@ -43,7 +43,8 @@ repository = "https://github.com/tinyhumansai/openhuman"
 openhuman-rpc = { path = "crates/openhuman-rpc", default-features = false }
 openhuman-embed = { path = "crates/openhuman-embed", default-features = false }
 openhuman-tinyhumans = { path = "crates/openhuman-tinyhumans", default-features = false }
-tinyagents-hooks = { path = "vendor/tinyagents/crates/tinyagents-hooks" }
+tinyagents-hooks = { path = "vendor/tinyagents/crates/tinyagents-hooks", default-features = false }
+tinyagents-harness-tools = { path = "vendor/tinyagents/crates/tinyagents-harness-tools", default-features = false }
 
 # Patches are workspace-root settings; Cargo ignores them in member manifests.
 [patch."https://github.com/tinyhumansai/tinytools"]
@@ -52,7 +53,6 @@ tinyagents-hooks = { path = "vendor/tinyagents/crates/tinyagents-hooks" }
 # every host tool link — so there is exactly one `tinytools` package and one
 # `Tool` trait. Without this, MCP tools would not satisfy the harness's trait.
 tinytools = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools" }
-tinytools-std = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 tinytools-agent = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools-agent" }
 
 [patch."https://github.com/tinyhumansai/tinybus"]
@@ -64,28 +64,47 @@ tinybus = { path = "vendor/tinybus/crates/tinybus" }
 tinybus-macros = { path = "vendor/tinybus/crates/tinybus-macros" }
 tinybus-module = { path = "vendor/tinybus/crates/tinybus-module" }
 
+[patch."https://github.com/senamakel/tinybus"]
+# The v2 storage and TinyBox modules depend on the migration fork URL. Patch
+# that source identity to the same checkout as the canonical dependency above
+# so all bus interfaces share one Rust type identity.
+tinybus = { path = "vendor/tinybus/crates/tinybus" }
+tinybus-macros = { path = "vendor/tinybus/crates/tinybus-macros" }
+tinybus-module = { path = "vendor/tinybus/crates/tinybus-module" }
+
 [patch."https://github.com/tinyhumansai/tinystoragedrivers"]
-# One editable checkout every module resolves onto: each vendor/tiny* manifest
-# names tinystoragedrivers by git tag, and this redirects them all to
-# vendor/tinystoragedrivers. This reverses #7754's removal of the patch on
-# purpose. The vendored commit must stay semver-compatible with the tag modules
-# declare; scripts/ci/check-storage-owner.mjs enforces that every tsd package
-# resolves to a path under vendor/tinystoragedrivers/. tinystoragedrivers-tinybus
-# is left out: nothing here depends on it, and an unused patch warns. Add it with
-# the first dependent.
+# Both canonical and fork module manifests can name TSD by Git. Resolve both
+# source identities to the one editable fork checkout below so every module
+# shares the same v2 types and bus contracts.
 tinystoragedrivers = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers" }
+tinystoragedrivers-api = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-api" }
+tinystoragedrivers-blob = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-blob" }
 tinystoragedrivers-bus = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-bus" }
 tinystoragedrivers-busproxy = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-busproxy" }
-tinystoragedrivers-client = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-client" }
-tinystoragedrivers-core = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-core" }
-tinystoragedrivers-file = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-file" }
-tinystoragedrivers-mongodb = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-mongodb" }
-tinystoragedrivers-s3 = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-s3" }
+tinystoragedrivers-connect = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-connect" }
+tinystoragedrivers-document = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-document" }
+tinystoragedrivers-kv = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-kv" }
+tinystoragedrivers-queue = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-queue" }
 tinystoragedrivers-secrets = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-secrets" }
-tinystoragedrivers-sqlite = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-sqlite" }
+tinystoragedrivers-testkit = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-testkit" }
+tinystoragedrivers-types = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-types" }
+
+[patch."https://github.com/senamakel/tinystoragedrivers"]
+tinystoragedrivers = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers" }
+tinystoragedrivers-api = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-api" }
+tinystoragedrivers-blob = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-blob" }
+tinystoragedrivers-bus = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-bus" }
+tinystoragedrivers-busproxy = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-busproxy" }
+tinystoragedrivers-connect = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-connect" }
+tinystoragedrivers-document = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-document" }
+tinystoragedrivers-kv = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-kv" }
+tinystoragedrivers-queue = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-queue" }
+tinystoragedrivers-secrets = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-secrets" }
+tinystoragedrivers-testkit = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-testkit" }
+tinystoragedrivers-types = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-types" }
 
 [patch."https://github.com/tinyhumansai/tinyinference"]
-# tinymemes depends on the Jev client by git; resolve it to the vendored copy.
+# tinycomputer depends on the Jev client by git; resolve it to the vendored copy.
 tinyinference-decisions = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-decisions" }
 tinyinference-core = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-core" }
 tinyinference-embeddings = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-embeddings" }

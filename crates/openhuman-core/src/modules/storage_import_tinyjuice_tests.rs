@@ -1,15 +1,14 @@
 use super::*;
+use crate::storage::{Scope, Storage};
 use std::time::Duration;
-use tinystoragedrivers::{MemoryStorage, Scope, StorageBackend};
+use tinystoragedrivers_testkit::memory_storage;
 
 const FRESH: &str = "00112233445566778899aabbccddeeff";
 const OLD: &str = "ffeeddccbbaa99887766554433221100";
 const UPPER: &str = "ABCDEF0123456789ABCDEF0123456789";
 
-fn scoped() -> ScopedStorage {
-    MemoryStorage::new()
-        .for_scope(&Scope::new("module:tinyjuice@local").unwrap())
-        .unwrap()
+fn scoped() -> Storage {
+    memory_storage(&Scope::new("module:tinyjuice@local").unwrap())
 }
 
 fn set_age(path: &Path, age: Duration) {
@@ -36,10 +35,10 @@ fn legacy_root() -> tempfile::TempDir {
     dir
 }
 
-async fn read(scoped: &ScopedStorage, token: &str) -> Option<String> {
+async fn read(scoped: &Storage, token: &str) -> Option<String> {
     scoped
         .blobs()
-        .get(&format!("{CCR_BLOB_PREFIX}{token}"))
+        .get(&ccr_key(token))
         .await
         .unwrap()
         .map(|blob| String::from_utf8(blob.bytes).unwrap())
@@ -129,11 +128,7 @@ async fn a_second_run_is_a_noop_and_a_blob_already_stored_is_kept() {
     let scoped = scoped();
     scoped
         .blobs()
-        .put(
-            &format!("{CCR_BLOB_PREFIX}{FRESH}"),
-            b"written by the module".to_vec(),
-            None,
-        )
+        .put(&ccr_key(FRESH), b"written by the module".to_vec(), None)
         .await
         .unwrap();
     let first = import_into(

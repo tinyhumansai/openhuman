@@ -320,7 +320,7 @@ println!("{}", reply.reply);
 
 [`CONTRIBUTING.md`](../CONTRIBUTING.md)를 읽거나, [이 프롬프트](./CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you)로 AI 코딩 에이전트의 안내를 받아 보세요.
 
-1. Git, Node.js 24+, pnpm 10.10.0, Rust 1.96.1(`rustfmt`와 `clippy` 포함), CMake, Ninja, ripgrep, 그리고 사용 중인 플랫폼의 데스크톱 빌드 사전 요구 사항을 설치합니다.
+1. Git, Node.js 24+, pnpm 10.10.0, Rust 1.99.1(`rustfmt`와 `clippy` 포함), CMake, Ninja, ripgrep, 그리고 사용 중인 플랫폼의 데스크톱 빌드 사전 요구 사항을 설치합니다.
 2. 저장소를 포크하고 클론합니다. `git submodule update --init --recursive`를 실행한 뒤 `pnpm install`을 실행합니다.
 3. UI 작업에는 `pnpm dev`, 데스크톱 앱에는 `pnpm dev:app`을 실행합니다. PR을 열기 전에 `pnpm typecheck`, `pnpm format:check`, `cargo check --manifest-path Cargo.toml`을 실행하세요.
 

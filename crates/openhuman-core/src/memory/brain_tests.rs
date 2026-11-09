@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::memory::scope::MemoryIdentity;
+use tinymemory_tools::layout::identity::Identity as MemoryIdentity;
 use tinymemory_tools::layout::placement::file_into;
 
 use tinymemory_api::{ItemKind, MemoryMeta, MetaFilter};
@@ -189,7 +189,7 @@ async fn ingest_refuses_bad_input() {
     ] {
         assert!(matches!(
             ingest(&config, &MemoryIdentity::root(), params).await,
-            Err(MemoryError::InvalidRequest(_))
+            Err(Error::InvalidRequest(_))
         ));
     }
     assert!(search(
@@ -203,6 +203,36 @@ async fn ingest_refuses_bad_input() {
     )
     .await
     .is_err());
+}
+
+#[tokio::test]
+async fn ingest_rejects_path_and_text_together_without_ingesting() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let engine = bind_reference(&config);
+    let path = tmp.path().join("valid.md");
+    std::fs::write(&path, "valid file content").unwrap();
+
+    let error = ingest(
+        &config,
+        &MemoryIdentity::root(),
+        BrainIngestParams {
+            path: Some(path.display().to_string()),
+            text: Some("valid text content".into()),
+            source: Some("files".into()),
+            title: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::InvalidRequest(message)
+            if message == "pass exactly one of `path` or `text`"
+    ));
+    assert!(stored(&engine, MetaFilter::kinds([ItemKind::Document]))
+        .await
+        .is_empty());
 }
 
 #[tokio::test]
@@ -291,7 +321,7 @@ async fn ingest_refuses_a_credential_store_a_system_root_traversal_and_null_byte
     ] {
         let result = ingest(&config, &MemoryIdentity::root(), path_params(path.clone())).await;
         assert!(
-            matches!(result, Err(MemoryError::InvalidRequest(_))),
+            matches!(result, Err(Error::InvalidRequest(_))),
             "{path:?}: {result:?}"
         );
     }
@@ -317,8 +347,55 @@ async fn ingest_refuses_a_symlink_into_a_credential_store() {
     )
     .await;
     assert!(
-        matches!(result, Err(MemoryError::InvalidRequest(_))),
+        matches!(result, Err(Error::InvalidRequest(_))),
         "{result:?}"
     );
     assert!(engine.is_empty());
+}
+
+#[tokio::test]
+async fn ingest_keeps_the_legacy_blank_source_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    bind_reference(&config);
+    let error = ingest(
+        &config,
+        &MemoryIdentity::root(),
+        BrainIngestParams {
+            path: None,
+            text: Some("body".into()),
+            source: Some(" ".into()),
+            title: None,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "invalid request: invalid request: a brain source id must not be blank"
+    );
+}
+
+#[tokio::test]
+async fn ingest_keeps_the_legacy_oversized_file_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    bind_reference(&config);
+    let path = tmp.path().join("oversized.bin");
+    let size = MAX_INGEST_BYTES + 1;
+    std::fs::File::create(&path).unwrap().set_len(size).unwrap();
+
+    let error = ingest(
+        &config,
+        &MemoryIdentity::root(),
+        path_params(path.display().to_string()),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        format!("invalid request: the file is {size} bytes; the limit is {MAX_INGEST_BYTES}")
+    );
 }

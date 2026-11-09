@@ -57,22 +57,6 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         toml: include_str!("orchestrator/agent.toml"),
         prompt_fn: super::orchestrator::build,
     },
-    // `planner` and `critic` are not delegable from chat (the orchestrator does
-    // not list them): they exist for the `parallel_research_cross_check`
-    // workflow-run template (`orchestration/workflow_runs/ops.rs`), whose
-    // read-only safety tier admits only read-only agents. Planning and
-    // code review in chat are the orchestrator's own `## Plans` rules and
-    // skill `coding`.
-    BuiltinAgent {
-        id: "planner",
-        toml: include_str!("planner/agent.toml"),
-        prompt_fn: super::planner::build,
-    },
-    BuiltinAgent {
-        id: "critic",
-        toml: include_str!("critic/agent.toml"),
-        prompt_fn: super::critic::build,
-    },
     BuiltinAgent {
         id: "task_manager_agent",
         toml: include_str!("task_manager_agent/agent.toml"),
@@ -135,8 +119,8 @@ pub const BUILTINS: &[BuiltinAgent] = &[
     #[cfg(feature = "flows")]
     BuiltinAgent {
         id: "workflow_builder",
-        toml: include_str!("../../flows/agents/workflow_builder/agent.toml"),
-        prompt_fn: crate::flows::agents::workflow_builder::prompt::build,
+        toml: include_str!("workflow_builder/agent.toml"),
+        prompt_fn: super::workflow_builder::prompt::build,
     },
     // Workflow-discovery specialist (the "Flow Scout"): reads the user's
     // memory/threads/people/connections/flows read-only and ends by calling
@@ -148,8 +132,8 @@ pub const BUILTINS: &[BuiltinAgent] = &[
     #[cfg(feature = "flows")]
     BuiltinAgent {
         id: "flow_discovery",
-        toml: include_str!("../../flows/agents/flow_discovery/agent.toml"),
-        prompt_fn: crate::flows::agents::flow_discovery::prompt::build,
+        toml: include_str!("flow_discovery/agent.toml"),
+        prompt_fn: super::flow_discovery::prompt::build,
     },
 ];
 
@@ -176,12 +160,10 @@ pub fn load_builtins() -> Result<Vec<AgentDefinition>> {
 
 /// Compile-time gate for built-ins whose deck/document tool is feature-gated.
 ///
-/// `presentation_agent` delegates deck creation to `generate_presentation`,
+/// `presentation_agent` creates decks with `generate_presentation`,
 /// which only registers under the `documents` feature (see `tools::ops`). In a
-/// slim build without `documents`, the agent would still be advertised as
-/// `make_presentation` while its filtered tool surface no longer contains any
-/// tool able to produce a deck, so it is dropped from the registry in lockstep
-/// with its tool.
+/// slim build without `documents`, the agent would have no tool able to
+/// produce a deck, so it is dropped from the registry in lockstep with its tool.
 fn builtin_enabled(_b: &BuiltinAgent) -> bool {
     #[cfg(not(feature = "documents"))]
     if _b.id == "presentation_agent" {
@@ -193,14 +175,19 @@ fn builtin_enabled(_b: &BuiltinAgent) -> bool {
 /// Parse a single [`BuiltinAgent`] triple into a finished [`AgentDefinition`].
 fn parse_builtin(b: &BuiltinAgent) -> Result<AgentDefinition> {
     // The TOML ships without `system_prompt` — serde falls back to
-    // `defaults::empty_inline_prompt` — and the loader injects the
-    // rendered sibling `prompt.md` immediately below.
+    // `defaults::empty_inline_prompt` — and the loader installs a dynamic
+    // host-owned prompt builder below. Most builders include a sibling
+    // `prompt.md`; flow builders receive their archetype text from TinyFlows.
     let mut def: AgentDefinition = parse_str(b.toml, DefinitionSource::Builtin)
         .with_context(|| format!("parsing built-in agent `{}` TOML", b.id))?;
 
     // Install the host-owned function-driven prompt builder.
     def.system_prompt = PromptSource::Dynamic(());
     def.extensions.prompt_builder = Some(b.prompt_fn);
+    def.extensions.tinyflows_prompt_owner = match b.id {
+        "workflow_builder" | "flow_discovery" => Some(b.id.to_owned()),
+        _ => None,
+    };
 
     // Sanity check: file layout id must match declared TOML id. This
     // catches copy-paste mistakes where someone forgets to update the

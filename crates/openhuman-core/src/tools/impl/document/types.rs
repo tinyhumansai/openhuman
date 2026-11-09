@@ -1,11 +1,9 @@
 //! Typed input / output / error contracts for the `generate_document` tool.
 //!
-//! The *document* half of these contracts — the section spec, its size
-//! limits, and the validation rules — lives in the host-local
-//! [`format`](super::format)
-//! module and is re-exported here. Nothing about "a title, some sections, and a bullet
-//! list" is OpenHuman-specific, so the definitions live where any host can
-//! reach them and this module keeps only what genuinely is ours:
+//! The document spec, its size limits, and validation rules are owned by
+//! `tinydocs-bus`. The parent module aliases that contract crate as `format`
+//! to preserve existing paths. This module keeps only OpenHuman's product
+//! boundary:
 //!
 //! - [`GenerateDocumentOutput`] — artifact ids and workspace paths, concepts
 //!   the bus contract has no notion of.
@@ -14,9 +12,8 @@
 //!   the deadline is OpenHuman's policy, applied by [`engine`](super::engine)
 //!   around a synchronous crate call.
 //!
-//! The re-exported [`GenerateDocumentInput`] is the format module's `DocumentSpec`
-//! under its historical OpenHuman name. Field names are unchanged, so the JSON
-//! tool schema the agent sees is byte-identical to before the extraction.
+//! [`GenerateDocumentInput`] names the bus `DocumentSpec` under its historical
+//! OpenHuman name. Field names are unchanged, so the JSON tool schema is stable.
 
 use serde::{Deserialize, Serialize};
 

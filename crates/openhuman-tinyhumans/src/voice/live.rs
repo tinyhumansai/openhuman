@@ -7,7 +7,10 @@
 //! ([`register`]); the core carries no hosted entry of its own.
 
 use openhuman_embed::__host::config::Config;
-use openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential;
+use openhuman_embed::__host::core::observability::{
+    INSUFFICIENT_CREDITS_PREFIX, PAID_PLAN_REQUIRED_PREFIX,
+};
+use openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential;
 use openhuman_embed::__host::voice_registry::{
     register_live_provider, LiveProviderEntry, LiveProviderKind, LiveProviderPlacement,
     LiveVoiceError, PreparedProvider, GEMINI_LANGUAGES, GEMINI_VOICES,
@@ -36,9 +39,26 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|v| !v.trim().is_empty())
 }
 
+/// The live-session error for a failed backend mint. The backend's billing
+/// refusals (balance below the session reserve, or a free plan) get their own
+/// codes so the UI can say "add credits" / "upgrade" instead of echoing the
+/// raw backend failure (TAURI-RUST-13BR / -11G3).
+pub(crate) fn mint_error(message: String) -> LiveVoiceError {
+    if message.contains(INSUFFICIENT_CREDITS_PREFIX) {
+        log::info!("{LOG_PREFIX} mint refused: insufficient credits");
+        LiveVoiceError::new("insufficient_credits", message)
+    } else if message.contains(PAID_PLAN_REQUIRED_PREFIX) {
+        log::info!("{LOG_PREFIX} mint refused: paid plan required");
+        LiveVoiceError::new("paid_plan_required", message)
+    } else {
+        LiveVoiceError::backend(message)
+    }
+}
+
 /// Whether a backend credential is available for the hosted providers.
-fn backend_ready(config: &Config) -> bool {
-    resolve_backend_credential(config).is_ok()
+fn backend_ready(config: &Config) -> openhuman_embed::__host::voice_registry::LiveFuture<bool> {
+    let config = config.clone();
+    Box::pin(async move { resolve_backend_credential(&config).await.is_ok() })
 }
 
 /// Shapes the session configuration for `gemini-hosted` from the user's settings.
@@ -94,7 +114,9 @@ async fn mint_gemini_ticket(
     config: &Config,
     live: &LiveConfig,
 ) -> Result<GeminiTicket, LiveVoiceError> {
-    let credential = resolve_backend_credential(config).map_err(LiveVoiceError::not_configured)?;
+    let credential = resolve_backend_credential(config)
+        .await
+        .map_err(LiveVoiceError::not_configured)?;
     let client =
         BackendClient::from_config(config).map_err(|e| LiveVoiceError::backend(e.to_string()))?;
     ensure_secure_backend_url(client.base_url()).map_err(LiveVoiceError::backend)?;
@@ -107,7 +129,7 @@ async fn mint_gemini_ticket(
             Some(body),
         )
         .await
-        .map_err(|error| LiveVoiceError::backend(flatten_authed_error(error)))?;
+        .map_err(|error| mint_error(flatten_authed_error(error)))?;
     parse_ticket(&raw)
 }
 
@@ -137,7 +159,7 @@ pub(crate) async fn prepare_elevenlabs(
 ) -> Result<PreparedProvider, LiveVoiceError> {
     let signed = mint_voice_agent_signed_url(&config)
         .await
-        .map_err(LiveVoiceError::backend)?
+        .map_err(mint_error)?
         .value;
     // `user_token` is the identity the backend's Custom-LLM relay verifies on
     // every relayed turn (#5399).

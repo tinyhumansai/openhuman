@@ -94,6 +94,9 @@ pub async fn dump_agent_prompt(options: DumpPromptOptions) -> Result<DumpedPromp
         options.model_override.clone(),
     )
     .await?;
+    let ctx = crate::core::runtime::DispatchCtx::host_default();
+    #[cfg(all(feature = "flows", feature = "skills"))]
+    crate::skills::bundled::flow_authoring::prewarm(&ctx, &config, None).await;
 
     // Ensure the registry is populated — `from_config_for_agent`
     // errors for any non-orchestrator id when the global registry
@@ -101,7 +104,7 @@ pub async fn dump_agent_prompt(options: DumpPromptOptions) -> Result<DumpedPromp
     AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .context("initialising AgentDefinitionRegistry for prompt dump")?;
 
-    render_via_session(&config, &options.agent_id).await
+    render_via_session(&ctx, &config, &options.agent_id).await
 }
 
 /// Dump every registered agent's system prompt in one shot.
@@ -115,6 +118,9 @@ pub async fn dump_all_agent_prompts(
 ) -> Result<Vec<DumpedPrompt>> {
     let config =
         load_dump_config(workspace_dir_override, config_path_override, model_override).await?;
+    let ctx = crate::core::runtime::DispatchCtx::host_default();
+    #[cfg(all(feature = "flows", feature = "skills"))]
+    crate::skills::bundled::flow_authoring::prewarm(&ctx, &config, None).await;
 
     AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .context("initialising AgentDefinitionRegistry for prompt dump")?;
@@ -131,7 +137,7 @@ pub async fn dump_all_agent_prompts(
 
     let mut results = Vec::with_capacity(ids.len());
     for id in ids {
-        let dumped = render_via_session(&config, &id)
+        let dumped = render_via_session(&ctx, &config, &id)
             .await
             .with_context(|| format!("rendering prompt for agent `{id}`"))?;
         results.push(dumped);
@@ -174,20 +180,35 @@ async fn load_dump_config(
 
 /// Build a real [`Agent`] via `from_config_for_agent`, populate live
 /// connected integrations, and render the turn-1 system prompt.
-async fn render_via_session(config: &Config, agent_id: &str) -> Result<DumpedPrompt> {
-    let mut agent = OpenHumanSessionHost::from_config_for_agent(
-        &crate::core::runtime::DispatchCtx::host_default(),
-        config,
-        agent_id,
-    )
-    .with_context(|| format!("building session agent for `{agent_id}`"))?;
+async fn render_via_session(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    agent_id: &str,
+) -> Result<DumpedPrompt> {
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, config, agent_id)
+        .await
+        .with_context(|| format!("building session agent for `{agent_id}`"))?;
 
     // Use the live turn prelude's hydration and surface reconciliation so this
     // snapshot matches what the runtime will send, without starting a model turn.
     agent.refresh_prompt_surface().await;
 
+    #[cfg(feature = "flows")]
+    let flow_archetype_text = match agent.resolved_definition() {
+        Some(definition) => {
+            crate::agent::prompts::flow_archetype::load_for_definition(
+                Some(config),
+                definition.as_ref(),
+            )
+            .await?
+        }
+        None => None,
+    };
+    #[cfg(not(feature = "flows"))]
+    let flow_archetype_text: Option<String> = None;
+
     let text = agent
-        .build_system_prompt()
+        .render_current_turn_prompt_with_flow_archetype(flow_archetype_text.as_deref())
         .with_context(|| format!("rendering system prompt for `{agent_id}`"))?;
 
     Ok(session_dump(&agent, agent_id, text))
@@ -223,3 +244,7 @@ fn session_dump(agent: &OpenHumanSessionHost, agent_id: &str, text: String) -> D
         tool_specs,
     }
 }
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod tests;

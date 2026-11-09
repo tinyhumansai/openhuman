@@ -37,7 +37,7 @@ with its own.
 
 ```dockerfile
 # Builds libtinycomputer.so from the gitlink this checkout records.
-FROM rust:1.96.1-bookworm AS tinycomputer
+FROM rust:1.99.1-bookworm AS tinycomputer
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential pkg-config ca-certificates \
         libasound2-dev libxdo-dev libxtst-dev libx11-dev \

@@ -3,11 +3,13 @@
 Host side of the legacy-session import.
 
 The importer is `crate::storage::import::sessions`, run at boot (and when the
-desktop rebinds its workspace to a different user). It moves a classic
+desktop rebinds its workspace to a different user). It reads a classic
 workspace's `session_db/sessions.db`, `session_raw/*.jsonl` transcripts and
-turn-state JSON into the storage backend through TinyAgents' `legacy` reader:
-read-only, id-preserving and only-if-absent. See the storage README for the
-agent each record lands in.
+turn-state JSON without changing those sources, then writes the records through
+the current TinyAgents storage ports. Database rows use TinyAgents' typed
+legacy batch API; the host owns file discovery and replay. Imports preserve
+IDs and are only-if-absent. See the storage README for the agent each record
+lands in.
 
 What stays in OpenHuman:
 

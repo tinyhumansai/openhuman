@@ -19,7 +19,9 @@ pub(crate) use paths::{active_workspace_marker_path, config_openhuman_dir, defau
 pub(crate) use reset_local_data::reset_local_data_for_paths;
 #[cfg(all(test, windows))]
 pub(crate) use reset_local_data::reset_local_data_remove_error;
-pub use reset_local_data::{get_data_paths, get_data_paths_for_user, reset_local_data};
+pub use reset_local_data::{
+    get_data_paths, get_data_paths_for_user, get_data_paths_to_clear, reset_local_data,
+};
 pub use runtime_flags::{
     agent_server_status, core_rpc_url_from_env, get_runtime_flags, set_browser_allow_all,
     RuntimeFlagsOut,

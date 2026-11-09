@@ -3,7 +3,7 @@
 mod common;
 
 use common::{chat_requests, offline_config, provider, route, runtime, stub_backend};
-use openhuman_embed::{AgentSpec, Provider, Route, Runtime, Workspace};
+use openhuman_embed::{AgentSpec, Provider, ReasoningEffort, Route, Runtime, Workspace};
 
 #[test]
 fn attribution_headers_are_scoped_to_each_agent_and_turn_route() {
@@ -22,7 +22,12 @@ async fn scenario() {
         .unwrap();
     let a_route = Route::openai_compatible(format!("{}/v1", a_provider.uri()), "a-key")
         .header("x-medulla-agent-id", "worker-a")
-        .header("x-medulla-run-id", "a-run");
+        .header("x-medulla-run-id", "a-run")
+        .provider_options(serde_json::json!({
+            "provider": {"sort": "latency"},
+            "usage": {"include": false}
+        }))
+        .reasoning_effort(ReasoningEffort::High);
     assert!(
         !format!("{a_route:?}").contains("a-run"),
         "header values must stay out of Debug"
@@ -41,7 +46,13 @@ async fn scenario() {
             ),
         )
         .unwrap();
-    let (a_result, b_result) = tokio::join!(a.turn("a").route(a_route).send(), b.run("b"));
+    let (a_result, b_result) = tokio::join!(
+        a.turn("a")
+            .route(a_route)
+            .provider_options(serde_json::json!({"usage": {"include": true}}))
+            .send(),
+        b.run("b")
+    );
     a_result.unwrap();
     b_result.unwrap();
     // The next turn inherits the agent provider, not the previous turn's headers.
@@ -62,6 +73,10 @@ async fn scenario() {
         a_requests[0].headers.get("authorization").unwrap(),
         "Bearer a-key"
     );
+    let a_body: serde_json::Value = serde_json::from_slice(&a_requests[0].body).unwrap();
+    assert_eq!(a_body["provider"], serde_json::json!({"sort": "latency"}));
+    assert_eq!(a_body["usage"], serde_json::json!({"include": true}));
+    assert_eq!(a_body["reasoning_effort"], "high");
     assert!(a_requests[1].headers.get("x-medulla-run-id").is_none());
     assert_eq!(
         b_requests[0].headers.get("x-medulla-agent-id").unwrap(),

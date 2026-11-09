@@ -74,7 +74,7 @@ async fn update_records_revisions_and_rollback_restores() {
         .await
         .unwrap()
         .value;
-    assert_eq!(rolled.graph.nodes.len(), 1);
+    assert_eq!(rolled.graph["nodes"].as_array().unwrap().len(), 1);
 
     // Rollback is itself undoable — it snapshotted the pre-rollback (2-node) graph.
     let history2 = flows_get_history(&config, &flow.id, 20).unwrap().value;
@@ -96,7 +96,7 @@ async fn compute_required_connections_flags_missing_composio_toolkits() {
         ],
         "edges": [ { "from_node": "t", "to_node": "send" } ]
     });
-    let graph = tinyflows::migrate::deserialize_graph(graph_json).unwrap();
+    let graph = structurally_valid_graph(graph_json);
     let required = compute_required_connections(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
@@ -125,7 +125,7 @@ async fn compute_required_connections_skips_native_and_http_nodes() {
             { "from_node": "search", "to_node": "http" }
         ]
     });
-    let graph = tinyflows::migrate::deserialize_graph(graph_json).unwrap();
+    let graph = structurally_valid_graph(graph_json);
     let required = compute_required_connections(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
@@ -240,18 +240,20 @@ fn extract_workflow_proposal_ignores_non_proposal_tool_results() {
 /// The terminal-state guarantee's core invariant: whatever `build_trail_off_fallback`
 /// returns, it must ALWAYS read as a question — the user is never left with
 /// silence, regardless of what (if anything) the tool history contains.
-#[test]
-fn build_trail_off_fallback_always_yields_a_question() {
-    let fallback = build_trail_off_fallback(&[]);
+#[tokio::test]
+async fn build_trail_off_fallback_always_yields_a_question() {
+    let config = Config::default();
+    let fallback = build_trail_off_fallback(&config, &[]).await.unwrap();
     assert!(
-        text_looks_like_question(&fallback),
+        text_looks_like_question(&config, &fallback).await.unwrap(),
         "fallback with no tool history must still be a question: {fallback}"
     );
     assert!(!fallback.trim().is_empty());
 }
 
-#[test]
-fn build_trail_off_fallback_surfaces_last_dry_run_blocker() {
+#[tokio::test]
+async fn build_trail_off_fallback_surfaces_last_dry_run_blocker() {
+    let config = Config::default();
     let history = vec![
         builder_tool_call("call_1", "dry_run_workflow"),
         builder_tool_result(
@@ -259,9 +261,9 @@ fn build_trail_off_fallback_surfaces_last_dry_run_blocker() {
             r#"{"ok": false, "null_resolutions": [{"node_id": "send", "path": "args.channel"}]}"#,
         ),
     ];
-    let fallback = build_trail_off_fallback(&history);
+    let fallback = build_trail_off_fallback(&config, &history).await.unwrap();
     assert!(
-        text_looks_like_question(&fallback),
+        text_looks_like_question(&config, &fallback).await.unwrap(),
         "blocker fallback must still end in a question: {fallback}"
     );
     assert!(
@@ -270,8 +272,9 @@ fn build_trail_off_fallback_surfaces_last_dry_run_blocker() {
     );
 }
 
-#[test]
-fn build_trail_off_fallback_surfaces_gate_rejection_error_text() {
+#[tokio::test]
+async fn build_trail_off_fallback_surfaces_gate_rejection_error_text() {
+    let config = Config::default();
     let history = vec![
         builder_tool_call("call_1", "propose_workflow"),
         builder_tool_result(
@@ -279,13 +282,14 @@ fn build_trail_off_fallback_surfaces_gate_rejection_error_text() {
             "propose_workflow rejected: tool slug 'slack:not_a_real_action' does not exist",
         ),
     ];
-    let fallback = build_trail_off_fallback(&history);
-    assert!(text_looks_like_question(&fallback));
+    let fallback = build_trail_off_fallback(&config, &history).await.unwrap();
+    assert!(text_looks_like_question(&config, &fallback).await.unwrap());
     assert!(fallback.contains("does not exist"));
 }
 
-#[test]
-fn build_trail_off_fallback_ignores_unrelated_read_tool_output() {
+#[tokio::test]
+async fn build_trail_off_fallback_ignores_unrelated_read_tool_output() {
+    let config = Config::default();
     // A plain-text result from a tool OUTSIDE the builder authoring belt (e.g.
     // a read-only history lookup) must never be misattributed as the blocker
     // — this stays tool-agnostic within the authoring belt, not "any tool".
@@ -293,16 +297,17 @@ fn build_trail_off_fallback_ignores_unrelated_read_tool_output() {
         builder_tool_call("call_1", "get_flow_history"),
         builder_tool_result("call_1", "no prior revisions found"),
     ];
-    let fallback = build_trail_off_fallback(&history);
-    assert!(text_looks_like_question(&fallback));
+    let fallback = build_trail_off_fallback(&config, &history).await.unwrap();
+    assert!(text_looks_like_question(&config, &fallback).await.unwrap());
     assert!(
         !fallback.contains("no prior revisions found"),
         "must not surface an unrelated read-tool's output as the blocker: {fallback}"
     );
 }
 
-#[test]
-fn build_trail_off_fallback_ignores_a_successful_proposal_payload() {
+#[tokio::test]
+async fn build_trail_off_fallback_ignores_a_successful_proposal_payload() {
+    let config = Config::default();
     let history = vec![
         builder_tool_call("call_1", "propose_workflow"),
         builder_tool_result(
@@ -310,13 +315,14 @@ fn build_trail_off_fallback_ignores_a_successful_proposal_payload() {
             r#"{"type": "workflow_proposal", "name": "demo", "graph": {}}"#,
         ),
     ];
-    let fallback = build_trail_off_fallback(&history);
-    assert!(text_looks_like_question(&fallback));
+    let fallback = build_trail_off_fallback(&config, &history).await.unwrap();
+    assert!(text_looks_like_question(&config, &fallback).await.unwrap());
     assert!(!fallback.contains("workflow_proposal"));
 }
 
-#[test]
-fn build_trail_off_fallback_picks_the_most_recent_blocker() {
+#[tokio::test]
+async fn build_trail_off_fallback_picks_the_most_recent_blocker() {
+    let config = Config::default();
     // Two dry-run failures in the history: the fallback should describe the
     // LAST one (the one the agent was still stuck on), not the first.
     let history = vec![
@@ -325,7 +331,7 @@ fn build_trail_off_fallback_picks_the_most_recent_blocker() {
         builder_tool_call("call_2", "dry_run_workflow"),
         builder_tool_result("call_2", r#"{"ok": false, "errors": ["second issue"]}"#),
     ];
-    let fallback = build_trail_off_fallback(&history);
+    let fallback = build_trail_off_fallback(&config, &history).await.unwrap();
     assert!(fallback.contains("second issue"));
     assert!(!fallback.contains("first issue"));
 }
@@ -336,31 +342,35 @@ fn build_trail_off_fallback_picks_the_most_recent_blocker() {
 /// resurfaced as "here's where I got stuck" — that failure is already
 /// resolved. The scan must stop at the most recent authoring-belt result,
 /// not keep walking backward past a success to an older, stale blocker.
-#[test]
-fn build_trail_off_fallback_does_not_resurface_a_resolved_blocker() {
+#[tokio::test]
+async fn build_trail_off_fallback_does_not_resurface_a_resolved_blocker() {
+    let config = Config::default();
     let history = vec![
         builder_tool_call("call_1", "dry_run_workflow"),
         builder_tool_result("call_1", r#"{"ok": false, "errors": ["first issue"]}"#),
         builder_tool_call("call_2", "dry_run_workflow"),
         builder_tool_result("call_2", r#"{"ok": true, "warnings": []}"#),
     ];
-    let fallback = build_trail_off_fallback(&history);
+    let fallback = build_trail_off_fallback(&config, &history).await.unwrap();
     assert!(
         !fallback.contains("first issue"),
         "must not surface an already-resolved blocker: {fallback}"
     );
-    assert!(text_looks_like_question(&fallback));
+    assert!(text_looks_like_question(&config, &fallback).await.unwrap());
 }
 
 /// Change 2 of the #4887 regression fix: when the trail-off backstop fires on
 /// a genuine non-question (a status dump), the model's original words must
 /// still be present in the combined output — the fallback question is added
 /// on top, never a replacement.
-#[test]
-fn combine_trail_off_fallback_preserves_original_text_on_genuine_non_question() {
+#[tokio::test]
+async fn combine_trail_off_fallback_preserves_original_text_on_genuine_non_question() {
+    let config = Config::default();
     let original = "## Done so far\n- Checked connections\n- Verified contracts";
-    let fallback = build_trail_off_fallback(&[]);
-    let combined = combine_trail_off_fallback(&fallback, original);
+    let fallback = build_trail_off_fallback(&config, &[]).await.unwrap();
+    let combined = combine_trail_off_fallback(&config, &fallback, original)
+        .await
+        .unwrap();
     // Assert the exact combined string, not just that both pieces appear
     // somewhere — this pins the documented fallback-first ordering and the
     // `---` divider, which a looser `contains`-based check wouldn't catch a
@@ -369,146 +379,32 @@ fn combine_trail_off_fallback_preserves_original_text_on_genuine_non_question() 
     // The combined text still ends in the model's original (non-question)
     // words, so the "is this a question" invariant applies to the
     // fallback alone, not the full combined string.
-    assert!(text_looks_like_question(&fallback));
+    assert!(text_looks_like_question(&config, &fallback).await.unwrap());
 }
 
 /// Guards against prepending an empty divider when the original text is a
 /// genuine silent turn (empty/whitespace-only) — there is nothing to
 /// preserve, so the combined output should just be the fallback.
-#[test]
-fn combine_trail_off_fallback_returns_fallback_alone_for_genuine_silence() {
-    let fallback = build_trail_off_fallback(&[]);
-    assert_eq!(combine_trail_off_fallback(&fallback, ""), fallback);
-    assert_eq!(combine_trail_off_fallback(&fallback, "   \n\n  "), fallback);
-}
-
-#[test]
-fn run_row_finalizer_reconciles_orphaned_running_row_to_interrupted_on_drop() {
-    let tmp = TempDir::new().unwrap();
-    let (config, flow_id, run_id) = seed_running_run(&tmp);
-
-    // Simulate the run future being dropped mid-await without any terminal
-    // write: the guard is created armed and never disarmed, so its `Drop`
-    // reconciles the row.
-    {
-        let _finalizer = RunRowFinalizer::new(Arc::new(config.clone()), &run_id, &flow_id);
-    }
-
-    let row = store::get_flow_run(&config, &run_id).unwrap().unwrap();
-    assert_eq!(
-        row.status, "interrupted",
-        "a dropped run must not stay 'running'"
-    );
-    assert_eq!(row.error.as_deref(), Some(INTERRUPTED_DROP_REASON));
-    assert!(
-        row.finished_at.is_some(),
-        "an interrupted run must be stamped finished"
-    );
-
-    // The flow-definition summary must track the row, like every other
-    // terminal path — otherwise the runs list keeps advertising the previous
-    // run's status for a flow whose latest run was interrupted.
-    let flow = store::get_flow(&config, &flow_id).unwrap().unwrap();
-    assert_eq!(
-        flow.last_status.as_deref(),
-        Some("interrupted"),
-        "the drop-guard must update the flow summary, not just the run row"
-    );
-    assert!(
-        flow.last_run_at.is_some(),
-        "the drop-guard must stamp last_run_at"
-    );
-}
-
-#[test]
-fn run_row_finalizer_disarm_leaves_a_settled_row_untouched() {
-    let tmp = TempDir::new().unwrap();
-    let (config, flow_id, run_id) = seed_running_run(&tmp);
-
-    // A run that settled normally disarms its guard after the real terminal
-    // write; dropping the disarmed guard must be a no-op.
-    {
-        let finalizer = RunRowFinalizer::new(Arc::new(config.clone()), &run_id, &flow_id);
-        finalizer.disarm();
-    }
-
-    let row = store::get_flow_run(&config, &run_id).unwrap().unwrap();
-    assert_eq!(
-        row.status, "running",
-        "a disarmed finalizer must not overwrite the row's real status"
-    );
-    assert!(row.error.is_none());
-}
-
 #[tokio::test]
-async fn boot_sweep_reconciles_orphaned_running_run_to_interrupted() {
-    let tmp = TempDir::new().unwrap();
-    let (config, _flow_id, run_id) = seed_running_run(&tmp);
-
-    // No in-process run owns this row (the registry is empty), so the boot
-    // sweep must reconcile it.
-    let swept = sweep_orphaned_running_runs_on_boot(&config).await;
-    assert_eq!(swept, 1, "the orphaned running row must be swept");
-
-    let row = store::get_flow_run(&config, &run_id).unwrap().unwrap();
-    assert_eq!(row.status, "interrupted");
-    assert!(
-        row.error
-            .as_deref()
-            .is_some_and(|e| e.contains("app restart")),
-        "the reason must explain the boot reconciliation, got {:?}",
-        row.error
+async fn combine_trail_off_fallback_returns_fallback_alone_for_genuine_silence() {
+    let config = Config::default();
+    let fallback = build_trail_off_fallback(&config, &[]).await.unwrap();
+    assert_eq!(
+        combine_trail_off_fallback(&config, &fallback, "")
+            .await
+            .unwrap(),
+        fallback
+    );
+    assert_eq!(
+        combine_trail_off_fallback(&config, &fallback, "   \n\n  ")
+            .await
+            .unwrap(),
+        fallback
     );
 }
 
 #[tokio::test]
-async fn boot_sweep_skips_a_run_that_is_live_in_flight() {
-    let tmp = TempDir::new().unwrap();
-    let (config, _flow_id, run_id) = seed_running_run(&tmp);
-
-    // Register the run as live in this process; the sweep must leave it alone.
-    let (_token, _guard) = run_registry::register(&run_id);
-    assert!(run_registry::is_in_flight(&run_id));
-
-    let swept = sweep_orphaned_running_runs_on_boot(&config).await;
-    assert_eq!(swept, 0, "a live in-flight run must never be swept");
-
-    let row = store::get_flow_run(&config, &run_id).unwrap().unwrap();
-    assert_eq!(row.status, "running", "the live run must stay running");
-}
-
-#[tokio::test]
-async fn boot_sweep_skips_a_run_started_after_the_process_floor() {
-    let tmp = TempDir::new().unwrap();
-    let (config, flow_id, _prior_run_id) = seed_running_run(&tmp);
-
-    // A row this process inserted, but NOT yet registered in the run registry —
-    // exactly the TOCTOU window between `start_flow_run_row` and
-    // `run_registry::register`. The `is_in_flight` guard does not cover it; the
-    // `PROCESS_RUN_FLOOR` floor must. Sweeping it would flip a live run to
-    // `interrupted` AND drop its durable checkpoint mid-run.
-    let live_run_id = format!("flow:{flow_id}:{}", uuid::Uuid::new_v4());
-    start_flow_run_row(&config, &live_run_id, &flow_id);
-    assert!(
-        !run_registry::is_in_flight(&live_run_id),
-        "the row must be unregistered for this test to exercise the window"
-    );
-
-    let swept = sweep_orphaned_running_runs_on_boot(&config).await;
-
-    let live = store::get_flow_run(&config, &live_run_id).unwrap().unwrap();
-    assert_eq!(
-        live.status, "running",
-        "a run started by THIS process must never be swept, registered or not"
-    );
-    assert_eq!(
-        swept, 1,
-        "only the prior-process orphan may be reconciled, got {swept}"
-    );
-}
-
-#[tokio::test]
-async fn boot_sweep_handles_schema_init_failure_gracefully() {
+async fn boot_sweep_logs_storage_open_failure_and_continues_boot() {
     let tmp = TempDir::new().unwrap();
     let file_path = tmp.path().join("not_a_dir");
     std::fs::write(&file_path, b"blocking file").unwrap();
@@ -519,6 +415,7 @@ async fn boot_sweep_handles_schema_init_failure_gracefully() {
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };
+    crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
 
     #[derive(Clone, Default)]
     struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
@@ -547,16 +444,19 @@ async fn boot_sweep_handles_schema_init_failure_gracefully() {
         .with_writer(capture.clone())
         .with_ansi(false)
         .finish();
-    let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+    tracing::subscriber::set_global_default(subscriber).expect("install test tracing subscriber");
 
-    // Execute the failing sweep path to exercise the real warning branch.
-    let swept = sweep_orphaned_running_runs_on_boot(&config).await;
+    // Registration is lazy and does not open the workspace backend. The
+    // module's BootSweep reaches the scoped callback, whose backend open must
+    // fail against this file-as-directory path while boot continues.
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let swept = crate::flows::recovery::sweep_orphaned_runs_on_boot(&ctx, &config).await;
     assert_eq!(swept, 0);
 
     let warning = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
     assert!(
-        warning.contains("create the storage directory"),
-        "the sweep warning must preserve the operation context, got {warning:?}"
+        warning.contains("boot sweep failed"),
+        "the storage-open failure must be reported by the sweep, got {warning:?}"
     );
     assert!(
         warning.contains(&file_path.display().to_string()),

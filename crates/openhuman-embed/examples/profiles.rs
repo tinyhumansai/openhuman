@@ -1,12 +1,18 @@
 //! Title: SaaS profiles isolate conversation history
 //! Summary: SaaS profiles isolate conversation history.
 //! Run: offline with loopback stubs; no live path.
-//! Feature: channels
+//! Feature: channels,storage-sqlite
 
 mod support;
 fn main() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
-    let config = openhuman_embed::SaasConfig::new(root.path());
+    let mut config = openhuman_embed::SaasConfig::new(root.path());
+    // A storage-backed host: profile leases then carry the atomic write
+    // condition the fenced cron store requires (file leases are refused).
+    config.storage_url = Some(format!(
+        "sqlite:{}",
+        root.path().join("storage.db").display()
+    ));
     let workspace = config.operator_config().workspace_dir;
     support::run_with_workspace(run(config), &workspace)
 }

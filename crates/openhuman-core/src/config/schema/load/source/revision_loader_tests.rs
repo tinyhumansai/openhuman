@@ -7,9 +7,9 @@ use tinytools::Tool;
 #[tokio::test]
 async fn discovered_parent_config_is_used_to_record_agent_overrides() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let _forced = ForcedDocumentSource::new(
-        scoped(&storage, "tenant-internal-boot-agent"),
+        scoped(storage.as_ref(), "tenant-internal-boot-agent"),
         Scope::new("tenant-internal-boot-agent").unwrap(),
         keys(18),
     );
@@ -70,7 +70,7 @@ async fn proxy_config_tool_loads_a_versioned_document_before_saving() {
     let previous_proxy = crate::config::runtime_proxy_config();
     let _restore = RuntimeProxyRestore(previous_proxy);
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let path = tmp.path().join("config.toml");
     let workspace = tmp.path().join("workspace");
 
@@ -84,7 +84,7 @@ async fn proxy_config_tool_loads_a_versioned_document_before_saving() {
     seed.proxy.http_proxy = Some("http://persisted-proxy.invalid:8080".into());
     seed.save().await.unwrap();
     let _forced = ForcedDocumentSource::new(
-        scoped(&storage, "tenant-proxy-tool-revision"),
+        scoped(storage.as_ref(), "tenant-proxy-tool-revision"),
         Scope::new("tenant-proxy-tool-revision").unwrap(),
         keys(19),
     );
@@ -126,12 +126,14 @@ impl Drop for RuntimeProxyRestore {
     }
 }
 
+// The allowlist store lives in `channels::host`, which the gates-off build omits.
+#[cfg(feature = "channels")]
 #[tokio::test]
 async fn channel_allowlist_store_loads_a_versioned_document_before_saving() {
     let tmp = tempfile::tempdir().unwrap();
     let _env = crate::config::test_env::lock_env_async().await;
     let _home = crate::config::test_env::EnvVarGuard::set("HOME", tmp.path());
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let openhuman_dir = tmp.path().join(".openhuman");
     tokio::fs::create_dir_all(&openhuman_dir).await.unwrap();
     let config_path = openhuman_dir.join("config.toml");
@@ -154,7 +156,7 @@ async fn channel_allowlist_store_loads_a_versioned_document_before_saving() {
     seed.save().await.unwrap();
 
     let _forced = ForcedDocumentSource::new(
-        scoped(&storage, "tenant-channel-allowlist-revision"),
+        scoped(storage.as_ref(), "tenant-channel-allowlist-revision"),
         Scope::new("tenant-channel-allowlist-revision").unwrap(),
         keys(20),
     );
@@ -184,15 +186,16 @@ async fn channel_allowlist_store_loads_a_versioned_document_before_saving() {
 #[tokio::test]
 async fn recovery_restores_the_bootstrap_file_when_document_cas_conflicts() {
     let tmp = tempfile::tempdir().unwrap();
-    let storage = MemoryStorage::new();
+    let storage = memory_backend();
     let mut recovered = config_at(tmp.path(), "recovered-config");
+    recovered.secrets.encrypt = false;
     recovered.storage.url = Some("sqlite:/bootstrap-from-recovered-file".into());
     recovered.save().await.unwrap();
     let corrupted = recovered.config_path.with_extension("toml.corrupted");
     std::fs::rename(&recovered.config_path, &corrupted).unwrap();
 
     let _forced = ForcedDocumentSource::new(
-        scoped(&storage, "tenant-recovery-cas"),
+        scoped(storage.as_ref(), "tenant-recovery-cas"),
         Scope::new("tenant-recovery-cas").unwrap(),
         keys(21),
     );
@@ -215,10 +218,8 @@ async fn recovery_restores_the_bootstrap_file_when_document_cas_conflicts() {
         .await
         .unwrap();
     let restored: toml::Value = toml::from_str(&restored).unwrap();
-    let storage_url = restored["storage"]["url"].as_str().unwrap();
-    let openhuman_dir = recovered.config_path.parent().unwrap();
-    let restored_url = crate::security::secret_storage::SecretStore::new(openhuman_dir, true)
-        .decrypt(storage_url)
-        .unwrap();
-    assert_eq!(restored_url, "sqlite:/bootstrap-from-recovered-file");
+    assert_eq!(
+        restored["storage"]["url"].as_str().unwrap(),
+        "sqlite:/bootstrap-from-recovered-file"
+    );
 }

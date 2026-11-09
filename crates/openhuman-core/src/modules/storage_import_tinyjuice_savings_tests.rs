@@ -1,6 +1,7 @@
 use super::*;
+use crate::storage::{Scope, Storage};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tinystoragedrivers::{MemoryStorage, Scope, StorageBackend};
+use tinystoragedrivers_testkit::memory_storage;
 
 const SNAPSHOT: &str = r#"{
     "total":{"events":2,"originalTokens":4000,"compactedTokens":2000,"tokensSaved":2000,"costSavedUsd":0.006},
@@ -8,10 +9,8 @@ const SNAPSHOT: &str = r#"{
     "byCompressor":{"smartcrusher":{"events":2,"originalTokens":4000,"compactedTokens":2000,"tokensSaved":2000,"costSavedUsd":0.006}}
 }"#;
 
-fn scoped() -> ScopedStorage {
-    MemoryStorage::new()
-        .for_scope(&Scope::new("module:tinyjuice@local").unwrap())
-        .unwrap()
+fn scoped() -> Storage {
+    memory_storage(&Scope::new("module:tinyjuice@local").unwrap())
 }
 
 fn workspace_with(snapshot: Option<&str>) -> tempfile::TempDir {

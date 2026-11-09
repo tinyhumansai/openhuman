@@ -37,5 +37,7 @@ fn expected_memory() -> serde_json::Value {
 #[test]
 fn memory_static_schema_matches_json_literal() {
     let tool = MemoryTool::new(std::sync::Arc::new(crate::config::Config::default()));
+    assert_eq!(MEMORY_TOOL_NAME, "memory");
+    assert_eq!(tinytools::Tool::name(&tool), "memory");
     assert_eq!(tinytools::Tool::parameters_schema(&tool), expected_memory());
 }

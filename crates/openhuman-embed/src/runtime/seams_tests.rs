@@ -327,6 +327,19 @@ async fn a_storage_url_is_opened_installed_and_the_previous_backend_restored() {
     openhuman_core::storage::clear();
 }
 
+#[test]
+fn blocking_url_open_retains_driver_metadata_for_the_cli_handoff() {
+    let mut seams = HostSeams {
+        storage: Some(StorageSource::from("memory")),
+        ..HostSeams::default()
+    };
+
+    seams.open_storage_blocking().expect("open storage URL");
+
+    assert_eq!(seams.storage_driver.as_deref(), Some("memory"));
+    assert!(matches!(seams.storage, Some(StorageSource::Backend(_))));
+}
+
 #[tokio::test]
 async fn a_backend_with_no_predecessor_is_cleared_and_a_replaced_one_left_alone() {
     let _lock = STORAGE_LOCK.lock().await;
@@ -364,5 +377,66 @@ async fn an_unopenable_storage_url_fails_the_open() {
         ..HostSeams::default()
     };
     let error = seams.open_storage().await.expect_err("bad url");
-    assert!(error.contains("storage backend"), "{error}");
+    assert!(error.contains("storage"), "{error}");
+}
+
+/// A backend a builder opened from a storage URL must report the URL's driver
+/// once installed, or boot-time recovery cannot tell a backend other processes
+/// share (MongoDB) from one this process owns.
+#[tokio::test]
+async fn an_installed_storage_url_reports_its_driver_to_the_core() {
+    let _lock = STORAGE_LOCK.lock().await;
+    openhuman_core::storage::clear();
+
+    let mut seams = HostSeams {
+        storage: Some(StorageSource::from("memory")),
+        ..HostSeams::default()
+    };
+    seams.open_storage().await.expect("open");
+    let installed = seams.install().expect("install");
+    assert_eq!(
+        openhuman_core::storage::installed_driver().as_deref(),
+        Some("memory")
+    );
+    assert!(!openhuman_core::storage::installed_is_shared());
+    drop(installed);
+    assert_eq!(openhuman_core::storage::installed_driver(), None);
+}
+
+/// The same for a shared driver, with the opened backend standing in for the
+/// MongoDB one a test cannot connect to.
+#[tokio::test]
+async fn a_shared_driver_makes_the_installed_backend_shared() {
+    let _lock = STORAGE_LOCK.lock().await;
+    openhuman_core::storage::clear();
+
+    let seams = HostSeams {
+        storage: Some(StorageSource::Backend(memory_backend().await)),
+        storage_driver: Some("mongodb".into()),
+        ..HostSeams::default()
+    };
+    let installed = seams.install().expect("install");
+    assert!(openhuman_core::storage::installed_is_shared());
+    drop(installed);
+    assert!(!openhuman_core::storage::installed_is_shared());
+}
+
+/// Restoring the backend a runtime replaced restores its driver too, so a
+/// shared backend is still recognised as shared once the runtime is gone.
+#[tokio::test]
+async fn restoring_a_replaced_shared_backend_restores_its_driver() {
+    let _lock = STORAGE_LOCK.lock().await;
+    openhuman_core::storage::install_with_driver("mongodb", memory_backend().await);
+
+    let seams = HostSeams {
+        storage: Some(StorageSource::Backend(memory_backend().await)),
+        storage_driver: Some("memory".into()),
+        ..HostSeams::default()
+    };
+    let installed = seams.install().expect("install");
+    assert!(!openhuman_core::storage::installed_is_shared());
+    drop(installed);
+
+    assert!(openhuman_core::storage::installed_is_shared());
+    openhuman_core::storage::clear();
 }

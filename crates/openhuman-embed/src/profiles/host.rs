@@ -30,7 +30,10 @@ impl ProfileHostOptions {
                     "profile tools require a named or host-only scope".into(),
                 ));
             }
-            Some(ToolScopeSpec::Named(names)) => Some(names.into_iter().collect()),
+            Some(ToolScopeSpec::Named(mut names)) => {
+                openhuman_core::cron::tools::widen_named_scope(&mut names);
+                Some(names.into_iter().collect())
+            }
             _ => None,
         };
         if self
@@ -71,7 +74,13 @@ impl ProfileRuntimeBuilder {
     #[must_use]
     pub fn tools(
         mut self,
-        factory: impl for<'a> Fn(TurnContext<'a>) -> HostTurnTools + Send + Sync + 'static,
+        factory: impl for<'a> Fn(
+                TurnContext<'a>,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = HostTurnTools> + Send + 'a>,
+            > + Send
+            + Sync
+            + 'static,
     ) -> Self {
         self.host_options.tools = Some(Arc::new(factory));
         self

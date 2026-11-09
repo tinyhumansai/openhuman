@@ -153,9 +153,12 @@ This does not establish capacity for real providers, tool subprocesses, MCP
 servers, or 1,000 simultaneously active turns. Measure those workloads before
 sizing a production fleet.
 
-To reproduce from the OpenHuman repository root:
+These figures were measured with the original feature graph: default
+features disabled and no storage driver, at commit `b783b39e78`. To reproduce
+them, build that commit from the OpenHuman repository root:
 
 ```sh
+git checkout b783b39e78
 cargo build -p openhuman-embed --locked --release --no-default-features --example linux_fleet
 systemd-run --user --scope -p MemoryMax=2G -p CPUQuota=200% --quiet \
   python3 crates/openhuman-embed/examples/linux_fleet_cgroup.py 500
@@ -173,3 +176,13 @@ systemd-run --user --scope -p MemoryMax=2G -p MemorySwapMax=0 -p CPUQuota=200% -
 The JSON output records process RSS, bootstrap/turn timings, cgroup limits,
 peak memory, and OOM counters. The raw runs are checked in as
 [`docs/benchmarks/medulla-embed-linux.json`](../../../benchmarks/medulla-embed-linux.json).
+
+On the current tree the example also needs `storage-sqlite`: an ephemeral
+workspace now keeps its session state in the workspace's SQLite store, and the
+core no longer falls back to memory. This build measures that SQLite-backed
+configuration. Its results are not comparable with the table above until the
+benchmark is rerun under it:
+
+```sh
+cargo build -p openhuman-embed --locked --release --no-default-features --features storage-sqlite --example linux_fleet
+```

@@ -1,15 +1,16 @@
 use super::*;
 use crate::desktop::notifications::types::CoreNotificationCategory;
-use crate::storage::{MemoryStorage, Scope, StorageBackend};
+use crate::storage::{test_support::memory_backend, Scope, StorageBackend};
 
 const WS: &str = "/workspace/a";
 
-fn docs_in(storage: &MemoryStorage, scope: &str) -> Docs {
+fn docs_in(storage: &dyn StorageBackend, scope: &str) -> Docs {
     Docs::over(&storage.for_scope(&Scope::new(scope).unwrap()).unwrap())
 }
 
 fn docs() -> Docs {
-    docs_in(&MemoryStorage::new(), "local")
+    let storage = memory_backend();
+    docs_in(storage.as_ref(), "local")
 }
 
 fn note(id: &str, provider: &str, body: &str, secs_ago: i64) -> IntegrationNotification {
@@ -323,11 +324,11 @@ fn an_unparseable_raw_payload_reads_as_a_string() {
 
 #[test]
 fn scopes_keep_notifications_apart() {
-    let storage = MemoryStorage::new();
-    docs_in(&storage, "alice")
+    let storage = memory_backend();
+    docs_in(storage.as_ref(), "alice")
         .insert(&note("a", "slack", "hi", 0), true)
         .unwrap();
-    let bob = docs_in(&storage, "bob");
+    let bob = docs_in(storage.as_ref(), "bob");
     assert!(bob.list(10, 0, None, None).unwrap().is_empty());
     assert!(!bob
         .exists_recent("slack", Some("acct"), "New message", "hi")

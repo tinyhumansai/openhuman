@@ -65,6 +65,12 @@ pub fn start(config: &crate::config::Config) {
 #[cfg(feature = "mcp")]
 pub(crate) mod module_client;
 
+#[cfg(all(test, feature = "mcp"))]
+#[path = "test_module_port.rs"]
+mod test_module_port;
+#[cfg(all(test, feature = "mcp"))]
+pub(crate) use test_module_port::install as install_test_module_port;
+
 mod host_cleanup;
 
 /// Brings this domain up — the build without it, where there is nothing to do.
@@ -111,7 +117,7 @@ pub(crate) async fn refresh_configured_tool_cache(config: &crate::config::Config
             return;
         }
     };
-    let client_config = host::client_config(config);
+    let client_config = host::client_config(config).await;
     let servers: Vec<String> = match client
         .call(&client_config, tinymcp_bus::names::methods::STATIC_LIST, ())
         .await
@@ -203,11 +209,27 @@ pub fn all_registered_controllers() -> Vec<crate::core::all::RegisteredControlle
     controllers
 }
 
+/// Built-in runtime entries, binding registry_get to its shared parser while
+/// preserving the legacy catalogue above for existing callers.
+pub(crate) fn all_controller_entries() -> Vec<crate::core::all::ControllerEntry> {
+    all_registered_controllers()
+        .into_iter()
+        .map(|controller| {
+            #[cfg(feature = "mcp")]
+            if controller.schema.method_name() == "mcp_clients.registry_get" {
+                return registry::registry_get_controller_entry();
+            }
+            crate::core::all::ControllerEntry::legacy(controller)
+        })
+        .collect()
+}
+
 pub mod audit;
 // Ungated, like the transport below and for the same reason: `tinymcp` is an
 // ordinary dependency, and the startup path calls `host::init` without a `cfg`
 // of its own. Gating this would break the build with the domain turned off.
 pub mod host;
+pub(crate) mod host_sandbox;
 pub mod registry;
 pub mod server;
 #[cfg(feature = "mcp")]

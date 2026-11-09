@@ -115,7 +115,7 @@ pub(super) async fn build_runtime_snapshot(config: &Config, req_id: u64) -> Runt
             let t = Instant::now();
             let status = match tokio::time::timeout(
                 SNAPSHOT_SUB_OP_TIMEOUT,
-                crate::inference::rpc::inference_status(&config_for_local_ai),
+                crate::inference::ops::inference_status(&config_for_local_ai),
             )
             .await
             {

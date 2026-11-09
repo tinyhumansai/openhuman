@@ -37,10 +37,10 @@ impl OpenHumanSessionHost {
         &self.connected_integrations
     }
 
-    /// This session's transcript key — `"{unix_ts}_{agent_id}"`,
-    /// generated once at build time. Sub-agents chain this into their
-    /// own transcript filenames so the parent → child hierarchy is
-    /// visible on disk.
+    /// This session's transcript key — `{unix_ts}_{token}_{agent}`, unique
+    /// per session host, generated once at build time. Sub-agents chain
+    /// this into their own transcript filenames so the parent → child
+    /// hierarchy is visible on disk.
     pub fn session_key(&self) -> &str {
         &self.session_key
     }

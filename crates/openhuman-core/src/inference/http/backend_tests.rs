@@ -23,3 +23,15 @@ fn configured_models_lists_sentinel_and_strips_temperature_suffix() {
     assert!(ids.contains(&"acme:claude".to_string()));
     assert!(ids.contains(&"ollama:qwen".to_string()));
 }
+
+#[test]
+fn configured_managed_default_keeps_colon_bearing_model_owner() {
+    let config = Config {
+        default_model: Some("qwen3:14b@NaN".to_string()),
+        ..Config::default()
+    };
+    let listed = configured_models(&config);
+    assert!(listed
+        .iter()
+        .any(|model| { model.id == "qwen3:14b" && model.owned_by == "openhuman" }));
+}

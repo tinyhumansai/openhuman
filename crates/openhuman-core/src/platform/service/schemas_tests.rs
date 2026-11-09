@@ -1,21 +1,14 @@
 use super::*;
+use crate::core::all::assert_schema_controller_parity;
 
 #[test]
-fn all_schemas_returns_nine() {
-    assert_eq!(all_controller_schemas().len(), 9);
-}
-
-#[test]
-fn all_controllers_returns_nine() {
-    assert_eq!(all_registered_controllers().len(), 9);
-}
-
-#[test]
-fn all_schemas_use_service_namespace() {
-    for s in all_controller_schemas() {
-        assert_eq!(s.namespace, "service");
-        assert!(!s.description.is_empty());
-    }
+fn service_schema_catalog_matches_registered_controllers() {
+    crate::core::all::expect_schema_namespace(&all_controller_schemas(), "service");
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "status",
+    );
 }
 
 #[test]
@@ -58,16 +51,6 @@ fn daemon_host_set_requires_show_tray() {
     assert_eq!(s.inputs.len(), 1);
     assert_eq!(s.inputs[0].name, "show_tray");
     assert!(s.inputs[0].required);
-}
-
-#[test]
-fn schemas_and_controllers_match() {
-    let s = all_controller_schemas();
-    let c = all_registered_controllers();
-    assert_eq!(s.len(), c.len());
-    for (schema, ctrl) in s.iter().zip(c.iter()) {
-        assert_eq!(schema.function, ctrl.schema.function);
-    }
 }
 
 #[test]

@@ -5,6 +5,7 @@ mod branches;
 mod config_file_read;
 pub(crate) mod context_overlay;
 mod context_refresh;
+mod diagnostics;
 mod dirs;
 pub(in crate::config::schema) mod env;
 mod env_overlay;
@@ -12,9 +13,16 @@ mod impl_load;
 mod migrate;
 mod parse;
 mod parse_source;
+mod provenance;
 mod saas_scope;
 mod secrets;
 pub(crate) mod source;
+
+pub(crate) use diagnostics::{ConfigLoadFallback, ConfigParseError, LoadDiagnostics};
+
+#[cfg(test)]
+#[path = "diagnostics_tests.rs"]
+mod diagnostics_tests;
 
 pub use active_workspace::active_workspace_dir_cached;
 pub(crate) use active_workspace::invalidate_active_workspace;
@@ -36,6 +44,11 @@ pub(super) use migrate::redact_url_for_log;
 // user-environment state). Exported so the classifier's tests can assert
 // against the real constant rather than a copied literal.
 pub(crate) use impl_load::CONFIG_OWNER_MISMATCH_MARKER;
+pub(crate) use migrate::apply_loaded_config_migrations;
+pub(crate) use provenance::{
+    current_dotenv_load, dotenv_loaded_variable, set_current_dotenv_load, ConfigProvenance,
+    DotenvLoadProvenance, ProvenanceSource, ValueProvenance,
+};
 
 // Items needed by load_tests.rs (loaded as `mod tests` below).
 // Tests are a submodule of `load`, so `super::*` == this module's namespace.
@@ -45,15 +58,16 @@ pub(crate) use dirs::default_root_dir_name_pub as default_root_dir_name;
 // re-export; only the load_tests module needs it visible at this level.
 #[cfg(test)]
 pub(crate) use dirs::read_active_user_id_checked;
-// Non-test: the keyless cloud embedder (`embeddings::cloud_adapter`)
-// resolves its `OPENHUMAN_WORKSPACE` credential scope through the same
-// workspace→config-dir mapping `config::load` uses, so a legacy `.../workspace`
-// override lands on the sibling `.openhuman` root that holds `auth-profiles.json`.
+// Non-test: the managed embedding factory resolves its credential scope
+// through the same workspace→config-dir mapping `config::load` uses, so a
+// legacy `.../workspace` override lands on the sibling `.openhuman` root that
+// holds `auth-profiles.json`.
 pub(crate) use dirs::resolve_config_dir_for_workspace;
-#[cfg(test)]
 pub(crate) use dirs::{
-    resolve_runtime_config_dirs, resolve_runtime_config_dirs_with, ConfigResolutionSource,
+    load_persisted_workspace_dirs, read_active_user_id_checked_async, ConfigResolutionSource,
 };
+#[cfg(test)]
+pub(crate) use dirs::{resolve_runtime_config_dirs, resolve_runtime_config_dirs_with};
 // PathBuf and Config were in scope via `use super::*` in the original load.rs.
 #[cfg(test)]
 pub(crate) use super::Config;
@@ -66,6 +80,10 @@ pub(crate) use migrate::{migrate_cloud_provider_slugs, migrate_legacy_inference_
 pub(crate) use parse::config_from_toml_str;
 #[cfg(test)]
 pub(crate) use std::path::PathBuf;
+
+#[cfg(test)]
+#[path = "provenance_tests.rs"]
+mod provenance_tests;
 
 pub(super) mod atomic_commit;
 

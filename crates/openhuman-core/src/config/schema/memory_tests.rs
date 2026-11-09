@@ -4,16 +4,24 @@ use serde_json::json;
 #[test]
 fn defaults_select_tinyhumans_with_logging_and_recall_on() {
     let config = MemoryConfig::default();
+    assert_eq!(config.recall, RecallSettings::default());
     assert_eq!(config.engine, DEFAULT_MEMORY_ENGINE);
     assert!(config.engines.is_empty());
     assert!(config.sources.is_empty());
     assert!(config.conversations.enabled);
     assert!(config.recall.enabled);
     assert_eq!(config.recall.budget_tokens, DEFAULT_RECALL_BUDGET_TOKENS);
+    assert_eq!(config.recall.learnings_limit, 8);
+    assert_eq!(config.recall.brain_limit, 6);
+    assert_eq!(config.recall.history_limit, 6);
+    assert_eq!(config.recall.team_limit, 3);
+    assert_eq!(config.recall.build_beliefs_every, 10);
     assert_eq!(
         config.recall.pre_turn_timeout_ms,
         DEFAULT_PRE_TURN_TIMEOUT_MS
     );
+    assert!(!config.recall.date_hint);
+    assert_eq!(config.recall.compaction_timeout_ms, 8_000);
     assert_eq!(config.recall.build_delay_secs, DEFAULT_BUILD_DELAY_SECS);
     assert_eq!(config.agent_id, None);
     assert_eq!(config.root, None);
@@ -37,6 +45,70 @@ fn explicit_pre_turn_deadline_still_overrides_the_default() {
     let config: MemoryConfig = toml::from_str("[recall]\npre_turn_timeout_ms = 5000")
         .expect("the configured deadline parses");
     assert_eq!(config.recall.pre_turn_timeout_ms, 5_000);
+}
+
+#[test]
+fn recall_settings_keep_their_toml_names_and_round_trip_values() {
+    let config: MemoryConfig = toml::from_str(
+        r#"
+[recall]
+enabled = false
+budget_tokens = 4096
+learnings_limit = 11
+brain_limit = 12
+history_limit = 13
+team_limit = 0
+build_beliefs_every = 0
+pre_turn_timeout_ms = 5000
+date_hint = true
+compaction_timeout_ms = 6000
+build_delay_secs = 456
+"#,
+    )
+    .expect("the established recall keys parse");
+
+    let recall = &config.recall;
+    assert!(!recall.enabled);
+    assert_eq!(recall.budget_tokens, 4096);
+    assert_eq!(recall.learnings_limit, 11);
+    assert_eq!(recall.brain_limit, 12);
+    assert_eq!(recall.history_limit, 13);
+    assert_eq!(recall.team_limit, 0);
+    assert_eq!(recall.build_beliefs_every, 0);
+    assert_eq!(recall.pre_turn_timeout_ms, 5000);
+    assert!(recall.date_hint);
+    assert_eq!(recall.compaction_timeout_ms, 6000);
+    assert_eq!(recall.build_delay_secs, 456);
+
+    let saved = toml::to_string(&config).expect("recall settings serialize");
+    for key in [
+        "enabled",
+        "budget_tokens",
+        "learnings_limit",
+        "brain_limit",
+        "history_limit",
+        "team_limit",
+        "build_beliefs_every",
+        "pre_turn_timeout_ms",
+        "date_hint",
+        "compaction_timeout_ms",
+        "build_delay_secs",
+    ] {
+        assert!(
+            saved.contains(&format!("{key} = ")),
+            "missing {key}: {saved}"
+        );
+    }
+    let restored: MemoryConfig = toml::from_str(&saved).expect("saved settings reload");
+    assert_eq!(restored.recall, config.recall);
+}
+
+#[test]
+fn memory_config_and_recall_settings_keep_their_hash_contract() {
+    fn assert_hash<T: std::hash::Hash>() {}
+
+    assert_hash::<RecallSettings>();
+    assert_hash::<MemoryConfig>();
 }
 
 #[test]
@@ -329,4 +401,33 @@ fn observed_actor_is_off_by_default_and_unwritten_until_set() {
 
     let on: MemoryConfig = toml::from_str("observed_actor = true").unwrap();
     assert!(on.observed_actor);
+}
+
+#[test]
+fn recall_each_turn_is_an_optional_host_binding_in_milliseconds() {
+    assert_eq!(MemoryConfig::default().recall_each_turn_ms, None);
+    let unset = toml::to_string(&MemoryConfig::default()).expect("serializes");
+    assert!(!unset.contains("recall_each_turn_ms"), "{unset}");
+
+    let config: MemoryConfig =
+        toml::from_str("recall_each_turn_ms = 1500").expect("the binding parses");
+    assert_eq!(config.recall_each_turn_ms, Some(1_500));
+    let written = toml::to_string(&config).expect("serializes");
+    assert!(written.contains("recall_each_turn_ms = 1500"), "{written}");
+}
+
+#[test]
+fn memory_block_deadline_is_an_optional_host_binding_in_milliseconds() {
+    assert_eq!(MemoryConfig::default().memory_block_deadline_ms, None);
+    let unset = toml::to_string(&MemoryConfig::default()).expect("serializes");
+    assert!(!unset.contains("memory_block_deadline_ms"), "{unset}");
+
+    let config: MemoryConfig =
+        toml::from_str("memory_block_deadline_ms = 300").expect("the binding parses");
+    assert_eq!(config.memory_block_deadline_ms, Some(300));
+    let written = toml::to_string(&config).expect("serializes");
+    assert!(
+        written.contains("memory_block_deadline_ms = 300"),
+        "{written}"
+    );
 }

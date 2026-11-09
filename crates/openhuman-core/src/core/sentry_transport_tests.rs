@@ -67,3 +67,16 @@ fn send_failure_does_not_prevent_flush() {
     assert!(transport.flush(Duration::from_secs(3)));
     assert!(transport.shutdown(Duration::from_secs(3)));
 }
+
+#[test]
+fn an_invalid_proxy_is_ignored_rather_than_failing_the_transport() {
+    let options = ClientOptions {
+        dsn: Some("http://public@127.0.0.1:9/1".parse().unwrap()),
+        http_proxy: Some("http://[not a proxy".into()),
+        https_proxy: Some("http://[not a proxy".into()),
+        debug: true,
+        ..Default::default()
+    };
+    let transport = SharedReqwestTransport::new(&options);
+    transport.shutdown(Duration::from_secs(1));
+}
