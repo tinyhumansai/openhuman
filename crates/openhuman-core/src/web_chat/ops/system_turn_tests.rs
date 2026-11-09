@@ -151,7 +151,7 @@ async fn system_turn_subagent_spawn_reaches_the_originating_client() {
     let mut events = crate::web_chat::subscribe_web_channel_events();
     let thread_id = "thread-bgdeliver-spawn";
     let request_id = "bgdeliver-test-spawn";
-    let mut fwd = spawn_forwarder("origin-client", thread_id, request_id).await;
+    let fwd = spawn_forwarder("origin-client", thread_id, request_id).await;
 
     fwd.tx
         .send(AgentProgress::TextDelta {
@@ -187,7 +187,7 @@ async fn system_turn_fallback_addresses_the_thread_not_the_system_room() {
     let mut events = crate::web_chat::subscribe_web_channel_events();
     let thread_id = "thread-bgdeliver-fallback";
     let request_id = "bgdeliver-test-fallback";
-    let mut fwd = spawn_forwarder(thread_id, thread_id, request_id).await;
+    let fwd = spawn_forwarder(thread_id, thread_id, request_id).await;
 
     fwd.tx
         .send(spawned("sub-bgdeliver-fallback"))
@@ -358,7 +358,7 @@ async fn system_turn_spawns_queued_at_turn_over_reach_the_socket() {
 async fn system_turn_turn_over_switches_to_the_late_sink() {
     let mut events = crate::web_chat::subscribe_web_channel_events();
     let request_id = "bgdeliver-test-turn-over";
-    let mut fwd = spawn_forwarder("origin-client", "thread-bgdeliver-turn-over", request_id).await;
+    let fwd = spawn_forwarder("origin-client", "thread-bgdeliver-turn-over", request_id).await;
     let detached_tx = fwd.tx.clone();
     fwd.tx
         .send(spawned("sub-bgdeliver-turn-over"))
