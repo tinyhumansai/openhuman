@@ -81,6 +81,13 @@ describe('usePageWelcomeView when landing on welcome (first visit)', () => {
     expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('main');
   });
 
+  it('falls back to the working view for an invalid ?view= and stays there', () => {
+    renderAt('/flows?view=old', true);
+    expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('main');
+    fireEvent.click(screen.getByTestId('link-flows'));
+    expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('main');
+  });
+
   it('lets an explicit ?view= win over the welcome landing', () => {
     renderAt('/flows?view=main', true);
     expect(screen.getByTestId('active-workflow-view')).toHaveTextContent('main');

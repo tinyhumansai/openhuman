@@ -94,15 +94,16 @@ export function usePageWelcomeView(opts: UsePageWelcomeViewOptions): PageWelcome
     [extraItems]
   );
 
-  const raw = new URLSearchParams(location.search).get('view') ?? '';
-  // Any explicit `?view=` ends the first-visit landing (adjusting state during
-  // render, React's documented pattern for state derived from props).
-  if (landingWelcome && validViews.has(raw)) setLandingWelcome(false);
-  const view: PageWelcomeViewId = validViews.has(raw)
-    ? raw
-    : landingWelcome
-      ? 'welcome'
-      : defaultView;
+  const raw = new URLSearchParams(location.search).get('view');
+  // Any `?view=`, valid or not, ends the first-visit landing (adjusting state
+  // during render, React's documented pattern for state derived from props).
+  if (landingWelcome && raw !== null) setLandingWelcome(false);
+  const view: PageWelcomeViewId =
+    raw !== null && validViews.has(raw)
+      ? raw
+      : landingWelcome && raw === null
+        ? 'welcome'
+        : defaultView;
 
   const setView = useCallback(
     (v: PageWelcomeViewId) => {
