@@ -65,6 +65,30 @@ fn is_loopback_url(url: &str) -> bool {
     host == "localhost" || host.ends_with(".localhost")
 }
 
+/// How many redirects a request may follow before it gives up.
+const MAX_REDIRECT_HOPS: usize = 10;
+
+/// A redirect policy that follows a redirect only while it stays on the
+/// loopback interface.
+///
+/// The client that carries a loopback request has no proxy at all, so a
+/// redirect to a remote host would reach that host directly, past the proxy
+/// the environment configured. The routing of every redirect target is
+/// therefore re-evaluated: a target on the loopback interface is still local
+/// and is followed, a remote one is not.
+fn loopback_redirects_only() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() > MAX_REDIRECT_HOPS {
+            return attempt.error(std::io::Error::other("too many redirects"));
+        }
+        if is_loopback_url(attempt.url().as_str()) {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    })
+}
+
 /// POST a JSON-RPC body and preserve the endpoint's status and body verbatim.
 pub async fn post_json_rpc(
     url: &str,
@@ -72,10 +96,19 @@ pub async fn post_json_rpc(
     body: impl Into<String>,
 ) -> Result<HttpRpcResponse, String> {
     let bearer = bearer_header(token);
+    let safe_url = redact_url_for_log(url);
     let mut client_builder = reqwest::Client::builder().timeout(Duration::from_secs(30));
     if is_loopback_url(url) {
         // The local core is on this machine; a proxy cannot reach it.
         client_builder = client_builder.no_proxy();
+        log::debug!("[openhuman_rpc] bypassing the proxy for the loopback {safe_url}");
+        // The routing of a redirect target is re-evaluated: this client has
+        // no proxy, so following a redirect to a remote host would reach that
+        // host directly, past the proxy the environment configured. Such a
+        // redirect is handed back to the caller verbatim.
+        client_builder = client_builder.redirect(loopback_redirects_only());
+    } else {
+        log::debug!("[openhuman_rpc] using the ambient proxy settings for {safe_url}");
     }
     if bearer.is_some() {
         client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
@@ -92,7 +125,6 @@ pub async fn post_json_rpc(
         request = request.header("Authorization", value);
     }
 
-    let safe_url = redact_url_for_log(url);
     log::debug!(
         "[openhuman_rpc] POST {safe_url} (auth={})",
         bearer.is_some()
