@@ -53,7 +53,14 @@ export const HOSTED_GROUPS = [
     maxParallel: 1,
     container: true,
   },
-  { group: "rust-cov", lanes: ["rust-cov"], maxParallel: 1, container: true },
+  // Independent coverage processes prevent global-test pollution and a single
+  // 100-minute job from hiding the failing subsystem. All suites still run.
+  ...["core", "facades", "integrations"].map((shard) => ({
+    group: `rust-cov-${shard}`,
+    lanes: [`rust-cov-${shard}`],
+    maxParallel: 1,
+    container: true,
+  })),
   { group: "tauri", lanes: ["tauri"], maxParallel: 1, container: true },
 
   // pwsh ships on the bare ubuntu-latest image, not in the CI container.
@@ -608,6 +615,38 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
       ],
     },
   ];
+
+  // EX63 retains the original single coverage lane and its shared build
+  // target. Hosted runners each run a different complete subset of the same
+  // suite, and the gate later requires all three LCOV reports before checking
+  // whole-tree coverage presence and the unchanged 80% diff threshold.
+  if (!ex63) {
+    const index = lanes.findIndex((lane) => lane.name === "rust-cov");
+    if (index < 0) throw new Error("missing base Rust coverage lane");
+    const [original] = lanes.splice(index, 1);
+    const shards = ["core", "facades", "integrations"];
+    lanes.splice(
+      index,
+      0,
+      ...shards.map((shard) => ({
+        ...original,
+        name: `rust-cov-${shard}`,
+        checks: original.checks.map((check) =>
+          check.name === "rust-core-coverage"
+            ? {
+                ...check,
+                env: {
+                  ...check.env,
+                  OH_COV_SHARD: shard,
+                  ...(shard === "core" ? { OH_COV_RUNNER: "nextest" } : {}),
+                  OUT: `ci-out/lcov/lcov-core-${shard}.info`,
+                },
+              }
+            : check,
+        ),
+      })),
+    );
+  }
 
   // Coverage replaces each existing plain suite only for the private profile.
   // Preserve the original package, features, target list, and libtest substring

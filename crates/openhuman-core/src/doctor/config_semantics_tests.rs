@@ -159,16 +159,33 @@ async fn action_directory_without_write_access_is_an_error() {
     permissions.set_readonly(true);
     std::fs::set_permissions(dir.path(), permissions).unwrap();
 
+    // POSIX readonly mode bits do not guarantee failure for a privileged
+    // process (for example, root inside the hosted CI container). Determine
+    // effective writability independently of the doctor's own probe.
+    let probe_path = dir.path().join(".test-effective-write-access");
+    let writable = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe_path)
+    {
+        Ok(_) => {
+            std::fs::remove_file(&probe_path).unwrap();
+            true
+        }
+        Err(_) => false,
+    };
     let findings = run_check(config, "workspace/action-dir").await;
     std::fs::set_permissions(dir.path(), original_permissions).unwrap();
 
+    let expected = if writable {
+        FindingSeverity::Pass
+    } else {
+        FindingSeverity::Error
+    };
     assert_eq!(
-        finding(&findings, FindingSeverity::Error)
-            .config_path
-            .as_deref(),
-        Some("action_dir")
+        finding(&findings, expected).config_path.as_deref(),
+        (!writable).then_some("action_dir")
     );
-    #[cfg(unix)]
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
 
