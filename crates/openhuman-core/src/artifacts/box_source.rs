@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tiny_artifacts::{ArtifactKind, Artifacts};
+use tiny_artifacts::{ArtifactKind, Artifacts, FileStore};
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
 use super::tiny_store::version_files_dir;
@@ -253,7 +253,7 @@ impl Tool for BoxSourced {
             Ok(bytes) => bytes,
             Err(error) => return Ok(ToolResult::error(error.to_string())),
         };
-        let staged = match stage(&self.staging, &path, &bytes) {
+        let staged = match stage(&self.staging, &path, &bytes).await {
             Ok(staged) => staged,
             Err(error) => {
                 tracing::warn!(%error, "[artifacts] could not stage a sandbox file");
@@ -294,9 +294,11 @@ impl Drop for Staged {
 /// generated, so a box name the host's filesystem rejects (`?` on Windows)
 /// still stages.
 ///
-/// The folder is owned by the returned [`Staged`] from before it exists, and
-/// nothing here awaits, so a call cancelled at any point leaves no copy behind.
-fn stage(staging: &Path, box_path: &str, bytes: &[u8]) -> std::io::Result<Staged> {
+/// The bytes go in through the artifact crate's [`FileStore`] port, like every
+/// other artifact file, not a raw filesystem write. The folder is owned by the
+/// [`Staged`] guard from before it exists, so a call cancelled at any await
+/// point (the guard is dropped with the future) leaves no copy behind.
+async fn stage(staging: &Path, box_path: &str, bytes: &[u8]) -> std::io::Result<Staged> {
     let name = match Path::new(box_path)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -311,8 +313,10 @@ fn stage(staging: &Path, box_path: &str, bytes: &[u8]) -> std::io::Result<Staged
         file: dir.join(name),
         dir,
     };
-    std::fs::create_dir_all(&staged.dir)?;
-    std::fs::write(&staged.file, bytes)?;
+    tiny_artifacts::FsFileStore::new(&staged.dir)
+        .put(&name, bytes, None)
+        .await
+        .map_err(std::io::Error::other)?;
     Ok(staged)
 }
 
