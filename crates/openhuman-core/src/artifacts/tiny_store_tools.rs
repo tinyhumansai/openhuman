@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use tiny_artifacts::{Author, Content};
 
-use crate::artifacts::files::FileRoots;
 use super::artifacts_service;
 use super::artifacts_service_with_publisher;
+use crate::artifacts::files::FileRoots;
 use crate::security::approval::ApprovalChatContext;
 use crate::tools::per_call::{context as per_call_context, PerCallTool};
 
@@ -58,7 +58,9 @@ pub fn registered_tools(
                 crate::artifacts::box_source::BoxSourced::new(
                     create,
                     crate::artifacts::box_source::KindSource::Args,
-                    Arc::new(crate::artifacts::box_source::SandboxBoxFiles::new(context.dispatch)),
+                    Arc::new(crate::artifacts::box_source::SandboxBoxFiles::new(
+                        context.dispatch,
+                    )),
                     tenant,
                     staging.clone(),
                 )
@@ -81,7 +83,9 @@ pub fn registered_tools(
                 crate::artifacts::box_source::BoxSourced::new(
                     update,
                     crate::artifacts::box_source::KindSource::Record(artifacts),
-                    Arc::new(crate::artifacts::box_source::SandboxBoxFiles::new(context.dispatch)),
+                    Arc::new(crate::artifacts::box_source::SandboxBoxFiles::new(
+                        context.dispatch,
+                    )),
                     tenant,
                     staging.clone(),
                 )

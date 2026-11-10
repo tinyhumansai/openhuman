@@ -30,13 +30,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tiny_artifacts::{
     ArtifactEvent, ArtifactEventKind, ArtifactKind, ArtifactObserver, ArtifactRecord,
-    ArtifactStore, Artifacts, Author, Content, FileRef, FileStore,
+    ArtifactStore, Artifacts, FileRef, FileStore,
 };
 
 use super::files::FileRoots;
 use super::types::ArtifactKind as LegacyArtifactKind;
 use crate::security::approval::ApprovalChatContext;
-use crate::tools::per_call::{context as per_call_context, PerCallTool};
 
 /// Subdirectory under the artifacts root holding versioned records.
 const VERSIONED_SUBDIR: &str = "versioned";

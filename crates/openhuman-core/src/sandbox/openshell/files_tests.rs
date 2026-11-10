@@ -437,4 +437,3 @@ async fn a_driver_failure_is_passed_through() {
 
     assert_eq!(read, Err(BoxError::Driver("gateway down".into())));
 }
-
