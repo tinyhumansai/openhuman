@@ -122,7 +122,9 @@ gate) returns a string starting `blocked by security policy:`
 module (fail closed) or an exhausted action budget may recover, so those stay
 retryable. Execution runs on the host (`sandbox::shell_exec::run_host`), in the
 action directory and with the shell's default pipeline exit status, under a
-hard 120 second timeout (`SHELL_JOB_TIMEOUT_SECS`). With the autonomy policy
+hard timeout of `[cron] shell_timeout_secs` (default 120 seconds, minimum 1;
+`CronConfig::shell_timeout`); a command that outlives it is killed and the run
+fails with `job timed out after <n>s`. With the autonomy policy
 disabled (the default), most policy checks are inert; see the project
 `CLAUDE.md`.
 
@@ -147,6 +149,51 @@ disabled (the default), most policy checks are inert; see the project
 6. The turn runs inside `core::runtime::turn_origin::with_origin` with the origin from
    `origin::turn_origin_for_job_run`. The morning briefing job also runs under a
    24 hour task-recency window so task-fetch tools only return recent tasks.
+
+### Scheduled actions (opt-in)
+
+A scheduled agent turn is read-only by default: the host security gate
+(`agent/tinyagents/host/security_gate/authorize.rs`) refuses `shell` and every
+acting or external-effect tool for a `TrustedAutomation { Cron }` turn, before
+any approval setting is consulted, and the approval engine refuses a cron
+external effect (`CallOrigin::Cron`).
+
+An agent definition can lift this for the cron jobs that run it:
+
+```toml
+# <workspace>/agents/builder/agent.toml (or AgentDefinitionSpec::scheduled_actions(true))
+id = "builder"
+when_to_use = "Writes code and runs tests on a schedule"
+scheduled_actions = true
+
+[tools]
+named = ["shell", "file_read", "file_write", "browser"]
+```
+
+`origin::scheduled_actions_enabled` grants it only when the job names the agent
+in `agent_id`, the definition sets `scheduled_actions = true`, its tools are
+`named` (a wildcard scope is refused with a warning) and the process is not in
+SaaS mode. The run then executes as `TrustedAutomation { CronActions }`, and
+`run_agent_job_for_run` marks the session it built
+(`OpenHumanSessionHost::enable_scheduled_actions`). The gate skips the
+read-only cron stage only when all three hold: the `CronActions` origin, the
+marked session, and a root run (`current_run_depth() == 0`). A sub-agent the
+run spawns inherits the origin but not the mark, so it stays read-only. The
+approval engine classifies `CronActions` as `CallOrigin::TrustedAutomation`, so
+the root's tools run without a person's approval.
+
+Nothing else is lifted: the channel boundary, the autonomy tier
+(`[autonomy]`, including `workspace_only` when enabled), TinySecurity's command
+analysis and protected-path floor, the agent's `sandbox_mode`, the browser's
+allowed-websites list and its forced checkpoint before payment all still
+apply. A job created from a channel conversation keeps running as that
+channel's `ExternalChannel` turn, opted-in agent or not.
+
+The browser's `[browser] unattended_actions` list is reachable from every cron
+turn, with or without this opt-in: the `browser` tool declares no external
+effect (its consequential actions are gated inside `execute`), so the cron
+stage lets the call through to `browser_unattended::allow`, which treats both
+`Cron` and `CronActions` as unattended.
 
 A job whose `agent_id` is not live is first offered to the host through
 `HostAgentResolver::open` (an embedding host sets it with

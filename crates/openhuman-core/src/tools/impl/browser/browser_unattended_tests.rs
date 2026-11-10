@@ -67,6 +67,7 @@ fn trusted_unattended_sources_may_take_a_listed_action() {
     let browser = listing(&["click"]);
     for origin in [
         cron(),
+        automation(TrustedAutomationSource::CronActions),
         automation(TrustedAutomationSource::Background),
         automation(TrustedAutomationSource::Workflow {
             require_approval: false,
@@ -289,6 +290,52 @@ async fn the_tool_lets_a_listed_cron_click_past_approval_to_the_module() {
     // because this test has no module.
     assert!(logs.contains(ALLOWED_LINE), "{logs}");
     assert!(!output.contains("policy-denied"), "{output}");
+}
+
+#[tokio::test]
+async fn the_tool_lets_a_listed_scheduled_actions_click_past_approval_to_the_module() {
+    let _serial = ALLOW_PATH.lock().await;
+    let (output, logs) =
+        dispatch_click(automation(TrustedAutomationSource::CronActions), &["click"]).await;
+    assert!(logs.contains(ALLOWED_LINE), "{logs}");
+    assert!(!output.contains("policy-denied"), "{output}");
+}
+
+/// The unattended pass lives inside `BrowserTool::execute`, so it is reachable
+/// only if the host security gate lets a cron turn call `browser` at all. The
+/// gate's read-only cron stage refuses acting and external-effect tools; the
+/// browser declares neither (its consequential actions are gated inside
+/// `execute`), so a cron turn — with or without the scheduled-actions opt-in —
+/// reaches the `[browser] unattended_actions` check.
+#[tokio::test]
+async fn a_cron_browser_call_passes_the_security_gate_to_reach_the_unattended_pass() {
+    use tinyagents_harness::host::security_gate::{SecurityGate, ToolCallRequest};
+    let args = json!({"action": "click", "selector": "@e1"});
+    let policy = Arc::new(SecurityPolicy {
+        enabled: false,
+        ..SecurityPolicy::default()
+    });
+    for origin in [cron(), automation(TrustedAutomationSource::CronActions)] {
+        let browser: Box<dyn Tool> = Box::new(BrowserTool::new(
+            Arc::new(SecurityPolicy::default()),
+            Arc::new(offline_client(&["click"])),
+            3,
+        ));
+        assert!(!browser.external_effect_with_args(&args));
+        let gate = crate::agent::tinyagents::host::OpenHumanSecurityGate::new(
+            policy.clone(),
+            vec![Arc::new(vec![browser])],
+        );
+        let request = ToolCallRequest::new("browser", args.clone(), "lead");
+        let decision = CoreContext::scope_with_turn_origin(
+            CoreContext::for_test(DomainSet::full(), None),
+            Some(origin.clone()),
+            gate.authorize_tool(&request),
+        )
+        .await
+        .expect("authorization");
+        assert!(decision.is_allowed(), "{origin:?}: {decision:?}");
+    }
 }
 
 #[tokio::test]
