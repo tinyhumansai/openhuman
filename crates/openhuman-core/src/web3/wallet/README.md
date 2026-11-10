@@ -61,7 +61,9 @@ The six established wallet tools are declared in `tinywallet-bus` and adapted
 in `tools.rs`: `wallet_status`, `wallet_chain_status`,
 `wallet_prepare_transfer`, `wallet_tx_status`, `wallet_tx_receipt`, and
 `wallet_lookup_tx`. `automation_tools.rs` adds two policy-bound tools:
-`wallet_balances` (the module's native and token balances) and `wallet_execute_prepared`
+`wallet_balances` (the module's native and token balances as `{native, tokens}`,
+with `tokensError` beside the native rows when only the token read fails) and
+`wallet_execute_prepared`
 (an execute through the spend policy below).
 
 ## Spend policy and ledger
