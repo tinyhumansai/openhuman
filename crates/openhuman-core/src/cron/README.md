@@ -187,7 +187,7 @@ may call `wallet_balances` and `wallet_execute_prepared` (executes only when
 `[wallet_policy] automation_enabled` is set and the transfer fits the asset's
 caps), and x402 payments from `x402_request` / `http_request` are approved
 without a prompt within the per-request budget. A plain `Cron` turn is refused
-by both.
+by both (it stays read-only, so `wallet_balances` still works).
 
 Nothing else is lifted: the channel boundary, the autonomy tier
 (`[autonomy]`, including `workspace_only` when enabled), TinySecurity's command
