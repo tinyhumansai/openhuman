@@ -77,20 +77,55 @@ After broadcast, three read-only tools let the agent follow a transaction by has
 
 ## Agent tools and approval safety
 
-The agent reaches the wallet through six tools:
+The agent reaches the wallet through eight tools:
 
 | Tool | Purpose |
 | --- | --- |
 | `wallet_status` | Onboarding status and account addresses. |
 | `wallet_chain_status` | Per-chain readiness and active RPC. |
+| `wallet_balances` | Live balances per account and network. |
 | `wallet_prepare_transfer` | Build a validated, fee-estimated quote. |
+| `wallet_execute_prepared` | Execute a prepared quote, only within the spend policy. |
 | `wallet_tx_status` | Transaction lifecycle state by hash. |
 | `wallet_tx_receipt` | Transaction receipt by hash. |
 | `wallet_lookup_tx` | Raw transaction lookup by hash. |
 
-No agent tool executes a transfer. The agent can prepare a quote, but moving funds (`execute_prepared`) goes through the RPC surface, where it must be explicitly confirmed and pass the owner-binding check. Together with prepare-then-confirm and per-thread quote binding, this keeps the agent from spending funds silently.
+The wallet UI's own execute is unchanged: you press confirm, and it is not capped unless you ask for that. The agent's execute tool is always held to the **spend policy**, and with no policy configured it cannot move funds at all, so you finish the transfer in the wallet UI as before.
 
-A quote is bound to the conversation that asked for it, expires after five minutes and is consumed when it executes. The [approval gate](approval-gate.md) is the second layer. It applies only once you turn on the autonomy policy, which is off by default. Treat every transfer as high-stakes and read that page before relying on the gate.
+A quote is bound to the conversation that asked for it, expires after five minutes and is consumed when it executes. The [approval gate](approval-gate.md) is a further layer for chat turns. It applies only once you turn on the autonomy policy, which is off by default. Treat every transfer as high-stakes and read that page before relying on the gate.
+
+## Spend policy for automated payments
+
+The `[wallet_policy]` section of `config.toml` lets an agent pay without you confirming each transfer, within limits you set. Background jobs and workflows that do not require approval may execute only when `automation_enabled` is on. Every asset must be listed, with optional caps in atomic units (lamports for SOL, millionths for USDC):
+
+- `per_tx_max_raw`: the largest single transfer.
+- `daily_max_raw`: the total over the last 24 hours (rolling).
+- `recipient_weekly_max_raw`: the total to one address over the last 7 days (rolling).
+
+There is no price feed, so a dollar cap is written as the amount it corresponds to. Fees are not counted. Example, SOL and USDC only, $50 per transfer, $100 per day, $50 per recipient per week (SOL at $150):
+
+```toml
+[wallet_policy]
+automation_enabled = true
+
+[[wallet_policy.assets]]
+chain = "solana"
+symbol = "USDC"
+per_tx_max_raw = 50000000
+daily_max_raw = 100000000
+recipient_weekly_max_raw = 50000000
+
+[[wallet_policy.assets]]
+chain = "solana"
+symbol = "SOL"
+per_tx_max_raw = 333333333
+daily_max_raw = 666666666
+recipient_weekly_max_raw = 333333333
+```
+
+The caps of one asset are counted separately from the other's. `OPENHUMAN_WALLET_POLICY_AUTOMATION_ENABLED`, `OPENHUMAN_WALLET_POLICY_APPLY_TO_INTERACTIVE` and `OPENHUMAN_WALLET_POLICY_ASSETS` (a JSON array of the same asset entries) override the file. The `wallet.policy_get`, `wallet.policy_update` and `wallet.ledger_list` RPCs read, change and audit it.
+
+Every execute is written to a ledger before it is signed and updated afterwards. A failed execute is marked *in doubt*: it still counts against the caps and is never retried, so check its status before preparing a new transfer. Scheduled (cron) agent turns are read-only and cannot pay. x402 payments from automation are limited by the x402 budget instead.
 
 ## See also
 

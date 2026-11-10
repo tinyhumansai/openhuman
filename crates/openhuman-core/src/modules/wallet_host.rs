@@ -99,6 +99,45 @@ fn x402_request_owner_matches(
         .is_some_and(|owner| &owner.thread_id == thread_id && &owner.client_id == client_id)
 }
 
+/// How the host answers one x402 authorization callback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum X402Route {
+    /// Trusted automation within the budget: approved without a person. The
+    /// module has already reserved the amount against its own budget before
+    /// asking; the host re-checks the per-request cap as a second line.
+    AutomationApproved,
+    /// The originating WebChat turn: ask the user with a forced approval.
+    PromptWebChat,
+    /// Refused, with the reason handed back to the module.
+    Refused(&'static str),
+}
+
+/// Route an x402 authorization. Trusted automation (a background job or an
+/// approval-free workflow, the same origins the native spend policy treats as
+/// automation) is approved within `per_request_max_atomic`; the WebChat flow
+/// is unchanged; an external channel, an unlabelled turn and everything else
+/// are refused.
+pub(super) fn x402_route(
+    request: &AuthorizeX402PaymentRequest,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
+    per_request_max_atomic: u64,
+) -> X402Route {
+    use crate::core::runtime::turn_origin::AgentTurnOrigin;
+    match origin {
+        Some(AgentTurnOrigin::TrustedAutomation { source, .. })
+            if crate::web3::wallet::policy::is_policy_automation(source) =>
+        {
+            if request.amount_atomic <= per_request_max_atomic {
+                X402Route::AutomationApproved
+            } else {
+                X402Route::Refused("x402 payment exceeds the per-request budget for automation")
+            }
+        }
+        _ if x402_request_owner_matches(request, origin) => X402Route::PromptWebChat,
+        _ => X402Route::Refused("x402 payment was not explicitly approved for this chat"),
+    }
+}
+
 fn x402_approval_facts(request: &AuthorizeX402PaymentRequest) -> serde_json::Value {
     serde_json::json!({
         "url": request.url,
@@ -451,35 +490,51 @@ impl WalletHost {
         }))
     }
 
-    /// x402 authorization is supplied by the host's guarded HTTP request path;
-    /// absent an active guard scope, payment signing fails closed.
+    /// x402 authorization: a WebChat turn asks its user with a forced approval
+    /// (the guarded HTTP request path), trusted automation is approved within
+    /// the per-request budget ([`x402_route`]), and any other origin fails
+    /// closed.
     async fn authorize_x402_payment(
         &self,
         request: AuthorizeX402PaymentRequest,
     ) -> tinybus::Result<HostResponse> {
         let origin = crate::core::runtime::DispatchCtx::ambient_turn().turn_origin();
-        let owner_matches = x402_request_owner_matches(&request, origin.as_ref());
-        let approved = if owner_matches {
-            if let Some(gate) = crate::security::approval::ApprovalGate::try_global() {
-                matches!(
-                    gate.intercept_forced(
-                        "x402_payment",
-                        "Approve this exact x402 payment",
-                        x402_approval_facts(&request),
-                    )
-                    .await,
-                    crate::security::approval::GateOutcome::Allow
+        let route = x402_route(
+            &request,
+            origin.as_ref(),
+            super::x402_service::per_request_max_atomic(),
+        );
+        tracing::debug!(
+            origin = origin.as_ref().map(|o| o.class()).unwrap_or_else(|| "none".into()),
+            route = ?route,
+            "[modules:wallet] x402 authorization"
+        );
+        let (approved, reason) = match route {
+            X402Route::AutomationApproved => (true, None),
+            X402Route::PromptWebChat => {
+                let approved = match crate::security::approval::ApprovalGate::try_global() {
+                    Some(gate) => matches!(
+                        gate.intercept_forced(
+                            "x402_payment",
+                            "Approve this exact x402 payment",
+                            x402_approval_facts(&request),
+                        )
+                        .await,
+                        crate::security::approval::GateOutcome::Allow
+                    ),
+                    None => false,
+                };
+                (
+                    approved,
+                    (!approved)
+                        .then(|| "x402 payment was not explicitly approved for this chat".into()),
                 )
-            } else {
-                false
             }
-        } else {
-            false
+            X402Route::Refused(reason) => (false, Some(reason.to_string())),
         };
         Ok(HostResponse::Authorization(AuthorizationResult {
             approved,
-            reason: (!approved)
-                .then(|| "x402 payment was not explicitly approved for this chat".into()),
+            reason,
         }))
     }
 }

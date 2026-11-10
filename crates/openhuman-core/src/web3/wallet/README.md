@@ -44,7 +44,9 @@ changing the facade.
 | `status`, `setup`, `reveal_recovery_phrase` | Onboarding, public account metadata, encrypted phrase custody, and explicit reveal. |
 | `balances`, `chain_status`, `network_defaults`, `supported_assets` | Read module-owned provider and network data. |
 | `encode_erc20_transfer` | Request standard EVM transfer calldata from the module. |
-| `prepare_transfer`, `execute_prepared` | Prepare a module-owned quote, then explicitly confirm and execute it. |
+| `prepare_transfer`, `execute_prepared` | Prepare a module-owned quote, then explicitly confirm and execute it (through the spend policy, as an interactive execute). |
+| `policy_get`, `policy_update` | Read and persist the `[wallet_policy]` spend policy. |
+| `ledger_list` | Recent execute records from the persistent spend ledger (`{limit}`, default 50, max 500). |
 | `tx_status`, `tx_receipt`, `lookup_tx` | Read transaction lifecycle and raw transaction data through the module. |
 
 The four chain families are EVM, Bitcoin, Solana, and Tron. EVM network
@@ -55,10 +57,36 @@ approval policy.
 
 ## Agent tools
 
-The six wallet tools are declared in `tinywallet-bus` and adapted locally:
-`wallet_status`, `wallet_chain_status`, `wallet_prepare_transfer`,
-`wallet_tx_status`, `wallet_tx_receipt`, and `wallet_lookup_tx`. Transfer
-execution remains behind the controller confirmation flow.
+The six established wallet tools are declared in `tinywallet-bus` and adapted
+in `tools.rs`: `wallet_status`, `wallet_chain_status`,
+`wallet_prepare_transfer`, `wallet_tx_status`, `wallet_tx_receipt`, and
+`wallet_lookup_tx`. `automation_tools.rs` adds two policy-bound tools:
+`wallet_balances` (the module's native balances) and `wallet_execute_prepared`
+(an execute through the spend policy below).
+
+## Spend policy and ledger
+
+Every execute, from the RPC or the agent tool, runs through
+`policy::guarded_execute`:
+
+- `policy.rs` classifies the caller (`ExecutionOrigin`): the wallet UI's RPC is
+  *interactive* and stays uncapped unless `apply_to_interactive`; the agent
+  tool in a chat-type turn is *agent* and is always held to the allowlist and
+  caps; a background job or approval-free workflow is *automation* and also
+  needs `automation_enabled`; an external channel or unlabelled turn is
+  refused. Caps per asset (atomic units): per transaction, rolling 24 hours,
+  and rolling 7 days per recipient (`config/schema/wallet_policy.rs`).
+- `ledger.rs` records the attempt as `pending` before the module signs and
+  updates it to `broadcast` or `in_doubt` afterwards; refusals are recorded
+  as `refused`. Pending and in-doubt records count against caps, and a quote
+  with an attempt that may have moved funds is never executed again. Records
+  live on the storage port (`storage::state_kv`, owner `wallet`, namespace
+  `spend_ledger`) and survive restarts.
+- `policy_ops.rs` serves `policy_get`, `policy_update` and `ledger_list`.
+
+The policy is host approval policy over the module's exact quote; it never
+builds or alters a transfer. Scheduled cron turns stay read-only at the
+harness gate, so they cannot reach the execute tool.
 
 ## Persistence and lifecycle
 
@@ -68,7 +96,8 @@ execution remains behind the controller confirmation flow.
 - The OS keychain is preferred for the encrypted mnemonic when policy and
   platform support permit it.
 - Prepared transactions and one-shot approval state live in the module service
-  and are not persisted across sign-out or process restart. Closing the service
+  and are not persisted across sign-out or process restart. The spend ledger
+  is persisted (see above). Closing the service
   invalidates quotes and endpoint aliases before the host discards its config.
 
 ## Tests and further reading

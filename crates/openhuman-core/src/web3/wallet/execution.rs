@@ -112,14 +112,26 @@ pub async fn prepare_transfer(
     ))
 }
 
-/// Confirm and execute a prepared transfer.
+/// Confirm and execute a prepared transfer from the wallet UI's RPC, where a
+/// person pressed confirm (an interactive execute under the spend policy).
 pub async fn execute_prepared(
     ctx: &DispatchCtx,
     params: ExecutePreparedParams,
     owner: Option<tinywallet_bus::wire::QuoteOwner>,
 ) -> Result<Outcome<ExecutionResult>, String> {
+    execute_prepared_as(ctx, params, owner, super::policy::ExecutionOrigin::rpc()).await
+}
+
+/// Confirm and execute a prepared transfer for `origin`, through the spend
+/// policy and ledger (`super::policy`).
+pub async fn execute_prepared_as(
+    ctx: &DispatchCtx,
+    params: ExecutePreparedParams,
+    owner: Option<tinywallet_bus::wire::QuoteOwner>,
+    origin: super::policy::ExecutionOrigin,
+) -> Result<Outcome<ExecutionResult>, String> {
     let config = ctx.load_config().await?;
-    let result = wallet_service::execute_native_transfer(ctx, &config, owner, params)
+    let result = wallet_service::execute_native_transfer(ctx, &config, owner, params, origin)
         .await
         .map_err(|error| error.to_string())?;
     Ok(Outcome::new(

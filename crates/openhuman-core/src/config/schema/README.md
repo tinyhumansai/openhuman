@@ -31,6 +31,7 @@ is mounted as a submodule of [`load/dirs.rs`](./load/dirs.rs) via `#[path]`.
 | `[cron]` | [`cron.rs`](./cron.rs) | `CronConfig` (`shell_timeout_secs`: shell-job timeout, default 120) |
 | `[hooks]` | [`hooks.rs`](./hooks.rs) | `HooksConfig` |
 | `[hosting]` | [`hosting.rs`](./hosting.rs) | `HostingConfig` |
+| `[wallet_policy]` (+ `[[wallet_policy.assets]]`) | [`wallet_policy.rs`](./wallet_policy.rs) | `WalletPolicyConfig`, `WalletAssetCap`: allowlist and per-transaction / rolling-day / per-recipient-week caps for wallet executes without a per-transfer confirmation |
 | `[learning]` | `learning.rs` | `LearningConfig`, `ReflectionSource` |
 | `[inbound_debounce]` (+ `by_channel.<name>`) | [`inbound_debounce.rs`](./inbound_debounce.rs) | `InboundDebounceConfig`, `InboundDebounceOverride`: per-conversation batching of inbound channel messages before a turn |
 | `[local_ai]` | [`local_ai.rs`](./local_ai.rs) | `LocalAiConfig`, `LocalAiUsage` |
