@@ -71,10 +71,19 @@ impl Tool for WalletBalancesTool {
         let tokens = super::token_balances(&ctx)
             .await
             .map(|outcome| outcome.value);
-        match combine_balances(native, tokens) {
-            Ok(value) => Ok(ToolResult::success(serde_json::to_string_pretty(&value)?)),
-            Err(error) => Ok(ToolResult::error(error)),
-        }
+        balances_tool_result(native, tokens)
+    }
+}
+
+/// The tool's answer for the two reads: the combined JSON on success, a tool
+/// error when the native read itself failed.
+pub(crate) fn balances_tool_result(
+    native: Result<Vec<super::BalanceInfo>, String>,
+    tokens: Result<Vec<super::TokenBalanceInfo>, String>,
+) -> anyhow::Result<ToolResult> {
+    match combine_balances(native, tokens) {
+        Ok(value) => Ok(ToolResult::success(serde_json::to_string_pretty(&value)?)),
+        Err(error) => Ok(ToolResult::error(error)),
     }
 }
 
