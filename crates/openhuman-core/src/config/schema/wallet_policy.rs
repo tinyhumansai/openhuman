@@ -61,8 +61,11 @@ pub struct WalletPolicyConfig {
 
 /// The caps for one asset. A cap that is absent does not limit that dimension;
 /// listing the asset is what allows it at all.
+///
+/// Unknown fields are rejected, so a misspelled cap (`daily_max_raww`) fails
+/// to parse instead of silently leaving that dimension uncapped.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct WalletAssetCap {
     /// Chain family: `evm`, `btc`, `solana` or `tron`.
     pub chain: String,
