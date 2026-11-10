@@ -246,11 +246,24 @@ fn a_render_that_stored_its_block_is_forgotten() {
 fn a_voided_render_that_ends_is_forgotten_without_harm() {
     let ready = ReadyBlocks::default();
     let voided = ready.ticket(Path::new("/workspace"));
-    let live = ready.ticket(Path::new("/workspace"));
+    let live = ready.ticket(Path::new("/other"));
     ready.invalidate(Some(Path::new("/workspace")));
     drop(voided);
-    assert!(ready.lock().in_flight.is_empty());
-    drop(live);
+    assert_eq!(ready.lock().in_flight.len(), 1, "the live ticket stays");
+    let now = Instant::now();
+    ready.put_ticketed_at(key_in("/other", "a", 500), Some("b".into()), live, now);
+    assert!(ready.contains_at(&key_in("/other", "a", 500), now));
+}
+
+#[test]
+fn an_older_render_does_not_store_over_one_a_generation_took_directly() {
+    let ready = ReadyBlocks::default();
+    let now = Instant::now();
+    let older = ready.ticket(Path::new("/workspace"));
+    let newer = ready.ticket(Path::new("/workspace"));
+    ready.delivered_at(key("a", 500), newer, now);
+    ready.put_ticketed_at(key("a", 500), Some("old".into()), older, now);
+    assert!(!ready.contains_at(&key("a", 500), now));
 }
 
 #[test]
@@ -264,4 +277,59 @@ fn a_ticket_is_live_until_an_invalidation_voids_it() {
     assert!(two.is_live(), "another workspace's render is untouched");
     ready.invalidate(None);
     assert!(!two.is_live());
+}
+
+#[test]
+fn storing_reports_whether_the_block_was_kept() {
+    let ready = ReadyBlocks::default();
+    let now = Instant::now();
+    let voided = ready.ticket(Path::new("/workspace"));
+    ready.invalidate(Some(Path::new("/workspace")));
+    assert!(!ready.put_ticketed_at(key("a", 500), Some("x".into()), voided, now));
+    let older = ready.ticket(Path::new("/workspace"));
+    let newer = ready.ticket(Path::new("/workspace"));
+    assert!(ready.put_ticketed_at(key("a", 500), Some("new".into()), newer, now));
+    assert!(!ready.put_ticketed_at(key("a", 500), Some("old".into()), older, now));
+    let fresh = ready.ticket(Path::new("/workspace"));
+    assert!(ready.put_ticketed_at(key("a", 500), None, fresh, now));
+}
+
+#[test]
+fn a_ticket_watch_follows_the_ticket_it_was_taken_from() {
+    let ready = ReadyBlocks::default();
+    let ticket = ready.ticket(Path::new("/workspace"));
+    let watch = ticket.watch();
+    assert!(watch.is_live());
+    ready.invalidate(None);
+    assert!(!watch.is_live());
+    drop(ticket);
+    assert!(!watch.is_live(), "and stays void once the ticket is gone");
+}
+
+#[test]
+fn a_delivery_watermark_outlives_the_eviction_of_blocks_for_other_keys() {
+    let ready = ReadyBlocks::default();
+    let now = Instant::now();
+    let older = ready.ticket(Path::new("/workspace"));
+    let newer = ready.ticket(Path::new("/workspace"));
+    ready.delivered_at(key("a", 500), newer, now);
+    // Enough other keys to evict every block the store can hold.
+    for tokens in 0..(READY_CAPACITY as u32 + 8) {
+        ready.put_at(key("b", 1_000 + tokens), Some("other".into()), now);
+    }
+    assert!(
+        !ready.put_ticketed_at(key("a", 500), Some("old".into()), older, now),
+        "the older render stored its superseded block"
+    );
+    assert!(ready.lock().marks.len() <= 1, "and the marks stay bounded");
+}
+
+#[test]
+fn watermarks_are_forgotten_once_no_older_render_is_in_flight() {
+    let ready = ReadyBlocks::default();
+    let now = Instant::now();
+    for tokens in 0..32 {
+        ready.put_at(key("a", tokens), Some("b".into()), now);
+    }
+    assert!(ready.lock().marks.is_empty());
 }

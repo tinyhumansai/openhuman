@@ -2,6 +2,7 @@ import debug from 'debug';
 import { Outlet } from 'react-router-dom';
 
 import { SidebarContent } from '../../layout/shell/SidebarSlot';
+import SecretGrantApprovalDeck from './SecretGrantApprovalDeck';
 import { SettingsLayoutProvider } from './SettingsLayoutContext';
 import SettingsSidebar from './SettingsSidebar';
 
@@ -38,6 +39,9 @@ const SettingsLayout = () => {
           what made settings look inset. The pane is the width of the content
           surface, same as Connections or Workflows. */}
       <div className="flex h-full min-h-0 w-full flex-col">
+        {/* A secret save from any panel parks the native secret grant with no
+            chat thread to show it on; ask for it here, above the panel. */}
+        <SecretGrantApprovalDeck />
         <div className="min-h-0 flex-1 overflow-hidden">
           <Outlet />
         </div>

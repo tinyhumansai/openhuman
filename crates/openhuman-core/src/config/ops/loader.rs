@@ -55,3 +55,7 @@ mod loader_current_tests;
 #[cfg(test)]
 #[path = "loader_explicit_ctx_tests.rs"]
 mod loader_explicit_ctx_tests;
+
+#[cfg(test)]
+#[path = "loader_snapshot_secrets_tests.rs"]
+mod loader_snapshot_secrets_tests;

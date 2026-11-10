@@ -296,6 +296,10 @@ pub struct OpenHumanRunContext {
     /// This root run owns settlement of driver jobs before its host turn
     /// returns. Inherited by recursive child contexts, never by ordinary chat.
     pub(crate) headless_descendant_settlement: bool,
+    /// This root run belongs to a cron job whose agent opted into scheduled
+    /// actions (`cron::origin::scheduled_actions_enabled`); its security gate
+    /// may lift the read-only cron stage. Never inherited by a child.
+    pub(crate) scheduled_actions: bool,
     /// Stable owner scope for the whole headless descendant tree. Native child
     /// runs get their own thread ids, but the root turn's settlement lease must
     /// retain every descendant under one owner key.

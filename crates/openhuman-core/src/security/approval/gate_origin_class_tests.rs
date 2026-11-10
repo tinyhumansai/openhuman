@@ -18,6 +18,12 @@ fn every_turn_origin_maps_to_one_engine_class() {
         origin_class(&trusted(TrustedAutomationSource::Cron)),
         CallOrigin::Cron
     );
+    // The scheduled-actions opt-in is judged as user-authorized automation,
+    // not refused like a plain scheduled job.
+    assert_eq!(
+        origin_class(&trusted(TrustedAutomationSource::CronActions)),
+        CallOrigin::TrustedAutomation
+    );
     assert_eq!(
         origin_class(&trusted(TrustedAutomationSource::Background)),
         CallOrigin::TrustedAutomation

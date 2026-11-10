@@ -34,6 +34,7 @@ use openhuman_embed::__host::inference_registry::{
 };
 use tinyinference_llm::model::ChatModel;
 
+#[cfg(feature = "voice")]
 pub use backend_error_code::HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE;
 pub use managed_model::ManagedOptions;
 

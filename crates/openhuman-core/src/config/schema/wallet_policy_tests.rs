@@ -83,3 +83,12 @@ fn env_overlay_wallet_policy_sets_flags_and_assets_and_ignores_garbage() {
     assert!(cfg.wallet_policy.automation_enabled);
     assert_eq!(cfg.wallet_policy.assets.len(), 1);
 }
+
+#[test]
+fn a_misspelled_asset_cap_field_is_rejected_instead_of_leaving_the_cap_off() {
+    let error = serde_json::from_str::<Vec<WalletAssetCap>>(
+        r#"[{"chain":"solana","symbol":"USDC","daily_max_raww":100000000}]"#,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("daily_max_raww"), "{error}");
+}

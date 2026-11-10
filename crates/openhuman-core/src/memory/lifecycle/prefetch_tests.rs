@@ -652,3 +652,40 @@ async fn erase_waits_for_current_automatic_work_before_returning_its_barrier() {
     drop(fence);
     drain(&cache, &key).await;
 }
+
+#[tokio::test]
+async fn a_shared_engine_invalidates_every_workspaces_packs_but_a_private_one_only_its_own() {
+    // The shared case clears every workspace's ready blocks: no test that pins
+    // the cache may be running.
+    let _stable = crate::memory::engine::CACHE_STABLE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _guard = TEST_LOCK.lock().await;
+    let (one, two) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (config_one, config_two) = (config_in(&one), config_in(&two));
+    let identity = tinymemory_tools::layout::identity::Identity::agent("a")
+        .resolve(&crate::memory::scope::identity_pins(&config_one));
+    let key_one = Key::new(&config_one, &identity, "t", false);
+    let key_two = Key::new(&config_two, &identity, "t", false);
+    let cache = Arc::new(Cache::default());
+    CACHES.register(&cache.0);
+    for shared in [false, true] {
+        for key in [&key_one, &key_two] {
+            enqueue(
+                cache.clone(),
+                key.clone(),
+                Box::pin(async { Some(pack("cached")) }),
+            );
+            drain(&cache, key).await;
+        }
+
+        invalidate_with(&config_one, shared);
+
+        assert!(completed(&cache, &key_one).is_none());
+        assert_eq!(
+            completed(&cache, &key_two).is_none(),
+            shared,
+            "shared engine: {shared}"
+        );
+    }
+}

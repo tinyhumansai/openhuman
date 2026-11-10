@@ -124,12 +124,16 @@ fn cache(ctx: &DispatchCtx) -> Arc<Cache> {
 /// cannot republish after invalidation. Call after
 /// successful memory writes and erasure; no engine work runs here.
 pub(crate) fn invalidate(config: &Config) {
-    CACHES.invalidate_where(|key| key.workspace == config.workspace_dir);
+    invalidate_with(config, crate::memory::engine::host_engine_is_shared());
+}
+
+/// [`invalidate`] with `shared` saying whether one engine serves every
+/// workspace in the process (the host engine does): a change through one
+/// workspace then reaches the packs and ready blocks of all of them.
+pub(crate) fn invalidate_with(config: &Config, shared: bool) {
+    CACHES.invalidate_where(|key| shared || key.workspace == config.workspace_dir);
     // A memory block rendered ahead of a generation holds what was just
     // written over or erased; it must not reach a later prompt.
-    // The host engine is one store for every workspace in the process, so a
-    // change through one workspace reaches the blocks of all of them.
-    let shared = crate::memory::engine::host_engine_is_shared();
     crate::agent::session_host::invalidate_ready_memory_blocks(
         (!shared).then_some(config.workspace_dir.as_path()),
     );

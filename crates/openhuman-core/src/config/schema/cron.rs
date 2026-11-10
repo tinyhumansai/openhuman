@@ -27,6 +27,26 @@ pub struct CronConfig {
     /// one profile, counted in the store.
     #[serde(default = "default_max_active_jobs")]
     pub max_active_jobs: u32,
+    /// Wall-clock limit, in seconds, for one run of a `shell` cron job. The
+    /// command is killed and the run fails as timed out when it passes.
+    /// Defaults to 120; `0` is treated as 1.
+    #[serde(default = "default_shell_timeout_secs")]
+    pub shell_timeout_secs: u64,
+}
+
+/// Default for [`CronConfig::shell_timeout_secs`].
+pub const DEFAULT_SHELL_TIMEOUT_SECS: u64 = 120;
+
+fn default_shell_timeout_secs() -> u64 {
+    DEFAULT_SHELL_TIMEOUT_SECS
+}
+
+impl CronConfig {
+    /// The shell-job timeout to enforce: [`Self::shell_timeout_secs`], at
+    /// least one second.
+    pub fn shell_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.shell_timeout_secs.max(1))
+    }
 }
 
 fn default_min_interval_secs() -> u64 {
@@ -53,6 +73,11 @@ impl Default for CronConfig {
             agent_jobs_only: false,
             min_interval_secs: default_min_interval_secs(),
             max_active_jobs: default_max_active_jobs(),
+            shell_timeout_secs: default_shell_timeout_secs(),
         }
     }
 }
+
+#[cfg(test)]
+#[path = "cron_tests.rs"]
+mod tests;

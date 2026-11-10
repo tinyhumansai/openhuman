@@ -9,8 +9,17 @@
 //!
 //! Records live in workspace storage on the `tinystoragedrivers` key-value
 //! port (`storage::state_kv`, owner `wallet`, namespace `spend_ledger`), the
-//! same backend and acting scope as every other host state value, so they
-//! survive a restart and follow `[storage] url`. Keys sort by creation time.
+//! same backend as every other host state value, so they survive a restart and
+//! follow `[storage] url`. Keys sort by creation time.
+//!
+//! The scope is the wallet owner's (`StateKv::open_owner_scoped`: the tenant
+//! profile, else the shared local scope), **not** the acting agent's: every
+//! agent of a workspace spends from the same wallet, so they share one
+//! allowance and one audit trail.
+//!
+//! Reservations are atomic across cores sharing the scope (`SpendLedger::reserve`):
+//! a compare-and-swap on a sequence document admits one reservation at a time,
+//! and a loser re-evaluates against the winner's record.
 
 use std::path::Path;
 
@@ -21,6 +30,16 @@ use crate::storage::state_kv::StateKv;
 
 const OWNER: &str = "wallet";
 const NAMESPACE: &str = "spend_ledger";
+const GATE_NAMESPACE: &str = "spend_gate";
+const GATE_KEY: &str = "sequence";
+/// How many times a reservation re-evaluates after losing a race.
+const RESERVE_ATTEMPTS: usize = 32;
+
+/// The reservation sequence: bumped by every successful reservation.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Gate {
+    seq: u64,
+}
 
 /// Where one execute is in its lifecycle.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -105,6 +124,7 @@ impl LedgerRecord {
 #[derive(Clone)]
 pub struct SpendLedger {
     kv: StateKv,
+    gate: StateKv,
 }
 
 impl SpendLedger {
@@ -115,8 +135,52 @@ impl SpendLedger {
     /// When the storage backend cannot be opened.
     pub fn open(workspace_dir: &Path) -> Result<Self> {
         Ok(Self {
-            kv: StateKv::open(workspace_dir, OWNER, NAMESPACE)?,
+            kv: StateKv::open_owner_scoped(workspace_dir, OWNER, NAMESPACE)?,
+            gate: StateKv::open_owner_scoped(workspace_dir, OWNER, GATE_NAMESPACE)?,
         })
+    }
+
+    /// Decide and reserve atomically. `decide` sees every record and returns
+    /// the `pending` record to reserve, or `Err` to refuse; the reservation is
+    /// published only if no other core reserved since `decide` read the
+    /// ledger, otherwise it is withdrawn and `decide` runs again on the newer
+    /// ledger. Nothing may be signed before this returns `Ok(Ok(_))`.
+    ///
+    /// # Errors
+    ///
+    /// A storage error, or a race that outlasted the retry budget.
+    pub fn reserve<E>(
+        &self,
+        mut decide: impl FnMut(&[LedgerRecord]) -> std::result::Result<LedgerRecord, E>,
+    ) -> Result<std::result::Result<LedgerRecord, E>> {
+        for _ in 0..RESERVE_ATTEMPTS {
+            let seen = self.gate.get::<Gate>(GATE_KEY)?.unwrap_or_default().seq;
+            let records = self.records()?;
+            let record = match decide(&records) {
+                Ok(record) => record,
+                Err(refusal) => return Ok(Err(refusal)),
+            };
+            // Visible before the sequence moves, so a concurrent evaluator can
+            // only over-count this reservation, never miss it.
+            self.put(&record)?;
+            let claimed = self.gate.update::<Gate, bool>(GATE_KEY, move |gate| {
+                if gate.seq == seen {
+                    gate.seq += 1;
+                    (true, true)
+                } else {
+                    (false, false)
+                }
+            })?;
+            if claimed {
+                return Ok(Ok(record));
+            }
+            tracing::debug!(
+                record_id = %record.id,
+                "[wallet:ledger] lost a reservation race; re-evaluating"
+            );
+            self.kv.delete(&record.key())?;
+        }
+        anyhow::bail!("wallet spend reservation kept conflicting with another core")
     }
 
     /// Insert or replace `record`.

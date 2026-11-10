@@ -33,6 +33,7 @@ impl OpenHumanRunContext {
             file_state_agent_id: None,
             tool_result_artifact_index: None,
             headless_descendant_settlement: false,
+            scheduled_actions: false,
             headless_descendant_owner: None,
             attachment_placeholders: Arc::new(Vec::new()),
             native_staged_parts: Vec::new(),
@@ -238,6 +239,9 @@ impl OpenHumanRunContext {
         child.native_message_id = None;
         child.response_shape = None;
         child.shell_processes = crate::sandbox::shell_processes::ShellProcesses::new();
+        // The scheduled-actions lift belongs to the cron job's own root run;
+        // a delegate stays read-only under the inherited cron origin.
+        child.scheduled_actions = false;
         child
     }
 
