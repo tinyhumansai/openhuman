@@ -72,9 +72,10 @@ Every execute, from the RPC or the agent tool, runs through
 - `policy.rs` classifies the caller (`ExecutionOrigin`): the wallet UI's RPC is
   *interactive* and stays uncapped unless `apply_to_interactive`; the agent
   tool in a chat-type turn is *agent* and is always held to the allowlist and
-  caps; a background job or approval-free workflow is *automation* and also
-  needs `automation_enabled`; an external channel or unlabelled turn is
-  refused. Caps per asset (atomic units): per transaction, rolling 24 hours,
+  caps; a background job, an approval-free workflow, or a cron job whose agent
+  opted into `scheduled_actions` (`CronActions`) is *automation* and also
+  needs `automation_enabled`; an external channel, an unlabelled turn or a
+  plain cron turn is refused. Caps per asset (atomic units): per transaction, rolling 24 hours,
   and rolling 7 days per recipient (`config/schema/wallet_policy.rs`).
 - `ledger.rs` records the attempt as `pending` before the module signs and
   updates it to `broadcast` or `in_doubt` afterwards; refusals are recorded
@@ -85,8 +86,12 @@ Every execute, from the RPC or the agent tool, runs through
 - `policy_ops.rs` serves `policy_get`, `policy_update` and `ledger_list`.
 
 The policy is host approval policy over the module's exact quote; it never
-builds or alters a transfer. Scheduled cron turns stay read-only at the
-harness gate, so they cannot reach the execute tool.
+builds or alters a transfer. A plain cron turn stays read-only at the
+harness gate and is refused by the policy; a cron job whose agent opted into
+`scheduled_actions` runs as `CronActions`, whose root run may call
+`wallet_balances` and `wallet_execute_prepared` within the caps (its
+sub-agents stay read-only). x402 payments from the same origin are approved
+within the per-request budget.
 
 ## Persistence and lifecycle
 

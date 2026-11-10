@@ -489,6 +489,7 @@ fn x402_from_trusted_automation_within_budget_is_approved_without_a_prompt() {
     use crate::core::runtime::turn_origin::TrustedAutomationSource;
     for source in [
         TrustedAutomationSource::Background,
+        TrustedAutomationSource::CronActions,
         TrustedAutomationSource::Workflow {
             require_approval: false,
         },
@@ -578,6 +579,28 @@ fn x402_webchat_flow_is_unchanged_and_still_prompts_the_owning_chat() {
             &x402_request(5, Some(owner)),
             Some(&webchat("thread-2")),
             u64::MAX
+        ),
+        X402Route::Refused(_)
+    ));
+}
+
+#[test]
+fn x402_from_scheduled_actions_cron_is_budgeted_and_plain_cron_is_refused() {
+    use crate::core::runtime::turn_origin::TrustedAutomationSource;
+    let actions = automation(TrustedAutomationSource::CronActions);
+    assert_eq!(
+        x402_route(&x402_request(1_000_000, None), Some(&actions), 1_000_000),
+        X402Route::AutomationApproved
+    );
+    assert!(matches!(
+        x402_route(&x402_request(1_000_001, None), Some(&actions), 1_000_000),
+        X402Route::Refused(_)
+    ));
+    assert!(matches!(
+        x402_route(
+            &x402_request(1, None),
+            Some(&automation(TrustedAutomationSource::Cron)),
+            1_000_000
         ),
         X402Route::Refused(_)
     ));

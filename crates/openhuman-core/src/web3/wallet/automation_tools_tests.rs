@@ -71,3 +71,45 @@ fn balance_tool_is_a_read() {
     assert_eq!(tool.permission_level(), PermissionLevel::ReadOnly);
     assert_eq!(automation_tools().len(), 2);
 }
+
+#[tokio::test]
+async fn execute_tool_is_policy_governed_for_scheduled_actions_cron_but_not_plain_cron() {
+    use crate::core::runtime::turn_origin::{
+        with_origin, AgentTurnOrigin, TrustedAutomationSource,
+    };
+    let tool = WalletExecutePreparedTool;
+    let args = json!({"quoteId": "q", "confirmed": true});
+    for (source, external) in [
+        (TrustedAutomationSource::CronActions, false),
+        (TrustedAutomationSource::Cron, true),
+    ] {
+        let origin = AgentTurnOrigin::TrustedAutomation {
+            job_id: "job".into(),
+            source,
+        };
+        let got = with_origin(origin, async { tool.external_effect_with_args(&args) }).await;
+        assert_eq!(got, external);
+    }
+}
+
+#[tokio::test]
+async fn execute_tool_refuses_a_plain_cron_turn_before_touching_the_wallet() {
+    use crate::core::runtime::turn_origin::{
+        with_origin, AgentTurnOrigin, TrustedAutomationSource,
+    };
+    let cron = AgentTurnOrigin::TrustedAutomation {
+        job_id: "job".into(),
+        source: TrustedAutomationSource::Cron,
+    };
+    let result = with_origin(cron, async {
+        run_execute(
+            &DispatchCtx::ambient_turn(),
+            json!({"quoteId": "q", "confirmed": true}),
+            None,
+        )
+        .await
+    })
+    .await;
+    assert!(result.is_error);
+    assert!(result.output().contains("WALLET_POLICY_REFUSED"));
+}
