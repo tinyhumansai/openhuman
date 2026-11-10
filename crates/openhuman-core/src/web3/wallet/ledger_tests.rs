@@ -62,3 +62,82 @@ fn a_refused_attempt_is_not_an_attempt_that_may_have_moved_funds() {
         LedgerStatus::InDoubt
     );
 }
+
+fn agent_context(
+    parent: &std::sync::Arc<crate::core::runtime::CoreContext>,
+    id: &str,
+) -> std::sync::Arc<crate::core::runtime::CoreContext> {
+    use crate::core::runtime::{ContextOverlay, DomainSet};
+    use crate::tools::toolpacks::ToolGroups;
+    parent.derive_with(
+        ContextOverlay::new(
+            crate::config::Config::default(),
+            DomainSet::kernel(),
+            ToolGroups::none(),
+        )
+        .session_agent(id),
+    )
+}
+
+#[tokio::test]
+async fn agents_sharing_a_workspace_share_one_ledger() {
+    use crate::core::runtime::{CoreContext, DomainSet};
+    let dir = tempfile::tempdir().unwrap();
+    let root = CoreContext::for_test(DomainSet::full(), Some(dir.path().to_path_buf()));
+    let alpha = agent_context(&root, "ledger-agent-alpha");
+    let beta = agent_context(&root, "ledger-agent-beta");
+
+    let path = dir.path().to_path_buf();
+    CoreContext::scope(alpha, async {
+        SpendLedger::open(&path)
+            .unwrap()
+            .put(&record("q-alpha", 1_000, LedgerStatus::Broadcast))
+            .unwrap();
+    })
+    .await;
+    let seen = CoreContext::scope(beta, async {
+        SpendLedger::open(&path).unwrap().records().unwrap()
+    })
+    .await;
+    assert_eq!(
+        seen.iter().map(|r| r.quote_id.as_str()).collect::<Vec<_>>(),
+        ["q-alpha"],
+        "a second agent spends from the same wallet and must see the first agent's spend"
+    );
+}
+
+#[test]
+fn a_reservation_that_lost_a_race_is_withdrawn_and_re_decided() {
+    let dir = tempfile::tempdir().unwrap();
+    let ours = SpendLedger::open(dir.path()).unwrap();
+    let other_core = SpendLedger::open(dir.path()).unwrap();
+
+    let mut calls = 0;
+    let outcome = ours
+        .reserve(|records| {
+            calls += 1;
+            if calls == 1 {
+                // Another core reserves between our read and our claim.
+                assert!(records.is_empty());
+                other_core
+                    .reserve(|_| Ok::<_, ()>(record("q-other", 1_000, LedgerStatus::Pending)))
+                    .unwrap()
+                    .unwrap();
+            } else {
+                assert_eq!(records.len(), 1, "the retry sees the other core's record");
+                return Err("over the cap");
+            }
+            Ok(record("q-ours", 2_000, LedgerStatus::Pending))
+        })
+        .unwrap();
+
+    assert_eq!(calls, 2);
+    assert_eq!(outcome.unwrap_err(), "over the cap");
+    let remaining = ours.records().unwrap();
+    assert_eq!(
+        remaining.len(),
+        1,
+        "our withdrawn reservation must not linger"
+    );
+    assert_eq!(remaining[0].quote_id, "q-other");
+}

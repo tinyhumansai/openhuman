@@ -365,24 +365,30 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = Result<ExecutionResult, WalletCallError>>,
 {
-    let records = ledger.records().map_err(ledger_error)?;
-    let decision = match records
-        .iter()
-        .rev()
-        .find(|record| record.quote_id == quote.quote_id && record.status.counts_against_caps())
-    {
-        Some(earlier) => Err(refusal(
-            RefusalKind::AlreadyAttempted,
-            format!(
-                "quote {} was already executed (status {:?}); it is never retried. Check \
-                 wallet_tx_status before preparing a new transfer",
-                quote.quote_id, earlier.status
-            ),
-        )),
-        None => evaluate(policy, origin, quote, &records, now_ms),
-    };
-    let policy_applied = match decision {
-        Ok(applied) => applied,
+    // Evaluate and reserve as one step across cores: the pending record is
+    // published only if no other core reserved since the ledger was read.
+    let reserved = ledger
+        .reserve(|records| {
+            let decision = match records.iter().rev().find(|record| {
+                record.quote_id == quote.quote_id && record.status.counts_against_caps()
+            }) {
+                Some(earlier) => Err(refusal(
+                    RefusalKind::AlreadyAttempted,
+                    format!(
+                        "quote {} was already executed (status {:?}); it is never retried. \
+                         Check wallet_tx_status before preparing a new transfer",
+                        quote.quote_id, earlier.status
+                    ),
+                )),
+                None => evaluate(policy, origin, quote, records, now_ms),
+            };
+            decision.map(|policy_applied| {
+                new_record(quote, origin, policy_applied, LedgerStatus::Pending, now_ms)
+            })
+        })
+        .map_err(ledger_error)?;
+    let mut record = match reserved {
+        Ok(record) => record,
         Err(refused) => {
             tracing::info!(
                 quote_id = %quote.quote_id,
@@ -398,9 +404,7 @@ where
             return Err(WalletCallError::InvalidInput(refused.to_string()));
         }
     };
-
-    let mut record = new_record(quote, origin, policy_applied, LedgerStatus::Pending, now_ms);
-    ledger.put(&record).map_err(ledger_error)?;
+    let policy_applied = record.policy_applied;
     tracing::info!(
         quote_id = %quote.quote_id,
         record_id = %record.id,
