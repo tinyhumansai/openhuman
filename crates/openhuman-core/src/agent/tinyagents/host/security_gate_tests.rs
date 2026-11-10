@@ -340,7 +340,8 @@ async fn opted_in_scheduled_actions_root_run_may_run_shell_through_tinysecurity(
 
 #[cfg(feature = "web3")]
 #[tokio::test]
-async fn scheduled_actions_root_run_may_execute_a_prepared_wallet_transfer_but_plain_cron_may_not() {
+async fn scheduled_actions_root_run_may_execute_a_prepared_wallet_transfer_but_plain_cron_may_not()
+{
     use crate::core::runtime::turn_origin::TrustedAutomationSource;
     use crate::web3::wallet::automation_tools::{WalletBalancesTool, WalletExecutePreparedTool};
     let wallet_gate = || {
