@@ -395,6 +395,13 @@ name = "cli_storage_url_e2e"
 path = "../../tests/cli_storage_url_e2e.rs"
 
 [[test]]
+# Spawns the real binary with its native TinySecurity cipher and no keyring
+# consent responder, as a product build runs.
+name = "settings_secret_grant_e2e"
+path = "../../tests/settings_secret_grant_e2e.rs"
+required-features = ["security-module"]
+
+[[test]]
 # Boots `openhuman-core serve` on a workspace with legacy approval rows.
 name = "storage_default_import_e2e"
 path = "../../tests/storage_default_import_e2e.rs"
