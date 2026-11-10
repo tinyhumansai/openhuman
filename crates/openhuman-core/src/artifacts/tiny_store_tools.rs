@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use tiny_artifacts::{Author, Content};
 
-use super::super::files::FileRoots;
+use crate::artifacts::files::FileRoots;
 use super::artifacts_service;
 use super::artifacts_service_with_publisher;
 use crate::security::approval::ApprovalChatContext;
@@ -26,7 +26,7 @@ pub fn registered_tools(
     workspace_dir: &Path,
     files: FileRoots,
     action_dir: &Path,
-    publisher: Option<super::ArtifactPublisherBinder>,
+    publisher: Option<crate::artifacts::ArtifactPublisherBinder>,
 ) -> Vec<Box<dyn tinytools::Tool>> {
     let can_publish = publisher.is_some();
     let service = {
@@ -46,7 +46,7 @@ pub fn registered_tools(
     let mut tools: Vec<Box<dyn tinytools::Tool>> = Vec::new();
     {
         let (service, author) = (service.clone(), author.clone());
-        let staging = super::box_source::staging_dir(workspace_dir);
+        let staging = crate::artifacts::box_source::staging_dir(workspace_dir);
         tools.push(Box::new(PerCallTool::new(
             per_call_context,
             move |context| {
@@ -55,10 +55,10 @@ pub fn registered_tools(
                     author.clone(),
                 );
                 let tenant = context.dispatch.tenant();
-                super::box_source::BoxSourced::new(
+                crate::artifacts::box_source::BoxSourced::new(
                     create,
-                    super::box_source::KindSource::Args,
-                    Arc::new(super::box_source::SandboxBoxFiles::new(context.dispatch)),
+                    crate::artifacts::box_source::KindSource::Args,
+                    Arc::new(crate::artifacts::box_source::SandboxBoxFiles::new(context.dispatch)),
                     tenant,
                     staging.clone(),
                 )
@@ -70,7 +70,7 @@ pub fn registered_tools(
     ))));
     {
         let (service, author) = (service.clone(), author.clone());
-        let staging = super::box_source::staging_dir(workspace_dir);
+        let staging = crate::artifacts::box_source::staging_dir(workspace_dir);
         tools.push(Box::new(PerCallTool::new(
             per_call_context,
             move |context| {
@@ -78,10 +78,10 @@ pub fn registered_tools(
                 let update =
                     tiny_artifacts::UpdateArtifactTool::new(Arc::clone(&artifacts), author.clone());
                 let tenant = context.dispatch.tenant();
-                super::box_source::BoxSourced::new(
+                crate::artifacts::box_source::BoxSourced::new(
                     update,
-                    super::box_source::KindSource::Record(artifacts),
-                    Arc::new(super::box_source::SandboxBoxFiles::new(context.dispatch)),
+                    crate::artifacts::box_source::KindSource::Record(artifacts),
+                    Arc::new(crate::artifacts::box_source::SandboxBoxFiles::new(context.dispatch)),
                     tenant,
                     staging.clone(),
                 )
