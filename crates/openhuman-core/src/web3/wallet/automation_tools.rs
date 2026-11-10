@@ -72,11 +72,25 @@ impl Tool for WalletBalancesTool {
         // and delay the error behind a slow token provider.
         let native = match super::balances(&ctx).await {
             Ok(outcome) => outcome.value,
-            Err(error) => return balances_tool_result(Err(error), Ok(Vec::new())),
+            Err(error) => {
+                tracing::warn!("[wallet:tool] wallet_balances native read failed");
+                return balances_tool_result(Err(error), Ok(Vec::new()));
+            }
         };
         let tokens = super::token_balances(&ctx)
             .await
             .map(|outcome| outcome.value);
+        match &tokens {
+            Ok(rows) => tracing::debug!(
+                native_rows = native.len(),
+                token_rows = rows.len(),
+                "[wallet:tool] wallet_balances read"
+            ),
+            Err(_) => tracing::warn!(
+                native_rows = native.len(),
+                "[wallet:tool] wallet_balances token read failed; returning native rows with tokensError"
+            ),
+        }
         balances_tool_result(Ok(native), tokens)
     }
 }
