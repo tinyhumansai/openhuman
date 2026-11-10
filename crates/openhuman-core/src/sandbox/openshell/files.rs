@@ -385,6 +385,6 @@ fn failed_command(action: &'static str, path: &str, result: &SandboxExecResult) 
 #[path = "files_tests.rs"]
 mod tests;
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 #[path = "files_shell_tests.rs"]
 mod on_a_real_shell;

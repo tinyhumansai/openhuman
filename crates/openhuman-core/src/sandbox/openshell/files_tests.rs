@@ -5,14 +5,14 @@ use crate::sandbox::openshell::{BoxOutput, RegistryLimits};
 use std::sync::Arc;
 use std::time::Duration;
 
-fn embedded(id: &str) -> Tenant {
+pub(super) fn embedded(id: &str) -> Tenant {
     Tenant {
         profile: None,
         agent: Some(id.into()),
     }
 }
 
-fn registry(driver: &Arc<ScriptedDriver>) -> Arc<BoxRegistry<ScriptedDriver>> {
+pub(super) fn registry(driver: &Arc<ScriptedDriver>) -> Arc<BoxRegistry<ScriptedDriver>> {
     BoxRegistry::new(
         Arc::clone(driver),
         RegistryLimits {
@@ -22,16 +22,16 @@ fn registry(driver: &Arc<ScriptedDriver>) -> Arc<BoxRegistry<ScriptedDriver>> {
     )
 }
 
-fn config() -> OpenShellRuntimeConfig {
+pub(super) fn config() -> OpenShellRuntimeConfig {
     OpenShellRuntimeConfig::default()
 }
 
 /// Every byte value, so NUL and bytes that are not UTF-8 are in the file.
-fn binary(len: usize) -> Vec<u8> {
+pub(super) fn binary(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i % 256) as u8).collect()
 }
 
-fn reply(exit_code: i32, stdout: &str, stderr: &str) -> ExecStep {
+pub(super) fn reply(exit_code: i32, stdout: &str, stderr: &str) -> ExecStep {
     ExecStep::Reply(BoxOutput {
         exit_code,
         stdout: stdout.as_bytes().to_vec(),
@@ -39,12 +39,12 @@ fn reply(exit_code: i32, stdout: &str, stderr: &str) -> ExecStep {
     })
 }
 
-fn encoded(bytes: &[u8]) -> String {
+pub(super) fn encoded(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 /// The part file a write's first command names: the quoted `./...part` word.
-fn part_in(command: &str) -> String {
+pub(super) fn part_in(command: &str) -> String {
     // The part file's name carries a UUID; the stale-file sweep names a glob.
     let marker = ".openhuman-transfer-";
     let name = command
@@ -58,7 +58,7 @@ fn part_in(command: &str) -> String {
 }
 
 /// The shell command of every exec the driver saw, in order.
-fn commands(driver: &ScriptedDriver) -> Vec<String> {
+pub(super) fn commands(driver: &ScriptedDriver) -> Vec<String> {
     driver
         .calls()
         .into_iter()

@@ -3,7 +3,8 @@
 
 use super::tests::*;
 use super::*;
-
+use crate::sandbox::openshell::scripted_driver::ScriptedDriver;
+use std::sync::Arc;
 
 fn host_boxes() -> (
     tempfile::TempDir,
