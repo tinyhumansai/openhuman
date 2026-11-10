@@ -3,6 +3,7 @@
 use crate::core::runtime::DispatchCtx;
 use serde_json::json;
 
+use crate::config::schema::SEARCH_PROVIDERS;
 use crate::config::Config;
 use crate::core::Outcome;
 
@@ -10,9 +11,23 @@ use crate::core::Outcome;
 pub async fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String> {
     let mut value = serde_json::to_value(config).map_err(|e| e.to_string())?;
     // The full snapshot is sent over RPC. Keep search settings visible while
-    // removing credentials, including the legacy Seltz key.
-    for provider in ["brave", "querit", "exa", "tavily", "gemini", "parallel"] {
-        value["search"][provider]["api_key"] = serde_json::Value::Null;
+    // removing credentials, including the legacy Seltz key. Walk every provider
+    // that stores a direct-route key so the list cannot drift from SEARCH_PROVIDERS.
+    for &provider in SEARCH_PROVIDERS {
+        if config.search.credentials(provider).is_none() {
+            continue;
+        }
+        let json_key = match provider {
+            "gemini_deep_research" => "gemini",
+            _ => provider,
+        };
+        if value["search"]
+            .get(json_key)
+            .and_then(|entry| entry.get("api_key"))
+            .is_some()
+        {
+            value["search"][json_key]["api_key"] = serde_json::Value::Null;
+        }
     }
     value["seltz"]["api_key"] = serde_json::Value::Null;
     // A broker URL may carry credentials too; show it redacted.
