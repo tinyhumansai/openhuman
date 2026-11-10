@@ -1,4 +1,4 @@
-use super::redact_rpc_url;
+use super::{redact_rpc_url, rest_get_text, rest_post_text, rpc_call_to};
 
 #[test]
 fn redact_rpc_url_strips_path_and_query() {
