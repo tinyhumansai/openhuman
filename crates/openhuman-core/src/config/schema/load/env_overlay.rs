@@ -13,6 +13,7 @@ mod proxy;
 mod runtime;
 mod search;
 mod update;
+mod wallet_policy;
 
 use super::super::proxy::{set_runtime_proxy_config, ProxyScope};
 use super::super::Config;
@@ -409,6 +410,7 @@ impl Config {
         self.apply_proxy_env(env);
         self.apply_runtime_env(env);
         self.apply_inbound_debounce_env(env);
+        self.apply_wallet_policy_env(env);
         self.apply_observability_env(env);
         self.apply_embedding_env(env);
         self.apply_update_env(env);

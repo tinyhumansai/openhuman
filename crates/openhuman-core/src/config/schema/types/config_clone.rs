@@ -100,6 +100,7 @@ impl Clone for Config {
             inbound_debounce: self.inbound_debounce.clone(),
             components: self.components.clone(),
             hosting: self.hosting.clone(),
+            wallet_policy: self.wallet_policy.clone(),
             storage: self.storage.clone(),
             voice_server: self.voice_server.clone(),
             voice_providers: self.voice_providers.clone(),

@@ -46,7 +46,12 @@ not host-side accounting or protocol interpretation.
 
 ## Safety and lifecycle
 
-- The host rejects a request before secret access if user approval is absent.
+- The module reserves the amount against its budget, then asks the host to
+  authorize (`modules::wallet_host::x402_route`). A WebChat turn gets a forced
+  approval prompt in its own chat; trusted automation (a background job or an
+  approval-free workflow) is approved without a person when the amount is
+  within the per-request budget; an external channel, an unlabelled turn and
+  anything else are refused.
 - The module parses the challenge, selects the payment rail, reserves budget,
   and verifies the exact owner and payment facts before signing.
 - The module service is closed on sign-out, configuration replacement, and
