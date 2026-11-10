@@ -67,11 +67,17 @@ impl Tool for WalletBalancesTool {
         context: Option<&dyn tinytools::ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context);
-        let native = super::balances(&ctx).await.map(|outcome| outcome.value);
+        // A failed native read is the tool's answer on its own: return it before
+        // the token read, which would otherwise hold the wallet service lock
+        // and delay the error behind a slow token provider.
+        let native = match super::balances(&ctx).await {
+            Ok(outcome) => outcome.value,
+            Err(error) => return balances_tool_result(Err(error), Ok(Vec::new())),
+        };
         let tokens = super::token_balances(&ctx)
             .await
             .map(|outcome| outcome.value);
-        balances_tool_result(native, tokens)
+        balances_tool_result(Ok(native), tokens)
     }
 }
 

@@ -83,7 +83,7 @@ The agent reaches the wallet through eight tools:
 | --- | --- |
 | `wallet_status` | Onboarding status and account addresses. |
 | `wallet_chain_status` | Per-chain readiness and active RPC. |
-| `wallet_balances` | Live native and token (USDC on Solana) balances. |
+| `wallet_balances` | Live native and token (USDC on Solana) balances, as `{native, tokens}`. If the token read fails, `tokens` is empty and `tokensError` says why; the native rows are still returned. |
 | `wallet_prepare_transfer` | Build a validated, fee-estimated quote. |
 | `wallet_execute_prepared` | Execute a prepared quote, only within the spend policy. |
 | `wallet_tx_status` | Transaction lifecycle state by hash. |
