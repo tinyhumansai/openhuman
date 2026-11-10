@@ -86,6 +86,8 @@ impl AuthService {
         self.store
             .upsert_profile(profile.clone(), set_active)
             .await?;
+        // A replaced key serves memory as another account from now on.
+        crate::memory::engine::drop_memory_reads_for_provider(&provider);
         Ok(profile)
     }
 
@@ -114,6 +116,9 @@ impl AuthService {
         self.store
             .set_active_profile(&provider, &profile_id)
             .await?;
+        // Another account's key now serves memory: what was read as the
+        // previous one must not reach the next generation.
+        crate::memory::engine::drop_memory_reads_for_provider(&provider);
         Ok(profile_id)
     }
 
@@ -125,16 +130,17 @@ impl AuthService {
     pub async fn remove_profile(&self, provider: &str, requested_profile: &str) -> Result<bool> {
         let provider = normalize_provider(provider)?;
         let profile_id = resolve_requested_profile_id(&provider, requested_profile);
-        if self.store.remove_profile(&profile_id).await? {
-            return Ok(true);
-        }
-        if !profile_id.starts_with("provider:") {
+        let mut removed = self.store.remove_profile(&profile_id).await?;
+        if !removed && !profile_id.starts_with("provider:") {
             let namespaced = format!("provider:{profile_id}");
-            if self.store.remove_profile(&namespaced).await? {
-                return Ok(true);
-            }
+            removed = self.store.remove_profile(&namespaced).await?;
         }
-        Ok(false)
+        if removed {
+            // The memory key's account is gone: what it read must not reach
+            // a later generation.
+            crate::memory::engine::drop_memory_reads_for_provider(&provider);
+        }
+        Ok(removed)
     }
 
     pub async fn get_profile(
