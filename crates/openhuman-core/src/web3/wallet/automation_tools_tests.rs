@@ -100,7 +100,7 @@ fn native_rows() -> Vec<super::super::BalanceInfo> {
         },
         super::super::BalanceInfo {
             chain: tinywallet_bus::wire::WalletChain::Evm,
-            evm_network: Some(tinywallet_bus::wire::EvmNetwork::Base),
+            evm_network: Some(tinywallet_bus::wire::EvmNetwork::BaseMainnet),
             address: "0xOwner".into(),
             asset_symbol: "ETH".into(),
             decimals: 18,
