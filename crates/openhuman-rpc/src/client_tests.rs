@@ -224,6 +224,14 @@ fn logged_lines() -> Vec<String> {
     LOGGED.lock().map(|lines| lines.clone()).unwrap_or_default()
 }
 
+/// The port a served URL points at.
+fn url_port(url: &str) -> u16 {
+    url::Url::parse(url)
+        .expect("a served url parses")
+        .port()
+        .expect("a served url carries a port")
+}
+
 /// Check loopback connectivity. Proxy bypass is covered by
 /// `tests/client_loopback_proxy.rs`.
 #[tokio::test]
@@ -233,29 +241,30 @@ async fn the_proxy_bypass_is_logged_with_the_redacted_url() {
     post_json_rpc(&url, None, "{}")
         .await
         .expect("loopback rpc should succeed");
+    let port = url_port(&url);
     let lines = logged_lines();
+    // The logger is shared by the whole test binary, so the line is matched
+    // on the port of this test's own server.
     let bypass = lines
         .iter()
-        .find(|line| line.contains("bypassing the proxy"))
-        .expect("the bypass decision is logged");
+        .find(|line| {
+            line.contains("bypassing the proxy") && line.contains(&format!("127.0.0.1:{port}"))
+        })
+        .expect("the bypass decision is logged for this server");
     assert!(bypass.contains("127.0.0.1"), "{bypass}");
     // The path is not part of the log line.
     assert!(!bypass.contains("/rpc"), "{bypass}");
 }
 
-#[tokio::test]
-async fn a_remote_target_is_logged_as_using_the_ambient_proxy_settings() {
-    capture_logs();
-    // A non-loopback address with nothing listening on it: the request fails
-    // right away, and the decision is logged before the request is sent.
-    let _ = post_json_rpc("http://192.168.110.51:45999/rpc", None, "{}").await;
-    let lines = logged_lines();
-    let ambient = lines
-        .iter()
-        .find(|line| line.contains("ambient proxy settings"))
-        .expect("the ambient proxy decision is logged");
-    assert!(ambient.contains("192.168.110.51"), "{ambient}");
-    assert!(!ambient.contains("/rpc"), "{ambient}");
+#[test]
+fn a_remote_target_is_logged_as_using_the_ambient_proxy_settings() {
+    // No request is sent: the decision and its log line are checked on their
+    // own, so the test never reaches a real host or an ambient proxy.
+    let url = "http://192.168.110.51:45999/rpc";
+    let line = ProxyDecision::for_url(url).log_line(&redact_url_for_log(url));
+    assert!(line.contains("ambient proxy settings"), "{line}");
+    assert!(line.contains("192.168.110.51"), "{line}");
+    assert!(!line.contains("/rpc"), "{line}");
 }
 
 #[tokio::test]
@@ -277,6 +286,18 @@ async fn a_redirect_that_stays_on_the_loopback_interface_is_followed() {
         .await
         .expect("the loopback redirect reaches the target");
     assert_eq!(response.status, 200, "body: {}", response.body);
+}
+
+#[tokio::test]
+async fn a_bearer_disables_loopback_redirects() {
+    // A bearer is never handed to a redirect target, so the redirect reaches
+    // the caller verbatim instead of being followed.
+    let target = serve_one_rpc_response().await.0;
+    let url = serve_one_redirect_to(&target).await;
+    let response = post_json_rpc(&url, Some("token"), "{}")
+        .await
+        .expect("the redirect response reaches the caller");
+    assert_eq!(response.status, 307, "body: {}", response.body);
 }
 
 #[tokio::test]

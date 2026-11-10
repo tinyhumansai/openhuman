@@ -65,6 +65,39 @@ fn is_loopback_url(url: &str) -> bool {
     host == "localhost" || host.ends_with(".localhost")
 }
 
+/// The proxy routing decision taken for a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProxyDecision {
+    /// The target is on this machine's loopback interface; a proxy cannot
+    /// reach it.
+    LoopbackBypass,
+    /// Any other target keeps the ambient proxy settings.
+    AmbientProxySettings,
+}
+
+impl ProxyDecision {
+    /// The decision for a target URL.
+    fn for_url(url: &str) -> Self {
+        if is_loopback_url(url) {
+            Self::LoopbackBypass
+        } else {
+            Self::AmbientProxySettings
+        }
+    }
+
+    /// The debug line that records the decision, with the redacted URL.
+    fn log_line(self, safe_url: &str) -> String {
+        match self {
+            Self::LoopbackBypass => {
+                format!("[openhuman_rpc] bypassing the proxy for the loopback {safe_url}")
+            }
+            Self::AmbientProxySettings => {
+                format!("[openhuman_rpc] using the ambient proxy settings for {safe_url}")
+            }
+        }
+    }
+}
+
 /// How many redirects a request may follow before it gives up.
 const MAX_REDIRECT_HOPS: usize = 10;
 
@@ -98,19 +131,21 @@ pub async fn post_json_rpc(
     let bearer = bearer_header(token);
     let safe_url = redact_url_for_log(url);
     let mut client_builder = reqwest::Client::builder().timeout(Duration::from_secs(30));
-    if is_loopback_url(url) {
+    let decision = ProxyDecision::for_url(url);
+    log::debug!("{}", decision.log_line(&safe_url));
+    if decision == ProxyDecision::LoopbackBypass {
         // The local core is on this machine; a proxy cannot reach it.
         client_builder = client_builder.no_proxy();
-        log::debug!("[openhuman_rpc] bypassing the proxy for the loopback {safe_url}");
         // The routing of a redirect target is re-evaluated: this client has
         // no proxy, so following a redirect to a remote host would reach that
         // host directly, past the proxy the environment configured. Such a
         // redirect is handed back to the caller verbatim.
         client_builder = client_builder.redirect(loopback_redirects_only());
-    } else {
-        log::debug!("[openhuman_rpc] using the ambient proxy settings for {safe_url}");
     }
     if bearer.is_some() {
+        // A bearer is never handed to a redirect target, so redirects are
+        // disabled altogether, including the loopback redirects that
+        // `loopback_redirects_only()` would otherwise follow.
         client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
     }
     let client = client_builder
