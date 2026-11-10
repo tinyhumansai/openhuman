@@ -137,15 +137,32 @@ impl OpenHumanSecurityGate {
         // internal orchestration control. This does not permit effectful spawn
         // implementations, shell, or any other acting tool. The check precedes
         // shell and approval shortcuts, including when approvals are disabled.
-        let is_cron_turn = matches!(
-            self.turn_origin(),
-            Some(
-                crate::core::runtime::turn_origin::AgentTurnOrigin::TrustedAutomation {
-                    source: crate::core::runtime::turn_origin::TrustedAutomationSource::Cron,
-                    ..
-                }
-            )
-        );
+        //
+        // The one exception is the scheduled-actions opt-in: a job whose agent
+        // definition sets `scheduled_actions = true` with a named tool scope
+        // runs under `CronActions`, and the scheduler marks the session it
+        // built. Only that session's root run (depth 0) skips this stage; a
+        // sub-agent it spawns inherits the origin but stays read-only here.
+        let cron_source = match self.turn_origin() {
+            Some(crate::core::runtime::turn_origin::AgentTurnOrigin::TrustedAutomation {
+                source,
+                ..
+            }) if source.is_cron() => Some(source),
+            _ => None,
+        };
+        let scheduled_actions_lifted = matches!(
+            cron_source,
+            Some(crate::core::runtime::turn_origin::TrustedAutomationSource::CronActions)
+        ) && self.scheduled_actions
+            && tinyagents_harness::context::current_run_depth().is_some_and(|run| run.depth == 0);
+        if scheduled_actions_lifted {
+            tracing::debug!(
+                target: "tinyagents",
+                tool = %call.tool_name,
+                "[tinyagents::host::security] scheduled-actions cron root: read-only cron stage lifted"
+            );
+        }
+        let is_cron_turn = cron_source.is_some() && !scheduled_actions_lifted;
         let is_headless_spawn_control =
             self.headless_descendant_settlement && call.tool_name == "spawn_subagent";
         let is_cron_denial = is_cron_turn

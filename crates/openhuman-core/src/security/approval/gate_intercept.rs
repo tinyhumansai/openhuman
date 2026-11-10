@@ -650,8 +650,11 @@ fn origin_class(origin: &AgentTurnOrigin) -> CallOrigin {
             source: TrustedAutomationSource::Cron,
             ..
         } => CallOrigin::Cron,
+        // A cron job whose agent opted into scheduled actions: the security
+        // gate admitted the call for that job's root run only, so it is judged
+        // as the user-authorized automation it is.
         AgentTurnOrigin::TrustedAutomation {
-            source: TrustedAutomationSource::Background,
+            source: TrustedAutomationSource::Background | TrustedAutomationSource::CronActions,
             ..
         }
         | AgentTurnOrigin::TrustedAutomation {

@@ -1,12 +1,10 @@
 //! Execution of `JobType::Shell` jobs under the security policy and a hard
-//! timeout.
+//! timeout (`[cron] shell_timeout_secs`, default 120 s).
 
 use crate::config::Config;
 use crate::security::SecurityPolicy;
 use tinyflows_bus::schedule::types::CronJob;
 use tokio::time::Duration;
-
-pub(super) const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 
 /// Prefix the retry loop (`executor.rs#classify_failure`) reads as final.
 pub(super) const POLICY_REFUSAL_PREFIX: &str = "blocked by security policy:";
@@ -43,14 +41,13 @@ pub(super) async fn run_job_command(
     security: &SecurityPolicy,
     job: &CronJob,
 ) -> (bool, String) {
-    run_job_command_with_timeout(
-        ctx,
-        config,
-        security,
-        job,
-        Duration::from_secs(SHELL_JOB_TIMEOUT_SECS),
-    )
-    .await
+    let timeout: Duration = config.cron.shell_timeout();
+    tracing::debug!(
+        job_id = %job.id,
+        timeout_secs = timeout.as_secs(),
+        "[cron:shell] running scheduled shell job"
+    );
+    run_job_command_with_timeout(ctx, config, security, job, timeout).await
 }
 
 /// The job output for a refused command: final unless it may recover.

@@ -475,6 +475,7 @@ impl SessionHostBuilder {
             autonomous_iter_cap: None,
             host_env: crate::agent::turn_env::HostTurnEnv::default(),
             settle_headless_descendants: false,
+            scheduled_actions: false,
             thread_id: None,
             agent_definition_name: agent_definition_name.clone(),
             // Canonical registry id — captured here at build time
