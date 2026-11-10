@@ -188,7 +188,7 @@ may call `wallet_balances` and `wallet_execute_prepared` (executes only when
 caps), and x402 payments from `x402_request` / `http_request` are approved
 without a prompt within the per-request budget. A plain `Cron` turn is refused
 by both (it stays read-only, so `wallet_balances` still works).
-A job created from a channel conversation stays an `ExternalChannel` turn and is refused too.
+A job created from a channel conversation stays an `ExternalChannel` turn, so `wallet_execute_prepared` and x402 are refused for it too.
 
 Nothing else is lifted: the channel boundary, the autonomy tier
 (`[autonomy]`, including `workspace_only` when enabled), TinySecurity's command
