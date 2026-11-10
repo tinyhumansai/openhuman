@@ -310,7 +310,7 @@ async fn stage(staging: &Path, box_path: &str, bytes: &[u8]) -> std::io::Result<
     };
     let dir = staging.join(uuid::Uuid::new_v4().simple().to_string());
     let staged = Staged {
-        file: dir.join(name),
+        file: dir.join(&name),
         dir,
     };
     tiny_artifacts::FsFileStore::new(&staged.dir)

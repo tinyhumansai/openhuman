@@ -432,7 +432,9 @@ async fn a_staged_copy_is_removed_when_its_call_is_dropped_before_it_finishes() 
 async fn a_box_name_the_host_cannot_hold_still_stages_with_its_extension() {
     let staging = tempfile::tempdir().unwrap();
 
-    let odd = stage(staging.path(), "out/re?port*.pdf", b"x").await.unwrap();
+    let odd = stage(staging.path(), "out/re?port*.pdf", b"x")
+        .await
+        .unwrap();
     let no_extension = stage(staging.path(), "out/Makefile", b"x").await.unwrap();
     let hostile = stage(staging.path(), "out/a.p?f", b"x").await.unwrap();
 
