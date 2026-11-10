@@ -112,7 +112,11 @@ fn native_rows() -> Vec<super::super::BalanceInfo> {
 }
 
 fn tool_json(result: &ToolResult) -> Value {
-    assert!(!result.is_error, "unexpected tool error: {}", result.output());
+    assert!(
+        !result.is_error,
+        "unexpected tool error: {}",
+        result.output()
+    );
     serde_json::from_str(&result.output()).expect("the tool answers with JSON")
 }
 
