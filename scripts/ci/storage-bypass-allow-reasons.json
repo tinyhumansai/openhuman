@@ -91,13 +91,6 @@
     "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
   },
   {
-    "path": "crates/openhuman-core/src/artifacts/box_source.rs",
-    "rule": "json-write",
-    "site": "std::fs::write(&staged.file, bytes)?;",
-    "reason": "Transient per-call scratch copy of a sandbox box file, owned by a guard that removes it, handed to the artifact tool as a file path; not record state. The artifact itself is stored through the artifact store.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/8652"
-  },
-  {
     "path": "crates/openhuman-core/src/artifacts/tiny_store.rs",
     "rule": "json-write",
     "site": "tokio::fs::write(&dest, latest.body.as_bytes()).await?;",
