@@ -42,7 +42,7 @@ changing the facade.
 | Function | Purpose |
 | --- | --- |
 | `status`, `setup`, `reveal_recovery_phrase` | Onboarding, public account metadata, encrypted phrase custody, and explicit reveal. |
-| `balances`, `chain_status`, `network_defaults`, `supported_assets` | Read module-owned provider and network data. |
+| `balances`, `token_balances`, `chain_status`, `network_defaults`, `supported_assets` | Read module-owned provider and network data (`token_balances`: catalogued SPL tokens such as USDC, contract 1.15). |
 | `encode_erc20_transfer` | Request standard EVM transfer calldata from the module. |
 | `prepare_transfer`, `execute_prepared` | Prepare a module-owned quote, then explicitly confirm and execute it (through the spend policy, as an interactive execute). |
 | `policy_get`, `policy_update` | Read and persist the `[wallet_policy]` spend policy. |
@@ -61,7 +61,7 @@ The six established wallet tools are declared in `tinywallet-bus` and adapted
 in `tools.rs`: `wallet_status`, `wallet_chain_status`,
 `wallet_prepare_transfer`, `wallet_tx_status`, `wallet_tx_receipt`, and
 `wallet_lookup_tx`. `automation_tools.rs` adds two policy-bound tools:
-`wallet_balances` (the module's native balances) and `wallet_execute_prepared`
+`wallet_balances` (the module's native and token balances) and `wallet_execute_prepared`
 (an execute through the spend policy below).
 
 ## Spend policy and ledger

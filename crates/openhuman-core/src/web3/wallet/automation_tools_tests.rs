@@ -71,3 +71,34 @@ fn balance_tool_is_a_read() {
     assert_eq!(tool.permission_level(), PermissionLevel::ReadOnly);
     assert_eq!(automation_tools().len(), 2);
 }
+
+fn token_row(raw: &str) -> super::super::TokenBalanceInfo {
+    super::super::TokenBalanceInfo {
+        chain: tinywallet_bus::wire::WalletChain::Solana,
+        evm_network: None,
+        address: "Owner".into(),
+        asset_symbol: "USDC".into(),
+        token_address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".into(),
+        decimals: 6,
+        raw: raw.into(),
+        formatted: "1.500000".into(),
+        provider_status: super::super::ProviderStatus::Ready,
+    }
+}
+
+#[test]
+fn balances_tool_returns_native_and_token_rows_together() {
+    let value = combine_balances(Ok(Vec::new()), Ok(vec![token_row("1500000")])).unwrap();
+    assert_eq!(value["native"], json!([]));
+    assert_eq!(value["tokens"][0]["assetSymbol"], "USDC");
+    assert_eq!(value["tokens"][0]["raw"], "1500000");
+    assert!(value.get("tokensError").is_none());
+}
+
+#[test]
+fn a_failed_token_read_keeps_the_native_balances_and_says_why() {
+    let value = combine_balances(Ok(Vec::new()), Err("module too old".into())).unwrap();
+    assert_eq!(value["tokens"], json!([]));
+    assert_eq!(value["tokensError"], "module too old");
+    assert!(combine_balances(Err("not configured".into()), Ok(Vec::new())).is_err());
+}
