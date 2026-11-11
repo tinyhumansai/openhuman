@@ -81,7 +81,7 @@ impl AuthService {
     /// authority; with no owner the store is directory-only.
     pub fn for_state_dir(state_dir: &Path, encrypt_secrets: bool, config: Option<&Config>) -> Self {
         if let Some(config) =
-            config.filter(|config| true || config_owns_state_dir(config, state_dir, encrypt_secrets))
+            config.filter(|config| config_owns_state_dir(config, state_dir, encrypt_secrets))
         {
             return Self::from_config(config);
         }
