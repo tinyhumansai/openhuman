@@ -231,7 +231,9 @@ async fn run_owned(
     let started = match started {
         Some(result) => result,
         None => {
-            tracing::debug!("[sandbox:shell] abandoned while starting; stopping the command before release");
+            tracing::debug!(
+                "[sandbox:shell] abandoned while starting; stopping the command before release"
+            );
             call.await
         }
     };
