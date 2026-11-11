@@ -587,7 +587,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: "cargo clippy --manifest-path crates/openhuman-app/Cargo.toml -- -D warnings",
         },
         {
-          // Hosted keeps ci-lite's wrapper-free RUSTFLAGS instrumentation.
+          // Hosted keeps ci-lite's wrapper-free RUSTFLAGS instrumentation (nextest).
           // The private plan below uses the Cargo target linker and nextest.
           name: "tauri-coverage",
           when: areas.rustTauri,
@@ -595,7 +595,10 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run:
             "unset RUSTFLAGS RUSTC_WRAPPER" +
             " && cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml" +
-            " && cargo llvm-cov --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
+            // One process per test (nextest): the app tests reach the
+            // TinySecurity module, which keeps its first secret scope for the
+            // life of a process, so tests sharing one process fail closed.
+            " && cargo llvm-cov nextest --profile ci --no-fail-fast --no-tests=fail --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
             " --lcov --output-path ci-out/lcov/lcov-tauri.info",
         },
       ],
