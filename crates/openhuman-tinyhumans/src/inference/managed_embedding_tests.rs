@@ -481,6 +481,42 @@ async fn default_provider_with_config_authenticates_with_config_scoped_token() {
     );
 }
 
+/// Sign-in stores the app session through the config-bound store (the keyring
+/// under `security-module`). The managed embedder built for that config must
+/// read the session through the same store, not a directory-only one that sees
+/// no token and reports "No backend session".
+#[tokio::test]
+async fn managed_embedding_bearer_reads_the_session_sign_in_stored_through_the_config() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = Config {
+        config_path: tmp.path().join("config.toml"),
+        workspace_dir: tmp.path().join("workspace"),
+        api_url: Some("http://127.0.0.1:9".to_owned()),
+        ..Config::default()
+    };
+    AuthService::from_config(&config)
+        .store_provider_token(
+            openhuman_embed::__host::credentials::APP_SESSION_PROVIDER,
+            openhuman_embed::__host::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            "signed.in.jwt",
+            HashMap::new(),
+            true,
+        )
+        .await
+        .expect("sign-in stores the app session through the config");
+    let context = openhuman_embed::__host::inference_registry::EmbeddingCallContext {
+        config: Some(config.clone()),
+        chat: None,
+        state_dir: state_dir_of(&config),
+        secrets_encrypt: config.secrets.encrypt,
+    };
+
+    let bearer = bearer_resolver(managed_base_url(&config.api_url), &context)()
+        .await
+        .expect("the managed embedder reads the signed-in session");
+    assert_eq!(bearer, "signed.in.jwt");
+}
+
 /// With no stored `app-session` token and no API key, the bearer resolver
 /// short-circuits to the backend-session error before any network call.
 #[tokio::test]
