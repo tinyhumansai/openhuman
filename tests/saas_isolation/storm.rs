@@ -292,6 +292,7 @@ fn diagstorm_min() {
             json!({ "id": "t", "title": "y", "created_at": "2026-10-10T00:00:00Z" }),
         );
         if status == 200 {
+            let _ = std::fs::copy(&node.log, "/tmp/claude-1000/-home-ubuntu-work-workflow-openhuman-openhuman/0d5d2c52-7f73-4b6e-91af-4956716ac66e/scratchpad/diagstorm.log");
             break;
         }
         if Instant::now() > deadline {
