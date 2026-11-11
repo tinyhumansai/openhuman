@@ -18,6 +18,7 @@ pub(super) fn registry(driver: &Arc<ScriptedDriver>) -> Arc<BoxRegistry<Scripted
         RegistryLimits {
             idle_ttl: Duration::from_secs(900),
             max_live: 10,
+            retain: None,
         },
     )
 }

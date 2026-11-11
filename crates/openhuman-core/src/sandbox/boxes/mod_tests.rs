@@ -44,6 +44,7 @@ fn settings_come_from_the_runtime_table() {
             image: "registry.example/agent:3".into(),
             cpu_millis: 250,
             memory_bytes: 64 * 1024 * 1024,
+            workdir: "/sandbox".into(),
         })
     );
     assert_eq!(
@@ -51,6 +52,7 @@ fn settings_come_from_the_runtime_table() {
         RegistryLimits {
             idle_ttl: Duration::from_secs(120),
             max_live: 4,
+            retain: None,
         }
     );
 }
@@ -106,6 +108,7 @@ fn zero_registry_limits_are_raised_to_one() {
         RegistryLimits {
             idle_ttl: Duration::from_secs(1),
             max_live: 1,
+            retain: None,
         }
     );
 }
@@ -174,7 +177,7 @@ async fn a_scoped_command_runs_in_its_tenants_box() {
     assert_eq!(result.stdout, "ok");
     assert_eq!(
         driver.calls()[0],
-        scripted_driver::Call::Create(BoxSettings::from_config(&config).unwrap())
+        scripted_driver::Call::Create(BoxSettings::from_config(&config).unwrap(), None)
     );
     let exec = driver.last_exec().unwrap();
     assert_eq!(exec.argv[3], "10");

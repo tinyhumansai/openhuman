@@ -102,6 +102,7 @@ impl Fixture {
             RegistryLimits {
                 idle_ttl: Duration::from_secs(900),
                 max_live: 10,
+                retain: None,
             },
         );
         let service = Arc::new(service);

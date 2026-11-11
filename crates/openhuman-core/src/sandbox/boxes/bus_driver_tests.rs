@@ -6,6 +6,7 @@ fn settings() -> BoxSettings {
         image: "registry.example/agent:1".into(),
         cpu_millis: 750,
         memory_bytes: 256 * 1024 * 1024,
+        workdir: "/sandbox".into(),
     }
 }
 
