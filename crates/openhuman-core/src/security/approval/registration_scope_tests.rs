@@ -86,3 +86,16 @@ fn a_reused_agent_id_has_a_fresh_scope_and_preserves_the_old_removal_reason() {
     assert_eq!(old.with_open(|| ()), Err("agent_removed".to_owned()));
     assert_eq!(ApprovalScope::default().with_open(|| 42), Ok(42));
 }
+
+#[test]
+fn a_failed_check_on_a_closed_scope_is_denied_with_the_closure_reason() {
+    let scope = ApprovalScope::default();
+    assert_eq!(ApprovalScope::closed_denial(None, "write_marker"), None);
+    assert_eq!(ApprovalScope::closed_denial(Some(&scope), "write_marker"), None);
+    scope.close("agent_removed");
+    scope.close("later_reason");
+    let denial = ApprovalScope::closed_denial(Some(&scope), "write_marker").unwrap();
+    assert!(denial.starts_with(tinytools::status::POLICY_DENIED_MARKER), "{denial}");
+    assert!(denial.contains("'write_marker'"), "{denial}");
+    assert!(denial.ends_with(": agent_removed"), "{denial}");
+}

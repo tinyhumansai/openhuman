@@ -417,12 +417,9 @@ impl ApprovalGate {
                     error = %error,
                     "[approval::gate] the approval engine could not decide — failing closed"
                 );
-                return (
-                    GateOutcome::Deny {
-                        reason: engine_denial(&origin, tool_name, &error),
-                    },
-                    None,
-                );
+                let reason = super::ApprovalScope::closed_denial(scope.as_deref(), tool_name)
+                    .unwrap_or_else(|| engine_denial(&origin, tool_name, &error));
+                return (GateOutcome::Deny { reason }, None);
             }
         };
         match checked {
