@@ -394,7 +394,7 @@ async fn a_new_box_waits_for_the_owners_forget_still_in_progress() {
         .exec(&user("u1"), &settings(), &request("pwd"))
         .await
         .unwrap();
-    let gate = Arc::new(Notify::new());
+    let gate = Arc::new(tokio::sync::Notify::new());
     driver.hold_next_forget(Arc::clone(&gate));
 
     // The idle box is reaped; its forget waits on the gate.
