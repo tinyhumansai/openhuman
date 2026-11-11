@@ -36,7 +36,7 @@ fn an_eviction_storm_keeps_live_turns_controllable() {
         None,
         "max_profiles_open = 2\nidle_evict_secs = 0\n",
         Some(llm.port),
-        "debug,hyper=info,hyper_util=info,reqwest=info,h2=info,rustls=info,tungstenite=info,tokio_tungstenite=info",
+        "info,openhuman_core::profiles=debug",
     );
     for (user, name) in USERS.iter().enumerate() {
         provision(&client(), &node.base, name);
@@ -106,14 +106,10 @@ fn an_eviction_storm_keeps_live_turns_controllable() {
                         refused += 1;
                         std::thread::sleep(Duration::from_millis(100));
                     }
-                    other => {
-                        // DIAGSTORM
-                        let _ = std::fs::copy(&node.log, "/tmp/claude-1000/-home-ubuntu-work-workflow-openhuman-openhuman/0d5d2c52-7f73-4b6e-91af-4956716ac66e/scratchpad/storm-debug.log");
-                        panic!(
+                    other => panic!(
                         "{user} never got a profile slot back (HTTP {other}, round {round}): {body}\n{}",
                         node.log_tail()
-                    )
-                    }
+                    ),
                 }
             };
             assert!(body.get("result").is_some(), "{body}");
@@ -224,81 +220,4 @@ fn an_eviction_storm_keeps_live_turns_controllable() {
         "[isolation] storm took {:.1}s",
         started.elapsed().as_secs_f64()
     );
-}
-
-// DIAGSTORM experiment: one slot, bob turns then carol must open.
-#[test]
-fn diagstorm_min() {
-    let variant = std::env::var("DIAGSTORM").unwrap_or_default();
-    let d = deployment(true);
-    let llm = mock_llm();
-    let node = start_node_logging(
-        &d,
-        "1",
-        None,
-        if variant.contains("two") {
-            "max_profiles_open = 2\nidle_evict_secs = 0\n"
-        } else {
-            "max_profiles_open = 1\nidle_evict_secs = 0\n"
-        },
-        Some(llm.port),
-        "debug,hyper=info,hyper_util=info,reqwest=info,h2=info,rustls=info",
-    );
-    for (user, name) in USERS.iter().enumerate() {
-        provision(&client(), &node.base, name);
-        let body = operator(
-            &node,
-            "openhuman.profiles_set_credential",
-            json!({ "profile_id": name, "kind": "session", "token": credential(user) }),
-        );
-        assert!(body.get("result").is_some(), "{body}");
-    }
-    let (bob, carol) = (USERS[1], USERS[2]);
-    let users: Vec<&str> = if variant.contains("two") {
-        vec![USERS[0], bob]
-    } else {
-        vec![bob]
-    };
-    for bob in users {
-        let (status, _, body) = call(
-            &node,
-            bob,
-            "openhuman.threads_upsert",
-            json!({ "id": "t", "title": "x", "created_at": "2026-10-10T00:00:00Z" }),
-        );
-        assert_eq!(status, 200, "{body}");
-        if variant.contains("turn") {
-            call(
-                &node,
-                bob,
-                "openhuman.channel_web_chat",
-                json!({ "client_id": "c1", "thread_id": "t", "message": "hello there friend" }),
-            );
-            let start = Instant::now();
-            while start.elapsed() < Duration::from_secs(3) && !active(&node, bob, "t") {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            wait_until("bob's turn", &node, Duration::from_secs(30), || {
-                !active(&node, bob, "t")
-            });
-        }
-    }
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        let (status, _, body) = call(
-            &node,
-            carol,
-            "openhuman.threads_upsert",
-            json!({ "id": "t", "title": "y", "created_at": "2026-10-10T00:00:00Z" }),
-        );
-        if status == 200 {
-            let _ = std::fs::copy(&node.log, "/tmp/claude-1000/-home-ubuntu-work-workflow-openhuman-openhuman/0d5d2c52-7f73-4b6e-91af-4956716ac66e/scratchpad/diagstorm.log");
-            break;
-        }
-        if Instant::now() > deadline {
-            let _ = std::fs::copy(&node.log, "/tmp/claude-1000/-home-ubuntu-work-workflow-openhuman-openhuman/0d5d2c52-7f73-4b6e-91af-4956716ac66e/scratchpad/diagstorm.log");
-            panic!("carol never opened ({status}): {body}");
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
 }

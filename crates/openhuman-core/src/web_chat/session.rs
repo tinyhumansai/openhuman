@@ -588,22 +588,6 @@ pub(crate) async fn checkin_session_agent(
     agent: OpenHumanSessionHost,
     fingerprint: SessionCacheFingerprint,
 ) {
-    // DIAGSTORM
-    let before = ctx.core().map(std::sync::Arc::strong_count);
-    if std::env::var_os("DIAGSTORM_NOCACHE").is_some() {
-        let weak = ctx.core().map(std::sync::Arc::downgrade);
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            let count = move || {
-                weak.as_ref().and_then(|w| w.upgrade()).map(|c| {
-                    (std::sync::Arc::strong_count(&c) - 1) * 1000 + c.diagstorm_counts().0
-                })
-            };
-            agent.diagstorm_strip(&count).await;
-        });
-        return;
-    }
-    log::warn!("DIAGSTORM checkin caching agent ctx_count={before:?}");
     let mut sessions = super::ops::thread_sessions(ctx).lock_owned().await;
     sessions.insert(
         super::ops::key_for(ctx, thread_id),

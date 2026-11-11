@@ -113,7 +113,6 @@ pub(super) fn tap_progress(
             }
         }
         let _ = drained.send(true);
-        log::warn!("DIAGSTORM tap exit");
     })
 }
 
