@@ -192,5 +192,8 @@ async fn without_unattended_unlock_the_secret_grant_still_parks_for_a_person() {
         .await
         .expect("a refusal ends the save")
         .expect("save task");
-    assert!(result.is_err(), "a refused unlock must fail the save closed");
+    assert!(
+        result.is_err(),
+        "a refused unlock must fail the save closed"
+    );
 }

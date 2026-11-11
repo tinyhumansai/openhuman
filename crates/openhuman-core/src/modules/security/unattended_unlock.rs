@@ -27,7 +27,9 @@ use crate::config::Config;
 use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::core::runtime::DispatchCtx;
 use crate::security::approval::{ApprovalDecision, ApprovalGate, GateOutcome};
-use crate::security::secret_storage::encrypted_file_backend::{MASTER_KEY_ENV, MASTER_KEY_FILE_ENV};
+use crate::security::secret_storage::encrypted_file_backend::{
+    MASTER_KEY_ENV, MASTER_KEY_FILE_ENV,
+};
 use crate::security::secret_storage::store::BackendKind;
 
 const LOG: &str = "[security::unattended_unlock]";

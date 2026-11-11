@@ -11,31 +11,46 @@ use tinysecurity_bus::{
 
 const OPERATION_TTL_MS: u32 = 30_000;
 const MASTER_GRANT_TOOL: &str = "native_secret_grant";
+const MASTER_GRANT_SUMMARY: &str = "Unlock configuration secrets";
 
 /// Ask through the installed approval gate, then consume TinySecurity's exact
 /// HumanOnce grant to obtain a short-lived process-private User master handle.
+///
+/// `config` decides who answers the grant: a person, or this host for the
+/// operator when `[secrets] unattended_unlock` holds
+/// ([`super::unattended_unlock`]).
 pub(crate) async fn resolve_user_master(
+    config: &crate::config::Config,
     client: &Client,
     scope: &SecretScope,
     registration_id: &str,
 ) -> Result<String, SecurityError> {
-    resolve_user_master_inner(client, scope, registration_id, None).await
+    resolve_user_master_inner(config, client, scope, registration_id, None).await
 }
 
 /// Resolve the module's User master using one explicitly supplied existing key.
 /// The callback can answer one target read and denies every Set during this
 /// invocation, preserving read-only inspection semantics.
 pub(crate) async fn resolve_user_master_with_existing_key(
+    config: &crate::config::Config,
     client: &Client,
     scope: &SecretScope,
     registration_id: &str,
     backend: &super::secret_backend::SecretBackend,
     encoded_key: &str,
 ) -> Result<String, SecurityError> {
-    resolve_user_master_inner(client, scope, registration_id, Some((backend, encoded_key))).await
+    resolve_user_master_inner(
+        config,
+        client,
+        scope,
+        registration_id,
+        Some((backend, encoded_key)),
+    )
+    .await
 }
 
 async fn resolve_user_master_inner(
+    config: &crate::config::Config,
     client: &Client,
     scope: &SecretScope,
     registration_id: &str,
@@ -48,14 +63,36 @@ async fn resolve_user_master_inner(
     let outcome = match answered {
         Some(outcome) => outcome,
         None => {
+            use super::unattended_unlock::{answer_master_grant, mode_for, UnlockMode};
             let gate = crate::security::approval::ApprovalGate::try_global()
                 .ok_or_else(|| SecurityError::Unavailable("secret approval unavailable".into()))?;
-            gate.intercept_forced(
-                MASTER_GRANT_TOOL,
-                "Unlock configuration secrets",
-                serde_json::json!({"registration_id": registration_id}),
-            )
-            .await
+            match mode_for(config) {
+                UnlockMode::Unattended => {
+                    answer_master_grant(
+                        &gate,
+                        MASTER_GRANT_TOOL,
+                        MASTER_GRANT_SUMMARY,
+                        registration_id,
+                    )
+                    .await
+                }
+                mode => {
+                    if mode == UnlockMode::IgnoredWithoutOperatorKey {
+                        tracing::warn!(
+                            "[security::unattended_unlock] secrets.unattended_unlock is set but the \
+                             keyring master key was not supplied by the operator \
+                             (OPENHUMAN_KEYRING_MASTER_KEY / OPENHUMAN_KEYRING_MASTER_KEY_FILE on a \
+                             file or encrypted_file keyring); asking a person instead"
+                        );
+                    }
+                    gate.intercept_forced(
+                        MASTER_GRANT_TOOL,
+                        MASTER_GRANT_SUMMARY,
+                        serde_json::json!({"registration_id": registration_id}),
+                    )
+                    .await
+                }
+            }
         }
     };
     if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
