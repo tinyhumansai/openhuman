@@ -111,7 +111,10 @@ async fn a_task_spawned_inside_the_host_scope_is_not_host_authorised() {
             }))
             .await
             .unwrap();
-            assert!(!spawned, "a spawned task must not inherit the authorisation");
+            assert!(
+                !spawned,
+                "a spawned task must not inherit the authorisation"
+            );
         })
         .await;
     })
@@ -151,11 +154,13 @@ async fn the_host_scope_survives_a_nested_context_scope() {
     let config = config_in(dir.path());
     let nested = booted_context(&config);
     host_authorised_secret_grant(&config, async {
-        let inside = crate::core::runtime::CoreContext::scope(nested, async {
-            host_authorises_here()
-        })
-        .await;
-        assert!(inside, "a nested context scope keeps the host's authorisation");
+        let inside =
+            crate::core::runtime::CoreContext::scope(nested, async { host_authorises_here() })
+                .await;
+        assert!(
+            inside,
+            "a nested context scope keeps the host's authorisation"
+        );
     })
     .await;
     assert!(!host_authorises_here(), "nothing outlives the scope");
