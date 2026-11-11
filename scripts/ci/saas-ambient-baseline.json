@@ -28,13 +28,6 @@
     "occurrence": 1
   },
   {
-    "rule": "bare-spawn",
-    "path": "crates/openhuman-core/src/artifacts/box_source.rs",
-    "line": 308,
-    "text": "tokio::spawn(async move { stage_now(&staging, &box_path, &bytes).await })",
-    "occurrence": 1
-  },
-  {
     "rule": "home-dir",
     "path": "crates/openhuman-core/src/channels/host/adapters.rs",
     "line": 32,
@@ -660,7 +653,7 @@
   {
     "rule": "home-dir",
     "path": "crates/openhuman-core/src/security/policy/native_paths.rs",
-    "line": 75,
+    "line": 85,
     "text": "home_dir: dirs::home_dir(),",
     "occurrence": 1
   },
