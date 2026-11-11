@@ -540,7 +540,7 @@ fn a_users_turn_reaches_inference_with_their_own_credential() {
         let mut cmd = core_command(&d, &["--port", &port.to_string()]);
         cmd.env("BACKEND_URL", format!("http://127.0.0.1:{backend}"))
             .env("RUST_LOG", "debug")
-            .stderr(std::fs::File::create(d.tmp.path().join("core.log")).unwrap())
+            .stderr(std::fs::File::create("/tmp/claude-1000/-home-ubuntu-work-workflow-openhuman-openhuman/0d5d2c52-7f73-4b6e-91af-4956716ac66e/scratchpad/core-full.log").unwrap())
             .stdout(Stdio::null());
         cmd
     });
