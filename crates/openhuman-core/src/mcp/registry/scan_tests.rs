@@ -38,27 +38,11 @@ async fn as_serve_host<F: std::future::Future<Output = ()>>(body: F) {
     .await;
 }
 
+/// One test, not two: the security module is admitted once per process under
+/// one secret scope, so two tests with their own workspaces would race for it.
 #[cfg(feature = "security-module")]
 #[tokio::test]
-async fn a_benign_tool_is_kept_when_the_host_has_no_embedder_config() {
-    as_serve_host(async {
-        let kept = tools_safe_for_agent(
-            "hands",
-            vec![tool("click", "Click an element on the page.")],
-        )
-        .await;
-        assert_eq!(
-            kept.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
-            ["click"],
-            "a serve host must scan with its loaded config, not drop every tool"
-        );
-    })
-    .await;
-}
-
-#[cfg(feature = "security-module")]
-#[tokio::test]
-async fn a_malicious_tool_is_still_dropped_when_the_host_has_no_embedder_config() {
+async fn a_host_without_an_embedder_config_scans_with_its_loaded_config() {
     as_serve_host(async {
         let kept = tools_safe_for_agent(
             "hands",
@@ -71,6 +55,8 @@ async fn a_malicious_tool_is_still_dropped_when_the_host_has_no_embedder_config(
             ],
         )
         .await;
+        // The benign tool survives (it was dropped as `scan.unavailable`
+        // before), and the injection attempt is still caught.
         assert_eq!(
             kept.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
             ["click"]
