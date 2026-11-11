@@ -368,7 +368,10 @@ fn staged_files_live_under_a_folder_artifacts_may_reference() {
 #[test]
 fn a_box_path_is_the_name_relative_to_the_work_folder() {
     assert_eq!(box_path("report.pdf", "/sandbox"), "report.pdf");
-    assert_eq!(box_path("/sandbox/out/report.pdf", "/sandbox"), "out/report.pdf");
+    assert_eq!(
+        box_path("/sandbox/out/report.pdf", "/sandbox"),
+        "out/report.pdf"
+    );
     assert_eq!(
         box_path("/sandboxed/report.pdf", "/sandbox"),
         "/sandboxed/report.pdf"

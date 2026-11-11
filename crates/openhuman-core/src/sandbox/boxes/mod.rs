@@ -332,7 +332,14 @@ pub async fn read_file(
     #[cfg(feature = "modules")]
     {
         let settings = backend.settings(config)?;
-        read_file_in(registry(backend, config), tenant, &settings, path, max_bytes).await
+        read_file_in(
+            registry(backend, config),
+            tenant,
+            &settings,
+            path,
+            max_bytes,
+        )
+        .await
     }
     #[cfg(not(feature = "modules"))]
     {

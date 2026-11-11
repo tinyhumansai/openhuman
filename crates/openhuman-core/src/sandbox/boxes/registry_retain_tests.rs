@@ -107,8 +107,14 @@ async fn each_box_is_created_with_its_owners_key_and_policy() {
     let driver = ScriptedDriver::new();
     let boxes = retaining(&driver, 10);
 
-    boxes.exec(&user("u1"), &settings(), &request("pwd")).await.unwrap();
-    boxes.exec(&user("u2"), &settings(), &request("pwd")).await.unwrap();
+    boxes
+        .exec(&user("u1"), &settings(), &request("pwd"))
+        .await
+        .unwrap();
+    boxes
+        .exec(&user("u2"), &settings(), &request("pwd"))
+        .await
+        .unwrap();
 
     assert_eq!(driver.retentions(), vec![kept_for("u1"), kept_for("u2")]);
     let exec = driver.last_exec().unwrap();
@@ -119,13 +125,19 @@ async fn each_box_is_created_with_its_owners_key_and_policy() {
 async fn reaping_forgets_an_idle_box_and_the_next_command_finds_it_again() {
     let driver = ScriptedDriver::new();
     let boxes = retaining(&driver, 10);
-    boxes.exec(&user("u1"), &settings(), &request("touch a")).await.unwrap();
+    boxes
+        .exec(&user("u1"), &settings(), &request("touch a"))
+        .await
+        .unwrap();
 
     assert_eq!(boxes.reap(Instant::now() + TTL).await, 1);
     assert_eq!(driver.forgotten(), vec!["box-0"]);
     assert!(driver.closed().is_empty());
 
-    boxes.exec(&user("u1"), &settings(), &request("ls")).await.unwrap();
+    boxes
+        .exec(&user("u1"), &settings(), &request("ls"))
+        .await
+        .unwrap();
     assert_eq!(driver.exec_resources(), vec!["box-0", "box-0"]);
     assert_eq!(driver.retentions(), vec![kept_for("u1"), kept_for("u1")]);
 }
@@ -135,7 +147,10 @@ async fn release_and_shutdown_forget_retained_boxes() {
     let driver = ScriptedDriver::new();
     let boxes = retaining(&driver, 10);
     for id in ["u1", "u2", "u3"] {
-        boxes.exec(&user(id), &settings(), &request("pwd")).await.unwrap();
+        boxes
+            .exec(&user(id), &settings(), &request("pwd"))
+            .await
+            .unwrap();
     }
 
     boxes.release(&user("u1")).await;
@@ -154,7 +169,10 @@ async fn a_box_reported_gone_is_forgotten_not_closed() {
     let boxes = retaining(&driver, 10);
     driver.then(ExecStep::Fail(BoxError::UnknownResource));
 
-    boxes.exec(&user("u1"), &settings(), &request("pwd")).await.unwrap();
+    boxes
+        .exec(&user("u1"), &settings(), &request("pwd"))
+        .await
+        .unwrap();
 
     assert_eq!(driver.forgotten(), vec!["box-0"]);
     assert!(driver.closed().is_empty());
@@ -180,14 +198,23 @@ async fn a_box_that_misses_the_deadline_is_forgotten_not_closed() {
 async fn a_full_registry_lets_go_of_its_least_recently_used_idle_box() {
     let driver = ScriptedDriver::new();
     let boxes = retaining(&driver, 2);
-    boxes.exec(&user("u1"), &settings(), &request("pwd")).await.unwrap();
+    boxes
+        .exec(&user("u1"), &settings(), &request("pwd"))
+        .await
+        .unwrap();
     tokio::time::advance(Duration::from_secs(5)).await;
-    boxes.exec(&user("u2"), &settings(), &request("pwd")).await.unwrap();
+    boxes
+        .exec(&user("u2"), &settings(), &request("pwd"))
+        .await
+        .unwrap();
     tokio::time::advance(Duration::from_secs(5)).await;
 
     // Neither box has been idle for the TTL, but a retained box let go of
     // is only asleep, so a new tenant takes the oldest one's place.
-    boxes.exec(&user("u3"), &settings(), &request("pwd")).await.unwrap();
+    boxes
+        .exec(&user("u3"), &settings(), &request("pwd"))
+        .await
+        .unwrap();
 
     assert_eq!(driver.forgotten(), vec!["box-0"]);
     assert!(driver.closed().is_empty());
@@ -202,9 +229,7 @@ async fn a_full_registry_never_lets_go_of_a_box_with_a_command_in_flight() {
     driver.then(ExecStep::WaitThenReply(Arc::clone(&gate)));
     let running = {
         let boxes = Arc::clone(&boxes);
-        tokio::spawn(async move {
-            boxes.exec(&user("u1"), &settings(), &request("make")).await
-        })
+        tokio::spawn(async move { boxes.exec(&user("u1"), &settings(), &request("make")).await })
     };
     tokio::task::yield_now().await;
     tokio::task::yield_now().await;

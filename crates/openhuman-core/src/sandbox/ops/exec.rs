@@ -333,8 +333,8 @@ pub(crate) async fn execute_resolved(
                     &extra_env,
                     timeout,
                 )
-                    .await
-                    .map(ShellRunOutcome::Finished)
+                .await
+                .map(ShellRunOutcome::Finished)
             }
             SandboxBackendKind::Agent37 => {
                 crate::sandbox::spawn_plan::consume(&planned)
@@ -380,18 +380,16 @@ async fn execute_unchecked(
                 .await
                 .map(ShellRunOutcome::Finished)
         }
-        SandboxBackendKind::OpenShell => {
-            crate::sandbox::boxes::execute(
-                    ctx,
-                    &config,
-                    crate::sandbox::boxes::BoxBackend::OpenShell,
-                    command,
-                    &extra_env,
-                    timeout,
-                )
-                .await
-                .map(ShellRunOutcome::Finished)
-        }
+        SandboxBackendKind::OpenShell => crate::sandbox::boxes::execute(
+            ctx,
+            &config,
+            crate::sandbox::boxes::BoxBackend::OpenShell,
+            command,
+            &extra_env,
+            timeout,
+        )
+        .await
+        .map(ShellRunOutcome::Finished),
         SandboxBackendKind::Agent37 => {
             crate::sandbox::agent37::execute(ctx, &config, command, &extra_env, timeout)
                 .await

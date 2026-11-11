@@ -234,7 +234,11 @@ fn the_configured_backend_picks_the_box_backend() {
         BoxBackend::configured(&config_with_backend(SandboxBackend::Agent37)),
         Some(BoxBackend::Agent37)
     );
-    for backend in [SandboxBackend::Docker, SandboxBackend::None, SandboxBackend::Landlock] {
+    for backend in [
+        SandboxBackend::Docker,
+        SandboxBackend::None,
+        SandboxBackend::Landlock,
+    ] {
         assert_eq!(
             BoxBackend::configured(&config_with_backend(backend.clone())),
             None,

@@ -47,7 +47,15 @@ pub(crate) async fn execute(
     extra_env: &HashMap<OsString, OsString>,
     timeout: Duration,
 ) -> anyhow::Result<SandboxExecResult> {
-    super::boxes::execute(ctx, config, BoxBackend::Agent37, command, extra_env, timeout).await
+    super::boxes::execute(
+        ctx,
+        config,
+        BoxBackend::Agent37,
+        command,
+        extra_env,
+        timeout,
+    )
+    .await
 }
 
 #[cfg(test)]

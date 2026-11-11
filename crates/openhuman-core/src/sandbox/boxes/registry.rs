@@ -25,8 +25,7 @@ use tokio::time::Instant;
 use sha2::{Digest, Sha256};
 
 use super::{
-    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxRetention, BoxSettings,
-    RegistryLimits,
+    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxRetention, BoxSettings, RegistryLimits,
 };
 use crate::core::runtime::Tenant;
 use crate::sandbox::types::SandboxExecResult;
@@ -482,7 +481,9 @@ fn take_least_recently_used(entries: &mut HashMap<Tenant, Entry>) -> Option<Stri
         .filter(|(_, entry)| entry.in_flight == 0)
         .min_by_key(|(_, entry)| entry.last_used)
         .map(|(tenant, _)| tenant.clone())?;
-    entries.remove(&tenant).and_then(|entry| entry.slot.retire())
+    entries
+        .remove(&tenant)
+        .and_then(|entry| entry.slot.retire())
 }
 
 /// The opaque key a retaining backend keeps `tenant`'s box under: `oh-`

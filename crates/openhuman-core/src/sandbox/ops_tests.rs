@@ -467,7 +467,10 @@ fn config_with_backend(backend: crate::config::SandboxBackend) -> crate::config:
 fn a_config_naming_a_box_keeping_backend_keeps_boxes() {
     use crate::config::SandboxBackend;
     for backend in [SandboxBackend::OpenShell, SandboxBackend::Agent37] {
-        assert!(config_keeps_boxes(&config_with_backend(backend.clone())), "{backend:?}");
+        assert!(
+            config_keeps_boxes(&config_with_backend(backend.clone())),
+            "{backend:?}"
+        );
     }
     for backend in [
         SandboxBackend::Auto,

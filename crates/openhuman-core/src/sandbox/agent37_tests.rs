@@ -3,9 +3,7 @@
 //! lifecycle itself is the shared registry's, tested in `boxes`.
 
 use super::*;
-use crate::sandbox::boxes::{
-    BoxError, BoxSettings, RegistryLimits, RetainPolicy, AGENT37_WORKDIR,
-};
+use crate::sandbox::boxes::{BoxError, BoxSettings, RegistryLimits, RetainPolicy, AGENT37_WORKDIR};
 
 fn local_only() -> Config {
     let mut config = Config::default();
@@ -110,8 +108,13 @@ fn boxes_are_retained_with_the_configured_sleep_and_expiry() {
 #[test]
 fn the_sleep_delay_is_clamped_to_what_agent37_accepts() {
     let mut config = Config::default();
-    for (configured, used) in [(0, 300), (299, 300), (300, 300), (86_400, 86_400), (u32::MAX, 86_400)]
-    {
+    for (configured, used) in [
+        (0, 300),
+        (299, 300),
+        (300, 300),
+        (86_400, 86_400),
+        (u32::MAX, 86_400),
+    ] {
         config.runtime.agent37.idle_sleep_secs = configured;
         let limits = BoxBackend::Agent37.limits(&config);
         assert_eq!(limits.retain.unwrap().idle_sleep_secs, used, "{configured}");
@@ -132,6 +135,9 @@ fn zero_expiry_and_zero_capacity_are_raised_to_one() {
 
 #[test]
 fn openshell_boxes_are_never_retained() {
-    assert_eq!(BoxBackend::OpenShell.limits(&Config::default()).retain, None);
+    assert_eq!(
+        BoxBackend::OpenShell.limits(&Config::default()).retain,
+        None
+    );
     assert_eq!(BoxBackend::OpenShell.workdir(), "/sandbox");
 }

@@ -25,7 +25,8 @@
 //! it is for a shell command, so `[runtime.openshell]` or `[runtime.agent37]`
 //! settings apply from then on. An agent37 box is retained for its tenant, so
 //! a file written there is still there after the box sleeps or this process
-//! restarts, until the box expires. [`load_host_config`](crate::config::load_host_config) loads one.
+//! restarts, until the box expires.
+//! [`load_host_config`](crate::config::load_host_config) loads one.
 
 pub use openhuman_core::sandbox::{
     read_box_file as read_file, write_box_file as write_file, BoxError,
