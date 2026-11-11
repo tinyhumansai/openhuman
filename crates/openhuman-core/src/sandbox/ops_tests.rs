@@ -464,17 +464,16 @@ fn config_with_backend(backend: crate::config::SandboxBackend) -> crate::config:
 }
 
 #[test]
-fn a_config_naming_the_openshell_backend_keeps_boxes() {
+fn a_config_naming_a_box_keeping_backend_keeps_boxes() {
     use crate::config::SandboxBackend;
-    assert!(config_keeps_boxes(&config_with_backend(
-        SandboxBackend::OpenShell
-    )));
+    for backend in [SandboxBackend::OpenShell, SandboxBackend::Agent37] {
+        assert!(config_keeps_boxes(&config_with_backend(backend)), "{backend:?}");
+    }
     for backend in [
         SandboxBackend::Auto,
         SandboxBackend::None,
         SandboxBackend::Docker,
         SandboxBackend::Landlock,
-        SandboxBackend::Agent37,
     ] {
         assert!(!config_keeps_boxes(&config_with_backend(backend)));
     }

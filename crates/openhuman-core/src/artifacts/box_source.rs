@@ -1,7 +1,7 @@
 //! `create_artifact` and `update_artifact` for a sandbox that keeps boxes: a
 //! file `path` names a file in the calling tenant's box, not on the host.
 //!
-//! With a backend that keeps one box per tenant (`openshell`; see
+//! With a backend that keeps one box per tenant (`openshell`, `agent37`; see
 //! [`SandboxBackendKind::keeps_boxes`](crate::sandbox::types::SandboxBackendKind::keeps_boxes)),
 //! the files an agent makes live in its box, and the host has never seen
 //! them. [`BoxSourced`] wraps the artifact crate's `create_artifact`
@@ -33,14 +33,14 @@ use crate::sandbox::MAX_BOX_FILE_BYTES;
 /// Where a call's box files are read from, and whether they are.
 #[async_trait]
 pub(crate) trait BoxFiles: Send + Sync {
-    /// Whether this call's sandbox keeps a box per tenant, so a file `path`
-    /// names a file in it.
+    /// The work folder of this call's box when its sandbox keeps a box per
+    /// tenant, so a file `path` names a file in it; `None` when it keeps none.
     ///
     /// # Errors
     ///
     /// When the configuration cannot be read: the call's source is then
     /// unknown, and it must not fall back to reading the host's disk.
-    async fn keeps_boxes(&self) -> Result<bool, BoxError>;
+    async fn work_folder(&self) -> Result<Option<&'static str>, BoxError>;
 
     /// The file at `path` in `tenant`'s box.
     async fn read(
@@ -64,12 +64,12 @@ impl SandboxBoxFiles {
 
 #[async_trait]
 impl BoxFiles for SandboxBoxFiles {
-    async fn keeps_boxes(&self) -> Result<bool, BoxError> {
+    async fn work_folder(&self) -> Result<Option<&'static str>, BoxError> {
         let config =
             self.ctx.load_config().await.map_err(|error| {
                 BoxError::Driver(format!("cannot read the configuration: {error}"))
             })?;
-        Ok(crate::sandbox::ops::sandbox_keeps_boxes(&self.ctx, &config))
+        Ok(crate::sandbox::ops::sandbox_box_workdir(&self.ctx, &config))
     }
 
     async fn read(
@@ -93,10 +93,9 @@ pub(crate) fn staging_dir(workspace_dir: &Path) -> PathBuf {
     version_files_dir(workspace_dir).join(".box-incoming")
 }
 
-/// `path` as a name relative to the box's work folder: an agent in the box
+/// `path` as a name relative to the box's `work_folder`: an agent in the box
 /// knows that folder by its absolute name, so one under it is accepted.
-fn box_path(path: &str) -> &str {
-    let work_folder = crate::sandbox::boxes::BOX_WORKDIR;
+fn box_path<'a>(path: &'a str, work_folder: &str) -> &'a str {
     path.strip_prefix(work_folder)
         .and_then(|rest| rest.strip_prefix('/'))
         .filter(|rest| !rest.is_empty())
@@ -211,9 +210,9 @@ impl BoxSourced {
         };
         Ok(self
             .boxes
-            .keeps_boxes()
+            .work_folder()
             .await?
-            .then(|| box_path(path).to_owned()))
+            .map(|work_folder| box_path(path, work_folder).to_owned()))
     }
 }
 
