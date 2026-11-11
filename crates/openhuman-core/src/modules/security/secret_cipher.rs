@@ -48,14 +48,20 @@ async fn resolve_user_master_inner(
     let outcome = match answered {
         Some(outcome) => outcome,
         None => {
-            let gate = crate::security::approval::ApprovalGate::try_global()
-                .ok_or_else(|| SecurityError::Unavailable("secret approval unavailable".into()))?;
-            gate.intercept_forced(
-                MASTER_GRANT_TOOL,
-                "Unlock configuration secrets",
-                serde_json::json!({"registration_id": registration_id}),
-            )
-            .await
+            let summary = "Unlock configuration secrets";
+            let args = serde_json::json!({"registration_id": registration_id});
+            match crate::security::approval::ApprovalGate::try_global() {
+                Some(gate) => gate.intercept_forced(MASTER_GRANT_TOOL, summary, args).await,
+                // No gate yet: only a library host's own authorisation can
+                // answer (`gate_host_grant.rs`); anything else stays refused.
+                None => crate::security::approval::gate::host_authorised_grant_without_gate(
+                    MASTER_GRANT_TOOL,
+                    summary,
+                    args,
+                )
+                .await
+                .ok_or_else(|| SecurityError::Unavailable("secret approval unavailable".into()))?,
+            }
         }
     };
     if let crate::security::approval::GateOutcome::Deny { reason } = outcome {

@@ -79,7 +79,11 @@ pub(crate) fn saas_host_grant(
     tool_name: &str,
     args: &serde_json::Value,
 ) -> SaasHostGrant {
-    if !saas || !forced || tool_name != NATIVE_SECRET_GRANT_TOOL {
+    if !saas {
+        // Outside SaaS only a library host's own scope authorises (`gate_host_grant.rs`).
+        return embedder_host_grant(forced, tool_name, args);
+    }
+    if !forced || tool_name != NATIVE_SECRET_GRANT_TOOL {
         return SaasHostGrant::NotApplicable;
     }
     let profile = ctx.tenant().ok().and_then(|tenant| tenant.profile);
@@ -310,7 +314,7 @@ impl ApprovalGate {
         guard.armed = true;
         let decided = self
             .engine
-            .decide(&request_id, Choice::Once, SAAS_HOST_AUTHORISED)
+            .decide(&request_id, Choice::Once, host_grant_label())
             .await;
         guard.disarm();
         match decided {

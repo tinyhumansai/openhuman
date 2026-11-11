@@ -228,6 +228,8 @@ impl ApprovalEngine for NativeEngine {
                 // audited under its own actor, never as a person's.
                 if label == crate::security::approval::gate::SAAS_HOST_AUTHORISED {
                     crate::security::approval::gate::SAAS_HOST_AUTHORISED
+                } else if label == crate::security::approval::gate::EMBEDDER_HOST_AUTHORISED {
+                    crate::security::approval::gate::EMBEDDER_HOST_AUTHORISED
                 } else {
                     ACTOR
                 }
