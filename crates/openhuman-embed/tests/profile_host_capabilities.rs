@@ -383,22 +383,33 @@ async fn scenario() {
         );
     }
     let executions_before_denied_turn = calls.lock().unwrap().len();
-    // Unregistered names fail closed at the host security gate (stage 2,
-    // tool resolution) as a tool error the model reads, not as a failed
-    // turn: each one is refused by name, and none of them runs.
+    // Unregistered unsafe names fail closed at the profile's capability hook
+    // as tool errors the model reads (the turn itself completes): each one is
+    // refused by name, and none of them runs.
     let requests_before_denied_turn = chat_requests(&inference).await.len();
     handles[0]
         .chat("denied", "unsafe fixture request")
         .await
-        .expect("a refused unknown tool is a tool error, not a failed turn");
-    let follow_ups = chat_requests(&inference).await;
+        .expect("a refused tool call is a tool error, not a failed turn");
+    let tool_results: Vec<String> = chat_requests(&inference).await[requests_before_denied_turn..]
+        .iter()
+        .flat_map(|request| {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            body["messages"].as_array().cloned().unwrap_or_default()
+        })
+        .filter(|message| message["role"] == "tool")
+        .map(|message| message["content"].to_string())
+        .collect();
     for name in ["shell", "spawn_subagent", "http_request", "run_workflow"] {
-        assert!(
-            follow_ups[requests_before_denied_turn..].iter().any(|request| {
-                String::from_utf8_lossy(&request.body).contains(&format!("Tool '{name}' is not available in this session"))
-            }),
-            "unregistered unsafe model call {name} must be refused by the security gate"
-        );
+        let refused = tool_results.iter().any(|content| {
+            content.contains(&format!("denied {name}:"))
+                && content.contains("outside the hosted profile capability boundary")
+        });
+        if !refused {
+            // The linked module's panic hook drops assertion payloads.
+            eprintln!("profile_host_capabilities: {name} not refused; tool results {tool_results:?}");
+        }
+        assert!(refused, "unregistered unsafe model call {name} must be refused");
     }
     assert_eq!(calls.lock().unwrap().len(), executions_before_denied_turn);
     assert!(

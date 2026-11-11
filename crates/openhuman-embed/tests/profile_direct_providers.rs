@@ -228,9 +228,9 @@ async fn scenario() {
             "gemini answered"
         );
         let exa_before = exa.received_requests().await.unwrap().len();
-        // A canonical role name is not callable: the host security gate
-        // refuses the unregistered name as a tool error the model reads, and
-        // the search provider is never reached.
+        // A canonical role name is not callable: the profile's capability
+        // hook refuses it as a tool error the model reads (the turn itself
+        // completes), and the search provider is never reached.
         let requests_before = chat_requests(&chat).await.len();
         handle
             .chat("t2", "use the canonical name")
@@ -247,7 +247,10 @@ async fn scenario() {
             .collect();
         let refused = tool_results
             .iter()
-            .any(|content| content.contains("Tool 'web_search_tool' is not available in this session"));
+            .any(|content| {
+                content.contains("denied web_search_tool")
+                    && content.contains("outside the hosted profile capability boundary")
+            });
         if !refused {
             // The linked module's panic hook drops assertion payloads.
             eprintln!("profile_direct_providers: tool results {tool_results:?}");
