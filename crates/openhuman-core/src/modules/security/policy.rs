@@ -260,7 +260,7 @@ pub(crate) fn module_config_for_secret_authority(
     }
     result.secret = Some(SecretConfig2 {
         registrations: Vec::new(),
-        limits: SecretLimits2::default(),
+        limits: SecretLimits2 { max_in_flight: 32, ..SecretLimits2::default() },
         callback_timeout_ms: AUDIT_CALLBACK_TIMEOUT_MS,
     });
     result.secret_cipher = None;
