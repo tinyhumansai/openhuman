@@ -3,7 +3,9 @@
 //! lifecycle itself is the shared registry's, tested in `boxes`.
 
 use super::*;
-use crate::sandbox::boxes::{BoxError, BoxSettings, RegistryLimits, RetainPolicy, AGENT37_WORKDIR};
+use crate::sandbox::boxes::{
+    BoxError, BoxSettings, OwnerScope, RegistryLimits, RetainPolicy, AGENT37_WORKDIR,
+};
 
 fn local_only() -> Config {
     let mut config = Config::default();
@@ -61,6 +63,7 @@ fn box_settings_come_from_the_agent37_runtime_config() {
             cpu_millis: 4_000,
             memory_bytes: 16_384 * 1024 * 1024,
             workdir: AGENT37_WORKDIR.into(),
+            owner_scope: BoxBackend::Agent37.owner_scope(&config),
         }
     );
     assert_eq!(BoxBackend::Agent37.workdir(), "/home/node");
@@ -140,4 +143,38 @@ fn openshell_boxes_are_never_retained() {
         None
     );
     assert_eq!(BoxBackend::OpenShell.workdir(), "/sandbox");
+}
+
+#[test]
+fn the_owner_scope_follows_the_workspace_and_the_retention_namespace() {
+    let mut first_user = Config::default();
+    first_user.workspace_dir = "/home/a/.openhuman/users/u1/workspace".into();
+    let mut next_user = first_user.clone();
+    next_user.workspace_dir = "/home/a/.openhuman/users/u2/workspace".into();
+    let mut staging = first_user.clone();
+    staging.runtime.agent37.retention_namespace = "staging".into();
+    let mut prod = first_user.clone();
+    prod.runtime.agent37.retention_namespace = "prod".into();
+    let mut padded = prod.clone();
+    padded.runtime.agent37.retention_namespace = "  prod ".into();
+
+    let agent37 = |config: &Config| BoxBackend::Agent37.owner_scope(config);
+    assert_ne!(agent37(&first_user), agent37(&next_user));
+    assert_ne!(agent37(&staging), agent37(&prod));
+    assert_ne!(agent37(&first_user), agent37(&prod));
+    assert_eq!(agent37(&prod), agent37(&padded));
+    assert_ne!(agent37(&prod), OwnerScope::default());
+    // OpenShell boxes are never retained; the workspace alone scopes them.
+    assert_eq!(
+        BoxBackend::OpenShell.owner_scope(&staging),
+        BoxBackend::OpenShell.owner_scope(&prod)
+    );
+    assert_ne!(
+        BoxBackend::OpenShell.owner_scope(&first_user),
+        BoxBackend::OpenShell.owner_scope(&next_user)
+    );
+    assert_eq!(
+        BoxBackend::Agent37.settings(&prod).unwrap().owner_scope,
+        agent37(&prod)
+    );
 }

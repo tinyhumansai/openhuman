@@ -632,7 +632,7 @@
   {
     "rule": "bare-spawn",
     "path": "crates/openhuman-core/src/sandbox/boxes/registry.rs",
-    "line": 256,
+    "line": 335,
     "text": "tokio::spawn(async move {",
     "occurrence": 1
   },

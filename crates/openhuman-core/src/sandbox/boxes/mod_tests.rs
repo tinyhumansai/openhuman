@@ -45,6 +45,7 @@ fn settings_come_from_the_runtime_table() {
             cpu_millis: 250,
             memory_bytes: 64 * 1024 * 1024,
             workdir: "/sandbox".into(),
+            owner_scope: OwnerScope::default(),
         })
     );
     assert_eq!(

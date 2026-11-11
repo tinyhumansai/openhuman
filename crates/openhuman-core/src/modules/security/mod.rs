@@ -23,6 +23,7 @@ pub(crate) mod sync_seam;
 #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
 pub(crate) mod test_host;
 pub(crate) mod text;
+pub(crate) mod unattended_unlock;
 
 #[cfg(test)]
 #[path = "security_tests.rs"]
@@ -83,11 +84,12 @@ pub(crate) fn clear_device_pairing_unlock_cache() {
 }
 
 pub(crate) async fn resolve_user_master(
+    config: &Config,
     client: &Client,
     scope: &crate::security::approval::native::SecretScope,
     registration_id: &str,
 ) -> Result<String, SecurityError> {
-    secret_cipher::resolve_user_master(client, scope, registration_id).await
+    secret_cipher::resolve_user_master(config, client, scope, registration_id).await
 }
 
 /// Resolve the admitted TinySecurity client, subject, and short-lived User
@@ -107,7 +109,7 @@ pub(crate) async fn device_pairing_master(
     let tenant = secret_tenant(config)?;
     let scope = tenant.scope.clone();
     let registration_id = tenant.ids.registration_id.clone();
-    let master = resolve_user_master(&client, &scope, &registration_id)
+    let master = resolve_user_master(config, &client, &scope, &registration_id)
         .await
         .map_err(|error| error.to_string())?;
     let generation = client
@@ -133,7 +135,7 @@ pub(crate) async fn ensure_device_pairing_unlocked(config: &Config) -> Result<()
         return Ok(());
     }
     let registration_id = secret_tenant(config)?.ids.registration_id.clone();
-    let master = resolve_user_master(&client, &scope, &registration_id)
+    let master = resolve_user_master(config, &client, &scope, &registration_id)
         .await
         .map_err(|error| error.to_string())?;
     unlock_pairing_scope(&client, &scope, &master, generation).await
@@ -475,6 +477,7 @@ pub(crate) async fn device_pairing_reconnect_event(
 
 /// Mint the server-observed close capability for one socket nonce.
 pub(crate) async fn resolve_user_master_with_existing_key(
+    config: &Config,
     client: &Client,
     scope: &crate::security::approval::native::SecretScope,
     registration_id: &str,
@@ -486,6 +489,7 @@ pub(crate) async fn resolve_user_master_with_existing_key(
             SecurityError::Unavailable("TinySecurity secret backend unavailable".into())
         })?;
     secret_cipher::resolve_user_master_with_existing_key(
+        config,
         client,
         scope,
         registration_id,

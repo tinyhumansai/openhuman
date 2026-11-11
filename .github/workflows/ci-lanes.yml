@@ -187,6 +187,12 @@ jobs:
       - name: Check out submodules
         run: bash scripts/ci/checkout-submodules.sh
 
+      - name: Install the pinned Rust toolchain
+        # The image can lag rust-toolchain.toml; install the pin up front with a
+        # retry instead of letting rustup auto-install it mid-lane.
+        if: matrix.container != ''
+        run: bash scripts/ci/install-pinned-toolchain.sh
+
       - name: Cache Rust build artifacts
         if: matrix.group == 'rust-lint' || startsWith(matrix.group, 'rust-cov-') || matrix.group == 'tauri' || matrix.group == 'storage'
         uses: Swatinem/rust-cache@v2
