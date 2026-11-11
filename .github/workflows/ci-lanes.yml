@@ -80,6 +80,7 @@ jobs:
           CI_AREA_TOOLCHAIN_IMAGE: ${{ steps.filter.outputs['toolchain-image'] }}
           CI_AREA_INSTALL_PS1: ${{ steps.filter.outputs.install_ps1 }}
           CI_AREA_STORAGE: ${{ steps.filter.outputs.storage }}
+          CI_AREA_INBOUND: ${{ steps.filter.outputs.inbound }}
         run: |
           set -euo pipefail
           matrix="$(node scripts/ci/self-hosted/lanes.mjs --profile hosted --print-matrix)"
@@ -189,7 +190,7 @@ jobs:
         run: bash scripts/ci/checkout-submodules.sh
 
       - name: Cache Rust build artifacts
-        if: matrix.group == 'rust-lint' || startsWith(matrix.group, 'rust-cov-') || matrix.group == 'tauri' || matrix.group == 'storage'
+        if: matrix.group == 'rust-lint' || startsWith(matrix.group, 'rust-cov-') || matrix.group == 'tauri' || matrix.group == 'storage' || matrix.group == 'inbound-e2e'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -272,6 +273,10 @@ jobs:
       - name: "Lane: Tauri clippy + coverage"
         if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'tauri') }}
         run: node scripts/ci/self-hosted/lanes.mjs --wait tauri
+
+      - name: "Lane: inbound module E2E"
+        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'inbound-e2e') }}
+        run: node scripts/ci/self-hosted/lanes.mjs --wait inbound-e2e
 
       - name: "Lane: install.ps1 (Pester)"
         if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'pester') }}
