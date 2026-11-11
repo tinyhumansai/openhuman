@@ -279,8 +279,9 @@ pub(crate) async fn execute(
             "[sandbox:box] running a command"
         );
         let tenant = tenant_for_box(ctx.tenant())?;
+        let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        let settings = registry.driver().serve(config, backend.settings(config)?);
+        let settings = registry.driver().serve(config, settings);
         run_command(registry, Ok(tenant), &settings, command, extra_env, timeout)
             .await
             .map_err(anyhow::Error::from)
@@ -324,8 +325,9 @@ pub async fn write_file(
     let backend = file_backend(config)?;
     #[cfg(feature = "modules")]
     {
+        let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        let settings = registry.driver().serve(config, backend.settings(config)?);
+        let settings = registry.driver().serve(config, settings);
         write_file_in(registry, tenant, &settings, path, bytes).await
     }
     #[cfg(not(feature = "modules"))]
@@ -354,8 +356,9 @@ pub async fn read_file(
     let backend = file_backend(config)?;
     #[cfg(feature = "modules")]
     {
+        let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        let settings = registry.driver().serve(config, backend.settings(config)?);
+        let settings = registry.driver().serve(config, settings);
         read_file_in(registry, tenant, &settings, path, max_bytes).await
     }
     #[cfg(not(feature = "modules"))]
