@@ -226,8 +226,11 @@ fn reference_policy_matches_windows_system_roots_on_any_drive() {
     let policy = reference_policy(root, root, allowed, floor());
     let refusal = policy(Path::new("D:\\Windows\\System32\\img.png")).unwrap_err();
     assert!(refusal.contains("protected"), "{refusal}");
-    let other = policy(Path::new("D:\\Pictures\\img.png")).unwrap_or_default();
-    assert!(!other.display().to_string().is_empty() || true);
+    // Off Windows the backslash path is one component, so the roots check may
+    // still refuse it; the floor must not.
+    if let Err(other) = policy(Path::new("D:\\Pictures\\img.png")) {
+        assert!(!other.contains("protected"), "{other}");
+    }
 }
 
 /// A file the session filed itself still answers to the floor.
