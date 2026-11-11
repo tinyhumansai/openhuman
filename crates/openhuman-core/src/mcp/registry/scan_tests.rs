@@ -3,7 +3,8 @@
 
 use super::tools_safe_for_agent;
 use crate::config::test_env::{EnvVarGuard, WORKSPACE};
-use crate::core::runtime::{CoreContext, DomainSet, HostKind};
+use crate::core::runtime::{CoreContext, DomainSet};
+use crate::HostKind;
 use serde_json::json;
 use tinymcp_bus::McpTool;
 
