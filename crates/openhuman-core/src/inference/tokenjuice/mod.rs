@@ -373,32 +373,14 @@ pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToo
     } else {
         COMPACT_TIMEOUT
     };
-    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    {
-        let done = done.clone();
-        let tool = tool_name.to_string();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(45));
-            if !done.load(std::sync::atomic::Ordering::SeqCst) {
-                eprintln!("TJDBG watchdog: call {seq} tool={tool} still pending after 45s");
-            }
-        });
-    }
-    eprintln!("TJDBG compact:call {seq} tool={tool_name} thread={:?} rt={:?}", std::thread::current().name(), tokio::runtime::Handle::try_current().map(|h| h.runtime_flavor()));
-    let fut = client(&config)
+    let response = match client(&config)
         .with_timeout(deadline)
         .call::<tinyjuice_bus::wire::CompactResponse>(
             "tinyjuice",
             methods::COMPACT_WITH,
             (request,),
-        );
-    let outer = tokio::time::timeout(std::time::Duration::from_secs(40), fut).await;
-    done.store(true, std::sync::atomic::Ordering::SeqCst);
-    eprintln!("TJDBG compact:returned {seq} outer_elapsed={} thread={:?}", outer.is_err(), std::thread::current().name());
-    let outer = outer.unwrap_or_else(|_| Err(tinybus::module::ModuleCallError::from_static_for_debug()));
-    let response = match outer
+        )
+        .await
     {
         Ok(response) => response,
         Err(error) => {
