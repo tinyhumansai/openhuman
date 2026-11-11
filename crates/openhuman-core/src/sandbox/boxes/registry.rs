@@ -366,6 +366,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
                 retained: self.limits.retain.is_some(),
                 cleanups: Arc::clone(&self.cleanups),
                 owner: lease.owner.clone(),
+                runtime: tokio::runtime::Handle::current(),
                 slot: Arc::clone(&slot),
                 resource: Some(resource.clone()),
             };
@@ -378,16 +379,18 @@ impl<D: BoxDriver> BoxRegistry<D> {
                         timeout_secs = whole_seconds(request.timeout),
                         "[sandbox:box] box did not answer by the deadline; letting it go"
                     );
+                    let detached = self.cleanups.detach(lease.owner.clone(), resource.clone());
                     slot.forget(&resource);
-                    self.let_go(&lease.owner, &resource).await;
+                    self.let_go_all(vec![detached]).await;
                     return Ok(backstop_timed_out(request.timeout));
                 }
                 Err(BoxError::UnknownResource) => {
                     // "Gone" is inferred after a failed exec, so the box may
                     // still exist on the gateway: let go of it rather than
                     // leak it (a retained box is only forgotten).
+                    let detached = self.cleanups.detach(lease.owner.clone(), resource.clone());
                     slot.forget(&resource);
-                    self.let_go(&lease.owner, &resource).await;
+                    self.let_go_all(vec![detached]).await;
                     if replaced {
                         return Err(BoxError::UnknownResource);
                     }
