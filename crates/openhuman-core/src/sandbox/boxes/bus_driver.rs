@@ -237,9 +237,16 @@ impl BoxDriver for BusBoxDriver {
     }
 
     async fn close(&self, resource: &str) -> Result<(), BoxError> {
-        tinybox::close(&self.config(), contract::ResourceId(resource.to_owned()))
+        let config = self.config_of(resource);
+        let outcome = tinybox::close(&config, contract::ResourceId(resource.to_owned()))
             .await
-            .map_err(BoxError::Driver)
+            .map_err(BoxError::Driver);
+        // The box is no longer ours to track once closed or forgotten.
+        self.created_with
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(resource);
+        outcome
     }
 
     async fn forget(&self, resource: &str) -> Result<(), BoxError> {
