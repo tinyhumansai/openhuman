@@ -113,13 +113,18 @@ Inside `generation/`:
 - Local reference files are limited by `reference_policy` to the action
   directory or workspace, with no `..` and nothing TinySecurity's protected
   floor covers (credential stores and pairs, system roots), session-filed
-  artifacts included. The policy is a sync callback, so the floor vocabulary
-  (`ProtectedFloor2`) is fetched once when the tools are built
-  (`ReferenceFloor::fetch`) and matched lexically, mirroring
-  `tinysecurity-policy`'s `path::floor`. Security disabled skips the floor, as
-  `SecurityPolicy::is_always_forbidden_async` does; a floor that cannot be
-  fetched refuses every local reference (and so does the sync
-  `media_tools_from`). Anything else must be an https URL.
+  artifacts included. The path is resolved first (`.` segments, symlinks);
+  the floor is asked about the path as named and as resolved, the roots are
+  matched against the resolved path, and the resolved path is what is read.
+  The policy is a sync callback, so it asks TinySecurity's own
+  `ProtectedPath2` per path through the bounded sync bridge
+  (`modules::security::text::protected_path_check`, reached through the
+  builder's `root_config` by `ReferenceFloor::fetch`); the host keeps no copy
+  of the floor algorithm. Security disabled skips the floor, as
+  `SecurityPolicy::is_always_forbidden_async` does; a module that cannot
+  answer refuses every local reference (and so does the sync
+  `media_tools_from`). A refusal is logged by category only, never by path.
+  Anything else must be an https URL.
 
 ## Tests
 
