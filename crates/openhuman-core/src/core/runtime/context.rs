@@ -113,6 +113,10 @@ pub struct CoreContext {
     extensions: crate::core::slots::Extensions,
     /// Explicit authority on this derived turn context.
     turn_origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
+    /// A library host's authorisation of its own runtime's secret master
+    /// grant, set only by [`CoreContext::scope_with_host_secret_grant`]; it
+    /// holds only on the host's own task while that scope runs.
+    host_secret_grant: Option<Arc<crate::security::approval::gate::HostSecretGrant>>,
     /// Durable relay conversation carried by the immutable turn context.
     channel_thread: Option<String>,
     /// The agent whose stores a host-installed session store
@@ -301,6 +305,7 @@ impl CoreContext {
             user_skill_roots: overlay.user_skill_roots,
             extensions: self.extensions.clone(),
             turn_origin: self.turn_origin.clone(),
+            host_secret_grant: None,
             channel_thread: self.channel_thread.clone(),
             session_agent: overlay.session_agent.or_else(|| self.session_agent.clone()),
             profile: overlay.profile.or_else(|| self.profile.clone()),
@@ -431,28 +436,33 @@ impl CoreContext {
     /// its own, scoped inside a turn that has one (an embedded agent's derived
     /// context replacing the caller's, say), keeps that turn's origin. Dropping
     /// it would turn a labelled turn into an unlabelled one the approval gate
-    /// refuses.
+    /// refuses. A host's secret grant survives it the same way.
     pub async fn scope<F: Future>(ctx: Arc<CoreContext>, fut: F) -> F::Output {
         CURRENT_CONTEXT
-            .scope(Self::keeping_turn_origin(ctx), fut)
+            .scope(Self::keeping_turn_authority(ctx), fut)
             .await
     }
 
     /// [`scope`](Self::scope) for a synchronous closure.
     pub fn sync_scope<R>(ctx: Arc<CoreContext>, f: impl FnOnce() -> R) -> R {
-        CURRENT_CONTEXT.sync_scope(Self::keeping_turn_origin(ctx), f)
+        CURRENT_CONTEXT.sync_scope(Self::keeping_turn_authority(ctx), f)
     }
 
-    /// `ctx`, carrying the origin of the turn it is being scoped inside when it
-    /// has none of its own.
-    fn keeping_turn_origin(ctx: Arc<CoreContext>) -> Arc<CoreContext> {
-        if ctx.turn_origin.is_some() {
+    /// `ctx`, carrying the origin of the turn it is being scoped inside, and
+    /// that scope's host secret grant, where it has none of its own.
+    fn keeping_turn_authority(ctx: Arc<CoreContext>) -> Arc<CoreContext> {
+        let Some(outer) = Self::scoped_for_turn() else {
+            return ctx;
+        };
+        let origin = outer.turn_origin.clone().filter(|_| ctx.turn_origin.is_none());
+        let grant = outer
+            .host_secret_grant
+            .clone()
+            .filter(|_| ctx.host_secret_grant.is_none());
+        if origin.is_none() && grant.is_none() {
             return ctx;
         }
-        match Self::scoped_for_turn().and_then(|outer| outer.turn_origin.clone()) {
-            Some(origin) => ctx.derive_channel_turn(None, Some(origin)),
-            None => ctx,
-        }
+        Arc::new(ctx.copy_with(None, origin, grant))
     }
 
     /// Capture the current context now and carry it across a subsequently
@@ -489,6 +499,9 @@ mod turn_origin_scope;
 
 #[path = "context_for_agent.rs"]
 mod for_agent_scope;
+
+#[path = "context_host_grant.rs"]
+mod host_grant_scope;
 
 #[path = "context_agent.rs"]
 mod agent_parts;
