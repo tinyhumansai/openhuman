@@ -106,10 +106,13 @@ fn an_eviction_storm_keeps_live_turns_controllable() {
                         refused += 1;
                         std::thread::sleep(Duration::from_millis(100));
                     }
-                    other => panic!(
+                    other => {
+                        // DIAGSTORM
+                        let _ = std::fs::copy(&node.log, "/tmp/claude-1000/-home-ubuntu-work-workflow-openhuman-openhuman/0d5d2c52-7f73-4b6e-91af-4956716ac66e/scratchpad/storm-debug.log");
+                        panic!(
                         "{user} never got a profile slot back (HTTP {other}, round {round}): {body}\n{}",
                         node.log_tail()
-                    ),
+                    )},
                 }
             };
             assert!(body.get("result").is_some(), "{body}");
