@@ -710,14 +710,24 @@
     "verification": "credentials/profiles/keychain_tests.rs: nothing_reaches_the_keyring_while_it_is_held_back"
   },
   {
-    "file": "crates/openhuman-core/src/sandbox/openshell/mod.rs",
+    "file": "crates/openhuman-core/src/sandbox/boxes/mod.rs",
     "scope": "",
-    "name": "REGISTRY",
-    "type": "std::sync::OnceLock<std::sync::Arc<BoxRegistry<BusBoxDriver>>>",
+    "name": "OPENSHELL_REGISTRY",
+    "type": "std::sync::OnceLock<ProcessRegistry>",
     "count": 1,
     "category": "B",
     "reason": "The process's OpenShell box registry holds one box per tenant, keyed on the whole authenticated Tenant (profile and agent), never the profile alone; a call with no tenant is refused before the registry is touched, so no two tenants can share a box.",
-    "verification": "sandbox/openshell/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/openshell/mod_tests.rs: an_unscoped_command_creates_no_box"
+    "verification": "sandbox/boxes/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/boxes/mod_tests.rs: an_unscoped_command_creates_no_box, a_call_without_a_tenant_is_refused"
+  },
+  {
+    "file": "crates/openhuman-core/src/sandbox/boxes/mod.rs",
+    "scope": "",
+    "name": "AGENT37_REGISTRY",
+    "type": "std::sync::OnceLock<ProcessRegistry>",
+    "count": 1,
+    "category": "B",
+    "reason": "The process's agent37 box registry holds one box per tenant, keyed on the whole authenticated Tenant (profile and agent), never the profile alone; a call with no tenant is refused before the registry is touched, so no two tenants can share a box.",
+    "verification": "sandbox/boxes/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/boxes/mod_tests.rs: an_unscoped_command_creates_no_box, a_call_without_a_tenant_is_refused"
   },
   {
     "file": "crates/openhuman-core/src/core/runtime/context_test_support.rs",
