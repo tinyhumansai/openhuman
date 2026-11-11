@@ -171,9 +171,12 @@ jobs:
           restore-keys: |
             pnpm-store-${{ runner.os }}-
 
-      - name: Install cargo-llvm-cov
+      - name: Install cargo-llvm-cov and cargo-nextest
         if: matrix.group == 'rust-cov' || matrix.group == 'tauri'
         uses: taiki-e/install-action@cargo-llvm-cov
+        with:
+          # rust-cov runs the core's tests one process per test (nextest).
+          tool: cargo-llvm-cov,cargo-nextest
 
       # One step per lane: `Start lanes` launches every lane in the background
       # (they still run in parallel); each `Lane:` step streams its own lane's

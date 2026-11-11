@@ -115,7 +115,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
     RUST_MIN_STACK: "67108864",
     // Nextest forks per test. LLVM merges counters losslessly into eight
     // files per binary instead of retaining a separate file per process.
-    ...(ex63 ? { LLVM_PROFILE_FILE_NAME: "openhuman-%8m.profraw" } : {}),
+    LLVM_PROFILE_FILE_NAME: "openhuman-%8m.profraw",
     ...(!ex63 ? { CARGO_BUILD_JOBS: "1" } : {}),
   };
   const modulesDir = ex63
@@ -419,13 +419,17 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           ],
           // Doctests run on pushes to main instead (see above); the tui suite
           // runs here (OH_COV_TUI=1).
-          // ex63: the core's unit tests run under cargo-nextest, one process
-          // per test and in parallel (the guest image ships cargo-nextest).
+          // The core's unit tests run under cargo-nextest on every profile, one
+          // process per test. They rely on that isolation: TinySecurity keeps
+          // the secret scope it was admitted with for the life of the process,
+          // so tests sharing one cargo-test process fail with "security secret
+          // scope changed after module admission" or "AlreadyRunning". (ex63's
+          // guest image ships cargo-nextest; hosted installs it in ci-lanes.)
           env: {
             OUT: "ci-out/lcov/lcov-core.info",
             OH_COV_DOCTESTS: "0",
             OH_COV_TUI: "1",
-            ...(ex63 ? { OH_COV_RUNNER: "nextest" } : {}),
+            OH_COV_RUNNER: "nextest",
           },
           run: withModules("bash scripts/ci/rust-coverage.sh"),
         },
