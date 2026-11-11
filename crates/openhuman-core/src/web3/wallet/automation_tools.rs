@@ -46,7 +46,8 @@ impl Tool for WalletBalancesTool {
     }
 
     fn description(&self) -> &'static str {
-        "Read the wallet's live balances: one row per account and network with the asset symbol, \
+        "Read the wallet's live balances: `native` (one row per account and network) and `tokens` \
+         (catalogued tokens such as USDC on Solana, with their mint), each with the asset symbol, \
          decimals, raw atomic amount and formatted amount. A row whose providerStatus is not \
          'ready' could not be read and shows zero."
     }
@@ -67,13 +68,57 @@ impl Tool for WalletBalancesTool {
         context: Option<&dyn tinytools::ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context);
-        match super::balances(&ctx).await {
-            Ok(outcome) => Ok(ToolResult::success(serde_json::to_string_pretty(
-                &outcome.value,
-            )?)),
-            Err(error) => Ok(ToolResult::error(error)),
+        // A failed native read is the tool's answer on its own: return it before
+        // the token read, which would otherwise hold the wallet service lock
+        // and delay the error behind a slow token provider.
+        let native = match super::balances(&ctx).await {
+            Ok(outcome) => outcome.value,
+            Err(error) => {
+                tracing::warn!("[wallet:tool] wallet_balances native read failed");
+                return balances_tool_result(Err(error), Ok(Vec::new()));
+            }
+        };
+        let tokens = super::token_balances(&ctx)
+            .await
+            .map(|outcome| outcome.value);
+        match &tokens {
+            Ok(rows) => tracing::debug!(
+                native_rows = native.len(),
+                token_rows = rows.len(),
+                "[wallet:tool] wallet_balances read"
+            ),
+            Err(_) => tracing::warn!(
+                native_rows = native.len(),
+                "[wallet:tool] wallet_balances token read failed; returning native rows with tokensError"
+            ),
         }
+        balances_tool_result(Ok(native), tokens)
     }
+}
+
+/// The tool's answer for the two reads: the combined JSON on success, a tool
+/// error when the native read itself failed.
+pub(crate) fn balances_tool_result(
+    native: Result<Vec<super::BalanceInfo>, String>,
+    tokens: Result<Vec<super::TokenBalanceInfo>, String>,
+) -> anyhow::Result<ToolResult> {
+    match combine_balances(native, tokens) {
+        Ok(value) => Ok(ToolResult::success(serde_json::to_string_pretty(&value)?)),
+        Err(error) => Ok(ToolResult::error(error)),
+    }
+}
+
+/// The `wallet_balances` result: native rows and token rows. A failed token
+/// read does not hide the native balances; it is reported beside them.
+pub(crate) fn combine_balances(
+    native: Result<Vec<super::BalanceInfo>, String>,
+    tokens: Result<Vec<super::TokenBalanceInfo>, String>,
+) -> Result<Value, String> {
+    let native = native?;
+    Ok(match tokens {
+        Ok(tokens) => json!({"native": native, "tokens": tokens}),
+        Err(error) => json!({"native": native, "tokens": [], "tokensError": error}),
+    })
 }
 
 /// Execute a prepared transfer under the spend policy.

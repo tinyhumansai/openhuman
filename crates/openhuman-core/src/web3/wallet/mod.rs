@@ -68,9 +68,10 @@ pub use endpoints::solana_cluster;
 pub use execution::{
     balances, chain_status, execute_prepared, execute_prepared_as, lookup_tx,
     network_defaults as wallet_network_defaults, prepare_transfer, prepared_quotes_for_test,
-    supported_assets, tx_receipt, tx_status, BalanceInfo, ChainStatus, ExecutePreparedParams,
-    ExecutionResult, PrepareTransferParams, PreparedKind, PreparedStatus, PreparedTransaction,
-    ProviderStatus, SupportedAsset, TxLookupInfo, TxReceiptInfo, TxState, TxStatusInfo,
+    supported_assets, token_balances, tx_receipt, tx_status, BalanceInfo, ChainStatus,
+    ExecutePreparedParams, ExecutionResult, PrepareTransferParams, PreparedKind, PreparedStatus,
+    PreparedTransaction, ProviderStatus, SupportedAsset, TokenBalanceInfo, TxLookupInfo,
+    TxReceiptInfo, TxState, TxStatusInfo,
 };
 #[cfg(feature = "web3")]
 pub use ops::{

@@ -91,7 +91,7 @@ Namespace names are wire contracts.
 | `web3_swap` | `quote`, `execute`, `routes` |
 | `web3_bridge` | `quote`, `execute` |
 | `web3_dapp` | `call`, `execute` |
-| [`wallet`](./wallet/README.md) | `setup`, `status`, `reveal_recovery_phrase`, `balances`, `chain_status`, `network_defaults`, `supported_assets`, `encode_erc20_transfer`, `prepare_transfer`, `execute_prepared`, `tx_status`, `tx_receipt`, `lookup_tx`, `policy_get`, `policy_update`, `ledger_list` |
+| [`wallet`](./wallet/README.md) | `setup`, `status`, `reveal_recovery_phrase`, `balances`, `token_balances`, `chain_status`, `network_defaults`, `supported_assets`, `encode_erc20_transfer`, `prepare_transfer`, `execute_prepared`, `tx_status`, `tx_receipt`, `lookup_tx`, `policy_get`, `policy_update`, `ledger_list` |
 | [`x402`](./x402/README.md) | `get_summary`, `list_payments`, `update_budget` |
 
 The existing Wallet/Web3/x402 agent declarations come from `tinywallet-bus`;

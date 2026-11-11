@@ -85,6 +85,7 @@ pub fn all_wallet_controller_schemas() -> Vec<ControllerSchema> {
         wallet_schemas("generate_mnemonic"),
         wallet_schemas("validate_mnemonic"),
         wallet_schemas("derive_recovery_material"),
+        wallet_schemas("token_balances"),
         wallet_schemas("policy_get"),
         wallet_schemas("policy_update"),
         wallet_schemas("ledger_list"),
@@ -156,6 +157,10 @@ pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: wallet_schemas("derive_recovery_material"),
             handler: handle_derive_recovery_material,
+        },
+        RegisteredController {
+            schema: wallet_schemas("token_balances"),
+            handler: handle_token_balances,
         },
         RegisteredController {
             schema: wallet_schemas("policy_get"),
@@ -428,6 +433,18 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "token_balances" => ControllerSchema {
+            namespace: "wallet",
+            function: "token_balances",
+            description: "List catalogued token balances for the wallet accounts: today the configured Solana cluster's USDC SPL mint, summed over the owner's token accounts. A row whose providerStatus is missing could not be read and shows zero.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Array of {chain, evmNetwork?, address, assetSymbol, tokenAddress, decimals, raw, formatted, providerStatus}.",
+                required: true,
+            }],
+        },
         "policy_get" => ControllerSchema {
             namespace: "wallet",
             function: "policy_get",
@@ -630,6 +647,14 @@ fn handle_derive_recovery_material(
         let parsed: RecoveryPhraseParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
         crate::web3::wallet::derive_recovery_material(&ctx, parsed.phrase)
+            .await?
+            .into_cli_compatible_json()
+    })
+}
+
+fn handle_token_balances(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        crate::web3::wallet::token_balances(&ctx)
             .await?
             .into_cli_compatible_json()
     })

@@ -72,6 +72,7 @@ fn balance_tool_is_a_read() {
     assert_eq!(automation_tools().len(), 2);
 }
 
+<<<<<<< HEAD
 #[tokio::test]
 async fn execute_tool_is_policy_governed_for_scheduled_actions_cron_but_not_plain_cron() {
     use crate::core::runtime::turn_origin::{
@@ -112,4 +113,79 @@ async fn execute_tool_refuses_a_plain_cron_turn_before_touching_the_wallet() {
     .await;
     assert!(result.is_error);
     assert!(result.output().contains("WALLET_POLICY_REFUSED"));
+=======
+fn token_row(raw: &str) -> super::super::TokenBalanceInfo {
+    super::super::TokenBalanceInfo {
+        chain: tinywallet_bus::wire::WalletChain::Solana,
+        evm_network: None,
+        address: "Owner".into(),
+        asset_symbol: "USDC".into(),
+        token_address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".into(),
+        decimals: 6,
+        raw: raw.into(),
+        formatted: "1.500000".into(),
+        provider_status: super::super::ProviderStatus::Ready,
+    }
+}
+
+fn native_rows() -> Vec<super::super::BalanceInfo> {
+    vec![
+        super::super::BalanceInfo {
+            chain: tinywallet_bus::wire::WalletChain::Solana,
+            evm_network: None,
+            address: "Owner".into(),
+            asset_symbol: "SOL".into(),
+            decimals: 9,
+            raw: "2500000000".into(),
+            formatted: "2.500000000".into(),
+            provider_status: super::super::ProviderStatus::Ready,
+        },
+        super::super::BalanceInfo {
+            chain: tinywallet_bus::wire::WalletChain::Evm,
+            evm_network: Some(tinywallet_bus::wire::EvmNetwork::BaseMainnet),
+            address: "0xOwner".into(),
+            asset_symbol: "ETH".into(),
+            decimals: 18,
+            raw: "0".into(),
+            formatted: "0".into(),
+            provider_status: super::super::ProviderStatus::Missing,
+        },
+    ]
+}
+
+fn tool_json(result: &ToolResult) -> Value {
+    assert!(
+        !result.is_error,
+        "unexpected tool error: {}",
+        result.output()
+    );
+    serde_json::from_str(&result.output()).expect("the tool answers with JSON")
+}
+
+#[test]
+fn balances_tool_returns_native_and_token_rows_together() {
+    let result = balances_tool_result(Ok(native_rows()), Ok(vec![token_row("1500000")])).unwrap();
+    let value = tool_json(&result);
+    assert_eq!(value["native"], json!(native_rows()));
+    assert_eq!(value["tokens"][0]["assetSymbol"], "USDC");
+    assert_eq!(value["tokens"][0]["raw"], "1500000");
+    assert!(value.get("tokensError").is_none());
+}
+
+#[test]
+fn a_failed_token_read_keeps_the_native_balances_and_says_why() {
+    let result = balances_tool_result(Ok(native_rows()), Err("module too old".into())).unwrap();
+    let value = tool_json(&result);
+    assert_eq!(value["native"], json!(native_rows()));
+    assert_eq!(value["tokens"], json!([]));
+    assert_eq!(value["tokensError"], "module too old");
+}
+
+#[test]
+fn a_failed_native_read_is_a_tool_error_even_when_tokens_were_read() {
+    let result =
+        balances_tool_result(Err("not configured".into()), Ok(vec![token_row("1")])).unwrap();
+    assert!(result.is_error);
+    assert!(result.output().contains("not configured"));
+>>>>>>> upstream/main
 }
