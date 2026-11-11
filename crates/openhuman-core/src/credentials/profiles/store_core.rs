@@ -9,6 +9,21 @@ use crate::security::secret_storage::SecretStore;
 
 use super::LOCK_FILENAME;
 
+/// Whether profile secrets go to TinySecurity's keyring for this
+/// `OPENHUMAN_KEYRING_BACKEND` selection. Every keyring operation there waits
+/// for a human to approve it, so an operator who chose a `file`,
+/// `encrypted_file` or `memory` keyring (a headless core: no OS keyring and no
+/// one to answer the prompt) keeps them in the encrypted profile document
+/// instead. Otherwise each write waited out the prompt and was refused.
+fn keyring_selected_for_profiles(selection: Option<&str>) -> bool {
+    use crate::security::secret_storage::store::{backend_kind_from_env_value, BackendKind};
+
+    !matches!(
+        selection.and_then(backend_kind_from_env_value),
+        Some(BackendKind::File | BackendKind::EncryptedFile | BackendKind::Memory)
+    )
+}
+
 impl AuthProfilesStore {
     pub fn new(state_dir: &Path, encrypt_secrets: bool) -> Self {
         Self::construct(state_dir, encrypt_secrets, None)
