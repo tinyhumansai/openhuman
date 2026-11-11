@@ -544,10 +544,18 @@ async fn clearing_the_session_preserves_the_active_key_over_a_stale_destination_
     )
     .await
     .unwrap();
-    assert_eq!(
-        api_key::get_api_key(&user_scoped).await.unwrap().as_deref(),
-        Some("sk-live-b")
-    );
+    let live = api_key::get_api_key(&user_scoped).await.unwrap();
+    if live.as_deref() != Some("sk-live-b") {
+        // A linked module's panic hook drops assertion payloads; print the
+        // facts first so a CI failure says which key came back, and where from.
+        eprintln!(
+            "user-scoped key read back as {:?} (pre-login {}, user-scoped {})",
+            live.as_deref().map(|key| if key == "sk-stale-a" { "stale-a" } else { "other" }),
+            pre_login.config_path.display(),
+            user_scoped.config_path.display(),
+        );
+    }
+    assert_eq!(live.as_deref(), Some("sk-live-b"));
 
     // A session-only clear must preserve key B as the effective credential,
     // not let the stale key A at the destination win by default.
