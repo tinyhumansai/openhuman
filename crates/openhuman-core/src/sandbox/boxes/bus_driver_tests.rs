@@ -7,6 +7,7 @@ fn settings() -> BoxSettings {
         cpu_millis: 750,
         memory_bytes: 256 * 1024 * 1024,
         workdir: "/sandbox".into(),
+        owner_scope: OwnerScope::default(),
     }
 }
 
@@ -65,7 +66,7 @@ fn an_openshell_box_is_never_retained() {
 fn an_agent37_box_starts_from_its_template_and_carries_its_owners_retention() {
     let settings = BoxSettings::from_agent37(&crate::config::Agent37RuntimeConfig::default())
         .expect("the default agent37 settings are valid");
-    let retention = BoxRetention {
+    let retention = Retention {
         key: "oh-abc".into(),
         idle_sleep_secs: 900,
         delete_after_secs: 2_592_000,

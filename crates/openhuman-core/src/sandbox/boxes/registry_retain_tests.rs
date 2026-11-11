@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::sandbox::boxes::scripted_driver::{ExecStep, ScriptedDriver};
-use crate::sandbox::boxes::{BoxRetention, RetainPolicy};
+use crate::sandbox::boxes::{RetainPolicy, Retention};
 use std::collections::BTreeMap;
 
 const TTL: Duration = Duration::from_secs(900);
@@ -33,6 +33,7 @@ fn settings() -> BoxSettings {
         cpu_millis: 2_000,
         memory_bytes: 4 * 1024 * 1024 * 1024,
         workdir: "/home/node".into(),
+        owner_scope: OwnerScope::default(),
     }
 }
 
@@ -51,14 +52,15 @@ fn user(id: &str) -> Tenant {
     }
 }
 
-fn kept_for(id: &str) -> Option<BoxRetention> {
-    Some(policy().for_owner(owner_key(&user(id))))
+fn kept_for(id: &str) -> Option<Retention> {
+    Some(policy().for_owner(owner_key(&OwnerScope::default(), &user(id))))
 }
 
 #[test]
 fn the_owner_key_is_stable_opaque_and_valid_for_the_backend() {
-    let key = owner_key(&user("+15551234567"));
-    assert_eq!(key, owner_key(&user("+15551234567")));
+    let scope = OwnerScope::new("prod", std::path::Path::new("/srv/agent/workspace"));
+    let key = owner_key(&scope, &user("+15551234567"));
+    assert_eq!(key, owner_key(&scope, &user("+15551234567")));
     assert!(!key.contains("15551234567"), "{key}");
     assert!((1..=128).contains(&key.len()), "{key}");
     assert!(
@@ -98,7 +100,10 @@ fn every_part_of_the_tenant_changes_the_owner_key() {
         user("u1"),
         user("u2"),
     ];
-    let keys: std::collections::HashSet<String> = tenants.iter().map(owner_key).collect();
+    let keys: std::collections::HashSet<String> = tenants
+        .iter()
+        .map(|tenant| owner_key(&OwnerScope::default(), tenant))
+        .collect();
     assert_eq!(keys.len(), tenants.len());
 }
 

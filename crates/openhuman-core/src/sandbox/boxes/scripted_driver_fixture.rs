@@ -15,12 +15,12 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::sync::Notify;
 
-use super::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxRetention, BoxSettings};
+use super::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings, Retention};
 
 /// One call the registry made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Call {
-    Create(BoxSettings, Option<BoxRetention>),
+    Create(BoxSettings, Option<Retention>),
     Exec { resource: String, exec: BoxExec },
     Close(String),
     Forget(String),
@@ -130,7 +130,7 @@ impl ScriptedDriver {
     }
 
     /// The retention each create asked for, in order.
-    pub(crate) fn retentions(&self) -> Vec<Option<BoxRetention>> {
+    pub(crate) fn retentions(&self) -> Vec<Option<Retention>> {
         self.calls()
             .into_iter()
             .filter_map(|call| match call {
@@ -175,7 +175,7 @@ impl BoxDriver for ScriptedDriver {
     async fn create(
         &self,
         settings: &BoxSettings,
-        retention: Option<&BoxRetention>,
+        retention: Option<&Retention>,
     ) -> Result<String, BoxError> {
         self.record(Call::Create(settings.clone(), retention.cloned()));
         let delay = *self.create_delay.lock().unwrap();
