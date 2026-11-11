@@ -173,11 +173,10 @@ jobs:
 
       - name: Install jq and unzip for release-script tests
         # stage-modules.mjs unpacks module archives with unzip, which the
-        # image does not carry.
+        # image does not carry. The script falls back to another Ubuntu mirror
+        # when the runner cannot resolve archive.ubuntu.com.
         if: matrix.container != '' && needs.plan.outputs.scripts == 'true'
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends jq python3-tomli unzip
+        run: bash scripts/ci/install-ci-packages.sh
 
       - name: Install bubblewrap for the sandbox jail
         # The image's bubblewrap 0.6.1 lacks --disable-userns, so TinyBox finds

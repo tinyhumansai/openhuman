@@ -588,6 +588,17 @@ pub(crate) async fn checkin_session_agent(
     agent: OpenHumanSessionHost,
     fingerprint: SessionCacheFingerprint,
 ) {
+    // DIAGSTORM
+    let before = ctx.core().map(std::sync::Arc::strong_count);
+    if std::env::var_os("DIAGSTORM_NOCACHE").is_some() {
+        drop(agent);
+        log::warn!(
+            "DIAGSTORM checkin dropped agent ctx_count before={before:?} after={:?}",
+            ctx.core().map(std::sync::Arc::strong_count)
+        );
+        return;
+    }
+    log::warn!("DIAGSTORM checkin caching agent ctx_count={before:?}");
     let mut sessions = super::ops::thread_sessions(ctx).lock_owned().await;
     sessions.insert(
         super::ops::key_for(ctx, thread_id),
