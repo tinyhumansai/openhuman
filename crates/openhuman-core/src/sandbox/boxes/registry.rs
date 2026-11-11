@@ -161,18 +161,37 @@ impl Drop for CleanupTicket {
     }
 }
 
-/// Let go of `resource` on a spawned task, counted as pending for `owner`
-/// until it finishes. Spawned so that it completes even if the caller that
-/// asked for it is dropped. The returned handle may be awaited or dropped.
-fn spawn_let_go<D: BoxDriver>(
-    driver: Arc<D>,
-    retained: bool,
-    cleanups: &Arc<Cleanups>,
-    owner: &Owner,
+/// A box already taken out of its slot, whose cleanup is counted as pending
+/// for its owner from the moment it is detached. Detaching happens while the
+/// lock that removed the box is still held, so no concurrent command can
+/// create a new box for the owner before this cleanup is visible.
+struct Detached {
     resource: String,
+    ticket: CleanupTicket,
+}
+
+impl Cleanups {
+    /// Take `resource` (of `owner`'s box) for cleanup.
+    fn detach(self: &Arc<Self>, owner: Owner, resource: String) -> Detached {
+        Detached {
+            resource,
+            ticket: self.begin(&owner),
+        }
+    }
+}
+
+/// Let go of a detached box on a task of its own, on `runtime`. The task
+/// completes even if the caller that asked for it is dropped; the returned
+/// handle may be awaited or dropped.
+fn spawn_detached<D: BoxDriver>(
+    driver: &Arc<D>,
+    retained: bool,
+    runtime: &tokio::runtime::Handle,
+    detached: Detached,
 ) -> tokio::task::JoinHandle<()> {
-    let ticket = cleanups.begin(owner);
-    tokio::spawn(async move {
+    let driver = Arc::clone(driver);
+    runtime.spawn(async move {
+        let Detached { resource, ticket } = detached;
         let _ticket = ticket;
         let_go_with(driver.as_ref(), retained, &resource).await;
     })
