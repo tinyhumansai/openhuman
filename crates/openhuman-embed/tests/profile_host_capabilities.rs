@@ -383,13 +383,23 @@ async fn scenario() {
         );
     }
     let executions_before_denied_turn = calls.lock().unwrap().len();
-    assert!(
-        handles[0]
-            .chat("denied", "unsafe fixture request")
-            .await
-            .is_err(),
-        "unregistered unsafe model calls must fail closed"
-    );
+    // Unregistered names are answered with the harness's recoverable
+    // unknown-tool error (`UnknownToolPolicy::ReturnToolError`): the model is
+    // told each one is not callable, and none of them runs.
+    let requests_before_denied_turn = chat_requests(&inference).await.len();
+    handles[0]
+        .chat("denied", "unsafe fixture request")
+        .await
+        .expect("an unknown tool call is a recoverable tool error");
+    let follow_ups = chat_requests(&inference).await;
+    for name in ["shell", "spawn_subagent", "http_request", "run_workflow"] {
+        assert!(
+            follow_ups[requests_before_denied_turn..].iter().any(|request| {
+                String::from_utf8_lossy(&request.body).contains(&format!("unknown tool `{name}`"))
+            }),
+            "unregistered unsafe model call {name} must be refused as an unknown tool"
+        );
+    }
     assert_eq!(calls.lock().unwrap().len(), executions_before_denied_turn);
     assert!(
         handles[0]
