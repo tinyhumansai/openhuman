@@ -348,3 +348,52 @@ fn reference_policy_resolves_path_aliases_before_the_floor() {
         "the checked, resolved path is the one read"
     );
 }
+
+#[derive(Clone, Default)]
+struct Capture(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Capture {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// A refused reference is logged by its category only: the tool already gets
+/// the refusal, and a credential file's full local path stays out of the log.
+#[test]
+fn a_refused_reference_is_logged_without_its_path() {
+    let capture = Capture::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(capture.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::TRACE)
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let (_, _, _, policy) = policy_over(floor());
+    let secret = "/home/user/.ssh/id_rsa_reference_log_probe";
+
+    assert!(policy(Path::new(secret)).is_err());
+
+    let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    assert!(
+        logs.contains("[media][reference] refused local reference"),
+        "the refusal is still logged: {logs:?}"
+    );
+    assert!(
+        !logs.contains("id_rsa_reference_log_probe"),
+        "the refused path is not logged: {logs:?}"
+    );
+}
