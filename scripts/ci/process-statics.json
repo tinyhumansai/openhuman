@@ -790,6 +790,16 @@
     "verification": "modules/security/test_host.rs: explicit_consent"
   },
   {
+    "file": "crates/openhuman-core/src/modules/security/unattended_unlock.rs",
+    "scope": "",
+    "name": "ASSUME_OPERATOR_KEY",
+    "type": "AtomicUsize",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only (`#[cfg(test)]`): never compiled into a product build. A counter of live guards that let a test treat the keyring key as operator-supplied without changing the process-wide keyring backend; it holds a count only, returns to zero when every guard drops, and matters only to a config that also sets `secrets.unattended_unlock`.",
+    "verification": "modules/security/unattended_unlock_tests.rs: a_default_config_is_interactive"
+  },
+  {
     "file": "crates/openhuman-core/src/security/prompt_injection/scan_port.rs",
     "scope": "",
     "name": "TEST_PROMPT_SCAN_PORT",
