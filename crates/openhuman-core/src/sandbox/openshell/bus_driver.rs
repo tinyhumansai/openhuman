@@ -92,6 +92,7 @@ pub(crate) fn create_request(
         },
         ports: Vec::new(),
         env: std::collections::BTreeMap::new(),
+        retention: None,
     }
 }
 

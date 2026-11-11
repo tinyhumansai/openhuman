@@ -176,6 +176,7 @@ async fn run_command(
             resources: box_resources(config),
             ports: Vec::new(),
             env: BTreeMap::new(),
+            retention: None,
         },
     )
     .await
