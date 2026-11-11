@@ -166,7 +166,10 @@ pub(crate) async fn answer_master_grant(
             }
             () = tokio::time::sleep(POLL) => {
                 for pending in gate.list_pending().unwrap_or_default() {
-                    if pending.tool_name != tool || !decided.insert(pending.request_id.clone()) {
+                    if pending.tool_name != tool
+                        || !names_registration(&pending.args_redacted, registration_id)
+                        || !decided.insert(pending.request_id.clone())
+                    {
                         continue;
                     }
                     tracing::info!(
@@ -201,6 +204,18 @@ pub(crate) async fn answer_master_grant(
                 }
             }
         }
+    }
+}
+
+/// Whether a parked grant can be this registration's. A row whose arguments
+/// still carry a registration id must carry ours, so a grant another profile's
+/// configuration raised is never answered here; a row whose arguments were
+/// redacted away cannot be told apart and is taken as ours (one secret scope
+/// is live per process).
+fn names_registration(args: &serde_json::Value, registration_id: &str) -> bool {
+    match args.get("registration_id").and_then(serde_json::Value::as_str) {
+        Some(named) => named == registration_id,
+        None => true,
     }
 }
 

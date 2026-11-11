@@ -80,6 +80,11 @@ async fn a_failed_secret_encryption_reports_the_field_and_the_reason() {
 
 // ── secrets.unattended_unlock on a headless host ───────────────────────────
 
+/// The two headless-host tests share the process gate and the admitted module:
+/// one approves whatever grant it raised, so they must not overlap.
+#[cfg(feature = "security-module")]
+static HEADLESS_HOST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[cfg(feature = "security-module")]
 const UNATTENDED_FIXTURE_KEY: &str = "local-ai-unattended-fixture-value";
 
@@ -121,6 +126,7 @@ async fn headless_gate(config: &Config) -> std::sync::Arc<crate::security::appro
 #[cfg(feature = "security-module")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unattended_unlock_round_trips_an_encrypted_local_ai_key_without_a_person() {
+    let _serial = HEADLESS_HOST.lock().await;
     let _explicit = crate::modules::security::test_host::explicit_consent();
     let _operator_key = crate::modules::security::unattended_unlock::assume_operator_key();
     let dir = tempfile::tempdir().unwrap();
@@ -160,6 +166,7 @@ async fn unattended_unlock_round_trips_an_encrypted_local_ai_key_without_a_perso
 async fn without_unattended_unlock_the_secret_grant_still_parks_for_a_person() {
     use crate::security::approval::ApprovalDecision;
 
+    let _serial = HEADLESS_HOST.lock().await;
     let _explicit = crate::modules::security::test_host::explicit_consent();
     let _operator_key = crate::modules::security::unattended_unlock::assume_operator_key();
     let dir = tempfile::tempdir().unwrap();

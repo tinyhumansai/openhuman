@@ -60,3 +60,13 @@ fn a_default_config_is_interactive() {
     config.secrets.unattended_unlock = true;
     assert_eq!(mode_for(&config), UnlockMode::Unattended);
 }
+
+#[test]
+fn only_a_grant_for_this_registration_is_answered() {
+    let ours = serde_json::json!({ "registration_id": "reg-ours" });
+    let theirs = serde_json::json!({ "registration_id": "reg-theirs" });
+    let redacted = serde_json::json!({});
+    assert!(names_registration(&ours, "reg-ours"));
+    assert!(!names_registration(&theirs, "reg-ours"));
+    assert!(names_registration(&redacted, "reg-ours"));
+}
