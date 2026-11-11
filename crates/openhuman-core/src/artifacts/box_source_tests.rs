@@ -1,10 +1,9 @@
 use super::*;
 use crate::artifacts::tiny_store::{artifacts_service, version_files_dir};
 use crate::artifacts::{read_artifact_bytes, FileRoots};
-use crate::config::OpenShellRuntimeConfig;
 use crate::core::runtime::DispatchCtx;
 use crate::sandbox::boxes::scripted_driver::{Call, ExecStep, ScriptedDriver};
-use crate::sandbox::boxes::{read_file_in, BoxOutput, BoxRegistry, RegistryLimits};
+use crate::sandbox::boxes::{read_file_in, BoxOutput, BoxRegistry, BoxSettings, RegistryLimits};
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -34,7 +33,8 @@ impl BoxFiles for ScriptedBoxes {
         read_file_in(
             &self.registry,
             tenant,
-            &OpenShellRuntimeConfig::default(),
+            &BoxSettings::from_config(&crate::config::OpenShellRuntimeConfig::default())
+                .expect("the default OpenShell settings are valid"),
             path,
             max_bytes,
         )
