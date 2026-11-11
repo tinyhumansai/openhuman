@@ -532,7 +532,15 @@ pub(crate) async fn protected_paths(paths: &[PathBuf]) -> Result<Vec<bool>, Stri
     let config = crate::core::runtime::DispatchCtx::ambient()
         .load_config()
         .await?;
-    let response = super::client(&config)
+    protected_paths_with_config(&config, paths).await
+}
+
+/// `ProtectedPath2` through `config`'s module, without the test port.
+pub(super) async fn protected_paths_with_config(
+    config: &Config,
+    paths: &[PathBuf],
+) -> Result<Vec<bool>, String> {
+    let response = super::client(config)
         .await
         .map_err(|error| error.to_string())?
         .protected_path2(tinysecurity_bus::ProtectedPathRequest2 {
@@ -544,6 +552,12 @@ pub(crate) async fn protected_paths(paths: &[PathBuf]) -> Result<Vec<bool>, Stri
         return Err("TinySecurity ProtectedPath2 answer length mismatch".into());
     }
     Ok(response.protected)
+}
+
+/// The scripted path floor installed on this thread, if any.
+#[cfg(any(test, feature = "test-keyring-consent"))]
+pub(super) fn installed_path_floor_port() -> Option<Arc<dyn PathFloorPort>> {
+    TEST_PATH_FLOOR_PORT.with(|slot| slot.borrow().clone())
 }
 
 /// `ProtectedFloor2` vocabulary for consumers that hand the floor to a jail.
