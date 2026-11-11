@@ -565,7 +565,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
         );
         let resource = self.driver.create(settings, retention.as_ref()).await?;
         if !slot.store(&resource) {
-            self.let_go(&resource).await;
+            self.let_go(owner, &resource).await;
             return Err(BoxError::Released);
         }
         tracing::debug!(resource = %resource, "[sandbox:box] box ready");
