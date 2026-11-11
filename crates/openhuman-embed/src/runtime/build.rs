@@ -573,7 +573,7 @@ async fn store_api_key(config: &Config, key: &ApiKey) -> Result<(), RuntimeError
     // secret master grant of this config directory, which nobody else can
     // answer before the core (and its approval gate) boots.
     let store = openhuman_core::credentials::api_key::store_api_key(config, key.expose());
-    store
+    openhuman_core::security::approval::gate::host_authorised_secret_grant(config, store)
         .await
         .map(|_| ())
         .map_err(RuntimeError::Build)

@@ -228,17 +228,17 @@ async fn scenario() {
             "gemini answered"
         );
         let exa_before = exa.received_requests().await.unwrap().len();
-        // A canonical role name is not callable: the harness answers it with
-        // its recoverable unknown-tool error (`UnknownToolPolicy::ReturnToolError`)
-        // and the search provider is never reached.
+        // A canonical role name is not callable: the host security gate
+        // refuses the unregistered name as a tool error the model reads, and
+        // the search provider is never reached.
         let requests_before = chat_requests(&chat).await.len();
         handle
             .chat("t2", "use the canonical name")
             .await
-            .expect("an unknown tool call is a recoverable tool error");
+            .expect("a refused unknown tool is a tool error, not a failed turn");
         assert!(
             chat_requests(&chat).await[requests_before..].iter().any(|request| {
-                String::from_utf8_lossy(&request.body).contains("unknown tool `web_search_tool`")
+                String::from_utf8_lossy(&request.body).contains("Tool 'web_search_tool' is not available in this session")
             }),
             "a canonical role name is not callable"
         );
