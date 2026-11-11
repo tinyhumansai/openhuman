@@ -515,14 +515,18 @@ impl<D: BoxDriver> BoxRegistry<D> {
     }
 
     /// Remove idle entries and return their boxes to close.
-    fn take_idle(&self, entries: &mut HashMap<Owner, Entry>, now: Instant) -> Vec<String> {
+    fn take_idle(
+        &self,
+        entries: &mut HashMap<Owner, Entry>,
+        now: Instant,
+    ) -> Vec<(Owner, String)> {
         let ttl = self.limits.idle_ttl;
         let mut resources = Vec::new();
-        entries.retain(|_, entry| {
+        entries.retain(|owner, entry| {
             let idle =
                 entry.in_flight == 0 && now.saturating_duration_since(entry.last_used) >= ttl;
             if idle {
-                resources.extend(entry.slot.retire());
+                resources.extend(entry.slot.retire().map(|resource| (owner.clone(), resource)));
             }
             !idle
         });
