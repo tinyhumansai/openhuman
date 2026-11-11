@@ -461,8 +461,8 @@ impl<D: BoxDriver> BoxRegistry<D> {
             owner,
             slot,
         });
-        for resource in reaped {
-            self.let_go(&resource).await;
+        for (reaped_owner, resource) in reaped {
+            self.let_go(&reaped_owner, &resource).await;
         }
         lease.ok_or_else(|| {
             tracing::warn!(
