@@ -40,6 +40,7 @@ vi.mock('./pages/Accounts', () => ({ default: () => <div /> }));
 vi.mock('./pages/Memory', () => ({ default: () => <div /> }));
 vi.mock('./pages/dev/AgentInsightsPreview', () => ({ default: () => <div /> }));
 vi.mock('./pages/dev/UiGallery', () => ({ default: () => <div /> }));
+vi.mock('./pages/FlowsPage', () => ({ default: () => <div /> }));
 vi.mock('./pages/Invites', () => ({ default: () => <div /> }));
 vi.mock('./pages/Notifications', () => ({ default: () => <div /> }));
 vi.mock('./pages/onboarding/Onboarding', () => ({ default: () => <div /> }));

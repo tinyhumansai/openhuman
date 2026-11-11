@@ -50,6 +50,8 @@ import {
   runFlowDetached,
   setFlowEnabled,
 } from '../services/api/flowsApi';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { markWelcomeSeen, selectWelcomeSeen } from '../store/layoutSlice';
 import type { ToastNotification } from '../types/intelligence';
 import WorkflowDiscoveriesPage from './WorkflowDiscoveriesPage';
 import WorkflowRunsPage from './WorkflowRunsPage';
@@ -459,7 +461,15 @@ export default function FlowsPage() {
     [emptyCreate, t]
   );
 
+  // Workflows opens on the list, except the first time this user opens it:
+  // that visit lands on Welcome, and showing it marks it seen (persisted per
+  // user). `?view=welcome` and the nav entry still reach Welcome any time.
+  const dispatch = useAppDispatch();
+  const welcomeSeen = useAppSelector(selectWelcomeSeen('flows'));
+
   const { view, setView, nav } = usePageWelcomeView({
+    defaultView: 'main',
+    landOnWelcome: !welcomeSeen,
     ariaLabel: t('nav.flows'),
     welcomeLabel: t('flows.welcome.nav'),
     mainLabel: t('flows.welcome.main'),
@@ -487,6 +497,10 @@ export default function FlowsPage() {
       },
     ],
   });
+
+  useEffect(() => {
+    if (view === 'welcome' && !welcomeSeen) dispatch(markWelcomeSeen({ id: 'flows' }));
+  }, [dispatch, view, welcomeSeen]);
 
   if (view === 'welcome') {
     return (

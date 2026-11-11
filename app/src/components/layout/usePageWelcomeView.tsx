@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useMemo } from 'react';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { SidebarContent } from './shell/SidebarSlot';
@@ -37,6 +37,14 @@ interface PageWelcomeExtraItem {
 }
 
 interface UsePageWelcomeViewOptions {
+  defaultView?: 'welcome' | 'main';
+  /**
+   * Land on Welcome (instead of `defaultView`) when the page mounts on a URL
+   * with no `?view=`. The landing is tied to that one history entry: any
+   * navigation (setView, a link, re-clicking the page in the shell) shows
+   * `defaultView`, and only going back to that entry shows Welcome again.
+   */
+  landOnWelcome?: boolean;
   /** Accessible label for the sidebar nav. */
   ariaLabel: string;
   /** Label for the Welcome entry. */
@@ -67,27 +75,43 @@ interface PageWelcomeView {
  * to the Welcome landing.
  */
 export function usePageWelcomeView(opts: UsePageWelcomeViewOptions): PageWelcomeView {
-  const { ariaLabel, mainLabel, mainIconPath, header, extraItems } = opts;
+  const {
+    ariaLabel,
+    welcomeLabel,
+    mainLabel,
+    mainIconPath,
+    header,
+    extraItems,
+    defaultView = 'welcome',
+    landOnWelcome = false,
+  } = opts;
   const location = useLocation();
   const navigate = useNavigate();
 
   const validViews = useMemo(
-    () => new Set<string>(['main', ...(extraItems ?? []).map(i => i.value)]),
+    () => new Set<string>(['welcome', 'main', ...(extraItems ?? []).map(i => i.value)]),
     [extraItems]
   );
 
-  const raw = new URLSearchParams(location.search).get('view') ?? '';
-  const view: PageWelcomeViewId = validViews.has(raw) ? raw : 'welcome';
+  const raw = new URLSearchParams(location.search).get('view');
+  // The history entry the page mounted on, if it lands on Welcome there.
+  const [landingKey] = useState(() => (landOnWelcome && raw === null ? location.key : null));
+  const view: PageWelcomeViewId =
+    raw !== null && validViews.has(raw)
+      ? raw
+      : location.key === landingKey
+        ? 'welcome'
+        : defaultView;
 
   const setView = useCallback(
     (v: PageWelcomeViewId) => {
       const params = new URLSearchParams(location.search);
-      if (v === 'welcome') params.delete('view');
+      if (v === defaultView) params.delete('view');
       else params.set('view', v);
       const search = params.toString();
       navigate({ pathname: location.pathname, search: search ? `?${search}` : '' });
     },
-    [location.pathname, location.search, navigate]
+    [defaultView, location.pathname, location.search, navigate]
   );
 
   const nav = useMemo(
@@ -101,6 +125,15 @@ export function usePageWelcomeView(opts: UsePageWelcomeViewOptions): PageWelcome
             groups={[
               {
                 items: [
+                  ...(defaultView === 'main'
+                    ? [
+                        {
+                          value: 'welcome',
+                          label: welcomeLabel,
+                          icon: navIcon('M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8v4m0 4h.01'),
+                        },
+                      ]
+                    : []),
                   { value: 'main', label: mainLabel, icon: navIcon(mainIconPath) },
                   ...(extraItems ?? []).map(item => ({
                     value: item.value,
@@ -115,7 +148,17 @@ export function usePageWelcomeView(opts: UsePageWelcomeViewOptions): PageWelcome
         </div>
       </SidebarContent>
     ),
-    [ariaLabel, mainLabel, mainIconPath, header, extraItems, view, setView]
+    [
+      ariaLabel,
+      welcomeLabel,
+      mainLabel,
+      mainIconPath,
+      header,
+      extraItems,
+      defaultView,
+      view,
+      setView,
+    ]
   );
 
   return { view, setView, nav };
