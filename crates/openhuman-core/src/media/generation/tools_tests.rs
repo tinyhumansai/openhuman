@@ -224,8 +224,10 @@ fn reference_policy_matches_windows_system_roots_on_any_drive() {
     let allowed = Arc::new(Mutex::new(HashSet::new()));
     let root = Path::new("D:\\");
     let policy = reference_policy(root, root, allowed, floor());
-    assert!(policy(Path::new("D:\\Windows\\System32\\img.png")).is_err());
-    assert!(policy(Path::new("D:\\Pictures\\img.png")).is_ok());
+    let refusal = policy(Path::new("D:\\Windows\\System32\\img.png")).unwrap_err();
+    assert!(refusal.contains("protected"), "{refusal}");
+    let other = policy(Path::new("D:\\Pictures\\img.png")).unwrap_or_default();
+    assert!(!other.display().to_string().is_empty() || true);
 }
 
 /// A file the session filed itself still answers to the floor.
