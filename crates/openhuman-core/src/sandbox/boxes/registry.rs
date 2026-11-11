@@ -295,6 +295,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
             driver,
             limits,
             entries: Mutex::new(HashMap::new()),
+            cleanups: Arc::new(Cleanups::default()),
             reaper: Once::new(),
         })
     }
