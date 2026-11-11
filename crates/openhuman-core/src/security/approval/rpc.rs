@@ -278,7 +278,7 @@ pub async fn approval_decide(
         anyhow!(error)
     })?;
     let decided = decide_off_the_caller_runtime(
-        gate,
+        std::sync::Arc::clone(&gate),
         tenant,
         agent_id.map(str::to_owned),
         request_id.to_owned(),
