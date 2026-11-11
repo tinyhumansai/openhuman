@@ -77,3 +77,120 @@ async fn a_failed_secret_encryption_reports_the_field_and_the_reason() {
     );
     assert!(!shown.contains("sk-must-not-leak"), "{shown}");
 }
+
+// ── secrets.unattended_unlock on a headless host ───────────────────────────
+
+#[cfg(feature = "security-module")]
+const UNATTENDED_FIXTURE_KEY: &str = "local-ai-unattended-fixture-value";
+
+#[cfg(feature = "security-module")]
+fn native_cipher_fixture(dir: &Path, unattended_unlock: bool) -> Config {
+    let workspace = dir.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let mut config = Config {
+        config_path: dir.join("config.toml"),
+        workspace_dir: workspace.clone(),
+        action_dir: workspace,
+        ..Config::default()
+    };
+    config.secrets.encrypt = true;
+    config.secrets.unattended_unlock = unattended_unlock;
+    config.local_ai.api_key = Some(UNATTENDED_FIXTURE_KEY.into());
+    config
+}
+
+/// What a booted serve host has: the security module admitted for this config
+/// and the process approval gate, with no chat surface and nobody to answer.
+#[cfg(feature = "security-module")]
+async fn headless_gate(config: &Config) -> std::sync::Arc<crate::security::approval::ApprovalGate> {
+    crate::modules::security::ensure_loaded(config)
+        .await
+        .expect("admit the native cipher module");
+    crate::core::bus::init().await.expect("approval events");
+    crate::security::approval::ApprovalGate::init_global(
+        config.clone(),
+        format!("session-{}", uuid::Uuid::new_v4()),
+    )
+}
+
+/// A headless `serve` host with `secrets.unattended_unlock` and an
+/// operator-supplied keyring key seals and reopens `local_ai.api_key` with
+/// nobody answering the "Unlock configuration secrets" grant. Before the
+/// setting existed the grant parked unrouted until it expired, and every
+/// config load timed out.
+#[cfg(feature = "security-module")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unattended_unlock_round_trips_an_encrypted_local_ai_key_without_a_person() {
+    let _explicit = crate::modules::security::test_host::explicit_consent();
+    let _operator_key = crate::modules::security::unattended_unlock::assume_operator_key();
+    let dir = tempfile::tempdir().unwrap();
+    let config = native_cipher_fixture(dir.path(), true);
+    let _gate = headless_gate(&config).await;
+
+    let opened = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let mut sealed = config.clone();
+        encrypt_config_secrets(&mut sealed)
+            .await
+            .expect("seal local_ai.api_key without a person");
+        let raw = sealed.local_ai.api_key.clone().expect("sealed value");
+        assert!(
+            crate::security::secret_storage::SecretStore::is_encrypted(&raw),
+            "local_ai.api_key must be sealed on save"
+        );
+        assert!(!raw.contains(UNATTENDED_FIXTURE_KEY));
+        let mut opened = sealed.clone();
+        decrypt_config_secrets(&mut opened, dir.path())
+            .await
+            .expect("open local_ai.api_key without a person");
+        opened
+    })
+    .await
+    .expect("the unlock must not wait for a person");
+
+    assert_eq!(
+        opened.local_ai.api_key.as_deref(),
+        Some(UNATTENDED_FIXTURE_KEY)
+    );
+}
+
+/// With the setting off (the default) the same host still parks the grant for
+/// a person, operator key or not, and a refusal fails the save closed.
+#[cfg(feature = "security-module")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn without_unattended_unlock_the_secret_grant_still_parks_for_a_person() {
+    use crate::security::approval::ApprovalDecision;
+
+    let _explicit = crate::modules::security::test_host::explicit_consent();
+    let _operator_key = crate::modules::security::unattended_unlock::assume_operator_key();
+    let dir = tempfile::tempdir().unwrap();
+    let config = native_cipher_fixture(dir.path(), false);
+    let gate = headless_gate(&config).await;
+
+    let mut sealed = config.clone();
+    let save = tokio::spawn(async move { encrypt_config_secrets(&mut sealed).await });
+    let pending = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            if let Some(pending) = gate
+                .list_pending()
+                .unwrap_or_default()
+                .into_iter()
+                .find(|pending| pending.tool_name == "native_secret_grant")
+            {
+                break pending;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the grant parks for a person");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!save.is_finished(), "the save must wait for the person");
+
+    gate.decide(&pending.request_id, ApprovalDecision::Deny)
+        .expect("deny the parked grant");
+    let result = tokio::time::timeout(std::time::Duration::from_secs(30), save)
+        .await
+        .expect("a refusal ends the save")
+        .expect("save task");
+    assert!(result.is_err(), "a refused unlock must fail the save closed");
+}
