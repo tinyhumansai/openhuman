@@ -36,6 +36,7 @@ use tokio::time::Instant;
 
 use sha2::{Digest, Sha256};
 
+use super::cleanup::{spawn_detached, Cleanups, Detached};
 use super::{
     BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, OwnerScope, RegistryLimits,
     Retention,
@@ -65,7 +66,7 @@ const TIMED_OUT_EXIT: i32 = 124;
 pub(crate) const REAP_EVERY_AT_MOST: Duration = Duration::from_secs(30);
 
 /// Who an entry's box is for: the tenant within its scope.
-type Owner = (OwnerScope, Tenant);
+pub(super) type Owner = (OwnerScope, Tenant);
 
 /// One live box per [`Tenant`] and [`OwnerScope`], over a [`BoxDriver`].
 pub struct BoxRegistry<D: BoxDriver> {
@@ -93,9 +94,6 @@ struct Slot {
     state: Mutex<SlotState>,
 }
 
-/// Cleanups (closes or forgets) still running, per owner. A new box for an
-/// owner waits until none is pending, so it never adopts an instance a
-/// cleanup is still tearing down.
 #[derive(Default)]
 struct Cleanups {
     pending: Mutex<HashMap<Owner, usize>>,
@@ -680,24 +678,6 @@ impl<D: BoxDriver> BoxRegistry<D> {
         if let Err(error) = outcome {
             tracing::warn!(%error, "[sandbox:box] a box cleanup task ended abnormally");
         }
-    }
-}
-
-/// Let go of `resource` through `driver`: forget it when `retained`, close it
-/// otherwise. A failure is logged.
-async fn let_go_with<D: BoxDriver>(driver: &D, retained: bool, resource: &str) {
-    let outcome = if retained {
-        driver.forget(resource).await
-    } else {
-        driver.close(resource).await
-    };
-    if let Err(error) = outcome {
-        tracing::warn!(
-            resource = %resource,
-            retained,
-            error = %error,
-            "[sandbox:box] letting go of a box failed"
-        );
     }
 }
 
