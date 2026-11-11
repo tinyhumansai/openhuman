@@ -1,5 +1,6 @@
 //! Reading and writing the persisted auth-profile document through TSD's
-//! encrypted local secret store.
+//! encrypted local secret store, or, for a SaaS tenant with a storage backend,
+//! through the backend lease taken for the operation (`backend.rs`).
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -256,7 +257,22 @@ impl AuthProfilesStore {
         ))
     }
 
-    pub(super) fn read_persisted_locked(&self) -> Result<PersistedAuthProfiles> {
+    pub(super) fn read_persisted_locked(
+        &self,
+        lock: &super::lock::AuthProfileLockGuard,
+    ) -> Result<PersistedAuthProfiles> {
+        if let Some(lease) = lock.backend() {
+            return match lease.read()? {
+                Some(bytes) => parse_backend_document(&bytes),
+                // First use of the backend: adopt a document a profile-local
+                // store left, read-only. The next write publishes it to the
+                // backend; the local file is never written again.
+                None => match self.read_encrypted_file_locked()? {
+                    Some(persisted) => Ok(persisted),
+                    None => self.read_file_locked(),
+                },
+            };
+        }
         if let Some(persisted) = self.read_encrypted_file_locked()? {
             return Ok(persisted);
         }
@@ -322,7 +338,15 @@ impl AuthProfilesStore {
         Ok(persisted)
     }
 
-    pub(super) fn write_persisted_locked(&self, persisted: &PersistedAuthProfiles) -> Result<()> {
+    pub(super) fn write_persisted_locked(
+        &self,
+        lock: &super::lock::AuthProfileLockGuard,
+        persisted: &PersistedAuthProfiles,
+    ) -> Result<()> {
+        if let Some(lease) = lock.backend() {
+            let json = serde_json::to_vec(persisted).context("Failed to serialize auth profiles")?;
+            return lease.write(json);
+        }
         self.write_persisted_locally(persisted)?;
         let _ = fs::remove_file(&self.legacy_path);
         Ok(())
@@ -382,6 +406,25 @@ impl AuthProfilesStore {
             Some(_) | None => Ok((None, None)),
         }
     }
+}
+
+/// Parse the document read from the storage backend. No quarantine there: an
+/// unparseable or newer record is an error, so a later write can never replace
+/// profiles it could not read.
+pub(super) fn parse_backend_document(bytes: &[u8]) -> Result<PersistedAuthProfiles> {
+    let mut persisted: PersistedAuthProfiles = serde_json::from_slice(bytes)
+        .context("auth profile record on the storage backend is not valid JSON")?;
+    if persisted.schema_version == 0 {
+        persisted.schema_version = CURRENT_SCHEMA_VERSION;
+    }
+    if persisted.schema_version > CURRENT_SCHEMA_VERSION {
+        anyhow::bail!(
+            "Unsupported auth profile schema version {} (max supported: {})",
+            persisted.schema_version,
+            CURRENT_SCHEMA_VERSION
+        );
+    }
+    Ok(persisted)
 }
 
 async fn encrypt_profile_field(
