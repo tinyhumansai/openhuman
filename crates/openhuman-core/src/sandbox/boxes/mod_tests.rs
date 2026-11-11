@@ -19,7 +19,7 @@ fn a_call_without_a_tenant_is_refused() {
     assert_eq!(refused, BoxError::NoTenant);
     assert_eq!(
         refused.to_string(),
-        "no tenant scope; refusing to run a command in a shared sandbox"
+        "no tenant scope; refusing to use a shared sandbox"
     );
 }
 
@@ -145,7 +145,7 @@ async fn an_unscoped_command_creates_no_box() {
     let refused = run_command(
         &boxes,
         Err(NoTenant),
-        &OpenShellRuntimeConfig::default(),
+        &BoxSettings::from_config(&OpenShellRuntimeConfig::default()).unwrap(),
         "id",
         &HashMap::new(),
         Duration::from_secs(10),
@@ -166,7 +166,7 @@ async fn a_scoped_command_runs_in_its_tenants_box() {
     let result = run_command(
         &boxes,
         Ok(embedded("u1")),
-        &config,
+        &BoxSettings::from_config(&config).unwrap(),
         "id",
         &HashMap::new(),
         Duration::from_secs(10),
@@ -215,4 +215,69 @@ async fn files_are_refused_without_a_tenant() {
 
     assert_eq!(wrote, Err(BoxError::NoTenant));
     assert_eq!(read, Err(BoxError::NoTenant));
+}
+
+fn config_with_backend(backend: crate::config::SandboxBackend) -> Config {
+    let mut config = Config::default();
+    config.sandbox.backend = backend;
+    config
+}
+
+#[test]
+fn the_configured_backend_picks_the_box_backend() {
+    use crate::config::SandboxBackend;
+    assert_eq!(
+        BoxBackend::configured(&config_with_backend(SandboxBackend::OpenShell)),
+        Some(BoxBackend::OpenShell)
+    );
+    assert_eq!(
+        BoxBackend::configured(&config_with_backend(SandboxBackend::Agent37)),
+        Some(BoxBackend::Agent37)
+    );
+    for backend in [SandboxBackend::Docker, SandboxBackend::None, SandboxBackend::Landlock] {
+        assert_eq!(
+            BoxBackend::configured(&config_with_backend(backend.clone())),
+            None,
+            "{backend:?}"
+        );
+    }
+    let mut off = config_with_backend(SandboxBackend::Agent37);
+    off.sandbox.enabled = Some(false);
+    assert_eq!(BoxBackend::configured(&off), None);
+}
+
+#[tokio::test]
+async fn files_are_refused_when_the_configured_backend_keeps_no_boxes() {
+    let config = config_with_backend(crate::config::SandboxBackend::Docker);
+
+    let wrote = write_file(Ok(embedded("u1")), &config, "a.txt", b"x").await;
+    let read = read_file(Ok(embedded("u1")), &config, "a.txt", 10).await;
+
+    assert_eq!(wrote, Err(BoxError::NoBoxBackend));
+    assert_eq!(read, Err(BoxError::NoBoxBackend));
+    assert_eq!(
+        BoxError::NoBoxBackend.to_string(),
+        "the configured sandbox backend keeps no per-tenant box"
+    );
+}
+
+#[tokio::test]
+async fn agent37_files_are_refused_under_local_only_privacy() {
+    let mut config = config_with_backend(crate::config::SandboxBackend::Agent37);
+    config.privacy.mode = crate::config::PrivacyMode::LocalOnly;
+
+    let wrote = write_file(Ok(embedded("u1")), &config, "a.txt", b"x").await;
+    let read = read_file(Ok(embedded("u1")), &config, "a.txt", 10).await;
+
+    assert_eq!(wrote, Err(BoxError::LocalOnly));
+    assert_eq!(read, Err(BoxError::LocalOnly));
+}
+
+#[tokio::test]
+async fn a_missing_tenant_is_refused_before_the_backend_is_considered() {
+    let config = config_with_backend(crate::config::SandboxBackend::Docker);
+    assert_eq!(
+        write_file(Err(NoTenant), &config, "a.txt", b"x").await,
+        Err(BoxError::NoTenant)
+    );
 }

@@ -31,7 +31,7 @@ impl SandboxBackendKind {
     /// them answers `true` here and gets the box-side behavior of every
     /// caller that asks.
     pub fn keeps_boxes(self) -> bool {
-        matches!(self, Self::OpenShell)
+        matches!(self, Self::OpenShell | Self::Agent37)
     }
 }
 
