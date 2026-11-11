@@ -265,6 +265,9 @@ struct Running<D: BoxDriver> {
     retained: bool,
     cleanups: Arc<Cleanups>,
     owner: Owner,
+    /// Captured while the command is armed: a cancelled command may be dropped
+    /// outside any runtime context, and its box must still be let go of.
+    runtime: tokio::runtime::Handle,
     slot: Arc<Slot>,
     resource: Option<String>,
 }
