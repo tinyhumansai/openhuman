@@ -40,6 +40,7 @@ async fn a_cached_session_agent_does_not_keep_its_tenant_in_use() {
             "{expected} is in the belt: {names:?}"
         );
     }
+    eprintln!("BELT {names:?} ctx={} ", Arc::strong_count(&profile));
     assert!(
         !profile.tenant_in_use(),
         "the session agent kept past its turn pins the tenant; belt: {names:?}"
