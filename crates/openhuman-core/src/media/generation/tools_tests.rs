@@ -138,7 +138,14 @@ fn floor() -> ReferenceFloor {
             .to_ascii_lowercase()
             .replace('\\', "/");
         let segments: Vec<&str> = lowered.split('/').filter(|s| !s.is_empty()).collect();
-        let stores = [".ssh", ".gnupg", ".aws", "keychains", ".netrc", ".git-credentials"];
+        let stores = [
+            ".ssh",
+            ".gnupg",
+            ".aws",
+            "keychains",
+            ".netrc",
+            ".git-credentials",
+        ];
         let pairs = [[".cargo", "credentials.toml"], ["microsoft", "credentials"]];
         let windows_root = segments.len() > 1
             && segments[0].len() == 2
@@ -290,7 +297,10 @@ async fn reference_policy_asks_tinysecurity_for_each_path() {
     let config = crate::modules::security::test_host::boot().expect("staged TinySecurity module");
     assert!(crate::core::runtime::CoreContext::current_embedder_config().is_none());
     let fetched = ReferenceFloor::fetch(Some(&config)).await;
-    assert!(matches!(fetched, ReferenceFloor::Enforced(_)), "{fetched:?}");
+    assert!(
+        matches!(fetched, ReferenceFloor::Enforced(_)),
+        "{fetched:?}"
+    );
 
     let home = tempfile::tempdir().unwrap();
     let home = home.path().canonicalize().unwrap();
@@ -330,9 +340,13 @@ async fn reference_policy_asks_tinysecurity_for_each_path() {
         home.join(".cargo/./credentials.toml"),
         PathBuf::from("/etc/passwd"),
     ] {
-        let refusal = policy(refused.clone())
-            .expect_err(&format!("{} must be refused", refused.display()));
-        assert!(refusal.contains("protected"), "{}: {refusal}", refused.display());
+        let refusal =
+            policy(refused.clone()).expect_err(&format!("{} must be refused", refused.display()));
+        assert!(
+            refusal.contains("protected"),
+            "{}: {refusal}",
+            refused.display()
+        );
     }
 }
 

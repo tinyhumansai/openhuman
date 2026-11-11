@@ -128,8 +128,7 @@ pub(crate) async fn protected_path_check(
     if let Some(port) = super::gap::installed_path_floor_port() {
         port.protected_paths(&[]).await?;
         return Ok(std::sync::Arc::new(move |path: &std::path::Path| {
-            let answers =
-                futures::executor::block_on(port.protected_paths(&[path.to_path_buf()]))?;
+            let answers = futures::executor::block_on(port.protected_paths(&[path.to_path_buf()]))?;
             answers
                 .first()
                 .copied()

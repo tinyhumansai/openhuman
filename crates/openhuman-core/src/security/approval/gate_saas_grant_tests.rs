@@ -229,7 +229,9 @@ async fn outside_saas_a_secret_grant_still_waits_for_a_person() {
 /// Drop the host grant once the engine has made its request durable (while
 /// `check` or `decide` is still in flight): the delivered request is cancelled,
 /// so a later unlock never meets an abandoned pending row.
-async fn dropped_host_grant_leaves_no_pending_request(hold: fn(&crate::security::approval::engine_stub::StubEngine)) {
+async fn dropped_host_grant_leaves_no_pending_request(
+    hold: fn(&crate::security::approval::engine_stub::StubEngine),
+) {
     let (gate, _dir) = test_gate();
     let gate = Arc::new(gate);
     let stub = stub_of(&gate);
@@ -262,7 +264,9 @@ async fn dropped_host_grant_leaves_no_pending_request(hold: fn(&crate::security:
     let _ = grant.await;
     let cancelled = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if stub.state(&request_id) == Some(crate::security::approval::engine_stub::State::Cancelled) {
+            if stub.state(&request_id)
+                == Some(crate::security::approval::engine_stub::State::Cancelled)
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;

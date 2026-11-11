@@ -219,8 +219,7 @@ fn video_tool(
 
 /// A synchronous TinySecurity floor decision for one path: `Ok(true)` when
 /// `ProtectedPath2` reports it protected.
-pub(crate) type ProtectedPathCheck =
-    Arc<dyn Fn(&Path) -> Result<bool, String> + Send + Sync>;
+pub(crate) type ProtectedPathCheck = Arc<dyn Fn(&Path) -> Result<bool, String> + Send + Sync>;
 
 /// TinySecurity's protected-path floor for local reference files. The
 /// reference policy is a sync callback, so it asks the module through the

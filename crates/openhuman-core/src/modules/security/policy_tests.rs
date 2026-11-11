@@ -258,7 +258,10 @@ async fn concurrent_tenants_each_unlock_their_config_secrets() {
             .get_profile(crate::credentials::APP_SESSION_PROVIDER, None)
             .await
             .map(|profile| profile.is_some());
-        removed.push((gone.map_err(|e| format!("{e:#}")), left.map_err(|e| format!("{e:#}"))));
+        removed.push((
+            gone.map_err(|e| format!("{e:#}")),
+            left.map_err(|e| format!("{e:#}")),
+        ));
     }
     for store in stored {
         store
