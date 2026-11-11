@@ -109,10 +109,10 @@ async fn get_api_key_with_service(service: &AuthService) -> Result<Option<String
 
 // Directory-only callers may reuse the exact runtime configuration that owns
 // that credential directory. A different ambient tenant never supplies cipher authority.
+// The API key is a document secret, so the owner binds the document store
+// (`config_document`), not the keyring-backed session store.
 fn service_in(state_dir: &Path, encrypt: bool) -> AuthService {
-    match crate::core::runtime::CoreContext::current_embedder_config().filter(|config| {
-        super::core::state_dir_from_config(config) == state_dir && config.secrets.encrypt == encrypt
-    }) {
+    match super::core::owning_embedder_config(state_dir, encrypt) {
         Some(config) => AuthService::config_document(&config),
         None => AuthService::new(state_dir, encrypt),
     }
