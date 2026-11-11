@@ -1,5 +1,8 @@
 use super::*;
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use crate::sandbox::boxes::OwnerScope;
 
 fn settings() -> BoxSettings {
     BoxSettings {
@@ -178,4 +181,71 @@ fn output_is_passed_through_unchanged() {
             stderr: b"err".to_vec(),
         }
     );
+}
+
+fn config_in(workspace: &str) -> Config {
+    let mut config = Config::default();
+    config.workspace_dir = workspace.into();
+    config
+}
+
+#[tokio::test]
+async fn each_call_reaches_the_module_with_its_own_configuration() {
+    let driver = BusBoxDriver::new(config_in("/first"), BoxBackend::Agent37);
+    assert_eq!(
+        driver.config().workspace_dir,
+        config_in("/first").workspace_dir
+    );
+
+    let seen = driver
+        .serve(&config_in("/second"), async {
+            driver.config().workspace_dir.clone()
+        })
+        .await;
+    assert_eq!(seen, config_in("/second").workspace_dir);
+
+    // Two calls in flight at once each keep their own.
+    let (a, b) = tokio::join!(
+        driver.serve(&config_in("/a"), async {
+            tokio::task::yield_now().await;
+            driver.config().workspace_dir.clone()
+        }),
+        driver.serve(&config_in("/b"), async {
+            tokio::task::yield_now().await;
+            driver.config().workspace_dir.clone()
+        }),
+    );
+    assert_eq!(a, config_in("/a").workspace_dir);
+    assert_eq!(b, config_in("/b").workspace_dir);
+
+    // Work outside any call (the reaper) uses the most recent call's.
+    assert_eq!(driver.config().workspace_dir, config_in("/b").workspace_dir);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_reservation_dropped_before_create_answers_is_abandoned() {
+    let abandoned = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let create = {
+        let abandoned = Arc::clone(&abandoned);
+        async move {
+            let guard = AbandonGuard::new("r-1".to_owned(), move |resource| {
+                abandoned.lock().unwrap().push(resource);
+            });
+            // Create never answers; the caller gives up here.
+            std::future::pending::<()>().await;
+            guard.keep();
+        }
+    };
+
+    let gave_up = tokio::time::timeout(Duration::from_secs(1), create).await;
+
+    assert!(gave_up.is_err());
+    assert_eq!(*abandoned.lock().unwrap(), vec!["r-1".to_owned()]);
+}
+
+#[test]
+fn a_reservation_kept_after_create_answers_is_not_abandoned() {
+    let abandoned = std::cell::Cell::new(false);
+    AbandonGuard::new("r-1", |_| abandoned.set(true)).keep();
+    assert!(!abandoned.get());
 }

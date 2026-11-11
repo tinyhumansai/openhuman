@@ -100,3 +100,13 @@ fn retention_settings_are_read_from_the_table() {
     // Unset fields keep their defaults.
     assert_eq!(config.template, DEFAULT_AGENT37_TEMPLATE);
 }
+
+#[test]
+fn the_retention_namespace_defaults_to_blank_and_can_be_set() {
+    assert_eq!(Agent37RuntimeConfig::default().retention_namespace, "");
+    let config: Agent37RuntimeConfig = toml::from_str("").expect("empty table parses");
+    assert_eq!(config.retention_namespace, "");
+    let config: Agent37RuntimeConfig =
+        toml::from_str("retention_namespace = \"chat-prod\"").expect("parses");
+    assert_eq!(config.retention_namespace, "chat-prod");
+}

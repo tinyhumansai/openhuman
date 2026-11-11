@@ -82,10 +82,10 @@ impl BusBoxDriver {
     /// Run `call` with every step of this driver inside it reaching the
     /// module with `config`, which also becomes the configuration for work
     /// outside any call.
-    pub async fn serve<F: Future>(&self, config: &Config, call: F) -> F::Output {
+    pub fn serve<F: Future>(&self, config: &Config, call: F) -> impl Future<Output = F::Output> {
         let config = Arc::new(config.clone());
         *self.latest.write().unwrap_or_else(PoisonError::into_inner) = Arc::clone(&config);
-        CALL_CONFIG.scope(config, call).await
+        CALL_CONFIG.scope(config, call)
     }
 
     /// The configuration for a step now: the serving call's, or the most

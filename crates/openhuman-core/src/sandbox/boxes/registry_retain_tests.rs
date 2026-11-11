@@ -317,3 +317,71 @@ async fn a_cancelled_command_lets_go_of_its_retained_box_and_the_next_finds_it_a
     assert_eq!(driver.exec_resources(), vec!["box-0", "box-0"]);
     assert_eq!(driver.retentions(), vec![kept_for("u1"), kept_for("u1")]);
 }
+
+fn scope(namespace: &str, workspace: &str) -> OwnerScope {
+    OwnerScope::new(namespace, std::path::Path::new(workspace))
+}
+
+fn scoped(owner_scope: OwnerScope) -> BoxSettings {
+    BoxSettings {
+        owner_scope,
+        ..settings()
+    }
+}
+
+#[test]
+fn the_namespace_and_the_workspace_each_change_the_owner_key() {
+    let tenant = Tenant::default();
+    let scopes = [
+        OwnerScope::default(),
+        scope("", "/home/a/.openhuman/users/u1/workspace"),
+        scope("", "/home/a/.openhuman/users/u2/workspace"),
+        scope("staging", "/srv/workspace"),
+        scope("prod", "/srv/workspace"),
+        // Length-prefixed: moving bytes between the parts is a new scope.
+        scope("prod/", "srv/workspace"),
+    ];
+    let keys: std::collections::HashSet<String> = scopes
+        .iter()
+        .map(|scope| owner_key(scope, &tenant))
+        .collect();
+    assert_eq!(keys.len(), scopes.len());
+    assert_eq!(
+        owner_key(&scope("prod", "/srv/workspace"), &tenant),
+        owner_key(&scope("prod", "/srv/workspace"), &tenant),
+    );
+    let key = owner_key(&scope("prod-eu", "/srv/workspace"), &tenant);
+    assert!(!key.contains("prod") && !key.contains("srv"), "{key}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn equal_tenants_in_two_scopes_never_share_a_retained_box() {
+    let driver = ScriptedDriver::new();
+    let boxes = retaining(&driver, 10);
+    let staging = scope("staging", "/srv/workspace");
+    let prod = scope("prod", "/srv/workspace");
+
+    for owner_scope in [staging.clone(), prod.clone(), staging.clone()] {
+        boxes
+            .exec(&user("u1"), &scoped(owner_scope), &request("pwd"))
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(driver.exec_resources(), vec!["box-0", "box-1", "box-0"]);
+    assert_eq!(boxes.live(), 2);
+    assert_eq!(
+        driver.retentions(),
+        vec![
+            Some(policy().for_owner(owner_key(&staging, &user("u1")))),
+            Some(policy().for_owner(owner_key(&prod, &user("u1")))),
+        ]
+    );
+
+    // Releasing a tenant lets go of its box in every scope.
+    boxes.release(&user("u1")).await;
+    let mut forgotten = driver.forgotten();
+    forgotten.sort();
+    assert_eq!(forgotten, vec!["box-0", "box-1"]);
+    assert_eq!(boxes.live(), 0);
+}

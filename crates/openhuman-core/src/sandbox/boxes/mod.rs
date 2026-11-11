@@ -282,14 +282,7 @@ pub(crate) async fn execute(
             .driver()
             .serve(
                 config,
-                run_command(
-                    registry,
-                    Ok(tenant),
-                    &settings,
-                    command,
-                    extra_env,
-                    timeout,
-                ),
+                run_command(registry, Ok(tenant), &settings, command, extra_env, timeout),
             )
             .await
             .map_err(anyhow::Error::from)
