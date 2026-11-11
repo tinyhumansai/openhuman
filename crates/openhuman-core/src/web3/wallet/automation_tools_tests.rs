@@ -112,6 +112,7 @@ async fn execute_tool_refuses_a_plain_cron_turn_before_touching_the_wallet() {
     .await;
     assert!(result.is_error);
     assert!(result.output().contains("WALLET_POLICY_REFUSED"));
+}
 
 fn token_row(raw: &str) -> super::super::TokenBalanceInfo {
     super::super::TokenBalanceInfo {
