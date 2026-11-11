@@ -520,6 +520,10 @@ mod repl_module_tests;
 #[path = "rpc_scope_tests.rs"]
 mod rpc_scope_tests;
 
+#[cfg(test)]
+#[path = "compact_deadline_tests.rs"]
+mod compact_deadline_tests;
+
 /// Run a typed query inside TinyJuice; cached originals stay inside the module.
 pub async fn query(
     ctx: &DispatchCtx,
