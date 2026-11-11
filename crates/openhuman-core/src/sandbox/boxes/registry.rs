@@ -244,6 +244,8 @@ impl<D: BoxDriver> Drop for Lease<'_, D> {
 struct Running<D: BoxDriver> {
     driver: Arc<D>,
     retained: bool,
+    cleanups: Arc<Cleanups>,
+    owner: Owner,
     slot: Arc<Slot>,
     resource: Option<String>,
 }
@@ -266,14 +268,17 @@ impl<D: BoxDriver> Drop for Running<D> {
             retained = self.retained,
             "[sandbox:box] command cancelled; letting go of its box"
         );
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        if tokio::runtime::Handle::try_current().is_err() {
             return;
-        };
-        let driver = Arc::clone(&self.driver);
-        let retained = self.retained;
-        // A cleanup of a box this registry no longer tracks, by id; it acts
-        // under no tenant's context, so it carries none.
-        runtime.spawn(async move { let_go_with(driver.as_ref(), retained, &resource).await });
+        }
+        // The box is let go of on a task of its own; the handle is not needed.
+        drop(spawn_let_go(
+            Arc::clone(&self.driver),
+            self.retained,
+            &self.cleanups,
+            &self.owner,
+            resource,
+        ));
     }
 }
 
