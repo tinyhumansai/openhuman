@@ -25,3 +25,7 @@ impl Config {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "secrets_tests.rs"]
+mod tests;

@@ -724,29 +724,3 @@ fn search_contents_cap_env_treats_every_zero_spelling_as_unset() {
     );
     assert_eq!(cfg.search.contents_max_chars, Some(1));
 }
-
-#[test]
-fn secrets_unattended_unlock_env_overrides_the_file() {
-    let mut cfg = Config::default();
-    assert!(!cfg.secrets.unattended_unlock, "off by default");
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new().with("OPENHUMAN_SECRETS_UNATTENDED_UNLOCK", "1"),
-    );
-    assert!(cfg.secrets.unattended_unlock);
-
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new().with("OPENHUMAN_SECRETS_UNATTENDED_UNLOCK", "off"),
-    );
-    assert!(!cfg.secrets.unattended_unlock, "0/off turns a file setting off");
-
-    cfg.secrets.unattended_unlock = true;
-    for ignored in ["", "  ", "maybe"] {
-        cfg.apply_env_overlay_with(
-            &HashMapEnv::new().with("OPENHUMAN_SECRETS_UNATTENDED_UNLOCK", ignored),
-        );
-        assert!(
-            cfg.secrets.unattended_unlock,
-            "{ignored:?} leaves the file setting alone"
-        );
-    }
-}
