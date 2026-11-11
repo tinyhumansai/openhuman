@@ -10,7 +10,7 @@ fn the_setting_off_keeps_the_human_grant_whatever_the_keyring() {
     ] {
         for operator_key in [false, true] {
             assert_eq!(
-                unlock_mode(false, operator_key, backend),
+                unlock_mode(false, false, operator_key, backend),
                 UnlockMode::Interactive,
                 "{backend:?} operator_key={operator_key}"
             );
@@ -21,11 +21,11 @@ fn the_setting_off_keeps_the_human_grant_whatever_the_keyring() {
 #[test]
 fn an_operator_key_on_a_file_keyring_unlocks_unattended() {
     assert_eq!(
-        unlock_mode(true, true, BackendKind::File),
+        unlock_mode(true, false, true, BackendKind::File),
         UnlockMode::Unattended
     );
     assert_eq!(
-        unlock_mode(true, true, BackendKind::EncryptedFile),
+        unlock_mode(true, false, true, BackendKind::EncryptedFile),
         UnlockMode::Unattended
     );
 }
@@ -35,20 +35,34 @@ fn the_setting_is_ignored_without_an_operator_supplied_file_key() {
     // A key the app minted or keeps in the OS keychain is the desktop's: a
     // person still answers.
     assert_eq!(
-        unlock_mode(true, false, BackendKind::EncryptedFile),
+        unlock_mode(true, false, false, BackendKind::EncryptedFile),
         UnlockMode::IgnoredWithoutOperatorKey
     );
     assert_eq!(
-        unlock_mode(true, false, BackendKind::File),
+        unlock_mode(true, false, false, BackendKind::File),
         UnlockMode::IgnoredWithoutOperatorKey
     );
     assert_eq!(
-        unlock_mode(true, true, BackendKind::Host),
+        unlock_mode(true, false, true, BackendKind::Host),
         UnlockMode::IgnoredWithoutOperatorKey
     );
     assert_eq!(
-        unlock_mode(true, true, BackendKind::Memory),
+        unlock_mode(true, false, true, BackendKind::Memory),
         UnlockMode::IgnoredWithoutOperatorKey
+    );
+}
+
+#[test]
+fn a_saas_core_ignores_the_setting() {
+    for backend in [BackendKind::File, BackendKind::EncryptedFile] {
+        assert_eq!(
+            unlock_mode(true, true, true, backend),
+            UnlockMode::IgnoredOnSaas
+        );
+    }
+    assert_eq!(
+        unlock_mode(false, true, true, BackendKind::File),
+        UnlockMode::Interactive
     );
 }
 

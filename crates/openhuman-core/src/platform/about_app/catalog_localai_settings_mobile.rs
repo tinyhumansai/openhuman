@@ -392,4 +392,22 @@ Capability {
         status: CapabilityStatus::Beta,
         privacy: None,
     },
+Capability {
+        id: "security.unattended_secret_unlock",
+        name: "Unattended Config-Secret Unlock",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "Lets a headless openhuman-core serve host read and write encrypted config \
+                      fields (provider API keys) without a person approving the one-time \
+                      \"Unlock configuration secrets\" request, which nobody can answer on a \
+                      server. Honoured only when the operator supplied a usable keyring master key \
+                      (OPENHUMAN_KEYRING_MASTER_KEY or OPENHUMAN_KEYRING_MASTER_KEY_FILE) to a file \
+                      or encrypted_file keyring, and never on a SaaS core; anywhere else a person \
+                      still approves each unlock.",
+        how_to: "Set [secrets] unattended_unlock = true in config.toml, or \
+                 OPENHUMAN_SECRETS_UNATTENDED_UNLOCK=1, alongside an operator-supplied keyring \
+                 master key.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
 ];

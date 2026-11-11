@@ -77,6 +77,12 @@ async fn resolve_user_master_inner(
                     .await
                 }
                 mode => {
+                    if mode == UnlockMode::IgnoredOnSaas {
+                        tracing::warn!(
+                            "[security::unattended_unlock] secrets.unattended_unlock is set but \
+                             this is a SaaS core; asking the user instead"
+                        );
+                    }
                     if mode == UnlockMode::IgnoredWithoutOperatorKey {
                         tracing::warn!(
                             "[security::unattended_unlock] secrets.unattended_unlock is set but the \

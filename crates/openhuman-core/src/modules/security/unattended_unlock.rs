@@ -48,17 +48,25 @@ pub(crate) enum UnlockMode {
     /// `unattended_unlock` is on but the keyring key is not the operator's,
     /// so the setting is ignored and a person approves it.
     IgnoredWithoutOperatorKey,
+    /// `unattended_unlock` is on but this is a SaaS core, whose gate refuses
+    /// a forced approval without an authenticated WebChat route before it can
+    /// park; the setting is ignored and the user approves it in chat.
+    IgnoredOnSaas,
 }
 
 /// The pure decision: the setting, whether the operator supplied the keyring
 /// master key, and the keyring backend in use.
 pub(crate) fn unlock_mode(
     unattended_unlock: bool,
+    saas: bool,
     operator_key_supplied: bool,
     backend: BackendKind,
 ) -> UnlockMode {
     if !unattended_unlock {
         return UnlockMode::Interactive;
+    }
+    if saas {
+        return UnlockMode::IgnoredOnSaas;
     }
     let file_keyring = matches!(backend, BackendKind::File | BackendKind::EncryptedFile);
     if operator_key_supplied && file_keyring {
@@ -79,8 +87,12 @@ pub(crate) fn mode_for(config: &Config) -> UnlockMode {
     }
     // A key variable that is set but unusable (missing file, malformed key)
     // is not an operator key: the file backend never validates it at startup.
+    if crate::core::runtime::is_saas() {
+        return UnlockMode::IgnoredOnSaas;
+    }
     unlock_mode(
         true,
+        false,
         crate::security::secret_storage::encrypted_file_backend::key_source::operator_master_key_supplied(),
         crate::security::secret_storage::store::effective_backend_kind(),
     )
