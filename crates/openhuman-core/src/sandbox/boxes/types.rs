@@ -156,6 +156,7 @@ impl BoxSettings {
             memory_bytes,
             workdir: OPENSHELL_WORKDIR.to_owned(),
             owner_scope: OwnerScope::default(),
+            call: None,
         })
     }
 
