@@ -138,3 +138,7 @@ fn build_cloud_model(
 #[cfg(test)]
 #[path = "managed_embedding_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "managed_embedding_inspection_tests.rs"]
+mod inspection_tests;
