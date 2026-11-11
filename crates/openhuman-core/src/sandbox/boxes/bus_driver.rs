@@ -11,8 +11,10 @@
 //! without deleting anything.
 //!
 //! Each call reaches the module with the configuration of the host call it
-//! serves ([`BusBoxDriver::serve`]), not of whichever call built the
-//! process's registry. A box's close or forget reaches the module with the
+//! serves, not of whichever call built the process's registry:
+//! [`BusBoxDriver::serve`] binds the call's [`BoxSettings`] to it as a
+//! [`BoxCall`], which the registry hands to the create and every exec made
+//! for the call. A box's close or forget reaches the module with the
 //! configuration it was created under, so a later call cannot redirect the
 //! cleanup of an earlier box; work outside any call (the idle reaper) uses the
 //! most recent module-enabled call's.
@@ -28,13 +30,14 @@
 //! [`BoxError::UnknownResource`], which the registry answers with a new box.
 
 use std::collections::HashMap;
-use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 
-use super::{BoxBackend, BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings, Retention};
+use super::{
+    BoxBackend, BoxCall, BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings, Retention,
+};
 use crate::config::Config;
 use crate::modules::tinybox::{self, contract};
 
@@ -58,11 +61,6 @@ pub(crate) const BUS_REPLY_GRACE: Duration = Duration::from_secs(5);
 
 /// Box states that still take commands.
 const LIVE_STATES: &[&str] = &["ready", "running"];
-
-tokio::task_local! {
-    /// The configuration of the host call a driver step runs for.
-    static CALL_CONFIG: Arc<Config>;
-}
 
 /// A [`BoxDriver`] over the TinyBox module, for one backend, reaching the
 /// module with the configuration of the call it serves.
@@ -108,26 +106,34 @@ impl BusBoxDriver {
             .unwrap_or_else(|| self.config())
     }
 
-    /// Run `call` with every step of this driver inside it reaching the
-    /// module with `config`, which also becomes the configuration for work
-    /// outside any call.
-    pub fn serve<F: Future>(&self, config: &Config, call: F) -> impl Future<Output = F::Output> {
-        let config = Arc::new(config.clone());
+    /// Bind `settings` to the host call `config` is for: every driver step
+    /// made with them reaches the module with `config`, which also becomes
+    /// the configuration for work outside any call.
+    pub fn serve(&self, config: &Config, settings: BoxSettings) -> BoxSettings {
+        let call = BoxCall::new(config.clone());
         // A call that has the module switched off must not become the
         // configuration for later cleanups: they would be refused before they
         // reach TinyBox, and the box would be left untracked.
         if config.modules.enabled {
-            *self.latest.write().unwrap_or_else(PoisonError::into_inner) = Arc::clone(&config);
+            *self.latest.write().unwrap_or_else(PoisonError::into_inner) =
+                Arc::clone(call.config());
         }
-        CALL_CONFIG.scope(config, call)
+        BoxSettings {
+            call: Some(call),
+            ..settings
+        }
     }
 
-    /// The configuration for a step now: the serving call's, or the most
-    /// recent call's outside one.
+    /// The configuration for a step serving `call`: that call's, or the most
+    /// recent call's for a step that serves none.
+    pub(crate) fn config_for(&self, call: Option<&BoxCall>) -> Arc<Config> {
+        call.map_or_else(|| self.config(), |call| Arc::clone(call.config()))
+    }
+
+    /// The configuration of the most recent module-enabled call, for work
+    /// outside any call.
     pub(crate) fn config(&self) -> Arc<Config> {
-        CALL_CONFIG.try_with(Arc::clone).unwrap_or_else(|_| {
-            Arc::clone(&self.latest.read().unwrap_or_else(PoisonError::into_inner))
-        })
+        Arc::clone(&self.latest.read().unwrap_or_else(PoisonError::into_inner))
     }
 }
 
@@ -203,7 +209,7 @@ impl BoxDriver for BusBoxDriver {
         settings: &BoxSettings,
         retention: Option<&Retention>,
     ) -> Result<String, BoxError> {
-        let config = self.config();
+        let config = self.config_for(settings.call.as_ref());
         let resource = tinybox::reserve(&config, contract::ReserveRequest::Resource)
             .await
             .map_err(BoxError::Driver)?;
@@ -223,7 +229,7 @@ impl BoxDriver for BusBoxDriver {
     }
 
     async fn exec(&self, resource: &str, exec: &BoxExec) -> Result<BoxOutput, BoxError> {
-        let config = self.config();
+        let config = self.config_for(exec.call.as_ref());
         match tinybox::exec_within(
             &config,
             exec_request(resource, exec),
