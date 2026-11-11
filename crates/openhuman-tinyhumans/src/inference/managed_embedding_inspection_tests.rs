@@ -150,8 +150,14 @@ async fn runtime_embedder_still_enforces_the_egress_guard() {
         .await
         .expect_err("a local-only egress must be refused");
 
+    // The refusal wording depends on whether TinySecurity answered (a
+    // local-only refusal) or was absent (could not confirm); both are the
+    // privacy guard, not the transport or the credential.
     assert!(
-        error.to_string().contains("Local-only privacy mode is active"),
+        error
+            .to_string()
+            .to_lowercase()
+            .contains("privacy mode is active"),
         "{error}"
     );
     assert_eq!(requests.load(Ordering::SeqCst), 0);
