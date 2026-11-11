@@ -191,37 +191,47 @@ fn config_in(workspace: &str) -> Config {
     config
 }
 
-#[tokio::test]
-async fn each_call_reaches_the_module_with_its_own_configuration() {
+#[test]
+fn each_call_reaches_the_module_with_its_own_configuration() {
     let driver = BusBoxDriver::new(config_in("/first"), BoxBackend::Agent37);
+    let none = ModuleConfig::default();
     assert_eq!(
-        driver.config().workspace_dir,
+        driver.config(&none).workspace_dir,
         config_in("/first").workspace_dir
     );
 
-    let seen = driver
-        .serve(&config_in("/second"), async {
-            driver.config().workspace_dir.clone()
-        })
-        .await;
-    assert_eq!(seen, config_in("/second").workspace_dir);
-
-    // Two calls in flight at once each keep their own.
-    let (a, b) = tokio::join!(
-        driver.serve(&config_in("/a"), async {
-            tokio::task::yield_now().await;
-            driver.config().workspace_dir.clone()
-        }),
-        driver.serve(&config_in("/b"), async {
-            tokio::task::yield_now().await;
-            driver.config().workspace_dir.clone()
-        }),
+    // Two calls interleaved each keep their own, whatever ran last.
+    let a = ModuleConfig::new(&config_in("/a"));
+    let b = ModuleConfig::new(&config_in("/b"));
+    assert_eq!(
+        driver.config(&a).workspace_dir,
+        config_in("/a").workspace_dir
     );
-    assert_eq!(a, config_in("/a").workspace_dir);
-    assert_eq!(b, config_in("/b").workspace_dir);
+    assert_eq!(
+        driver.config(&b).workspace_dir,
+        config_in("/b").workspace_dir
+    );
+    assert_eq!(
+        driver.config(&a).workspace_dir,
+        config_in("/a").workspace_dir
+    );
 
     // Work outside any call (the reaper) uses the most recent call's.
-    assert_eq!(driver.config().workspace_dir, config_in("/b").workspace_dir);
+    assert_eq!(
+        driver.config(&none).workspace_dir,
+        config_in("/a").workspace_dir
+    );
+}
+
+#[test]
+fn module_config_compares_by_identity_and_never_prints_the_configuration() {
+    let one = ModuleConfig::new(&config_in("/secret-path"));
+    assert_eq!(one, one.clone());
+    assert_ne!(one, ModuleConfig::new(&config_in("/secret-path")));
+    assert_ne!(one, ModuleConfig::default());
+    assert_eq!(ModuleConfig::default(), ModuleConfig::default());
+    assert!(!format!("{one:?}").contains("secret-path"));
+    assert!(ModuleConfig::default().get().is_none());
 }
 
 #[tokio::test(start_paused = true)]

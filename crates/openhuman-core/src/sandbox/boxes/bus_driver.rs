@@ -30,7 +30,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use super::{BoxBackend, BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings, ModuleConfig, Retention};
+use super::{
+    BoxBackend, BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings, ModuleConfig, Retention,
+};
 use crate::config::Config;
 use crate::modules::tinybox::{self, contract};
 
@@ -176,9 +178,12 @@ impl BoxDriver for BusBoxDriver {
     }
 
     async fn close(&self, resource: &str) -> Result<(), BoxError> {
-        tinybox::close(&self.config(&ModuleConfig::default()), contract::ResourceId(resource.to_owned()))
-            .await
-            .map_err(BoxError::Driver)
+        tinybox::close(
+            &self.config(&ModuleConfig::default()),
+            contract::ResourceId(resource.to_owned()),
+        )
+        .await
+        .map_err(BoxError::Driver)
     }
 
     async fn forget(&self, resource: &str) -> Result<(), BoxError> {

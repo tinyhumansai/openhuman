@@ -57,9 +57,9 @@ pub use bus_driver::BusBoxDriver;
 pub use files::{read_file_in, write_file_in, MAX_FILE_BYTES};
 pub use registry::{owner_key, BoxRegistry};
 pub use types::{
-    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, ModuleConfig, OwnerScope, RegistryLimits,
-    RetainPolicy, Retention, AGENT37_WORKDIR, MAX_IDLE_SLEEP_SECS, MIN_IDLE_SLEEP_SECS,
-    OPENSHELL_WORKDIR,
+    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, ModuleConfig, OwnerScope,
+    RegistryLimits, RetainPolicy, Retention, AGENT37_WORKDIR, MAX_IDLE_SLEEP_SECS,
+    MIN_IDLE_SLEEP_SECS, OPENSHELL_WORKDIR,
 };
 
 use super::types::{SandboxBackendKind, SandboxExecResult};
@@ -279,7 +279,8 @@ pub(crate) async fn execute(
         let tenant = tenant_for_box(ctx.tenant())?;
         let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        run_command(registry, Ok(tenant), &settings, command, extra_env, timeout).await
+        run_command(registry, Ok(tenant), &settings, command, extra_env, timeout)
+            .await
             .map_err(anyhow::Error::from)
     }
     #[cfg(not(feature = "modules"))]
