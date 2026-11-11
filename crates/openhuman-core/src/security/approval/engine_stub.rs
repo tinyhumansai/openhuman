@@ -78,6 +78,9 @@ pub(crate) struct StubEngine {
     /// answers, so a test can drop the caller while either is in flight.
     hold_after_delivery: AtomicBool,
     hold_decides: AtomicBool,
+    /// Make `decide` wait for this signal, as the native engine waits for the
+    /// parked call's check to release its subject's stream.
+    decide_waits_for: Mutex<Option<Arc<tokio::sync::Notify>>>,
     /// The durable flow trust the module keeps: `(flow, tool)` pairs.
     trust: Mutex<std::collections::BTreeSet<(String, String)>>,
     /// Durable whole-tool trust keyed by the exact tenant and posture variant.
@@ -179,6 +182,14 @@ impl StubEngine {
     /// Hold every `decide` until the caller drops it.
     pub(crate) fn hold_decides(&self, hold: bool) {
         self.hold_decides.store(hold, Ordering::SeqCst);
+    }
+
+    /// Make every later `decide` wait until `signal` is notified.
+    pub(crate) fn decide_waits_for(&self, signal: Arc<tokio::sync::Notify>) {
+        *self
+            .decide_waits_for
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(signal);
     }
 
     pub(crate) fn fail_reserve(&self, fail: bool) {
@@ -382,6 +393,14 @@ impl ApprovalEngine for StubEngine {
     ) -> Result<Decided, EngineError> {
         if self.hold_decides.load(Ordering::SeqCst) {
             std::future::pending::<()>().await;
+        }
+        let signal = self
+            .decide_waits_for
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(signal) = signal {
+            signal.notified().await;
         }
         let now = now_ms();
         self.with(request_id, |row| {

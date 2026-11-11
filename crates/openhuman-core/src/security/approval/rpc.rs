@@ -19,6 +19,19 @@ use super::types::{
 /// writing unbounded rows.
 const MAX_PREAUTHORIZE_TOOLS: usize = 100;
 
+/// Apply a decision for `tenant` without blocking the calling runtime.
+///
+/// RED stub: decides inline.
+pub(crate) async fn decide_off_the_caller_runtime(
+    gate: std::sync::Arc<ApprovalGate>,
+    tenant: crate::core::runtime::Tenant,
+    agent: Option<String>,
+    request_id: String,
+    decision: ApprovalDecision,
+) -> anyhow::Result<Option<PendingApproval>> {
+    gate.decide_as(&tenant, agent.as_deref(), &request_id, decision)
+}
+
 /// Read the host-aware approval-gate boot decision so the UI banner can
 /// render the right state on first paint (rather than waiting for a
 /// connected socket subscriber to catch a transient boot-time event).
@@ -264,7 +277,14 @@ pub async fn approval_decide(
         );
         anyhow!(error)
     })?;
-    let decided = gate.decide_as(&tenant, agent_id, request_id, decision);
+    let decided = decide_off_the_caller_runtime(
+        gate,
+        tenant,
+        agent_id.map(str::to_owned),
+        request_id.to_owned(),
+        decision,
+    )
+    .await;
     let decided = match decided {
         Ok(row) => row,
         Err(err) => {
