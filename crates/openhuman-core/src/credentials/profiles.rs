@@ -8,7 +8,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-mod backend;
 mod keychain;
 #[cfg(test)]
 pub(crate) use keychain::namespaced_keyring_name;
@@ -213,8 +212,6 @@ fn user_id_from_state_dir(state_dir: &Path) -> String {
 
 #[derive(Clone)]
 pub struct AuthProfilesStore {
-    /// The credential directory (`config_path`'s parent) this store serves.
-    state_dir: PathBuf,
     path: PathBuf,
     legacy_path: PathBuf,
     lock_path: PathBuf,

@@ -74,19 +74,7 @@ async fn load_profile_with_keyring(
         .config_path
         .parent()
         .ok_or(ReadOnlyAuthProfileError::Unavailable)?;
-    // A SaaS tenant's document lives on the storage backend; a tenant's store
-    // outside its own scope is refused, not read from a local file.
-    let backend_bytes = match super::backend::document_for(state_dir) {
-        Ok(Some(document)) => document
-            .get()
-            .map_err(|_| ReadOnlyAuthProfileError::Unavailable)?
-            .map(|(value, _)| value.to_vec()),
-        Ok(None) => None,
-        Err(_) => return Err(ReadOnlyAuthProfileError::Unavailable),
-    };
-    let bytes = if let Some(bytes) = backend_bytes {
-        bytes
-    } else {
+    let bytes = {
         let path = super::profiles_file(state_dir);
         if path.exists() {
             let directory = path.parent().ok_or(ReadOnlyAuthProfileError::Unavailable)?;
