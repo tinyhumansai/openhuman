@@ -96,7 +96,15 @@ impl ApprovalGate {
         // A SaaS tenant's own secret master grant with nobody to ask
         // (`gate_saas_grant.rs`).
         if let Some(decided) = self
-            .saas_host_grant_outcome(&dispatch, saas, saas_human_approval, forced, tool_name, action_summary, &args_redacted)
+            .saas_host_grant_outcome(
+                &dispatch,
+                saas,
+                saas_human_approval,
+                forced,
+                tool_name,
+                action_summary,
+                &args_redacted,
+            )
             .await
         {
             return decided;
@@ -104,13 +112,7 @@ impl ApprovalGate {
         // Deployment-allowlisted tools retain their audited automatic path.
         // A rejected tool can reach the normal approval engine only when this
         // exact SaaS WebChat turn has an authenticated, routable user surface.
-        match saas_outcome_with(
-            &dispatch,
-            saas,
-            &origin,
-            forced,
-            tool_name,
-        ) {
+        match saas_outcome_with(&dispatch, saas, &origin, forced, tool_name) {
             Some(GateOutcome::Allow) => {
                 return self
                     .saas_approved(
