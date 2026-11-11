@@ -8,7 +8,7 @@ The host builds a plan request from trusted command, environment, runtime and
 caller facts, asks TinySecurity for a plan, then passes the admitted artifact to
 the selected TinyBox executor. A missing module, refused plan or failed
 consumption denies execution. OpenHuman maps the module results to the existing
-`None`, `Local`, `Docker` or `OpenShell` routing and status contracts; it does
+`None`, `Local`, `Docker`, `OpenShell` or `Agent37` routing and status contracts; it does
 not duplicate the protected-path or credential-root policy.
 
 `[security.sandbox] backend = "openshell"` routes a command to the tenant's own
