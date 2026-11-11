@@ -401,27 +401,28 @@ impl<D: BoxDriver> BoxRegistry<D> {
     /// another box.
     pub async fn release(&self, tenant: &Tenant) {
         let mut resources = Vec::new();
-        self.entries().retain(|(_, owner), entry| {
+        self.entries().retain(|(scope, owner), entry| {
             if owner != tenant {
                 return true;
             }
-            resources.extend(entry.slot.retire());
+            let key = (scope.clone(), owner.clone());
+            resources.extend(entry.slot.retire().map(|resource| (key.clone(), resource)));
             false
         });
-        for resource in resources {
-            self.let_go(&resource).await;
+        for (owner, resource) in resources {
+            self.let_go(&owner, &resource).await;
         }
     }
 
     /// Let go of every box: closed, or forgotten when retained.
     pub async fn shutdown(&self) {
-        let resources: Vec<String> = self
+        let resources: Vec<(Owner, String)> = self
             .entries()
             .drain()
-            .filter_map(|(_, entry)| entry.slot.retire())
+            .filter_map(|(owner, entry)| entry.slot.retire().map(|resource| (owner, resource)))
             .collect();
-        for resource in resources {
-            self.let_go(&resource).await;
+        for (owner, resource) in resources {
+            self.let_go(&owner, &resource).await;
         }
     }
 
