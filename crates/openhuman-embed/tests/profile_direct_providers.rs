@@ -236,11 +236,20 @@ async fn scenario() {
             .chat("t2", "use the canonical name")
             .await
             .expect("a refused unknown tool is a tool error, not a failed turn");
+        let tool_results: Vec<String> = chat_requests(&chat).await[requests_before..]
+            .iter()
+            .flat_map(|request| {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                body["messages"].as_array().cloned().unwrap_or_default()
+            })
+            .filter(|message| message["role"] == "tool")
+            .map(|message| message["content"].to_string())
+            .collect();
         assert!(
-            chat_requests(&chat).await[requests_before..].iter().any(|request| {
-                String::from_utf8_lossy(&request.body).contains("Tool 'web_search_tool' is not available in this session")
-            }),
-            "a canonical role name is not callable"
+            tool_results
+                .iter()
+                .any(|content| content.contains("Tool 'web_search_tool' is not available in this session")),
+            "a canonical role name is not callable: {tool_results:?}"
         );
         assert_eq!(exa.received_requests().await.unwrap().len(), exa_before);
     }
