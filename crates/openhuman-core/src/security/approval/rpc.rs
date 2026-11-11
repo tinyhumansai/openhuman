@@ -39,7 +39,7 @@ pub(crate) async fn decide_off_the_caller_runtime(
         decision = decision.as_str(),
         "[rpc:approval_decide] deciding on a blocking thread"
     );
-    tokio::task::spawn_blocking(move || {
+    crate::core::runtime::DispatchCtx::ambient().spawn_blocking(move || {
         gate.decide_as(&tenant, agent.as_deref(), &request_id, decision)
     })
     .await
