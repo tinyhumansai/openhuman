@@ -331,15 +331,20 @@ impl<D: BoxDriver> BoxRegistry<D> {
         let lease = self
             .check_out((settings.owner_scope.clone(), tenant.clone()))
             .await?;
+        // One command at a time per box: a command queued behind another arms
+        // nothing until it runs, so cancelling it cannot close the box the
+        // running command is using.
+        let slot = Arc::clone(&lease.slot);
+        let _turn = slot.exec_gate.lock().await;
         let mut replaced = false;
         loop {
-            let resource = self
-                .resource_for(&lease.owner, &lease.slot, settings)
-                .await?;
+            let resource = self.resource_for(&lease.owner, &slot, settings).await?;
             let running = Running {
                 driver: Arc::clone(&self.driver),
                 retained: self.limits.retain.is_some(),
-                slot: Arc::clone(&lease.slot),
+                cleanups: Arc::clone(&self.cleanups),
+                owner: lease.owner.clone(),
+                slot: Arc::clone(&slot),
                 resource: Some(resource.clone()),
             };
             let outcome = self.run(&resource, settings, request).await;
@@ -351,16 +356,16 @@ impl<D: BoxDriver> BoxRegistry<D> {
                         timeout_secs = whole_seconds(request.timeout),
                         "[sandbox:box] box did not answer by the deadline; letting it go"
                     );
-                    lease.slot.forget(&resource);
-                    self.let_go(&resource).await;
+                    slot.forget(&resource);
+                    self.let_go(&lease.owner, &resource).await;
                     return Ok(backstop_timed_out(request.timeout));
                 }
                 Err(BoxError::UnknownResource) => {
                     // "Gone" is inferred after a failed exec, so the box may
                     // still exist on the gateway: let go of it rather than
                     // leak it (a retained box is only forgotten).
-                    lease.slot.forget(&resource);
-                    self.let_go(&resource).await;
+                    slot.forget(&resource);
+                    self.let_go(&lease.owner, &resource).await;
                     if replaced {
                         return Err(BoxError::UnknownResource);
                     }
