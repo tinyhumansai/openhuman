@@ -414,6 +414,16 @@ fn backstop_timed_out(timeout: Duration) -> SandboxExecResult {
     }
 }
 
+/// The opaque key a retaining backend keeps `tenant`'s box under.
+pub fn owner_key(tenant: &Tenant) -> String {
+    let _ = tenant;
+    String::new()
+}
+
 #[cfg(test)]
 #[path = "registry_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "registry_retain_tests.rs"]
+mod retain_tests;
