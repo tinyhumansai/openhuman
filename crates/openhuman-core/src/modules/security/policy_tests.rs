@@ -201,6 +201,25 @@ fn secret_authority_admits_concurrent_work_across_tenants() {
     assert!(limits.max_in_flight > tinysecurity_bus::SecretLimits2::default().max_in_flight);
 }
 
+/// Every encrypted credential read is one secret cipher operation, and every
+/// agent of a runtime shares its config directory's registration, so the
+/// per-registration rate is sized at the contract ceiling: the default of 120
+/// refused a busy runtime's API-key reads within a second.
+#[test]
+fn secret_authority_rate_admits_a_busy_runtimes_credential_reads() {
+    let module =
+        module_config_for_secret_authority(&Config::default(), Some(":1.42".into()), None).unwrap();
+    let limits = module
+        .secret
+        .expect("the secret authority is enabled")
+        .limits;
+    assert_eq!(limits.operations_per_minute, 4096, "the contract's maximum");
+    assert!(
+        limits.operations_per_minute
+            > tinysecurity_bus::SecretLimits2::default().operations_per_minute
+    );
+}
+
 /// More tenants than the single-scope default budget unlock their config
 /// secrets at the same moment, and every one of them is admitted: a tenant's
 /// master grant is never refused because other tenants hold work in flight.
