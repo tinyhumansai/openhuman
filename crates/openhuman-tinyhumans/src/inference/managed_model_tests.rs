@@ -285,10 +285,7 @@ async fn managed_bearer_never_reads_through_a_config_for_another_directory() {
         .resolve_bearer("http://127.0.0.1:9/openai/v1")
         .await
         .expect_err("another directory must not read the tenant's session");
-    assert!(
-        error.to_string().contains("No backend session"),
-        "{error}"
-    );
+    assert!(error.to_string().contains("No backend session"), "{error}");
 }
 
 #[tokio::test]
