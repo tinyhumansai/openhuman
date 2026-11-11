@@ -629,15 +629,28 @@ impl<D: BoxDriver> BoxRegistry<D> {
     /// (its backend keeps it, asleep), close any other. A failure is logged.
     /// The cleanup runs on its own task and is awaited here, so a caller
     /// dropped meanwhile still leaves the cleanup to finish.
-    async fn let_go(&self, owner: &Owner, resource: &str) {
-        let handle = spawn_let_go(
-            Arc::clone(&self.driver),
-            self.limits.retain.is_some(),
-            &self.cleanups,
-            owner,
-            resource.to_owned(),
-        );
-        if let Err(error) = handle.await {
+    /// Spawn the cleanups of detached boxes, each on its own task. Must be
+    /// called from within the runtime.
+    fn schedule(&self, detached: Vec<Detached>) -> Vec<tokio::task::JoinHandle<()>> {
+        let runtime = tokio::runtime::Handle::current();
+        let retained = self.limits.retain.is_some();
+        detached
+            .into_iter()
+            .map(|detached| spawn_detached(&self.driver, retained, &runtime, detached))
+            .collect()
+    }
+
+    /// Let go of detached boxes and wait for each cleanup to finish. They are
+    /// all scheduled before the first await, so a caller dropped meanwhile
+    /// still leaves every cleanup to run.
+    async fn let_go_all(&self, detached: Vec<Detached>) {
+        for handle in self.schedule(detached) {
+            self.log_cleanup(handle.await);
+        }
+    }
+
+    fn log_cleanup(&self, outcome: Result<(), tokio::task::JoinError>) {
+        if let Err(error) = outcome {
             tracing::warn!(%error, "[sandbox:box] a box cleanup task ended abnormally");
         }
     }
