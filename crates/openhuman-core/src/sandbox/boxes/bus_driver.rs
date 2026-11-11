@@ -146,6 +146,27 @@ fn close_abandoned(config: Arc<Config>, resource: contract::ResourceId) {
     });
 }
 
+/// Settle a create's answer against its reservation. A created box is handed
+/// to the registry and the reservation disarmed. A failed create keeps the
+/// reservation armed, so it is closed on drop: the module may have kept the
+/// allocation even though the create reported an error, and the registry holds
+/// no id for it to clean up later.
+pub(crate) fn settle_create<T, F: FnOnce(T)>(
+    reservation: AbandonGuard<T, F>,
+    created: Result<contract::ResourceInfo, String>,
+) -> Result<String, BoxError> {
+    match created {
+        Ok(info) => {
+            reservation.keep();
+            Ok(info.resource.0)
+        }
+        Err(error) => {
+            drop(reservation);
+            Err(BoxError::Driver(error))
+        }
+    }
+}
+
 #[async_trait]
 impl BoxDriver for BusBoxDriver {
     async fn create(
