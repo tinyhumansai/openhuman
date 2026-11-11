@@ -210,6 +210,44 @@ async fn managed_bearer_resolves_exp_less_hosted_app_sessions() {
     );
 }
 
+/// Sign-in (`auth.set_credential`) stores the app session through the
+/// config-bound store, which under `security-module` keeps the token in the
+/// keyring and clears it from the profile document. The managed model built for
+/// that config must read the session through the same store; a directory-only
+/// store sees no token and every turn failed with "No backend session".
+#[tokio::test]
+async fn managed_bearer_reads_the_session_sign_in_stored_through_the_config() {
+    use openhuman_embed::__host::config::Config;
+    use openhuman_embed::__host::credentials::{
+        AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
+    };
+
+    let tmp = tempfile::TempDir::new().expect("temporary credentials");
+    let config = Config {
+        config_path: tmp.path().join("config.toml"),
+        workspace_dir: tmp.path().join("workspace"),
+        ..Config::default()
+    };
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "signed.in.jwt",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .await
+        .expect("sign-in stores the app session through the config");
+
+    assert_eq!(
+        super::super::managed_options(&config)
+            .resolve_bearer("http://127.0.0.1:9/openai/v1")
+            .await
+            .expect("the managed model reads the signed-in session"),
+        "signed.in.jwt"
+    );
+}
+
 #[tokio::test]
 async fn managed_api_key_precedes_an_expired_app_session() {
     let tmp = tempfile::TempDir::new().expect("temporary credentials");
