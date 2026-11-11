@@ -4,6 +4,8 @@ use crate::storage::sessions::splice_fixture_tests::{head_of, memory_locator};
 use async_trait::async_trait;
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 
+static TRACEDIAG_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
 struct GatedRepairModel {
     calls: std::sync::atomic::AtomicUsize,
     total_calls: std::sync::atomic::AtomicUsize,
@@ -31,6 +33,7 @@ impl ChatModel<()> for GatedRepairModel {
     ) -> tinyinference_llm::Result<ModelResponse> {
         self.total_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        eprintln!("TRACEDIAG model invoke at {:?}", TRACEDIAG_START.get().map(|s| s.elapsed()));
         self.user_messages.lock().unwrap().extend(
             request
                 .messages
@@ -67,6 +70,8 @@ async fn cancellation_during_required_output_repair_finalizes_native_run() {
     use tinyagents_harness::terminal::TerminalReason;
     use tinyagents_harness::HarnessStatusStore;
 
+    let _ = TRACEDIAG_START.set(std::time::Instant::now());
+    let _scan = crate::security::prompt_injection::install_allowing_prompt_scan();
     let scratch = tempfile::tempdir().expect("isolated workspace");
     let workspace = scratch.path().join("workspace");
     let mut config = crate::config::Config::default();
@@ -120,6 +125,7 @@ async fn cancellation_during_required_output_repair_finalizes_native_run() {
     .collect();
     let input = format!("hello using this synthetic credential: {secret}");
     let redacted = tinyinference_core::sanitize::scrub_credentials(&input);
+    eprintln!("TRACEDIAG turn spawned at {:?}", TRACEDIAG_START.get().map(|s| s.elapsed()));
     let turn = tokio::spawn(crate::core::runtime::CoreContext::scope(
         Arc::clone(&core),
         async move { host.run_single_with_origin(&input, Some(origin)).await },
