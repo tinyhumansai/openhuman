@@ -41,15 +41,23 @@ async fn resolve_user_master_inner(
     registration_id: &str,
     existing_key: Option<(&super::secret_backend::SecretBackend, &str)>,
 ) -> Result<String, SecurityError> {
-    let gate = crate::security::approval::ApprovalGate::try_global()
-        .ok_or_else(|| SecurityError::Unavailable("secret approval unavailable".into()))?;
-    let outcome = gate
-        .intercept_forced(
-            MASTER_GRANT_TOOL,
-            "Unlock configuration secrets",
-            serde_json::json!({"registration_id": registration_id}),
-        )
-        .await;
+    #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
+    let answered = super::test_host::answer_master_grant(MASTER_GRANT_TOOL, registration_id).await;
+    #[cfg(not(any(test, feature = "e2e-test-support", feature = "test-keyring-consent")))]
+    let answered = None;
+    let outcome = match answered {
+        Some(outcome) => outcome,
+        None => {
+            let gate = crate::security::approval::ApprovalGate::try_global()
+                .ok_or_else(|| SecurityError::Unavailable("secret approval unavailable".into()))?;
+            gate.intercept_forced(
+                MASTER_GRANT_TOOL,
+                "Unlock configuration secrets",
+                serde_json::json!({"registration_id": registration_id}),
+            )
+            .await
+        }
+    };
     if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
         crate::security::approval::native::forget_secret_grant(registration_id);
         tracing::warn!(

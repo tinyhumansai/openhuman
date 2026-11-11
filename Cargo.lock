@@ -5996,6 +5996,7 @@ dependencies = [
  "directories",
  "futures",
  "log",
+ "openhuman",
  "openhuman-embed",
  "parking_lot",
  "reqwest 0.12.28",
@@ -10387,7 +10388,7 @@ dependencies = [
 
 [[package]]
 name = "tinysecurity-bus"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",

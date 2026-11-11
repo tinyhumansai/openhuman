@@ -3,8 +3,8 @@ use serde_json::json;
 
 use super::super::session_expiry::is_session_expired_error;
 use super::{
-    default_state, invoke_method, request_session_failure_is_actionable,
-    translate_local_session_error,
+    default_state, invoke_method, request_session_failure_is_actionable, session_failure_outcome,
+    translate_local_session_error, SessionFailureOutcome,
 };
 
 #[tokio::test]
@@ -228,6 +228,75 @@ fn rpc_expiry_requires_matching_request_time_credential_provenance() {
         Some(&request_fingerprint),
         Some("request-token"),
     ));
+}
+
+/// A signed-out core (no stored session, no API key) answers a hosted call
+/// with a local pre-flight refusal. No credential was sent, so there is no
+/// provenance to verify and nothing to sign out: the original error, with its
+/// sign-in hint, must reach the caller untouched and no expiry is published.
+#[test]
+fn signed_out_preflight_refusal_passes_through_untouched() {
+    for error in [
+        "no backend session token; run auth_store_session first",
+        "composio unavailable: no backend session token. Sign in or set a TinyHumans API key.",
+    ] {
+        assert!(is_session_expired_error(error), "{error}");
+        assert_eq!(
+            session_failure_outcome(error, false, false, None, None),
+            SessionFailureOutcome::PassThrough,
+            "{error}"
+        );
+    }
+}
+
+/// A credential that existed keeps the fail-closed rewrites: generic
+/// dispatch cannot prove which token received a downstream 401.
+#[test]
+fn stored_credentials_keep_session_failure_rewrites() {
+    let error = "SESSION_EXPIRED: backend rejected session token";
+    let reason_of = |outcome| match outcome {
+        SessionFailureOutcome::Replace { reason, message } => {
+            assert!(!is_session_expired_error(&message), "{message}");
+            reason
+        }
+        other => panic!("expected a replaced error, got {other:?}"),
+    };
+    assert_eq!(
+        reason_of(session_failure_outcome(
+            error,
+            false,
+            false,
+            None,
+            Some("header.payload.signature")
+        )),
+        "credential_provenance_unavailable"
+    );
+    assert_eq!(
+        reason_of(session_failure_outcome(error, false, true, None, None)),
+        "api_key_credential"
+    );
+    assert_eq!(
+        reason_of(session_failure_outcome(
+            error,
+            true,
+            false,
+            None,
+            Some("header.payload.local")
+        )),
+        "local_offline_credential"
+    );
+    let fingerprint =
+        crate::credentials::backend_credential::credential_fingerprint("request-token");
+    assert_eq!(
+        session_failure_outcome(
+            error,
+            false,
+            false,
+            Some(&fingerprint),
+            Some("request-token")
+        ),
+        SessionFailureOutcome::PublishExpiry
+    );
 }
 
 /// #8081: a Memory tab on a plan without memory got `403 MEMORY_PLAN_REQUIRED`

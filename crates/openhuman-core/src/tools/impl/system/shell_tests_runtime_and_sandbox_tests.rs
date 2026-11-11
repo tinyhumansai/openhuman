@@ -6,8 +6,8 @@ async fn shell_blocks_rate_limited() {
     let security = Arc::new(SecurityPolicy {
         autonomy: AutonomyLevel::Supervised,
         max_actions_per_hour: 0,
-        workspace_dir: std::env::temp_dir(),
-        action_dir: std::env::temp_dir(),
+        workspace_dir: test_workdir(),
+        action_dir: test_workdir(),
         ..SecurityPolicy::default()
     });
     let tool = ShellTool::new(security, test_runtime(), test_audit());
@@ -18,6 +18,7 @@ async fn shell_blocks_rate_limited() {
 
 #[tokio::test]
 async fn shell_uses_host_node_and_python_from_path() {
+    let _storage = native_shell_storage();
     for (binary, command, expected) in [
         ("node", "node -e 'console.log(1)'", "1"),
         ("python3", "python3 -c 'print(1)'", "1"),

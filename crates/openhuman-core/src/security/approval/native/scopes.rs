@@ -192,6 +192,12 @@ impl ScopeEntry {
         Ok(())
     }
 
+    /// Forget the module's registration of this subject after it was retired,
+    /// so the next registration starts from `RegisterApprovalScope2`.
+    pub(super) async fn forget_registration(&self) {
+        *self.registered.lock().await = None;
+    }
+
     /// Register through the exact callback binding used to initialize the
     /// module, keeping API calls and host callbacks on one authenticated peer.
     pub(super) async fn register_with_callback(
@@ -272,19 +278,6 @@ pub(super) async fn ensure(
     generation: u64,
 ) -> Result<Arc<ScopeEntry>, String> {
     ensure_with_registration(config, proxy, subject, posture, generation, false).await
-}
-
-/// Register a scope that TinySecurity already created from module init config.
-/// Its init-time scope has no audit stream, so attach the persisted stream with
-/// `ReplaceApprovalScope2` on first use.
-pub(super) async fn ensure_preconfigured(
-    config: &Config,
-    proxy: &SecurityProxy,
-    subject: SubjectScope,
-    posture: &Posture,
-    generation: u64,
-) -> Result<Arc<ScopeEntry>, String> {
-    ensure_with_registration(config, proxy, subject, posture, generation, true).await
 }
 
 async fn ensure_with_registration(

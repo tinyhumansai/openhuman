@@ -8,10 +8,6 @@
     "log"
   ],
   [
-    "email",
-    "security_scrub"
-  ],
-  [
     "github_pat",
     "log"
   ],

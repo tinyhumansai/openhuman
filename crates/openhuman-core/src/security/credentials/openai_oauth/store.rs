@@ -209,6 +209,16 @@ fn try_refresh_oauth_token(refresh: &str) -> Result<OAuthTokenSet, String> {
     };
     let refresh = refresh.to_string();
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        // `block_in_place` panics on a current-thread runtime, and a refresh
+        // that would have to block the only worker could never finish. Refuse
+        // instead, as the no-runtime case does, so the caller reports an
+        // expired session rather than aborting its task.
+        if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
+            return Err(
+                "a multi-thread tokio runtime is required to refresh openai oauth token"
+                    .to_string(),
+            );
+        }
         // `block_in_place` lets the multi-thread runtime move other tasks off this
         // worker before we synchronously drive the refresh future, avoiding a
         // deadlock when this lookup is reached from inside an async caller.

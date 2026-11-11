@@ -20,6 +20,11 @@ pub(super) fn decision(caller_agent: &str) -> Option<bool> {
     if caller_agent != CREDENTIAL_STORE {
         return None;
     }
+    configured_answer()
+}
+
+/// The answer the environment selects for this test build.
+pub(crate) fn configured_answer() -> Option<bool> {
     match std::env::var("OPENHUMAN_TEST_KEYRING_CONSENT").as_deref() {
         Ok("approve") => Some(true),
         Ok("deny") => Some(false),

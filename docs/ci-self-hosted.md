@@ -87,7 +87,10 @@ for any commit without posting it.
 ## Job groups
 
 Lanes are grouped into jobs sized for 4-core, ~14 GB runners: `checks`,
-`rust-lint` (lint and gates-off in turn), `rust-cov`, `tauri` and `pester`.
+`rust-lint` (lint and gates-off in turn), `rust-cov-core`, `rust-cov-product`,
+`rust-cov-facades` and `rust-cov-tui` (the `rust-cov` lane in four jobs, each a whole
+section of `scripts/ci/rust-coverage.sh`, picked by `OH_COV_SHARD`; the gate merges their
+lcov files and fails if any is missing), `tauri` and `pester`.
 Groups whose areas are untouched don't start.
 
 ## Measuring

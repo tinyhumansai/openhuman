@@ -41,13 +41,9 @@ fn agent_test_config(tmp: &tempfile::TempDir) -> Config {
     config.default_model = Some("test/session-fixture".to_string());
     config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
-    let fixture_config = config.clone();
-    crate::storage::block_on_anyhow(async move {
-        crate::agent::session_host::test_support::install_managed_model_fixture(&fixture_config)
-            .await;
-        Ok(())
-    })
-    .expect("install managed model fixture");
+    // Not on the storage bridge: persisting the fixture credential uses that
+    // bridge itself and refuses to be re-entered from its own runtime.
+    crate::agent::session_host::test_support::install_managed_model_fixture_sync(&config);
     config
 }
 

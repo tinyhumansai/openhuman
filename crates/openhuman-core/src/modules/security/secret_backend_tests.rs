@@ -100,3 +100,36 @@ fn malformed_hex_key_cannot_arm_a_read_or_write() {
     assert!(backend.existing_master_read.lock().is_none());
     assert!(backend.pending_targets.lock().is_empty());
 }
+
+/// The binding serves one backend object for every tenant: a callback naming
+/// a registration the host never routed, or one it retired, is denied.
+#[tokio::test]
+async fn the_router_denies_registrations_it_does_not_route() {
+    let backends = SecretBackends::empty();
+    let tenant = std::sync::Arc::new(backend());
+    backends.add(std::sync::Arc::clone(&tenant)).unwrap();
+    assert!(
+        backends.add(std::sync::Arc::new(backend())).is_err(),
+        "a registration keeps the backend it was routed with"
+    );
+
+    let mut unknown = identity();
+    unknown.registration_id = "another-tenant".into();
+    let response = backends
+        .set(SecretBackendSetRequest2 {
+            identity: unknown,
+            encoded: b"key".to_vec(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(response.status, SecretBackendSetStatus2::Denied);
+
+    backends.remove("registration-id");
+    let mut read = identity();
+    read.phase = SecretPhase2::TargetRead;
+    let response = backends
+        .load(SecretBackendLoadRequest2 { identity: read })
+        .await
+        .unwrap();
+    assert_eq!(response.status, SecretBackendLoadStatus2::Denied);
+}

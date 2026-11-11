@@ -139,6 +139,44 @@ fn unscreened_decision(input: &str) -> PromptEnforcementDecision {
     }
 }
 
+/// A unit test's scripted scan answer ([`super::scan_port`]); test-support
+/// builds outside unit tests always scan through TinySecurity.
+#[cfg(all(
+    feature = "security-module",
+    any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+))]
+async fn scripted_scan(
+    _input: &str,
+) -> Option<Result<tinysecurity_bus::ScanPromptScoredResponse2, String>> {
+    #[cfg(test)]
+    {
+        super::scan_port::scripted_scan(_input).await
+    }
+    #[cfg(not(test))]
+    {
+        None
+    }
+}
+
+/// One bounded `ScanPrompt2`; the outer error is the budget running out.
+#[cfg(feature = "security-module")]
+async fn scan_within_budget(
+    config: &crate::config::Config,
+    input: &str,
+) -> Result<Result<tinysecurity_bus::ScanPromptScoredResponse2, String>, tokio::time::error::Elapsed>
+{
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let client = crate::modules::security::client(config)
+            .await
+            .map_err(|error| error.to_string())?;
+        client
+            .scan_prompt2(input.to_owned())
+            .await
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
 /// Screen user or untrusted text through TinySecurity. Missing configuration,
 /// module failure, timeout, and oversized inputs all fail closed as Review,
 /// unless security is disabled or the configuration turns the screen off.
@@ -210,22 +248,53 @@ pub(crate) async fn enforce_prompt_input_with_config(
     if input.len() > MAX_PROMPT_BYTES {
         return held_decision(input, context, "input.oversized");
     }
+    // A test process has no booted host: a fixture with no configuration, or
+    // one that turned modules off, screens through the test host's module.
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let test_host_config = config
+        .is_none_or(|config| !config.modules.enabled)
+        .then(crate::modules::security::test_host::screening_config)
+        .flatten();
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let config = test_host_config.as_ref().or(config);
     let Some(config) = config else {
         return held_decision(input, context, "screen.unavailable");
     };
     #[cfg(not(feature = "security-module"))]
     let _ = config;
-    #[cfg(feature = "security-module")]
-    let scanned = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        let client = crate::modules::security::client(config)
-            .await
-            .map_err(|error| error.to_string())?;
-        client
-            .scan_prompt2(input.to_owned())
-            .await
-            .map_err(|error| error.to_string())
-    })
-    .await;
+    #[cfg(all(
+        feature = "security-module",
+        not(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))
+    ))]
+    let scanned = scan_within_budget(config, input).await;
+    // On the module bus: a test's paused clock would otherwise expire the
+    // budget the moment it waits on another runtime, and a first load is
+    // not what the budget is sized for.
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let scanned = if let Some(answer) = scripted_scan(input).await {
+        Ok(answer)
+    } else {
+        let (config, input) = (config.clone(), input.to_owned());
+        let task = crate::modules::runtime::spawn_on_bus(async move {
+            let _ = crate::modules::security::ensure_loaded(&config).await;
+            scan_within_budget(&config, &input).await
+        });
+        match task {
+            Ok(task) => task
+                .await
+                .unwrap_or_else(|error| Ok(Err(error.to_string()))),
+            Err(error) => Ok(Err(error.to_string())),
+        }
+    };
     #[cfg(not(feature = "security-module"))]
     let scanned: Result<Result<tinysecurity_bus::ScanPromptScoredResponse2, String>, ()> = Err(());
     let response = match scanned {
@@ -329,6 +398,16 @@ pub async fn scan_tool_definition(field: &str, text: &str) -> Option<ToolDefinit
     }
     #[cfg(not(feature = "security-module"))]
     let _ = config;
+    // A test process has no booted host, so no embedder scope names a
+    // configuration to scan under. The test host supplies the one the real
+    // TinySecurity module is admitted with, as `mcp::registry::tools_safe_for_agent`
+    // does; a process without the staged module still has none and fails
+    // closed below.
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let config = config.or_else(crate::modules::security::test_host::screening_config);
     #[cfg(feature = "security-module")]
     let Some(config) = config
     else {
