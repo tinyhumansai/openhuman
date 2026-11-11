@@ -85,6 +85,18 @@ async fn a_failed_secret_encryption_reports_the_field_and_the_reason() {
 #[cfg(feature = "security-module")]
 static HEADLESS_HOST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// These tests load the real TinySecurity module. They run only where the
+/// runner staged it (`OPENHUMAN_TEST_MODULES_STAGED=1`, as CI does), never
+/// downloading it from a clean checkout.
+#[cfg(feature = "security-module")]
+fn native_module_staged() -> bool {
+    let staged = std::env::var("OPENHUMAN_TEST_MODULES_STAGED").as_deref() == Ok("1");
+    if !staged {
+        eprintln!("skipped: the native TinySecurity test module is not staged");
+    }
+    staged
+}
+
 #[cfg(feature = "security-module")]
 const UNATTENDED_FIXTURE_KEY: &str = "local-ai-unattended-fixture-value";
 
@@ -126,6 +138,9 @@ async fn headless_gate(config: &Config) -> std::sync::Arc<crate::security::appro
 #[cfg(feature = "security-module")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unattended_unlock_round_trips_an_encrypted_local_ai_key_without_a_person() {
+    if !native_module_staged() {
+        return;
+    }
     let _serial = HEADLESS_HOST.lock().await;
     let _explicit = crate::modules::security::test_host::explicit_consent();
     let _operator_key = crate::modules::security::unattended_unlock::assume_operator_key();
@@ -166,6 +181,9 @@ async fn unattended_unlock_round_trips_an_encrypted_local_ai_key_without_a_perso
 async fn without_unattended_unlock_the_secret_grant_still_parks_for_a_person() {
     use crate::security::approval::ApprovalDecision;
 
+    if !native_module_staged() {
+        return;
+    }
     let _serial = HEADLESS_HOST.lock().await;
     let _explicit = crate::modules::security::test_host::explicit_consent();
     let _operator_key = crate::modules::security::unattended_unlock::assume_operator_key();

@@ -62,17 +62,15 @@ fn a_default_config_is_interactive() {
 }
 
 fn parked(tool: &str, tool_call_id: Option<&str>) -> crate::security::approval::PendingApproval {
-    crate::security::approval::PendingApproval {
-        request_id: "req-1".into(),
-        tool_name: tool.into(),
-        action_summary: "Unlock configuration secrets".into(),
-        args_redacted: serde_json::json!({}),
-        created_at: chrono::Utc::now(),
-        expires_at: None,
-        source_context: None,
-        tool_call_id: tool_call_id.map(str::to_owned),
-        ..Default::default()
-    }
+    let mut pending = crate::security::approval::PendingApproval::new(
+        "req-1",
+        tool,
+        "Unlock configuration secrets",
+        serde_json::json!({}),
+        None,
+    );
+    pending.tool_call_id = tool_call_id.map(str::to_owned);
+    pending
 }
 
 #[test]
