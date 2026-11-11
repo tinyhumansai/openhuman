@@ -8,16 +8,20 @@
 //! one per [`Tenant`], so files a command writes are there for the next one.
 //! [`BoxBackend`] names the two and what differs between them.
 //!
-//! - **Keyed on the whole tenant.** An embedded host runs one agent per end
-//!   user with no profile, so keying on the profile alone would put every user
-//!   in one box. A call with no tenant ([`NoTenant`]) is refused, never sent
-//!   to a shared box.
+//! - **Keyed on the whole tenant, within its scope.** An embedded host runs
+//!   one agent per end user with no profile, so keying on the profile alone
+//!   would put every user in one box. A call with no tenant ([`NoTenant`]) is
+//!   refused, never sent to a shared box. Boxes are also kept per
+//!   [`OwnerScope`]: the active workspace (which is per signed-in user) and,
+//!   on agent37, `[runtime.agent37] retention_namespace`, hashed. Equal
+//!   tenants of two users, two hosts or two deployments sharing one agent37
+//!   key therefore never share a box.
 //! - **Created once, reused, let go of.** Concurrent first commands make one
 //!   box. A box idle for the registry's TTL is let go of by a background
 //!   reaper, and `max_live` caps the boxes held at once.
 //! - **OpenShell closes, agent37 retains.** An OpenShell box let go of is
 //!   closed and its files are gone. An agent37 box is created with the
-//!   tenant's [`owner_key`] and a [`RetainPolicy`] (box contract 2.4): letting
+//!   scoped tenant's [`owner_key`] and a [`RetainPolicy`] (box contract 2.4): letting
 //!   go only forgets it, the service sleeps it when idle, and the next command
 //!   (from this process or after a restart) finds the same box, files
 //!   included, until it has slept for `delete_after_secs`.
@@ -25,16 +29,18 @@
 //!   `timeout -k 5 <secs> sh -c <command>` in the backend's work folder
 //!   ([`BoxBackend::workdir`]), with only the variables the request carries.
 //!   A box that does not answer shortly after the deadline is let go of and
-//!   the command reported as timed out.
+//!   the command reported as timed out. A command whose caller gives up is
+//!   stopped the same way: its box is let go of.
 //! - **Files cross over commands too.** [`write_file`] and [`read_file`] move a
 //!   file between the host and a tenant's box with plain `exec`s (base64 in
 //!   chunks), relative to the work folder, on whichever backend is configured.
 //!
 //! [`BoxDriver`] is the seam: [`BusBoxDriver`] reaches the TinyBox module
 //! (behind the `modules` feature); tests use a scripted stand-in. The process
-//! holds one registry per backend, built from the config of the first call
-//! that needs it, so the TTL, `max_live` and retention changes take effect on
-//! restart.
+//! holds one registry per backend, whose TTL, `max_live` and retention come
+//! from the config of the first call that needs it, so changes to them take
+//! effect on restart. Each call still reaches the module with its own
+//! configuration ([`BusBoxDriver::serve`]).
 
 #[cfg(feature = "modules")]
 mod bus_driver;
@@ -51,8 +57,9 @@ pub use bus_driver::BusBoxDriver;
 pub use files::{read_file_in, write_file_in, MAX_FILE_BYTES};
 pub use registry::{owner_key, BoxRegistry};
 pub use types::{
-    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxRetention, BoxSettings, RegistryLimits,
-    RetainPolicy, AGENT37_WORKDIR, MAX_IDLE_SLEEP_SECS, MIN_IDLE_SLEEP_SECS, OPENSHELL_WORKDIR,
+    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, OwnerScope, RegistryLimits,
+    RetainPolicy, Retention, AGENT37_WORKDIR, MAX_IDLE_SLEEP_SECS, MIN_IDLE_SLEEP_SECS,
+    OPENSHELL_WORKDIR,
 };
 
 use super::types::{SandboxBackendKind, SandboxExecResult};
@@ -101,17 +108,35 @@ impl BoxBackend {
         }
     }
 
-    /// What a new box is created with, from the backend's runtime table.
+    /// What a new box is created with, from the backend's runtime table, in
+    /// the scope of `config`'s workspace ([`Self::owner_scope`]).
     ///
     /// # Errors
     ///
     /// [`BoxError::InvalidConfig`] and [`BoxError::InvalidMemory`] for an
     /// unusable table.
     pub fn settings(self, config: &Config) -> Result<BoxSettings, BoxError> {
-        match self {
+        let settings = match self {
             Self::OpenShell => BoxSettings::from_config(&config.runtime.openshell),
             Self::Agent37 => BoxSettings::from_agent37(&config.runtime.agent37),
-        }
+        }?;
+        Ok(BoxSettings {
+            owner_scope: self.owner_scope(config),
+            ..settings
+        })
+    }
+
+    /// The scope a call's boxes belong to: the active workspace, which is
+    /// per signed-in user, and on agent37 the deployment's
+    /// `[runtime.agent37] retention_namespace`, so hosts and deployments
+    /// sharing one agent37 key keep apart. OpenShell boxes are never
+    /// retained, so its scope is the workspace alone.
+    pub fn owner_scope(self, config: &Config) -> OwnerScope {
+        let namespace = match self {
+            Self::OpenShell => "",
+            Self::Agent37 => config.runtime.agent37.retention_namespace.trim(),
+        };
+        OwnerScope::new(namespace, &config.workspace_dir)
     }
 
     /// The registry bounds, and retention, from the backend's runtime table.
@@ -252,16 +277,22 @@ pub(crate) async fn execute(
         );
         let tenant = tenant_for_box(ctx.tenant())?;
         let settings = backend.settings(config)?;
-        run_command(
-            registry(backend, config),
-            Ok(tenant),
-            &settings,
-            command,
-            extra_env,
-            timeout,
-        )
-        .await
-        .map_err(anyhow::Error::from)
+        let registry = registry(backend, config);
+        registry
+            .driver()
+            .serve(
+                config,
+                run_command(
+                    registry,
+                    Ok(tenant),
+                    &settings,
+                    command,
+                    extra_env,
+                    timeout,
+                ),
+            )
+            .await
+            .map_err(anyhow::Error::from)
     }
     #[cfg(not(feature = "modules"))]
     {
@@ -303,7 +334,14 @@ pub async fn write_file(
     #[cfg(feature = "modules")]
     {
         let settings = backend.settings(config)?;
-        write_file_in(registry(backend, config), tenant, &settings, path, bytes).await
+        let registry = registry(backend, config);
+        registry
+            .driver()
+            .serve(
+                config,
+                write_file_in(registry, tenant, &settings, path, bytes),
+            )
+            .await
     }
     #[cfg(not(feature = "modules"))]
     {
@@ -332,14 +370,14 @@ pub async fn read_file(
     #[cfg(feature = "modules")]
     {
         let settings = backend.settings(config)?;
-        read_file_in(
-            registry(backend, config),
-            tenant,
-            &settings,
-            path,
-            max_bytes,
-        )
-        .await
+        let registry = registry(backend, config);
+        registry
+            .driver()
+            .serve(
+                config,
+                read_file_in(registry, tenant, &settings, path, max_bytes),
+            )
+            .await
     }
     #[cfg(not(feature = "modules"))]
     {
@@ -355,8 +393,9 @@ fn modules_disabled() -> BoxError {
     )
 }
 
-/// Let go of `tenant`'s boxes, on every backend the process holds boxes on:
-/// an OpenShell box is closed, an agent37 box only forgotten (it sleeps).
+/// Let go of `tenant`'s boxes, in every scope, on every backend the process
+/// holds boxes on: an OpenShell box is closed, an agent37 box only forgotten
+/// (it sleeps).
 pub async fn release(tenant: &Tenant) {
     #[cfg(feature = "modules")]
     for cell in [&OPENSHELL_REGISTRY, &AGENT37_REGISTRY] {
