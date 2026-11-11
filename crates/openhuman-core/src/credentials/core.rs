@@ -77,9 +77,8 @@ impl AuthService {
     /// caller holding only `(state_dir, encrypt)` reads through the owning
     /// config's store: `config` when it owns the directory, else the current
     /// dispatch's embedder config when that does. A config for another
-    /// directory, or with
-    /// another encryption setting, never lends its authority; with no owner
-    /// the store is directory-only.
+    /// directory, or with another encryption setting, never lends its
+    /// authority; with no owner the store is directory-only.
     pub fn for_state_dir(state_dir: &Path, encrypt_secrets: bool, config: Option<&Config>) -> Self {
         if let Some(config) =
             config.filter(|config| config_owns_state_dir(config, state_dir, encrypt_secrets))

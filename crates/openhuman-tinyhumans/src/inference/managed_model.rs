@@ -28,6 +28,11 @@ pub struct ManagedOptions {
     pub secrets_encrypt: bool,
     /// An auth-profile name to use instead of the default app session.
     pub auth_profile_override: Option<String>,
+    /// The runtime config that owns `openhuman_dir`. With it the session is
+    /// read through the config-bound store sign-in wrote it with (whose
+    /// secrets live in the keyring under `security-module`); without it the
+    /// store falls back to the ambient owner of the directory, if any.
+    pub config: Option<std::sync::Arc<openhuman_embed::__host::config::Config>>,
 }
 
 impl ManagedOptions {
@@ -70,6 +75,7 @@ impl ManagedOptions {
             endpoint,
             &self.state_dir(),
             self.secrets_encrypt,
+            self.config.as_deref(),
             self.auth_profile_override.as_deref(),
             "openhuman_backend_model.resolve_bearer",
         )

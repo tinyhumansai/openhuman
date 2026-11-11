@@ -124,13 +124,16 @@ fn guarded_cloud_model(
 }
 
 /// Resolves the bearer for each embedding batch from `context`'s credential
-/// scope: a stored TinyHumans API key first, else the app session.
+/// scope: a stored TinyHumans API key first, else the app session, read
+/// through the store bound to `context.config` when it owns that scope.
 fn bearer_resolver(key_endpoint: String, context: &EmbeddingCallContext) -> BearerResolver {
     let state_dir = context.state_dir.clone();
     let secrets_encrypt = context.secrets_encrypt;
+    let config = context.config.clone().map(Arc::new);
     Arc::new(move || {
         let state_dir = state_dir.clone();
         let key_endpoint = key_endpoint.clone();
+        let config = config.clone();
         Box::pin(async move {
             // A stored TinyHumans API key is the bearer outright, with the
             // plaintext guard: never put the key on a non-HTTPS, non-loopback wire.
@@ -155,6 +158,7 @@ fn bearer_resolver(key_endpoint: String, context: &EmbeddingCallContext) -> Bear
                 &key_endpoint,
                 &state_dir,
                 secrets_encrypt,
+                config.as_deref(),
                 None,
                 "managed_embedding.resolve_bearer",
             )
