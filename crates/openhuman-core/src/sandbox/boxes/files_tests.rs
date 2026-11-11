@@ -23,8 +23,10 @@ pub(super) fn registry(driver: &Arc<ScriptedDriver>) -> Arc<BoxRegistry<Scripted
     )
 }
 
-pub(super) fn config() -> OpenShellRuntimeConfig {
-    OpenShellRuntimeConfig::default()
+/// The settings of an OpenShell box with the default `[runtime.openshell]`.
+pub(super) fn config() -> BoxSettings {
+    BoxSettings::from_config(&crate::config::OpenShellRuntimeConfig::default())
+        .expect("the default OpenShell settings are valid")
 }
 
 /// Every byte value, so NUL and bytes that are not UTF-8 are in the file.
