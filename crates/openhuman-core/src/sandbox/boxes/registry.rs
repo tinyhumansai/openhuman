@@ -423,30 +423,36 @@ impl<D: BoxDriver> BoxRegistry<D> {
     /// retained). A command still running in one fails rather than starting
     /// another box.
     pub async fn release(&self, tenant: &Tenant) {
-        let mut resources = Vec::new();
+        let mut detached = Vec::new();
         self.entries().retain(|(scope, owner), entry| {
             if owner != tenant {
                 return true;
             }
             let key = (scope.clone(), owner.clone());
-            resources.extend(entry.slot.retire().map(|resource| (key.clone(), resource)));
+            detached.extend(
+                entry
+                    .slot
+                    .retire()
+                    .map(|resource| self.cleanups.detach(key.clone(), resource)),
+            );
             false
         });
-        for (owner, resource) in resources {
-            self.let_go(&owner, &resource).await;
-        }
+        self.let_go_all(detached).await;
     }
 
     /// Let go of every box: closed, or forgotten when retained.
     pub async fn shutdown(&self) {
-        let resources: Vec<(Owner, String)> = self
+        let detached: Vec<Detached> = self
             .entries()
             .drain()
-            .filter_map(|(owner, entry)| entry.slot.retire().map(|resource| (owner, resource)))
+            .filter_map(|(owner, entry)| {
+                entry
+                    .slot
+                    .retire()
+                    .map(|resource| self.cleanups.detach(owner, resource))
+            })
             .collect();
-        for (owner, resource) in resources {
-            self.let_go(&owner, &resource).await;
-        }
+        self.let_go_all(detached).await;
     }
 
     /// Start the background reaper, once; it stops when the registry drops.
