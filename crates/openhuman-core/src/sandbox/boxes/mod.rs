@@ -122,6 +122,7 @@ impl BoxBackend {
         }?;
         Ok(BoxSettings {
             owner_scope: self.owner_scope(config),
+            module: ModuleConfig::new(config),
             ..settings
         })
     }
@@ -278,13 +279,7 @@ pub(crate) async fn execute(
         let tenant = tenant_for_box(ctx.tenant())?;
         let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        registry
-            .driver()
-            .serve(
-                config,
-                run_command(registry, Ok(tenant), &settings, command, extra_env, timeout),
-            )
-            .await
+        run_command(registry, Ok(tenant), &settings, command, extra_env, timeout).await
             .map_err(anyhow::Error::from)
     }
     #[cfg(not(feature = "modules"))]
@@ -328,13 +323,7 @@ pub async fn write_file(
     {
         let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        registry
-            .driver()
-            .serve(
-                config,
-                write_file_in(registry, tenant, &settings, path, bytes),
-            )
-            .await
+        write_file_in(registry, tenant, &settings, path, bytes).await
     }
     #[cfg(not(feature = "modules"))]
     {
@@ -364,13 +353,7 @@ pub async fn read_file(
     {
         let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        registry
-            .driver()
-            .serve(
-                config,
-                read_file_in(registry, tenant, &settings, path, max_bytes),
-            )
-            .await
+        read_file_in(registry, tenant, &settings, path, max_bytes).await
     }
     #[cfg(not(feature = "modules"))]
     {

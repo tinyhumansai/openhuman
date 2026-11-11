@@ -4,13 +4,14 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 pub use tinybox_bus::Retention;
 
-use crate::config::{Agent37RuntimeConfig, OpenShellRuntimeConfig};
+use crate::config::{Agent37RuntimeConfig, Config, OpenShellRuntimeConfig};
 
 /// The work folder of an OpenShell box: the base image's `/sandbox` workspace.
 pub const OPENSHELL_WORKDIR: &str = "/sandbox";
@@ -73,6 +74,50 @@ impl std::fmt::Debug for OwnerScope {
     }
 }
 
+/// The host configuration one box call reaches the TinyBox module with.
+///
+/// It travels with the call's [`BoxSettings`] and [`BoxExec`] rather than in
+/// ambient task state, so each step of a call, and concurrent calls, use the
+/// configuration of the call they belong to and not that of whichever call
+/// first built the process's registry. Empty means "the driver's latest".
+#[derive(Clone, Default)]
+pub struct ModuleConfig(Option<Arc<Config>>);
+
+impl ModuleConfig {
+    /// The module configuration of a call made with `config`.
+    pub fn new(config: &Config) -> Self {
+        Self(Some(Arc::new(config.clone())))
+    }
+
+    /// The call's configuration, if it brought one.
+    pub fn get(&self) -> Option<&Arc<Config>> {
+        self.0.as_ref()
+    }
+}
+
+impl std::fmt::Debug for ModuleConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The configuration holds credentials; never print it.
+        f.write_str(if self.0.is_some() {
+            "ModuleConfig(..)"
+        } else {
+            "ModuleConfig(none)"
+        })
+    }
+}
+
+impl PartialEq for ModuleConfig {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ModuleConfig {}
+
 /// What a new box is created with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoxSettings {
@@ -87,6 +132,8 @@ pub struct BoxSettings {
     /// The scope the calling tenant's box belongs to; the registry keeps one
     /// box per scope and tenant.
     pub owner_scope: OwnerScope,
+    /// The configuration the call reaches the TinyBox module with.
+    pub module: ModuleConfig,
 }
 
 impl BoxSettings {
@@ -251,6 +298,8 @@ pub struct BoxExec {
     /// When the registry gives up on the reply; a driver's own transport
     /// deadline must not fire before it.
     pub deadline: Duration,
+    /// The configuration the call reaches the TinyBox module with.
+    pub module: ModuleConfig,
 }
 
 /// What a command left behind.
