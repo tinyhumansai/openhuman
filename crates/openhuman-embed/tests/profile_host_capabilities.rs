@@ -412,11 +412,24 @@ async fn scenario() {
         assert!(refused, "unregistered unsafe model call {name} must be refused");
     }
     assert_eq!(calls.lock().unwrap().len(), executions_before_denied_turn);
+    // The operator callback refuses even a registered safe name, again as a
+    // tool error the model reads; the tool does not run.
+    let requests_before_callback_denial = chat_requests(&inference).await.len();
+    handles[0]
+        .chat("callback-denied", "deny callback request")
+        .await
+        .expect("a refused tool call is a tool error, not a failed turn");
+    let callback_refused = chat_requests(&inference).await[requests_before_callback_denial..]
+        .iter()
+        .any(|request| {
+            let body = String::from_utf8_lossy(&request.body);
+            body.contains("denied tenant_probe") && body.contains("operator refused this call")
+        });
+    if !callback_refused {
+        eprintln!("profile_host_capabilities: the operator callback's refusal did not reach the model");
+    }
     assert!(
-        handles[0]
-            .chat("callback-denied", "deny callback request")
-            .await
-            .is_err(),
+        callback_refused,
         "the operator callback must refuse even a registered safe name"
     );
     assert_eq!(calls.lock().unwrap().len(), executions_before_denied_turn);
