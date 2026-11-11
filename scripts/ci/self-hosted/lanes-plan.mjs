@@ -587,12 +587,22 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: "cargo clippy --manifest-path crates/openhuman-app/Cargo.toml -- -D warnings",
         },
         {
+          // The app's artifact tests ask TinySecurity whether a path is
+          // protected, which fails closed ("file is in a protected location")
+          // when no real module is loadable, so the coverage run needs the
+          // registry-installed test modules, as rust-cov does.
+          name: "test-modules",
+          when: !ex63 && areas.rustTauri,
+          run: `bash scripts/ci/self-hosted/install-test-modules.sh "${modulesDir}" ${modulesEnvFile}`,
+        },
+        {
           // Hosted keeps ci-lite's wrapper-free RUSTFLAGS instrumentation (nextest).
           // The private plan below uses the Cargo target linker and nextest.
           name: "tauri-coverage",
           when: areas.rustTauri,
           env: { ...covEnv },
-          run:
+          needs: ["test-modules"],
+          run: withModules(
             "unset RUSTFLAGS RUSTC_WRAPPER" +
             " && cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml" +
             // No repo nextest config: the app is its own workspace, so the root
