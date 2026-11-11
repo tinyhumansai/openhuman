@@ -99,3 +99,10 @@ impl CoreContext {
         &self.agent.state
     }
 }
+
+// DIAGSTORM
+impl CoreContext {
+    pub fn diagstorm_counts(&self) -> (usize, Option<String>) {
+        (Arc::strong_count(&self.agent.state), self.profile.as_deref().map(str::to_owned))
+    }
+}
