@@ -114,21 +114,20 @@ pub async fn offer_or_direct(
     client: &ModuleClient,
     event: InboundEvent,
 ) -> Offered {
-    offer_or_direct_with(config, client, event, Claims::global(), &ATTEMPT_DEADLINES).await
+    if !super::active(config) {
+        return Offered::Direct("inbound event queues inactive".to_owned());
+    }
+    let claims = Claims::of_workspace(config, chrono::Utc::now().timestamp_millis());
+    offer_or_direct_with(client, event, &claims, &ATTEMPT_DEADLINES).await
 }
 
 async fn offer_or_direct_with(
-    config: &Config,
     client: &ModuleClient,
     event: InboundEvent,
     claims: &Claims,
     deadlines: &[Duration],
 ) -> Offered {
-    if !super::active(config) {
-        return Offered::Direct("inbound event queues inactive".to_owned());
-    }
     let now_ms = || chrono::Utc::now().timestamp_millis();
-    claims.attach(config, now_ms());
     let key = event.dedupe_key();
     claims.open(&key);
     match hand_off(client, event, deadlines).await {

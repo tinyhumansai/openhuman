@@ -165,11 +165,9 @@ pub struct Deliverer {
     inbound: tokio::sync::OnceCell<Arc<InboundConfig>>,
     /// What runs pinned sources' turns: given, or built on first use.
     pinned: tokio::sync::OnceCell<Option<Pinned>>,
-    /// Who ran events whose offers were ambiguous.
-    claims: &'static Claims,
-    /// Whether `claims` was attached to the configured storage (done on
-    /// first use, or not at all when the deliverer was given its settings).
-    claims_attached: tokio::sync::OnceCell<()>,
+    /// Who ran events whose offers were ambiguous: the configured
+    /// workspace's claims, resolved on first use.
+    claims: tokio::sync::OnceCell<Arc<Claims>>,
 }
 
 impl std::fmt::Debug for Deliverer {
@@ -193,7 +191,9 @@ impl Deliverer {
         let mut deliverer =
             Self::build(runner, ctx, tokio::sync::OnceCell::new_with(Some(timeout)))
                 .with_inbound(InboundConfig::default());
-        deliverer.claims_attached = tokio::sync::OnceCell::new_with(Some(()));
+        // Given its settings, it reads no configuration: its claims are its
+        // own unless given some (`Self::with_claims`).
+        deliverer.claims = tokio::sync::OnceCell::new_with(Some(Arc::new(Claims::default())));
         deliverer
     }
 
@@ -223,8 +223,7 @@ impl Deliverer {
             accepted: Mutex::new(Accepted::default()),
             inbound: tokio::sync::OnceCell::new(),
             pinned: tokio::sync::OnceCell::new(),
-            claims: Claims::global(),
-            claims_attached: tokio::sync::OnceCell::new(),
+            claims: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -240,6 +239,13 @@ impl Deliverer {
     #[must_use]
     pub fn with_pinned(mut self, pinned: Pinned) -> Self {
         self.pinned = tokio::sync::OnceCell::new_with(Some(Some(pinned)));
+        self
+    }
+
+    /// Share `claims` with the offers of the events it delivers.
+    #[must_use]
+    pub fn with_claims(mut self, claims: Arc<Claims>) -> Self {
+        self.claims = tokio::sync::OnceCell::new_with(Some(claims));
         self
     }
 
@@ -412,19 +418,20 @@ impl Deliverer {
         }
     }
 
-    /// The claims, attached to the configured storage on first use.
+    /// The configured workspace's claims, resolved on first use.
     async fn claims(&self) -> &Claims {
-        self.claims_attached
-            .get_or_init(|| async {
-                match self.ctx.load_config().await {
-                    Ok(config) => self.claims.attach(&config, (self.now_ms)()),
-                    Err(error) => {
-                        tracing::debug!(error = %error, "[inbound] config unavailable; claims kept in memory only");
-                    }
-                }
-            })
-            .await;
         self.claims
+            .get_or_init(|| async {
+                let config = match self.ctx.load_config().await {
+                    Ok(config) => config,
+                    Err(error) => {
+                        tracing::debug!(error = %error, "[inbound] config unavailable; the default workspace's claims");
+                        crate::config::Config::default()
+                    }
+                };
+                Claims::of_workspace(&config, (self.now_ms)())
+            })
+            .await
     }
 
     /// `turn` without the events their offers already ran directly, each

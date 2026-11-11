@@ -19,12 +19,17 @@
 //! | --- | --- | --- |
 //! | `inbound.direct` | `Key::of([source:event_id])` | an event the direct path ran, and when |
 //!
+//! Claims belong to a workspace: each workspace's are kept apart, in memory
+//! and in that workspace's own storage, so no profile reads or writes
+//! another's records.
+//!
 //! Records are kept as long as the module keeps its tombstones (30 days),
 //! so a dead-lettered copy redriven later is still recognised. They are
 //! rare: only an offer whose every attempt was ambiguous writes one.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{LazyLock, Mutex, OnceLock, PoisonError};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use tinystoragedrivers::{CollectionSpec, ErrorKind, Precondition, Query};
@@ -94,7 +99,7 @@ impl Memory {
     }
 }
 
-/// The claims of this process, over the host's storage once attached.
+/// The claims of one workspace, over its storage once attached.
 #[derive(Default)]
 pub struct Claims {
     memory: Mutex<Memory>,
@@ -109,13 +114,27 @@ impl std::fmt::Debug for Claims {
     }
 }
 
-static GLOBAL: LazyLock<Claims> = LazyLock::new(Claims::default);
+/// Each workspace's claims, by workspace directory.
+static WORKSPACES: LazyLock<Mutex<HashMap<PathBuf, Arc<Claims>>>> = LazyLock::new(Mutex::default);
 
 impl Claims {
-    /// The claims the offers and deliveries of this process share.
+    /// The claims the offers and deliveries of `config`'s workspace share,
+    /// attached to its storage (and loaded, at `now_ms`) on first use.
     #[must_use]
-    pub fn global() -> &'static Self {
-        &GLOBAL
+    pub fn of_workspace(config: &Config, now_ms: i64) -> Arc<Self> {
+        let claims = Self::for_dir(&config.workspace_dir);
+        claims.attach(config, now_ms);
+        claims
+    }
+
+    fn for_dir(workspace_dir: &Path) -> Arc<Self> {
+        Arc::clone(
+            WORKSPACES
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(workspace_dir.to_path_buf())
+                .or_default(),
+        )
     }
 
     /// Claims over `scoped` storage, loaded at `now_ms` (tests).
@@ -134,7 +153,7 @@ impl Claims {
     /// on, and remember the ones recorded before (a previous process's).
     /// Only the first call opens the store; a store that cannot be opened
     /// leaves the claims in memory.
-    pub fn attach(&self, config: &Config, now_ms: i64) {
+    fn attach(&self, config: &Config, now_ms: i64) {
         if self.store.get().is_some() {
             return;
         }

@@ -210,6 +210,16 @@
     "verification": "inbound/settings_tests.rs: the_defaults_resolve_to_the_shipped_files_in_storage"
   },
   {
+    "file": "crates/openhuman-core/src/inbound/claims.rs",
+    "scope": "",
+    "name": "WORKSPACES",
+    "type": "LazyLock<Mutex<HashMap<PathBuf,Arc<Claims>>>>",
+    "count": 1,
+    "category": "B",
+    "reason": "Inbound triage-once claims, keyed by workspace directory: each workspace's claims live in their own entry and persist only to that workspace's storage (inbound.direct), so one profile never reads or writes another's. An entry holds event dedupe keys (source:event_id) and claim states, no payloads.",
+    "verification": "inbound/claims_tests.rs: each_workspace_keeps_its_own_claims, a_direct_path_event_is_skipped_after_a_restart"
+  },
+  {
     "file": "crates/openhuman-core/src/inference/provider/factory/routing.rs",
     "scope": "",
     "name": "WORKLOAD_ROUTER",

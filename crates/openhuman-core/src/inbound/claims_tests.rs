@@ -77,3 +77,16 @@ fn direct_path_claims_are_bounded_in_memory() {
     assert!(!claims.delivering("composio:slack:b0"));
     assert!(claims.delivering(&format!("composio:slack:b{CAPACITY}")));
 }
+
+#[test]
+fn each_workspace_keeps_its_own_claims() {
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let config = |dir: &tempfile::TempDir| {
+        let mut config = Config::default();
+        config.workspace_dir = dir.path().to_path_buf();
+        config
+    };
+    assert!(Claims::of_workspace(&config(&a), NOW_MS).take_direct("composio:slack:w1", NOW_MS));
+    assert!(!Claims::of_workspace(&config(&b), NOW_MS).delivering("composio:slack:w1"));
+    assert!(Claims::of_workspace(&config(&a), NOW_MS).delivering("composio:slack:w1"));
+}

@@ -690,9 +690,10 @@ async fn an_event_handled_directly_is_not_delivered_again() {
     // Its offer was ambiguous and ran on the caller's direct path, yet the
     // module persisted it: the queued copy must not be triaged a second time.
     let event = trigger_event("deliver-direct-1");
-    assert!(Claims::global().take_direct(&event.dedupe_key(), NOW_MS));
+    let claims = Arc::new(Claims::default());
+    assert!(claims.take_direct(&event.dedupe_key(), NOW_MS));
     let triage = ScriptedTriage::new([decision(TriageAction::React)]);
-    let deliverer = deliverer(&triage);
+    let deliverer = deliverer(&triage).with_claims(claims);
     let response = deliverer
         .deliver(turn(vec![event.clone()], Lane::Background, 1))
         .await;
@@ -711,9 +712,11 @@ async fn an_event_handled_directly_is_not_delivered_again() {
 async fn a_digest_leaves_out_only_the_events_handled_directly() {
     let direct = trigger_event("deliver-direct-2");
     let queued = trigger_event("deliver-direct-3");
-    assert!(Claims::global().take_direct(&direct.dedupe_key(), NOW_MS));
+    let claims = Arc::new(Claims::default());
+    assert!(claims.take_direct(&direct.dedupe_key(), NOW_MS));
     let triage = ScriptedTriage::new([decision(TriageAction::React)]);
     let response = deliverer(&triage)
+        .with_claims(claims)
         .deliver(turn(vec![direct, queued], Lane::Background, 1))
         .await;
     assert_eq!(response.status, DeliverStatus::Accepted);
