@@ -609,10 +609,13 @@ fn one_runtime_hosts_independently_configured_agents() {
                 panic!("the test is the runtime's sole owner once every agent is dropped");
             };
             drop(runtime);
-            assert!(
-                !workspace_dir.exists(),
-                "an ephemeral workspace must be removed with its runtime"
-            );
+            // The workspace goes with the last holder of the runtime's guard:
+            // the runtime, or a dropped agent's deferred MCP cleanup, which keeps
+            // the files until the module acknowledges its close (`EphemeralRoot`).
+            common::eventually("the ephemeral workspace to be removed with its runtime", || {
+                (!workspace_dir.exists()).then_some(())
+            })
+            .await;
         })
         .await
         .expect("library host task did not panic");
