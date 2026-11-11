@@ -236,6 +236,32 @@ pub struct SecretsConfig {
     pub unattended_unlock: bool,
 }
 
+/// Env override for [`SecretsConfig::unattended_unlock`].
+pub const SECRETS_UNATTENDED_UNLOCK_ENV: &str = "OPENHUMAN_SECRETS_UNATTENDED_UNLOCK";
+
+impl SecretsConfig {
+    /// `unattended_unlock` with the process environment applied on top, so a
+    /// configuration read without the env overlay (a raw reload of the file)
+    /// still honours the operator's [`SECRETS_UNATTENDED_UNLOCK_ENV`]: `1` turns
+    /// it on, `0` turns it off, and an empty or unrecognised value leaves the
+    /// file's setting.
+    pub(crate) fn effective_unattended_unlock(&self) -> bool {
+        Self::unattended_unlock_with(
+            self.unattended_unlock,
+            std::env::var(SECRETS_UNATTENDED_UNLOCK_ENV).ok().as_deref(),
+        )
+    }
+
+    /// The decision behind [`Self::effective_unattended_unlock`].
+    pub(crate) fn unattended_unlock_with(file: bool, env: Option<&str>) -> bool {
+        match env.map(|raw| raw.trim().to_ascii_lowercase()).as_deref() {
+            Some("1" | "true" | "yes" | "on") => true,
+            Some("0" | "false" | "no" | "off") => false,
+            _ => file,
+        }
+    }
+}
+
 impl Default for SecretsConfig {
     fn default() -> Self {
         Self {

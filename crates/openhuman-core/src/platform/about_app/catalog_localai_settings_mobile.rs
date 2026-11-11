@@ -402,8 +402,9 @@ Capability {
                       \"Unlock configuration secrets\" request, which nobody can answer on a \
                       server. Honoured only when the operator supplied a usable keyring master key \
                       (OPENHUMAN_KEYRING_MASTER_KEY or OPENHUMAN_KEYRING_MASTER_KEY_FILE) to a file \
-                      or encrypted_file keyring, and never on a SaaS core; anywhere else a person \
-                      still approves each unlock.",
+                      or encrypted_file keyring. Without such a key a person still approves each \
+                      unlock. A SaaS core ignores the setting: its usual WebChat approval applies, \
+                      and an unlock with no WebChat route (a background config load) is refused.",
         how_to: "Set [secrets] unattended_unlock = true in config.toml, or \
                  OPENHUMAN_SECRETS_UNATTENDED_UNLOCK=1, alongside an operator-supplied keyring \
                  master key.",

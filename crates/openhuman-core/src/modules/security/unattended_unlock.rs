@@ -77,8 +77,11 @@ pub(crate) fn unlock_mode(
 }
 
 /// [`unlock_mode`] for `config` on this process.
+///
+/// The setting is read with the environment override applied, because some
+/// callers hold a configuration read straight from the file.
 pub(crate) fn mode_for(config: &Config) -> UnlockMode {
-    if !config.secrets.unattended_unlock {
+    if !config.secrets.effective_unattended_unlock() {
         return UnlockMode::Interactive;
     }
     #[cfg(test)]

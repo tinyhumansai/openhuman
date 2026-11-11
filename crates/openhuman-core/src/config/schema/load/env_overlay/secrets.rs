@@ -4,8 +4,7 @@ use crate::config::schema::load::env::parse_env_bool;
 use crate::config::schema::load::env::EnvLookup;
 use crate::config::schema::Config;
 
-/// Env override for [`crate::config::schema::SecretsConfig::unattended_unlock`].
-pub(crate) const UNATTENDED_UNLOCK_ENV: &str = "OPENHUMAN_SECRETS_UNATTENDED_UNLOCK";
+pub(crate) use crate::config::schema::tools::integrations::SECRETS_UNATTENDED_UNLOCK_ENV as UNATTENDED_UNLOCK_ENV;
 
 impl Config {
     pub(super) fn apply_secrets_env<E: EnvLookup + ?Sized>(&mut self, env: &E) {

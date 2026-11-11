@@ -80,7 +80,8 @@ async fn resolve_user_master_inner(
                     if mode == UnlockMode::IgnoredOnSaas {
                         tracing::warn!(
                             "[security::unattended_unlock] secrets.unattended_unlock is set but \
-                             this is a SaaS core; asking the user instead"
+                             this is a SaaS core; the user must approve over WebChat, and an unlock \
+                             with no WebChat route is refused"
                         );
                     }
                     if mode == UnlockMode::IgnoredWithoutOperatorKey {
