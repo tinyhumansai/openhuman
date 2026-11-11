@@ -182,6 +182,14 @@ run spawns inherits the origin but not the mark, so it stays read-only. The
 approval engine classifies `CronActions` as `CallOrigin::TrustedAutomation`, so
 the root's tools run without a person's approval.
 
+`CronActions` also counts as trusted automation for the wallet: its root run
+may call `wallet_balances` and `wallet_execute_prepared` (executes only when
+`[wallet_policy] automation_enabled` is set and the transfer fits the asset's
+caps), and x402 payments from `x402_request` / `http_request` are approved
+without a prompt within the per-request budget. A plain `Cron` turn is refused
+by both (it stays read-only, so `wallet_balances` still works).
+A job created from a channel conversation stays an `ExternalChannel` turn, so `wallet_execute_prepared` and x402 are refused for it too.
+
 Nothing else is lifted: the channel boundary, the autonomy tier
 (`[autonomy]`, including `workspace_only` when enabled), TinySecurity's command
 analysis and protected-path floor, the agent's `sandbox_mode`, the browser's

@@ -18,6 +18,7 @@ cd "$(dirname "$0")/../.."
 EXPECTED=$(cat <<'EOF'
 agent_registry/host_definition_tests.rs
 agent/session_host/mod.rs
+agent/tinyagents/host/security_gate_tests.rs
 integrations/prelude_integrations.rs
 agent/session_host/runtime_session_tool_surface.rs
 agent/session_host/runtime_session_tests.rs

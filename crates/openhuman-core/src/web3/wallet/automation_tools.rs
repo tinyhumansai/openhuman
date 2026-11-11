@@ -13,9 +13,10 @@
 //! and an external channel parks and expires. Independently of the gate, the
 //! spend policy inside the tool applies the asset allowlist and caps to every
 //! agent execute; trusted automation additionally needs
-//! `[wallet_policy] automation_enabled`. Every attempt lands in the ledger. Note that scheduled
-//! (cron) turns stay read-only at the harness gate regardless; automation that
-//! pays runs as a background job or an approval-free workflow.
+//! `[wallet_policy] automation_enabled`. Every attempt lands in the ledger. Automation that
+//! pays runs as a background job, an approval-free workflow, or a cron job whose
+//! agent opted into `scheduled_actions` (`CronActions`); a plain cron turn is
+//! read-only at the harness gate and refused by the policy.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
