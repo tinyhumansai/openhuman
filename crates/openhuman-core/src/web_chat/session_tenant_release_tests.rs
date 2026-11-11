@@ -40,46 +40,16 @@ async fn a_cached_session_agent_does_not_keep_its_tenant_in_use() {
             "{expected} is in the belt: {names:?}"
         );
     }
-    eprintln!("BELT {names:?} ctx={} ", Arc::strong_count(&profile));
+    // Building the session starts short background work of its own (the
+    // flow-authoring prewarm) that holds the tenant while it runs; that has to
+    // finish. What may not happen is a hold that outlives it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while profile.tenant_in_use() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     assert!(
         !profile.tenant_in_use(),
         "the session agent kept past its turn pins the tenant; belt: {names:?}"
     );
     drop(agent);
-}
-
-// TEMP-BISECT (remove before commit)
-#[tokio::test]
-async fn temp_bisect_tool_holders() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = super::session_checkout_tests::test_config(&tmp).await;
-    let root = CoreContext::for_test(DomainSet::full(), None);
-    let profile = root.derive_with(
-        ContextOverlay::new(config.clone(), DomainSet::full(), ToolGroups::advertised())
-            .profile("p1"),
-    );
-    let cfg = config.clone();
-    let mut tools = CoreContext::scope_with_turn_origin(Arc::clone(&profile), None, async move {
-        crate::tools::ops::all_tools(
-            Arc::new(cfg.clone()),
-            &Arc::new(crate::security::SecurityPolicy::default()),
-            crate::security::AuditSink::disabled(),
-            &crate::config::BrowserConfig::default(),
-            &crate::config::HttpRequestConfig::default(),
-            &cfg.action_dir,
-            &cfg,
-        )
-        .await
-    })
-    .await;
-    eprintln!("BISECT start in_use={} n={}", profile.tenant_in_use(), tools.len());
-    while let Some(tool) = tools.pop() {
-        let before = profile.tenant_in_use();
-        let name = tool.name().to_string();
-        drop(tool);
-        if before && !profile.tenant_in_use() {
-            eprintln!("BISECT holder={name}");
-        }
-    }
-    eprintln!("BISECT end in_use={}", profile.tenant_in_use());
 }
