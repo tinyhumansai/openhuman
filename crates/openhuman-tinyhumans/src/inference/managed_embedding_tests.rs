@@ -1,6 +1,7 @@
 use super::*;
 use openhuman_embed::__host::config::Config;
 use openhuman_embed::__host::credentials::AuthService;
+use openhuman_embed::__host::security::approval::ApprovalChatContext;
 use std::collections::HashMap;
 use tinyinference_embeddings::{
     CloudEmbeddingModel, EmbeddingModel, DEFAULT_CLOUD_DIMENSIONS, DEFAULT_CLOUD_MODEL,
@@ -31,7 +32,7 @@ fn build_cloud_model(
     secrets_encrypt: bool,
     model: &str,
     dimensions: usize,
-    chat: Option<openhuman_embed::__host::security::approval::ApprovalChatContext>,
+    chat: Option<ApprovalChatContext>,
 ) -> CloudEmbeddingModel {
     let context = openhuman_embed::__host::inference_registry::EmbeddingCallContext {
         config: None,
