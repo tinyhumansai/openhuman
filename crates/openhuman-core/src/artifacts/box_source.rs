@@ -7,7 +7,7 @@
 //! them. [`BoxSourced`] wraps the artifact crate's `create_artifact`
 //! tool (and likewise `update_artifact`, whose artifact kind comes from its
 //! stored record): for an `image` or `file` artifact it reads the file out of the
-//! caller's box ([`crate::sandbox::openshell::read_file`]), stages the bytes in
+//! caller's box ([`crate::sandbox::boxes::read_file`]), stages the bytes in
 //! a folder artifacts may reference, hands the staged path to the crate's tool
 //! unchanged, and removes the staged copy. Everything after that is
 //! [`create_artifact`](tiny_artifacts::CreateArtifactTool) as ever: the same
@@ -27,7 +27,7 @@ use tinytools::{PermissionLevel, Tool, ToolResult};
 
 use super::tiny_store::version_files_dir;
 use crate::core::runtime::{DispatchCtx, NoTenant, Tenant};
-use crate::sandbox::openshell::BoxError;
+use crate::sandbox::boxes::BoxError;
 use crate::sandbox::MAX_BOX_FILE_BYTES;
 
 /// Where a call's box files are read from, and whether they are.
@@ -78,7 +78,7 @@ impl BoxFiles for SandboxBoxFiles {
         path: &str,
         max_bytes: u64,
     ) -> Result<Vec<u8>, BoxError> {
-        let tenant = crate::sandbox::openshell::tenant_for_box(tenant)?;
+        let tenant = crate::sandbox::boxes::tenant_for_box(tenant)?;
         let config =
             self.ctx.load_config().await.map_err(|error| {
                 BoxError::Driver(format!("cannot read the configuration: {error}"))
@@ -96,7 +96,7 @@ pub(crate) fn staging_dir(workspace_dir: &Path) -> PathBuf {
 /// `path` as a name relative to the box's work folder: an agent in the box
 /// knows that folder by its absolute name, so one under it is accepted.
 fn box_path(path: &str) -> &str {
-    let work_folder = crate::sandbox::openshell::BOX_WORKDIR;
+    let work_folder = crate::sandbox::boxes::BOX_WORKDIR;
     path.strip_prefix(work_folder)
         .and_then(|rest| rest.strip_prefix('/'))
         .filter(|rest| !rest.is_empty())

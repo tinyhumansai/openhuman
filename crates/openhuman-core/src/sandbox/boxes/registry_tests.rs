@@ -1,5 +1,5 @@
 use super::*;
-use crate::sandbox::openshell::scripted_driver::{ok_output, Call, ExecStep, ScriptedDriver};
+use crate::sandbox::boxes::scripted_driver::{ok_output, Call, ExecStep, ScriptedDriver};
 use std::collections::BTreeMap;
 use tokio::sync::Notify;
 

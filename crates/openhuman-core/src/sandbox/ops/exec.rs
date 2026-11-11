@@ -325,7 +325,7 @@ pub(crate) async fn execute_resolved(
                     .map_err(|error| {
                         anyhow::anyhow!("Sandbox plan could not be consumed: {error}")
                     })?;
-                crate::sandbox::openshell::execute(ctx, &config, command, &extra_env, timeout)
+                crate::sandbox::boxes::execute(ctx, &config, command, &extra_env, timeout)
                     .await
                     .map(ShellRunOutcome::Finished)
             }
@@ -374,7 +374,7 @@ async fn execute_unchecked(
                 .map(ShellRunOutcome::Finished)
         }
         SandboxBackendKind::OpenShell => {
-            crate::sandbox::openshell::execute(ctx, &config, command, &extra_env, timeout)
+            crate::sandbox::boxes::execute(ctx, &config, command, &extra_env, timeout)
                 .await
                 .map(ShellRunOutcome::Finished)
         }

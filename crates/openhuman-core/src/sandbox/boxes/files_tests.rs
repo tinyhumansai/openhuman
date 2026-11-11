@@ -1,7 +1,7 @@
 use super::*;
 use crate::core::runtime::NoTenant;
-use crate::sandbox::openshell::scripted_driver::{Call, ExecStep, ScriptedDriver};
-use crate::sandbox::openshell::{BoxOutput, RegistryLimits};
+use crate::sandbox::boxes::scripted_driver::{Call, ExecStep, ScriptedDriver};
+use crate::sandbox::boxes::{BoxOutput, RegistryLimits};
 use std::sync::Arc;
 use std::time::Duration;
 
