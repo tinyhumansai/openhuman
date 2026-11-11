@@ -34,6 +34,7 @@ fn settings() -> BoxSettings {
         memory_bytes: 4 * 1024 * 1024 * 1024,
         workdir: "/home/node".into(),
         owner_scope: OwnerScope::default(),
+        module: ModuleConfig::default(),
     }
 }
 

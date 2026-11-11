@@ -40,7 +40,7 @@
 //! holds one registry per backend, whose TTL, `max_live` and retention come
 //! from the config of the first call that needs it, so changes to them take
 //! effect on restart. Each call still reaches the module with its own
-//! configuration ([`BusBoxDriver::serve`]).
+//! configuration ([`BoxSettings::module`]).
 
 #[cfg(feature = "modules")]
 mod bus_driver;
@@ -57,7 +57,7 @@ pub use bus_driver::BusBoxDriver;
 pub use files::{read_file_in, write_file_in, MAX_FILE_BYTES};
 pub use registry::{owner_key, BoxRegistry};
 pub use types::{
-    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, OwnerScope, RegistryLimits,
+    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, ModuleConfig, OwnerScope, RegistryLimits,
     RetainPolicy, Retention, AGENT37_WORKDIR, MAX_IDLE_SLEEP_SECS, MIN_IDLE_SLEEP_SECS,
     OPENSHELL_WORKDIR,
 };

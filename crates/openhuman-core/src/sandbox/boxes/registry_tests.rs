@@ -20,6 +20,7 @@ fn settings() -> BoxSettings {
         memory_bytes: 256 * 1024 * 1024,
         workdir: "/sandbox".into(),
         owner_scope: OwnerScope::default(),
+        module: ModuleConfig::default(),
     }
 }
 

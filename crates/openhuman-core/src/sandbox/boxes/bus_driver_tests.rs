@@ -11,6 +11,7 @@ fn settings() -> BoxSettings {
         memory_bytes: 256 * 1024 * 1024,
         workdir: "/sandbox".into(),
         owner_scope: OwnerScope::default(),
+        module: ModuleConfig::default(),
     }
 }
 
@@ -109,6 +110,7 @@ fn an_exec_carries_argv_workdir_and_only_the_given_env() {
         cwd: "/sandbox".into(),
         env: env.clone(),
         deadline: Duration::from_secs(40),
+        module: ModuleConfig::default(),
     };
 
     let request = exec_request("r-1", &exec);
