@@ -514,7 +514,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
         if !entries.contains_key(owner) && entries.len() >= self.limits.max_live {
             reaped = self.take_idle(&mut entries, now);
             if entries.len() >= self.limits.max_live && self.limits.retain.is_some() {
-                reaped.extend(take_least_recently_used(&mut entries));
+                reaped.extend(take_least_recently_used(&mut entries, &self.cleanups));
             }
             if entries.len() >= self.limits.max_live {
                 return (None, reaped);
