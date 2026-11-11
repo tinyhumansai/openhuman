@@ -34,7 +34,11 @@ async fn a_cached_session_agent_does_not_keep_its_tenant_in_use() {
     .await
     .unwrap_or_else(|error| panic!("the session agent builds: {error}"));
     let names: Vec<&str> = agent.tools().iter().map(|tool| tool.name()).collect();
-    for expected in ["create_artifact", "http_request", "web_fetch", "curl"] {
+    let mut expected = vec!["create_artifact", "http_request", "web_fetch", "curl"];
+    if cfg!(feature = "web3") {
+        expected.push("x402_request");
+    }
+    for expected in expected {
         assert!(
             names.contains(&expected),
             "{expected} is in the belt: {names:?}"
