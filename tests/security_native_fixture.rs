@@ -1,4 +1,3 @@
-use openhuman_core::storage::DocumentStore as _;
 use openhuman_core::{
     config::Config,
     core::runtime::{
