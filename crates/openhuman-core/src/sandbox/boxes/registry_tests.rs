@@ -96,7 +96,7 @@ async fn the_box_enforces_the_deadline_from_its_own_workspace() {
 async fn every_driver_step_gets_the_call_it_serves() {
     let driver = ScriptedDriver::new();
     let boxes = registry(&driver, 10);
-    let call = BoxCall::new(crate::config::Config::default());
+    let call = crate::sandbox::boxes::BoxCall::new(crate::config::Config::default());
     let served = BoxSettings {
         call: Some(call.clone()),
         ..settings()

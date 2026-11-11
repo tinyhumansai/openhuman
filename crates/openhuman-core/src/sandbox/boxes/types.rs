@@ -4,13 +4,14 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 pub use tinybox_bus::Retention;
 
-use crate::config::{Agent37RuntimeConfig, OpenShellRuntimeConfig};
+use crate::config::{Agent37RuntimeConfig, Config, OpenShellRuntimeConfig};
 
 /// The work folder of an OpenShell box: the base image's `/sandbox` workspace.
 pub const OPENSHELL_WORKDIR: &str = "/sandbox";
@@ -73,6 +74,41 @@ impl std::fmt::Debug for OwnerScope {
     }
 }
 
+/// The host call a driver step serves: the configuration that call reaches
+/// its backend with. It travels with the call's [`BoxSettings`] and each
+/// [`BoxExec`] made for it, so concurrent calls never see each other's.
+///
+/// Compared by identity (two calls are the same call only if they share it),
+/// and shown without the configuration, which can hold credentials.
+#[derive(Clone)]
+pub struct BoxCall(Arc<Config>);
+
+impl BoxCall {
+    /// The call `config` is for.
+    pub fn new(config: Config) -> Self {
+        Self(Arc::new(config))
+    }
+
+    /// The configuration the call reaches its backend with.
+    pub fn config(&self) -> &Arc<Config> {
+        &self.0
+    }
+}
+
+impl PartialEq for BoxCall {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for BoxCall {}
+
+impl std::fmt::Debug for BoxCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BoxCall(..)")
+    }
+}
+
 /// What a new box is created with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoxSettings {
@@ -87,6 +123,9 @@ pub struct BoxSettings {
     /// The scope the calling tenant's box belongs to; the registry keeps one
     /// box per scope and tenant.
     pub owner_scope: OwnerScope,
+    /// The host call these settings serve; `None` outside one (a driver
+    /// then uses its own most recent configuration).
+    pub call: Option<BoxCall>,
 }
 
 impl BoxSettings {
@@ -251,6 +290,8 @@ pub struct BoxExec {
     /// When the registry gives up on the reply; a driver's own transport
     /// deadline must not fire before it.
     pub deadline: Duration,
+    /// The host call the command serves, from its [`BoxSettings`].
+    pub call: Option<BoxCall>,
 }
 
 /// What a command left behind.
