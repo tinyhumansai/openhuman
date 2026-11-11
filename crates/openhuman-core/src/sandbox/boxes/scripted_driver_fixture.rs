@@ -15,12 +15,12 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::sync::Notify;
 
-use super::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxRetention, BoxSettings};
+use super::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings, Retention};
 
 /// One call the registry made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Call {
-    Create(BoxSettings, Option<BoxRetention>),
+    Create(BoxSettings, Option<Retention>),
     Exec { resource: String, exec: BoxExec },
     Close(String),
     Forget(String),
@@ -53,6 +53,8 @@ pub(crate) struct ScriptedDriver {
     box_root: Mutex<Option<PathBuf>>,
     /// Retained boxes by owner key, as a retaining backend keeps them.
     kept: Mutex<HashMap<String, String>>,
+    /// When set, the next forget waits for this notification first.
+    forget_gate: Mutex<Option<Arc<Notify>>>,
 }
 
 impl ScriptedDriver {
@@ -85,6 +87,11 @@ impl ScriptedDriver {
             .unwrap()
             .as_ref()
             .map(|root| root.join(resource))
+    }
+
+    /// Make the next forget wait for `gate` before it answers.
+    pub(crate) fn hold_next_forget(&self, gate: Arc<Notify>) {
+        *self.forget_gate.lock().unwrap() = Some(gate);
     }
 
     pub(crate) fn fail_closes(&self) {
@@ -123,7 +130,7 @@ impl ScriptedDriver {
     }
 
     /// The retention each create asked for, in order.
-    pub(crate) fn retentions(&self) -> Vec<Option<BoxRetention>> {
+    pub(crate) fn retentions(&self) -> Vec<Option<Retention>> {
         self.calls()
             .into_iter()
             .filter_map(|call| match call {
@@ -168,7 +175,7 @@ impl BoxDriver for ScriptedDriver {
     async fn create(
         &self,
         settings: &BoxSettings,
-        retention: Option<&BoxRetention>,
+        retention: Option<&Retention>,
     ) -> Result<String, BoxError> {
         self.record(Call::Create(settings.clone(), retention.cloned()));
         let delay = *self.create_delay.lock().unwrap();
@@ -232,6 +239,10 @@ impl BoxDriver for ScriptedDriver {
 
     async fn forget(&self, resource: &str) -> Result<(), BoxError> {
         self.record(Call::Forget(resource.to_owned()));
+        let gate = self.forget_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
         if self.close_fails.load(Ordering::SeqCst) {
             return Err(BoxError::Driver("forget refused".into()));
         }

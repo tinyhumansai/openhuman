@@ -3,9 +3,12 @@
 //! and the [`BoxDriver`] seam that creates, runs, closes and forgets boxes.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
+pub use tinybox_bus::Retention;
 
 use crate::config::{Agent37RuntimeConfig, OpenShellRuntimeConfig};
 
@@ -21,6 +24,55 @@ pub const MIN_IDLE_SLEEP_SECS: u32 = 300;
 /// The most seconds agent37 lets a box sit idle before it sleeps.
 pub const MAX_IDLE_SLEEP_SECS: u32 = 86_400;
 
+/// Domain separation for [`OwnerScope`]'s hash, versioned like the owner key.
+const OWNER_SCOPE_DOMAIN: &[u8] = b"openhuman.sandbox.box-scope.v1\0";
+
+/// Where a tenant's box belongs beyond the tenant itself: the deployment's
+/// namespace and the active workspace, hashed together.
+///
+/// A [`Tenant`](crate::core::runtime::Tenant) names who a box is for within
+/// one host. Two hosts sharing a box service (or one host switching between
+/// signed-in users) can see the same tenant, so the registry keeps a box per
+/// scope and tenant, and a retained box's owner key folds the scope in. Only
+/// the hash is kept: no namespace or path is ever sent anywhere. The default
+/// scope is the unscoped one, for tests and drivers with no host around them.
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
+pub struct OwnerScope {
+    digest: Option<[u8; 32]>,
+}
+
+impl OwnerScope {
+    /// The scope of boxes for `workspace` within the deployment `namespace`
+    /// (blank for none). Each part is length-prefixed, so no two different
+    /// pairs share a scope.
+    pub fn new(namespace: &str, workspace: &Path) -> Self {
+        let workspace = workspace.as_os_str().as_encoded_bytes();
+        let mut hash = Sha256::new();
+        hash.update(OWNER_SCOPE_DOMAIN);
+        for part in [namespace.as_bytes(), workspace] {
+            hash.update((part.len() as u64).to_le_bytes());
+            hash.update(part);
+        }
+        Self {
+            digest: Some(hash.finalize().into()),
+        }
+    }
+
+    /// The scope's hash, or `None` for the unscoped default.
+    pub fn digest(&self) -> Option<&[u8; 32]> {
+        self.digest.as_ref()
+    }
+}
+
+impl std::fmt::Debug for OwnerScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.digest {
+            None => f.write_str("OwnerScope(unscoped)"),
+            Some(digest) => write!(f, "OwnerScope({})", hex::encode(&digest[..6])),
+        }
+    }
+}
+
 /// What a new box is created with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoxSettings {
@@ -32,6 +84,9 @@ pub struct BoxSettings {
     pub memory_bytes: u64,
     /// The folder commands run in and file paths are relative to.
     pub workdir: String,
+    /// The scope the calling tenant's box belongs to; the registry keeps one
+    /// box per scope and tenant.
+    pub owner_scope: OwnerScope,
 }
 
 impl BoxSettings {
@@ -61,6 +116,7 @@ impl BoxSettings {
             cpu_millis: config.cpu_millis,
             memory_bytes,
             workdir: OPENSHELL_WORKDIR.to_owned(),
+            owner_scope: OwnerScope::default(),
         })
     }
 
@@ -92,6 +148,7 @@ impl BoxSettings {
             cpu_millis: config.cpu_millis,
             memory_bytes: config.memory_bytes().unwrap_or(u64::MAX),
             workdir: AGENT37_WORKDIR.to_owned(),
+            owner_scope: OwnerScope::default(),
         })
     }
 }
@@ -120,27 +177,15 @@ impl RetainPolicy {
         }
     }
 
-    /// This policy for the box of the owner `key` names.
-    pub fn for_owner(self, key: String) -> BoxRetention {
-        BoxRetention {
+    /// This policy for the box of the owner `key` names, as the box contract's
+    /// [`Retention`].
+    pub fn for_owner(self, key: String) -> Retention {
+        Retention {
             key,
             idle_sleep_secs: self.idle_sleep_secs,
             delete_after_secs: self.delete_after_secs,
         }
     }
-}
-
-/// What a retained box is created with: its owner's key and how long it is
-/// kept. A later create with the same key finds the same box again.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BoxRetention {
-    /// An opaque, stable key for the box's owner, derived from the tenant
-    /// (never a raw id): `[A-Za-z0-9_-]`, at most 128 characters.
-    pub key: String,
-    /// Seconds without a command before the box falls asleep.
-    pub idle_sleep_secs: u32,
-    /// Seconds a box may sleep before the backend deletes it.
-    pub delete_after_secs: u64,
 }
 
 /// Registry-wide bounds, fixed when the registry is built.
@@ -151,7 +196,7 @@ pub struct RegistryLimits {
     /// The most boxes alive at once.
     pub max_live: usize,
     /// `Some` for a backend that keeps each tenant's box for it: boxes are
-    /// created with the tenant's [`BoxRetention`], and the registry only
+    /// created with the tenant's [`Retention`], and the registry only
     /// ever forgets them ([`BoxDriver::forget`]), never closes them.
     pub retain: Option<RetainPolicy>,
 }
@@ -305,7 +350,7 @@ pub trait BoxDriver: Send + Sync + 'static {
     async fn create(
         &self,
         settings: &BoxSettings,
-        retention: Option<&BoxRetention>,
+        retention: Option<&Retention>,
     ) -> Result<String, BoxError>;
 
     /// Run one program in the box and collect its output. A box that is gone

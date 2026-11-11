@@ -10,17 +10,31 @@
 //! handle and leaves the instance, so the module's resource slots are freed
 //! without deleting anything.
 //!
+//! Each call reaches the module with the configuration of the host call it
+//! serves ([`BusBoxDriver::serve`]), not of whichever call built the
+//! process's registry. A box's close or forget reaches the module with the
+//! configuration it was created under, so a later call cannot redirect the
+//! cleanup of an earlier box; work outside any call (the idle reaper) uses the
+//! most recent module-enabled call's.
+//!
+//! A reservation is closed if the create it was for is cancelled before the
+//! module answers ([`AbandonGuard`]), so a cancelled first command never
+//! leaves a module resource slot (or a box) that nothing tracks.
+//!
 //! Each step is one bus call (`Reserve` + `Create`, `Exec`, `Close`). The
 //! module's error names do not cross the bus client (it reports only
 //! sanitized categories), so a failed exec is followed by an `Inspect`: a box
 //! the module no longer knows, or one that can no longer take commands, is
 //! [`BoxError::UnknownResource`], which the registry answers with a new box.
 
+use std::collections::HashMap;
+use std::future::Future;
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 
-use super::{BoxBackend, BoxDriver, BoxError, BoxExec, BoxOutput, BoxRetention, BoxSettings};
+use super::{BoxBackend, BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings, Retention};
 use crate::config::Config;
 use crate::modules::tinybox::{self, contract};
 
@@ -45,18 +59,140 @@ pub(crate) const BUS_REPLY_GRACE: Duration = Duration::from_secs(5);
 /// Box states that still take commands.
 const LIVE_STATES: &[&str] = &["ready", "running"];
 
-/// A [`BoxDriver`] over the TinyBox module, using the module configuration it
-/// was built with, for one backend.
+tokio::task_local! {
+    /// The configuration of the host call a driver step runs for.
+    static CALL_CONFIG: Arc<Config>;
+}
+
+/// A [`BoxDriver`] over the TinyBox module, for one backend, reaching the
+/// module with the configuration of the call it serves.
 pub struct BusBoxDriver {
-    config: Config,
+    /// The configuration of the most recent call that has modules enabled,
+    /// for work outside any call; the initial configuration until such a call.
+    latest: RwLock<Arc<Config>>,
+    /// The configuration each box was created under, by resource id. Its
+    /// cleanup reaches the module with that configuration, not with whichever
+    /// call replaced `latest` since.
+    created_with: Mutex<HashMap<String, Arc<Config>>>,
     backend: BoxBackend,
 }
 
 impl BusBoxDriver {
-    /// A driver that reaches the module with `config`'s module settings and
-    /// creates `backend`'s boxes.
+    /// A driver that creates `backend`'s boxes, reaching the module with
+    /// `config` until a call brings its own.
     pub fn new(config: Config, backend: BoxBackend) -> Self {
-        Self { config, backend }
+        Self {
+            latest: RwLock::new(Arc::new(config)),
+            created_with: Mutex::new(HashMap::new()),
+            backend,
+        }
+    }
+
+    /// Record that `resource` was created under `config`, the configuration
+    /// its create was made with.
+    fn remember(&self, resource: &str, config: &Arc<Config>) {
+        self.created_with
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(resource.to_owned(), Arc::clone(config));
+    }
+
+    /// The configuration a step on `resource` reaches the module with: the
+    /// one it was created under, or the current one for a box not recorded.
+    fn config_of(&self, resource: &str) -> Arc<Config> {
+        self.created_with
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(resource)
+            .cloned()
+            .unwrap_or_else(|| self.config())
+    }
+
+    /// Run `call` with every step of this driver inside it reaching the
+    /// module with `config`, which also becomes the configuration for work
+    /// outside any call.
+    pub fn serve<F: Future>(&self, config: &Config, call: F) -> impl Future<Output = F::Output> {
+        let config = Arc::new(config.clone());
+        // A call that has the module switched off must not become the
+        // configuration for later cleanups: they would be refused before they
+        // reach TinyBox, and the box would be left untracked.
+        if config.modules.enabled {
+            *self.latest.write().unwrap_or_else(PoisonError::into_inner) = Arc::clone(&config);
+        }
+        CALL_CONFIG.scope(config, call)
+    }
+
+    /// The configuration for a step now: the serving call's, or the most
+    /// recent call's outside one.
+    pub(crate) fn config(&self) -> Arc<Config> {
+        CALL_CONFIG.try_with(Arc::clone).unwrap_or_else(|_| {
+            Arc::clone(&self.latest.read().unwrap_or_else(PoisonError::into_inner))
+        })
+    }
+}
+
+/// Holds `value` for a step that may be cancelled: dropped while armed, it
+/// hands the value to `abandon`; [`Self::keep`] disarms it.
+pub(crate) struct AbandonGuard<T, F: FnOnce(T)> {
+    armed: Option<(T, F)>,
+}
+
+impl<T, F: FnOnce(T)> AbandonGuard<T, F> {
+    pub(crate) fn new(value: T, abandon: F) -> Self {
+        Self {
+            armed: Some((value, abandon)),
+        }
+    }
+
+    /// The step finished: abandon nothing.
+    pub(crate) fn keep(mut self) {
+        self.armed = None;
+    }
+}
+
+impl<T, F: FnOnce(T)> Drop for AbandonGuard<T, F> {
+    fn drop(&mut self) {
+        if let Some((value, abandon)) = self.armed.take() {
+            abandon(value);
+        }
+    }
+}
+
+/// Close a reservation (or the box created on it) whose create was
+/// cancelled, on a detached task, since `Drop` cannot await. Closing a
+/// retained box only drops the module's handle and keeps the instance.
+fn close_abandoned(config: Arc<Config>, resource: contract::ResourceId) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    tracing::debug!("[sandbox:box] create cancelled; closing its reservation");
+    // Cleanup of a module id this host no longer tracks; it acts under no
+    // tenant's context, so it carries none.
+    runtime.spawn(async move {
+        if let Err(error) = tinybox::close(&config, resource).await {
+            tracing::warn!(%error, "[sandbox:box] closing a cancelled reservation failed");
+        }
+    });
+}
+
+/// Settle a create's answer against its reservation. A created box is handed
+/// to the registry and the reservation disarmed. A failed create keeps the
+/// reservation armed, so it is closed on drop: the module may have kept the
+/// allocation even though the create reported an error, and the registry holds
+/// no id for it to clean up later.
+pub(crate) fn settle_create<T, F: FnOnce(T)>(
+    reservation: AbandonGuard<T, F>,
+    created: Result<contract::ResourceInfo, String>,
+) -> Result<String, BoxError> {
+    match created {
+        Ok(info) => {
+            reservation.keep();
+            Ok(info.resource.0)
+        }
+        Err(error) => {
+            drop(reservation);
+            Err(BoxError::Driver(error))
+        }
     }
 }
 
@@ -65,21 +201,31 @@ impl BoxDriver for BusBoxDriver {
     async fn create(
         &self,
         settings: &BoxSettings,
-        retention: Option<&BoxRetention>,
+        retention: Option<&Retention>,
     ) -> Result<String, BoxError> {
-        let resource = tinybox::reserve(&self.config, contract::ReserveRequest::Resource)
+        let config = self.config();
+        let resource = tinybox::reserve(&config, contract::ReserveRequest::Resource)
             .await
             .map_err(BoxError::Driver)?;
+        // Until Create answers, the reservation is only ours: close it if this
+        // future is dropped. Once Create answers, the module has either
+        // created the box (handed to the registry below) or torn a failed one
+        // down itself.
+        let reservation = AbandonGuard::new(resource.clone(), {
+            let config = Arc::clone(&config);
+            move |resource| close_abandoned(config, resource)
+        });
         let request = create_request(resource, self.backend, settings, retention);
-        let info = tinybox::create(&self.config, request)
-            .await
-            .map_err(BoxError::Driver)?;
-        Ok(info.resource.0)
+        let created = tinybox::create(&config, request).await;
+        let resource = settle_create(reservation, created)?;
+        self.remember(&resource, &config);
+        Ok(resource)
     }
 
     async fn exec(&self, resource: &str, exec: &BoxExec) -> Result<BoxOutput, BoxError> {
+        let config = self.config();
         match tinybox::exec_within(
-            &self.config,
+            &config,
             exec_request(resource, exec),
             bus_deadline(exec.deadline),
         )
@@ -88,16 +234,23 @@ impl BoxDriver for BusBoxDriver {
             Ok(output) => Ok(box_output(output)),
             Err(error) => {
                 let probe =
-                    tinybox::inspect(&self.config, contract::ResourceId(resource.to_owned())).await;
+                    tinybox::inspect(&config, contract::ResourceId(resource.to_owned())).await;
                 Err(exec_failure(error, probe))
             }
         }
     }
 
     async fn close(&self, resource: &str) -> Result<(), BoxError> {
-        tinybox::close(&self.config, contract::ResourceId(resource.to_owned()))
+        let config = self.config_of(resource);
+        let outcome = tinybox::close(&config, contract::ResourceId(resource.to_owned()))
             .await
-            .map_err(BoxError::Driver)
+            .map_err(BoxError::Driver);
+        // The box is no longer ours to track once closed or forgotten.
+        self.created_with
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(resource);
+        outcome
     }
 
     async fn forget(&self, resource: &str) -> Result<(), BoxError> {
@@ -114,7 +267,7 @@ pub(crate) fn create_request(
     resource: contract::ResourceId,
     backend: BoxBackend,
     settings: &BoxSettings,
-    retention: Option<&BoxRetention>,
+    retention: Option<&Retention>,
 ) -> contract::CreateRequest {
     contract::CreateRequest {
         resource,
@@ -129,11 +282,7 @@ pub(crate) fn create_request(
         },
         ports: Vec::new(),
         env: std::collections::BTreeMap::new(),
-        retention: retention.map(|retention| contract::Retention {
-            key: retention.key.clone(),
-            idle_sleep_secs: retention.idle_sleep_secs,
-            delete_after_secs: retention.delete_after_secs,
-        }),
+        retention: retention.cloned(),
     }
 }
 
