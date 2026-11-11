@@ -74,6 +74,10 @@ pub(crate) struct StubEngine {
     fail_reserve: AtomicBool,
     fail_record_execution: AtomicBool,
     always_pending: AtomicBool,
+    /// Park `check` after the prompt was delivered, and `decide` before it
+    /// answers, so a test can drop the caller while either is in flight.
+    hold_after_delivery: AtomicBool,
+    hold_decides: AtomicBool,
     /// The durable flow trust the module keeps: `(flow, tool)` pairs.
     trust: Mutex<std::collections::BTreeSet<(String, String)>>,
     /// Durable whole-tool trust keyed by the exact tenant and posture variant.
@@ -167,6 +171,16 @@ impl StubEngine {
     }
 
     /// Make every later `reserve` fail.
+    /// Hold every `check` after its prompt is delivered until the caller drops it.
+    pub(crate) fn hold_after_delivery(&self, hold: bool) {
+        self.hold_after_delivery.store(hold, Ordering::SeqCst);
+    }
+
+    /// Hold every `decide` until the caller drops it.
+    pub(crate) fn hold_decides(&self, hold: bool) {
+        self.hold_decides.store(hold, Ordering::SeqCst);
+    }
+
     pub(crate) fn fail_reserve(&self, fail: bool) {
         self.fail_reserve.store(fail, Ordering::SeqCst);
     }
@@ -351,6 +365,9 @@ impl ApprovalEngine for StubEngine {
             self.with(&request_id, |row| row.state = State::Cancelled);
             return Err(EngineError::Unavailable(error));
         }
+        if self.hold_after_delivery.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
         Ok(Checked::Pending {
             request_id,
             expires_at_ms: expires_ms,
@@ -363,6 +380,9 @@ impl ApprovalEngine for StubEngine {
         choice: Choice,
         label: &str,
     ) -> Result<Decided, EngineError> {
+        if self.hold_decides.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
         let now = now_ms();
         self.with(request_id, |row| {
             if row.state != State::Pending || now >= row.expires_ms {

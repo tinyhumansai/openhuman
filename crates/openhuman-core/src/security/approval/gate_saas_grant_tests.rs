@@ -225,3 +225,63 @@ async fn outside_saas_a_secret_grant_still_waits_for_a_person() {
     decide_parked(&gate, &pending.request_id, ApprovalDecision::Deny);
     assert!(matches!(asked.await.unwrap(), GateOutcome::Deny { .. }));
 }
+
+/// Drop the host grant once the engine has made its request durable (while
+/// `check` or `decide` is still in flight): the delivered request is cancelled,
+/// so a later unlock never meets an abandoned pending row.
+async fn dropped_host_grant_leaves_no_pending_request(hold: fn(&crate::security::approval::engine_stub::StubEngine)) {
+    let (gate, _dir) = test_gate();
+    let gate = Arc::new(gate);
+    let stub = stub_of(&gate);
+    hold(&stub);
+    let worker = Arc::clone(&gate);
+    let grant = tokio::spawn(async move {
+        worker
+            .saas_host_authorised_grant(
+                NATIVE_SECRET_GRANT_TOOL,
+                "Unlock configuration secrets",
+                serde_json::json!({"registration_id": "alice-registration"}),
+                "alice",
+                "scope-under-test",
+            )
+            .await
+    });
+    let request_id = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(id) = stub.request_ids().into_iter().next() {
+                break id;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the engine never made the request durable");
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(!grant.is_finished(), "the grant is still in flight");
+    grant.abort();
+    let _ = grant.await;
+    let cancelled = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if stub.state(&request_id) == Some(crate::security::approval::engine_stub::State::Cancelled) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    assert!(
+        cancelled.is_ok(),
+        "the dropped grant left request {request_id} as {:?}",
+        stub.state(&request_id)
+    );
+}
+
+#[tokio::test]
+async fn a_host_grant_dropped_while_check_is_in_flight_cancels_its_request() {
+    dropped_host_grant_leaves_no_pending_request(|stub| stub.hold_after_delivery(true)).await;
+}
+
+#[tokio::test]
+async fn a_host_grant_dropped_while_decide_is_in_flight_cancels_its_request() {
+    dropped_host_grant_leaves_no_pending_request(|stub| stub.hold_decides(true)).await;
+}
