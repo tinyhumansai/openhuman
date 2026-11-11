@@ -368,8 +368,13 @@ pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToo
         context_token,
         scope,
     };
+    let deadline = if wants_summary {
+        COMPACT_WITH_TIMEOUT
+    } else {
+        COMPACT_TIMEOUT
+    };
     let response = match client(&config)
-        .with_timeout(COMPACT_WITH_TIMEOUT)
+        .with_timeout(deadline)
         .call::<tinyjuice_bus::wire::CompactResponse>(
             "tinyjuice",
             methods::COMPACT_WITH,
@@ -379,7 +384,10 @@ pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToo
     {
         Ok(response) => response,
         Err(error) => {
-            log::debug!("[tokenjuice] module compaction unavailable: {error}");
+            log::warn!(
+                "[tokenjuice] module compaction unavailable, passing through: tool={tool_name} wants_summary={wants_summary} deadline_secs={} error={error}",
+                deadline.as_secs()
+            );
             return CompactedToolOutput::passthrough(content, wants_summary);
         }
     };
