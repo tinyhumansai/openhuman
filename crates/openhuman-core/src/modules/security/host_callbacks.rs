@@ -246,6 +246,7 @@ pub(in crate::modules) async fn ensure_loaded(
                 .map_err(|_| "security callback registration failed".to_owned())?;
                 let judge = super::judge::resolve(&config);
                 let module_config = neutral_config(&config, &binding, judge)?;
+                eprintln!("DBG first-load config_path={} ws={} cfg={}", config.config_path.display(), config.workspace_dir.display(), module_config);
                 let state = std::sync::Arc::new(SecurityCallbackState {
                     binding: std::sync::Arc::clone(&binding),
                     consumer,
@@ -258,7 +259,7 @@ pub(in crate::modules) async fn ensure_loaded(
                 Ok((binding, module_config))
             }
         })
-        .await?;
+        .await.map_err(|e| { eprintln!("DBG load err {e}"); e })?;
 
     let selected_key = binding.unique_name().to_string();
     let mut candidates = candidates.lock().await;
