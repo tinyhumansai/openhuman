@@ -90,7 +90,6 @@ async fn api_key_alone_authenticates_cloud_embeddings() {
         "m",
         2,
         None,
-        None,
     );
 
     let vectors = provider
@@ -124,7 +123,6 @@ async fn api_key_is_refused_over_plaintext_non_loopback() {
         false,
         "m",
         2,
-        None,
         None,
     );
     let err = provider.embed(&["hello".to_string()]).await.unwrap_err();
@@ -184,7 +182,6 @@ fn unreachable_embedder_with_chat(
         model,
         DEFAULT_CLOUD_DIMENSIONS,
         chat,
-        None,
     )
     .with_egress_guard(std::sync::Arc::new(move |_, _| {
         openhuman_embed::__host::egress::emit_external_transfer(
@@ -526,7 +523,6 @@ async fn offline_local_session_is_refused_before_embedding_request() {
         "m",
         2,
         None,
-        None,
     );
 
     let err = provider
@@ -597,7 +593,6 @@ async fn expired_session_publishes_session_expired_before_embedding_request() {
         false,
         "m",
         2,
-        None,
         None,
     );
 
