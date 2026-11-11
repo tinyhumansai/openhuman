@@ -666,13 +666,14 @@ fn backstop_timed_out(timeout: Duration) -> SandboxExecResult {
 /// Remove the least recently used entry with no command in flight and
 /// return its box to let go of. Only a retaining registry does this: its box
 /// is forgotten, not deleted, so the tenant finds it again next time.
-fn take_least_recently_used(entries: &mut HashMap<Owner, Entry>) -> Option<String> {
+fn take_least_recently_used(entries: &mut HashMap<Owner, Entry>) -> Option<(Owner, String)> {
     let owner = entries
         .iter()
         .filter(|(_, entry)| entry.in_flight == 0)
         .min_by_key(|(_, entry)| entry.last_used)
         .map(|(owner, _)| owner.clone())?;
-    entries.remove(&owner).and_then(|entry| entry.slot.retire())
+    let resource = entries.remove(&owner)?.slot.retire()?;
+    Some((owner, resource))
 }
 
 /// The opaque key a retaining backend keeps `tenant`'s box under within
