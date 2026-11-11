@@ -192,7 +192,10 @@ async fn scenario() {
 
     // An agent job made through the tool binds to this thread and fires.
     handle.chat("t1", "schedule it").await.unwrap();
-    let fire_at = fire_at.lock().unwrap().expect("the model scheduled the job");
+    let fire_at = fire_at
+        .lock()
+        .unwrap()
+        .expect("the model scheduled the job");
     common::wait_until(fire_at).await;
     assert_eq!(runtime.sweep_cron_at(chrono::Utc::now()).await.ran, 1);
     tokio::time::timeout(Duration::from_secs(30), async {
