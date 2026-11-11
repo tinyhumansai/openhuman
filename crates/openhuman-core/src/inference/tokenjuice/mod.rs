@@ -282,6 +282,12 @@ pub struct ToolOutputCompaction<'a> {
 /// timeout is the one that fires.
 const COMPACT_WITH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(330);
 
+/// Deadline for a `CompactWith` that asks for no summary. The module then does
+/// local work only and answers in milliseconds, so a reply that has not come
+/// within the ordinary TinyBus deadline is lost, and waiting out the summary
+/// budget would hold the whole turn for five and a half minutes.
+const COMPACT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Compact one tool result through the module, passing it through unchanged on
 /// any failure.
 pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToolOutput {
