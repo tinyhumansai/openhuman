@@ -284,22 +284,21 @@ impl<D: BoxDriver> Drop for Running<D> {
         let Some(resource) = self.resource.take() else {
             return;
         };
-        self.slot.forget(&resource);
         tracing::debug!(
             resource = %resource,
             retained = self.retained,
             "[sandbox:box] command cancelled; letting go of its box"
         );
-        if tokio::runtime::Handle::try_current().is_err() {
-            return;
-        }
+        // Detach before forgetting, so a command for the same owner that
+        // runs in between already sees the pending cleanup.
+        let detached = self.cleanups.detach(self.owner.clone(), resource.clone());
+        self.slot.forget(&resource);
         // The box is let go of on a task of its own; the handle is not needed.
-        drop(spawn_let_go(
-            Arc::clone(&self.driver),
+        drop(spawn_detached(
+            &self.driver,
             self.retained,
-            &self.cleanups,
-            &self.owner,
-            resource,
+            &self.runtime,
+            detached,
         ));
     }
 }
