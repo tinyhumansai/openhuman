@@ -19,8 +19,9 @@ struct ScriptedBoxes {
 
 #[async_trait]
 impl BoxFiles for ScriptedBoxes {
-    async fn keeps_boxes(&self) -> Result<bool, BoxError> {
+    async fn work_folder(&self) -> Result<Option<&'static str>, BoxError> {
         self.keeps
+            .map(|keeps| keeps.then_some("/sandbox"))
             .ok_or_else(|| BoxError::Driver("cannot read the configuration: unreadable".into()))
     }
 
@@ -366,10 +367,26 @@ fn staged_files_live_under_a_folder_artifacts_may_reference() {
 
 #[test]
 fn a_box_path_is_the_name_relative_to_the_work_folder() {
-    assert_eq!(box_path("report.pdf"), "report.pdf");
-    assert_eq!(box_path("/sandbox/out/report.pdf"), "out/report.pdf");
-    assert_eq!(box_path("/sandboxed/report.pdf"), "/sandboxed/report.pdf");
-    assert_eq!(box_path("/sandbox"), "/sandbox");
+    assert_eq!(box_path("report.pdf", "/sandbox"), "report.pdf");
+    assert_eq!(box_path("/sandbox/out/report.pdf", "/sandbox"), "out/report.pdf");
+    assert_eq!(
+        box_path("/sandboxed/report.pdf", "/sandbox"),
+        "/sandboxed/report.pdf"
+    );
+    assert_eq!(box_path("/sandbox", "/sandbox"), "/sandbox");
+}
+
+#[test]
+fn an_agent37_box_path_is_relative_to_its_home() {
+    assert_eq!(
+        box_path("/home/node/out/report.pdf", "/home/node"),
+        "out/report.pdf"
+    );
+    // Another backend's work folder is just an absolute path here.
+    assert_eq!(
+        box_path("/sandbox/out/report.pdf", "/home/node"),
+        "/sandbox/out/report.pdf"
+    );
 }
 
 #[tokio::test]

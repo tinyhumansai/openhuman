@@ -1,76 +1,137 @@
-//! Pure helpers for the agent37 backend: the `timeout` wrapping, whole-second
-//! rounding, the box limits, and the UTF-8 environment projection. The command path itself goes
-//! through the TinyBox module and is exercised by integration tests, not here.
-#![cfg(feature = "modules")]
+//! The agent37 backend: what it refuses before anything leaves the host, and
+//! how `[runtime.agent37]` becomes its boxes' settings and retention. The box
+//! lifecycle itself is the shared registry's, tested in `boxes`.
 
 use super::*;
-use std::collections::HashMap;
-use std::ffi::OsString;
-use std::time::Duration;
+use crate::sandbox::boxes::{
+    BoxError, BoxSettings, RegistryLimits, RetainPolicy, AGENT37_WORKDIR,
+};
+
+fn local_only() -> Config {
+    let mut config = Config::default();
+    config.privacy.mode = crate::config::PrivacyMode::LocalOnly;
+    config
+}
+
+#[tokio::test]
+async fn local_only_privacy_refuses_a_command_before_it_leaves_the_host() {
+    let error = execute(
+        &DispatchCtx::unbound(),
+        &local_only(),
+        "id",
+        &HashMap::new(),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error.downcast_ref::<BoxError>(),
+        Some(&BoxError::LocalOnly),
+        "{error}"
+    );
+    assert!(error.to_string().contains("local_only"));
+}
 
 #[test]
-fn timeout_argv_wraps_the_command_for_the_box_to_stop() {
+fn only_local_only_privacy_forbids_agent37() {
+    let mut config = Config::default();
+    // Standard (the default) allows agent37's off-device execution.
+    assert_eq!(BoxBackend::Agent37.check_allowed(&config), Ok(()));
+    // Sensitive is not local-only, so it still allows agent37.
+    config.privacy.mode = crate::config::PrivacyMode::Sensitive;
+    assert_eq!(BoxBackend::Agent37.check_allowed(&config), Ok(()));
+    // OpenShell runs on the operator's own gateway.
+    assert_eq!(BoxBackend::OpenShell.check_allowed(&local_only()), Ok(()));
+}
+
+#[test]
+fn box_settings_come_from_the_agent37_runtime_config() {
+    let mut config = Config::default();
+    config.runtime.docker.cpu_limit = Some(8.0);
+    config.runtime.docker.memory_limit_mb = Some(1);
+    config.runtime.agent37.template = "team-sandbox".into();
+    config.runtime.agent37.cpu_millis = 4_000;
+    config.runtime.agent37.memory_mb = 16_384;
+
+    let settings = BoxBackend::Agent37.settings(&config).unwrap();
+
     assert_eq!(
-        timeout_argv(30, "echo hi"),
-        vec![
-            "timeout".to_owned(),
-            "-k".to_owned(),
-            "5".to_owned(),
-            "30".to_owned(),
-            "sh".to_owned(),
-            "-c".to_owned(),
-            "echo hi".to_owned(),
-        ]
+        settings,
+        BoxSettings {
+            image: "team-sandbox".into(),
+            cpu_millis: 4_000,
+            memory_bytes: 16_384 * 1024 * 1024,
+            workdir: AGENT37_WORKDIR.into(),
+        }
+    );
+    assert_eq!(BoxBackend::Agent37.workdir(), "/home/node");
+}
+
+#[test]
+fn box_settings_ask_for_the_maximum_when_memory_overflows() {
+    let mut config = Config::default();
+    config.runtime.agent37.memory_mb = u64::MAX;
+
+    let settings = BoxBackend::Agent37.settings(&config).unwrap();
+    assert_eq!(settings.memory_bytes, u64::MAX);
+}
+
+#[test]
+fn a_blank_template_is_refused_with_a_config_error() {
+    let mut config = Config::default();
+    config.runtime.agent37.template = "  ".into();
+
+    let refused = BoxBackend::Agent37.settings(&config).unwrap_err();
+    assert!(matches!(refused, BoxError::InvalidConfig(_)), "{refused:?}");
+    assert!(refused.to_string().contains("[runtime.agent37]"));
+}
+
+#[test]
+fn boxes_are_retained_with_the_configured_sleep_and_expiry() {
+    let mut config = Config::default();
+    config.runtime.agent37.idle_sleep_secs = 1_200;
+    config.runtime.agent37.delete_after_secs = 86_400;
+    config.runtime.agent37.max_live = 7;
+
+    assert_eq!(
+        BoxBackend::Agent37.limits(&config),
+        RegistryLimits {
+            idle_ttl: Duration::from_secs(1_200),
+            max_live: 7,
+            retain: Some(RetainPolicy {
+                idle_sleep_secs: 1_200,
+                delete_after_secs: 86_400,
+            }),
+        }
     );
 }
 
 #[test]
-fn whole_seconds_rounds_up_and_never_asks_for_none() {
-    assert_eq!(whole_seconds(Duration::from_secs(0)), 1);
-    assert_eq!(whole_seconds(Duration::from_millis(1)), 1);
-    assert_eq!(whole_seconds(Duration::from_millis(1500)), 2);
-    assert_eq!(whole_seconds(Duration::from_secs(5)), 5);
-}
-
-#[test]
-fn utf8_env_keeps_utf8_pairs_and_drops_the_rest() {
-    let mut env = HashMap::new();
-    env.insert(OsString::from("KEY"), OsString::from("value"));
-    let out = utf8_env(&env);
-    assert_eq!(out.get("KEY").map(String::as_str), Some("value"));
-    assert_eq!(out.len(), 1);
-}
-
-#[test]
-fn local_only_privacy_forbids_agent37() {
+fn the_sleep_delay_is_clamped_to_what_agent37_accepts() {
     let mut config = Config::default();
-    // Standard (the default) allows agent37's off-device execution.
-    assert!(!local_only_forbids_agent37(&config));
-    config.privacy.mode = crate::config::PrivacyMode::LocalOnly;
-    assert!(local_only_forbids_agent37(&config));
-    // Sensitive is not local-only, so it still allows agent37.
-    config.privacy.mode = crate::config::PrivacyMode::Sensitive;
-    assert!(!local_only_forbids_agent37(&config));
+    for (configured, used) in [(0, 300), (299, 300), (300, 300), (86_400, 86_400), (u32::MAX, 86_400)]
+    {
+        config.runtime.agent37.idle_sleep_secs = configured;
+        let limits = BoxBackend::Agent37.limits(&config);
+        assert_eq!(limits.retain.unwrap().idle_sleep_secs, used, "{configured}");
+        assert_eq!(limits.idle_ttl, Duration::from_secs(u64::from(used)));
+    }
 }
 
 #[test]
-fn box_resources_come_from_the_agent37_runtime_config() {
+fn zero_expiry_and_zero_capacity_are_raised_to_one() {
     let mut config = Config::default();
-    config.runtime.docker.cpu_limit = Some(8.0);
-    config.runtime.docker.memory_limit_mb = Some(1);
-    config.runtime.agent37.cpu_millis = 4_000;
-    config.runtime.agent37.memory_mb = 16_384;
+    config.runtime.agent37.delete_after_secs = 0;
+    config.runtime.agent37.max_live = 0;
 
-    let resources = box_resources(&config);
-
-    assert_eq!(resources.cpu_millis, 4_000);
-    assert_eq!(resources.memory_bytes, 16_384 * 1024 * 1024);
+    let limits = BoxBackend::Agent37.limits(&config);
+    assert_eq!(limits.retain.unwrap().delete_after_secs, 1);
+    assert_eq!(limits.max_live, 1);
 }
 
 #[test]
-fn box_resources_ask_for_the_maximum_when_memory_overflows() {
-    let mut config = Config::default();
-    config.runtime.agent37.memory_mb = u64::MAX;
-
-    assert_eq!(box_resources(&config).memory_bytes, u64::MAX);
+fn openshell_boxes_are_never_retained() {
+    assert_eq!(BoxBackend::OpenShell.limits(&Config::default()).retain, None);
+    assert_eq!(BoxBackend::OpenShell.workdir(), "/sandbox");
 }
