@@ -554,7 +554,7 @@ impl OpenHumanSessionHost {
             ($name:literal, $e:expr) => {{
                 let before = count();
                 $e;
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
                 log::warn!(
                     "DIAGSTORM strip {} before={:?} after={:?}",
                     $name,

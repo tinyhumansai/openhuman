@@ -591,16 +591,16 @@ pub(crate) async fn checkin_session_agent(
     // DIAGSTORM
     let before = ctx.core().map(std::sync::Arc::strong_count);
     if std::env::var_os("DIAGSTORM_NOCACHE").is_some() {
-        agent
-            .diagstorm_strip(&|| {
-                ctx.core()
-                    .map(|c| std::sync::Arc::strong_count(c) * 1000 + c.diagstorm_counts().0)
-            })
-            .await;
-        log::warn!(
-            "DIAGSTORM checkin dropped agent ctx_count before={before:?} after={:?}",
-            ctx.core().map(std::sync::Arc::strong_count)
-        );
+        let weak = ctx.core().map(std::sync::Arc::downgrade);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            let count = move || {
+                weak.as_ref().and_then(|w| w.upgrade()).map(|c| {
+                    (std::sync::Arc::strong_count(&c) - 1) * 1000 + c.diagstorm_counts().0
+                })
+            };
+            agent.diagstorm_strip(&count).await;
+        });
         return;
     }
     log::warn!("DIAGSTORM checkin caching agent ctx_count={before:?}");
