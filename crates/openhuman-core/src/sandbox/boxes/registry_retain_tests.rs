@@ -410,11 +410,7 @@ async fn a_new_box_waits_for_the_owners_forget_still_in_progress() {
     // box must not be created (and so must not adopt that instance) yet.
     let again = {
         let boxes = Arc::clone(&boxes);
-        tokio::spawn(async move {
-            boxes
-                .exec(&user("u1"), &settings(), &request("pwd"))
-                .await
-        })
+        tokio::spawn(async move { boxes.exec(&user("u1"), &settings(), &request("pwd")).await })
     };
     for _ in 0..10 {
         tokio::task::yield_now().await;
