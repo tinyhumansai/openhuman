@@ -39,11 +39,10 @@ pub(crate) async fn decide_off_the_caller_runtime(
         decision = decision.as_str(),
         "[rpc:approval_decide] deciding on a blocking thread"
     );
-    crate::core::runtime::DispatchCtx::ambient().spawn_blocking(move || {
-        gate.decide_as(&tenant, agent.as_deref(), &request_id, decision)
-    })
-    .await
-    .map_err(|error| anyhow!("the approval decision worker failed: {error}"))?
+    crate::core::runtime::DispatchCtx::ambient()
+        .spawn_blocking(move || gate.decide_as(&tenant, agent.as_deref(), &request_id, decision))
+        .await
+        .map_err(|error| anyhow!("the approval decision worker failed: {error}"))?
 }
 
 /// Read the host-aware approval-gate boot decision so the UI banner can
