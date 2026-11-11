@@ -1,9 +1,10 @@
 //! The doctor's read-only managed embedding probe versus real embedding traffic.
 //!
 //! The doctor never loads TinySecurity, so its inspection embedder must not
-//! ask it; ordinary embedders must keep asking it on every batch. These tests
-//! run with the `security-module` feature on (the default) and no TinySecurity
-//! module loaded, which is exactly the doctor's situation.
+//! ask it; ordinary embedders must keep asking it on every batch. The guard
+//! tests pin this thread's privacy mode to `LocalOnly`, which refuses external
+//! user content whether or not the TinySecurity module is staged, so they hold
+//! both in a plain `cargo test` and in CI's staged-module run.
 
 use super::{from_request, from_request_for_inspection};
 use axum::{routing::post, Json, Router};
@@ -124,11 +125,22 @@ async fn inspection_embedder_reports_an_unreachable_endpoint() {
     );
 }
 
-/// Real embedding traffic still asks TinySecurity before a batch leaves: with
-/// the module absent, the runtime embedder refuses and sends nothing, even
-/// with a valid credential and a reachable endpoint.
+/// Pins this thread's privacy mode to `LocalOnly`, under which the egress
+/// guard refuses external user content with or without TinySecurity. Thread
+/// scoped: `#[tokio::test]` runs the embedder on this thread, and parallel
+/// tests never observe it.
+fn local_only() -> openhuman_core::security::live_policy::TestPrivacyGuard {
+    openhuman_core::security::live_policy::test_privacy_scope(
+        openhuman_core::config::PrivacyMode::LocalOnly,
+    )
+}
+
+/// Real embedding traffic applies the egress guard before a batch leaves:
+/// under `LocalOnly` the runtime embedder refuses and sends nothing, even with
+/// a valid credential and a reachable endpoint.
 #[tokio::test]
 async fn runtime_embedder_still_enforces_the_egress_guard() {
+    let _local_only = local_only();
     let (base, requests) = mock_embeddings().await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_api_key(&tmp, &base).await;
@@ -136,13 +148,34 @@ async fn runtime_embedder_still_enforces_the_egress_guard() {
     let error = from_request(request_for(&config))
         .embed(&["user text".to_owned()])
         .await
-        .expect_err("an unconfirmed egress must be refused");
+        .expect_err("a local-only egress must be refused");
 
     assert!(
-        error
-            .to_string()
-            .contains("security module could not confirm"),
+        error.to_string().contains("Local-only privacy mode is active"),
         "{error}"
     );
     assert_eq!(requests.load(Ordering::SeqCst), 0);
+}
+
+/// The inspection embedder carries no egress guard at all: in the same
+/// `LocalOnly` mode that refuses the runtime embedder, it still sends its probe.
+/// The local-only refusal for the doctor belongs to the core's doctor factory,
+/// which checks before it ever asks for this model.
+#[tokio::test]
+async fn inspection_embedder_skips_the_egress_guard_under_local_only() {
+    let _local_only = local_only();
+    let (base, requests) = mock_embeddings().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_api_key(&tmp, &base).await;
+
+    let model = from_request_for_inspection(&request_for(&config))
+        .await
+        .expect("the frozen API key builds an inspection embedder");
+    let vectors = model
+        .embed(&[PROBE.to_owned()])
+        .await
+        .expect("the inspection embedder has no egress guard to refuse it");
+
+    assert_eq!(vectors.first().map(Vec::len), Some(2));
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
 }
