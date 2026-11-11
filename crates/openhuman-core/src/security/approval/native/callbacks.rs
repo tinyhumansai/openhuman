@@ -24,9 +24,6 @@ const LOG: &str = "[approval::native]";
 
 /// `ApprovalStore2.Load`: the latest rows of one subject.
 pub(crate) async fn load(request: ApprovalLoadRequest2) -> Result<ApprovalLoadResponse2, String> {
-    let r = load_x(request).await; if let Err(e)=&r { eprintln!("DBG load err: {e}"); } r
-}
-async fn load_x(request: ApprovalLoadRequest2) -> Result<ApprovalLoadResponse2, String> {
     let scope = by_handle(&request.scope)
         .await
         .ok_or("approval store: unknown subject")?;
@@ -40,9 +37,6 @@ async fn load_x(request: ApprovalLoadRequest2) -> Result<ApprovalLoadResponse2, 
 
 /// `ApprovalStore2.Cas`: one compare-and-swap of a row.
 pub(crate) async fn cas(request: ApprovalCasRequest2) -> Result<ApprovalCasResponse2, String> {
-    let r = cas_x(request).await; if let Err(e)=&r { eprintln!("DBG cas err: {e}"); } r
-}
-async fn cas_x(request: ApprovalCasRequest2) -> Result<ApprovalCasResponse2, String> {
     let scope = by_handle(&request.scope)
         .await
         .ok_or("approval store: unknown subject")?;
@@ -56,9 +50,6 @@ async fn cas_x(request: ApprovalCasRequest2) -> Result<ApprovalCasResponse2, Str
 
 /// `AuditSink2.Append`: one ordered audit batch of one subject's stream.
 pub(crate) async fn append(request: AuditSinkRequest2) -> Result<AuditSinkResponse2, String> {
-    let r = append_x(request).await; if let Err(e)=&r { eprintln!("DBG append err: {e}"); } r
-}
-async fn append_x(request: AuditSinkRequest2) -> Result<AuditSinkResponse2, String> {
     // The batch names its subject only by the module's identifier hash, so the
     // stream the host assigned to the subject is what identifies it; the first
     // batch fixes how the stream's subject is spelled and later ones must repeat it.
@@ -83,11 +74,6 @@ async fn append_x(request: AuditSinkRequest2) -> Result<AuditSinkResponse2, Stri
 /// asked for (another process's pending row, a replay after a restart) has no
 /// surface to show it on and is refused, which denies it.
 pub(crate) async fn prompt(
-    request: ApprovalDeliveryRequest2,
-) -> Result<ApprovalDeliveryResponse2, String> {
-    let r = prompt_x(request).await; if let Err(e)=&r { eprintln!("DBG prompt err: {e}"); } r
-}
-async fn prompt_x(
     request: ApprovalDeliveryRequest2,
 ) -> Result<ApprovalDeliveryResponse2, String> {
     let row = request.row;
