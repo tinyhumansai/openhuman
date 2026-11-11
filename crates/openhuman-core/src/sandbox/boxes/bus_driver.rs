@@ -84,7 +84,12 @@ impl BusBoxDriver {
     /// outside any call.
     pub fn serve<F: Future>(&self, config: &Config, call: F) -> impl Future<Output = F::Output> {
         let config = Arc::new(config.clone());
-        *self.latest.write().unwrap_or_else(PoisonError::into_inner) = Arc::clone(&config);
+        // A call that has the module switched off must not become the
+        // configuration for later cleanups: they would be refused before they
+        // reach TinyBox, and the box would be left untracked.
+        if config.modules.enabled {
+            *self.latest.write().unwrap_or_else(PoisonError::into_inner) = Arc::clone(&config);
+        }
         CALL_CONFIG.scope(config, call)
     }
 
