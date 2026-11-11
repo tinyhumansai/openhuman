@@ -476,7 +476,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
     /// Count a command against `tenant`'s entry, making the entry when there
     /// is room (after reaping idle boxes if there is not). Returns the slot,
     /// or `None` at capacity, and the reaped boxes to close.
-    fn hold(&self, owner: &Owner, now: Instant) -> (Option<Arc<Slot>>, Vec<String>) {
+    fn hold(&self, owner: &Owner, now: Instant) -> (Option<Arc<Slot>>, Vec<(Owner, String)>) {
         let mut entries = self.entries();
         let mut reaped = Vec::new();
         if !entries.contains_key(owner) && entries.len() >= self.limits.max_live {
