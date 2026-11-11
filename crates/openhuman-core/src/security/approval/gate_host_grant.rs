@@ -96,7 +96,7 @@ pub(crate) async fn host_authorised_grant_without_gate(
         .ok()?;
     match embedder_host_grant(true, tool_name, &args) {
         SaasHostGrant::Authorised { profile, scope_id } => {
-            let session = format!("host-grant-{}", uuid::Uuid::new_v4());
+            let session = format!("session-{}", uuid::Uuid::new_v4());
             let gate = ApprovalGate::new(config, session, None);
             let (outcome, _) = gate
                 .saas_host_authorised_grant(tool_name, action_summary, args, &profile, &scope_id)
