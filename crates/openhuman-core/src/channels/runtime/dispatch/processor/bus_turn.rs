@@ -4,8 +4,8 @@
 use crate::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD};
 use crate::channels::context::{ChannelRouteSelection, ChannelRuntimeContext};
 use crate::core::bus::BUS;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::progress::AgentProgress;
-use crate::security::turn_origin::AgentTurnOrigin;
 use std::sync::Arc;
 use tinyagents_session::transcript::TranscriptMessage;
 use tinybus::NativeRequestError;

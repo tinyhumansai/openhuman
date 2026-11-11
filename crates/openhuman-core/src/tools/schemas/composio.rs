@@ -19,6 +19,7 @@ pub(super) fn handle_composio_execute(
         let action_args = params.get("params").cloned();
 
         let config = ctx.load_config().await?;
+        let keys = crate::integrations::composio::tools::composio_call_keys(&config).await?;
         // The connector module owns the mode split (backend proxy vs. the
         // user's personal direct tenant, #1710); this only supplies the config.
         let resp = crate::integrations::composio::execute_dispatch::execute_composio_action(
@@ -31,6 +32,11 @@ pub(super) fn handle_composio_execute(
         )
         .await
         .map_err(|e| format!("composio execute failed: {e}"))?;
+        // Strip the Composio keys before the result leaves over RPC, as the
+        // agent tools do with their results.
+        let resp =
+            crate::integrations::composio::tools::redact_composio_response(&config, keys, resp)
+                .await?;
         tracing::debug!(
             action = %action,
             successful = resp.successful,

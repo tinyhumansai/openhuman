@@ -73,7 +73,7 @@ pub async fn flows_list_connections(
     //    out secret material here; injection happens server-side in
     //    `flows::caps_host::OpenHumanHttp`).
     let http_creds =
-        match crate::security::credentials::HttpCredentialsStore::from_config(config).list() {
+        match crate::flows::http_credentials::HttpCredentialsStore::from_config(config).list() {
             Ok(list) => {
                 tracing::debug!(
                     count = list.len(),
@@ -178,7 +178,7 @@ async fn normalize_keys(
 /// guessing a public channel.
 pub(crate) fn build_flow_connections(
     composio: Vec<crate::integrations::composio::ComposioConnection>,
-    http: Vec<crate::security::credentials::HttpCredentialSummary>,
+    http: Vec<crate::flows::http_credentials::HttpCredentialSummary>,
     identities: &[crate::integrations::composio::contract::ConnectedIdentity],
     keys: &std::collections::HashMap<String, String>,
 ) -> Vec<FlowConnection> {
@@ -209,7 +209,7 @@ pub(crate) fn build_flow_connections(
 
 /// Human-readable picker label for a named HTTP credential, e.g.
 /// `"stripe (bearer)"`. Only the (non-secret) name + scheme — never the value.
-fn http_credential_display(cred: &crate::security::credentials::HttpCredentialSummary) -> String {
+fn http_credential_display(cred: &crate::flows::http_credentials::HttpCredentialSummary) -> String {
     format!("{} ({})", cred.name, cred.scheme)
 }
 

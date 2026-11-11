@@ -6,7 +6,7 @@ use anyhow::Result;
 use reqwest::Method;
 use serde_json::Value;
 
-use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
 use super::backend_client::BackendClient;
 

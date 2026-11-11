@@ -85,7 +85,7 @@ fn default_tool_descs(config: &Config) -> Vec<(&'static str, &'static str)> {
 /// Build the model, tools and prompt of a channel turn from `config`, under
 /// `security`. Side-effect free apart from the workspace's audit logger: it
 /// installs no process-global policy and registers no subscriber.
-pub(crate) fn build_channel_turn_parts(
+pub(crate) async fn build_channel_turn_parts(
     dispatch: &DispatchCtx,
     config: &Config,
     security: &Arc<SecurityPolicy>,
@@ -98,7 +98,8 @@ pub(crate) fn build_channel_turn_parts(
                 "chat",
                 config,
                 config.default_temperature,
-            )?;
+            )
+            .await?;
             (model, provider::factory::INFERENCE_BACKEND_ID.to_string())
         }
         ChatWorkloadResolution::Workload {
@@ -115,7 +116,8 @@ pub(crate) fn build_channel_turn_parts(
                 "chat",
                 config,
                 config.default_temperature,
-            )?;
+            )
+            .await?;
             (model_id, slug)
         }
     };
@@ -124,11 +126,10 @@ pub(crate) fn build_channel_turn_parts(
         &config.runtime,
         config.shell.hide_window,
     )?);
-    // Phase 1 of #1401: audit logger is wired with defaults so emission paths
-    // are exercised at runtime. The logger is workspace-scoped and shared, so
-    // concurrent sessions append to one `audit.log` without racing on rotation.
-    let audit = crate::security::get_or_create_workspace_audit_logger(
-        crate::config::AuditConfig::default(),
+    // The audit handle is workspace-scoped and shared; event persistence is
+    // delegated to TinySecurity's ordered `AuditSink2` stream.
+    let audit = crate::security::get_or_create_workspace_audit_sink(
+        config.audit.clone(),
         config.workspace_dir.clone(),
     )?;
     let workspace = config.workspace_dir.clone();
@@ -151,6 +152,7 @@ pub(crate) fn build_channel_turn_parts(
             config,
             None,
         )
+        .await
     });
 
     let skills = if capabilities.is_some() {

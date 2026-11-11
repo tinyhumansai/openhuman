@@ -79,42 +79,47 @@ async fn two_profiles_on_the_same_thread_id_hold_two_keys() {
 
 #[tokio::test]
 async fn a_user_cancel_under_the_fence_placeholder_id_keeps_the_callers_client() {
-    let token = tokio_util::sync::CancellationToken::new();
-    track_parallel_turn_for_test(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "fence-thread",
-        token.clone(),
-    )
-    .await;
-    let mut events = crate::web_chat::subscribe_web_channel_events();
+    let workspace = tempfile::tempdir().unwrap();
+    let config = crate::credentials::test_support::plaintext_fixture_config(workspace.path());
+    CoreContext::scope_test_native_config(&config, async {
+        let token = tokio_util::sync::CancellationToken::new();
+        track_parallel_turn_for_test(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "fence-thread",
+            token.clone(),
+        )
+        .await;
+        let mut events = crate::web_chat::subscribe_web_channel_events();
 
-    crate::web_chat::ops::channel_ops::cancel_chat_scoped(
-        &DispatchCtx::ambient(),
-        "profile-fence",
-        "fence-thread",
-        None,
-    )
-    .await
-    .unwrap();
-
-    let seen = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        loop {
-            match events.recv().await {
-                Ok(event)
-                    if event.event_name() == "chat_cancelled"
-                        && event.context().thread_id == "fence-thread" =>
-                {
-                    return event.context().client_id.clone();
-                }
-                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(error) => panic!("event stream closed: {error}"),
-            }
-        }
-    })
-    .await
-    .expect("the cancelled turn announces itself");
-    assert_eq!(seen, "profile-fence");
-    tokio::time::timeout(std::time::Duration::from_secs(5), token.cancelled())
+        crate::web_chat::ops::channel_ops::cancel_chat_scoped(
+            &DispatchCtx::ambient(),
+            "profile-fence",
+            "fence-thread",
+            None,
+        )
         .await
-        .expect("tearing the turn down reaches its watcher");
+        .unwrap();
+
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                match events.recv().await {
+                    Ok(event)
+                        if event.event_name() == "chat_cancelled"
+                            && event.context().thread_id == "fence-thread" =>
+                    {
+                        return event.context().client_id.clone();
+                    }
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(error) => panic!("event stream closed: {error}"),
+                }
+            }
+        })
+        .await
+        .expect("the cancelled turn announces itself");
+        assert_eq!(seen, "profile-fence");
+        tokio::time::timeout(std::time::Duration::from_secs(5), token.cancelled())
+            .await
+            .expect("tearing the turn down reaches its watcher");
+    })
+    .await;
 }

@@ -1,6 +1,6 @@
 use super::{
     grouped_schemas, is_help_only, load_dotenv_for_cli, parse_function_params, parse_input_value,
-    parse_launch_options,
+    parse_launch_options, restart_required,
 };
 use crate::config::test_env::EnvVarGuard;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -405,4 +405,19 @@ fn default_build_leaves_the_generic_namespace_path_unchanged() {
         !grouped.contains_key("memory_diff"),
         "`memory_diff` was removed and must not be listed"
     );
+}
+
+#[test]
+fn an_auth_response_asking_for_a_restart_is_recognised_at_any_depth() {
+    use serde_json::json;
+    assert!(restart_required(&json!({"restartRequired": true})));
+    assert!(restart_required(
+        &json!({"result": {"result": {"restartRequired": true}}})
+    ));
+    assert!(!restart_required(
+        &json!({"result": {"restartRequired": false}})
+    ));
+    assert!(!restart_required(
+        &json!({"result": {"isAuthenticated": true}})
+    ));
 }

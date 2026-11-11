@@ -39,7 +39,7 @@ async fn validation_runs_before_the_credential() {
 #[tokio::test]
 async fn local_session_is_backend_unavailable() {
     let tmp = TempDir::new().unwrap();
-    let config = test_support::local_session(&tmp);
+    let config = test_support::local_session(&tmp).await;
     let err = oauth_connect(&config, "github", None, None, None)
         .await
         .unwrap_err();
@@ -60,7 +60,7 @@ async fn connect_forwards_non_empty_query_and_shapes_the_result() {
         .mount(&server)
         .await;
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
     let out = oauth_connect(&config, "/github/", Some("s1"), Some(""), Some("encrypted"))
         .await
         .unwrap();
@@ -79,7 +79,7 @@ async fn connect_rejects_a_response_without_url_or_state() {
         .mount(&server)
         .await;
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
     let err = oauth_connect(&config, "notion", None, None, None)
         .await
         .unwrap_err();
@@ -112,7 +112,7 @@ async fn list_revoke_and_token_handoff_round_trip() {
         .await;
 
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
 
     let out = oauth_list_integrations(&config).await.unwrap();
     assert_eq!(
@@ -138,7 +138,7 @@ async fn token_handoff_without_encrypted_payload_errors() {
         .mount(&server)
         .await;
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
     let err = oauth_fetch_integration_tokens(&config, ID, "k")
         .await
         .unwrap_err();
@@ -169,7 +169,7 @@ async fn fetch_client_key_returns_the_one_time_share() {
         .mount(&server)
         .await;
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
 
     let outcome = oauth_fetch_client_key(&config, &format!(" {ID} "))
         .await
@@ -189,7 +189,7 @@ async fn fetch_client_key_rejects_a_response_without_the_key() {
         .mount(&server)
         .await;
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
 
     assert!(oauth_fetch_client_key(&config, ID)
         .await

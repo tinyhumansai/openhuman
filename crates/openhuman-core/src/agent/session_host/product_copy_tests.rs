@@ -269,24 +269,31 @@ fn the_final_summary_quotes_each_failure_message() {
 /// plain language derived from the stop note, and lists each tool with its
 /// short error line instead of quoting the note (written for the model) or the
 /// raw records. The detailed cases live in `stop_summary_tests.rs`.
-#[test]
-fn the_final_summary_of_a_halted_turn_gives_a_reason_and_names_the_tools() {
-    let out = super::super::stop_policy::deterministic_final_summary(
-        &[result("install_item", false, "no direct download")],
-        Some(STOP_NOTE),
-    );
-    assert!(
-        out.starts_with("I stopped this turn early because the same step kept failing."),
-        "lead missing: {out}"
-    );
-    assert!(
-        !out.contains("Stopping:"),
-        "the stop note is not quoted: {out}"
-    );
-    assert!(
-        out.contains("- `install_item` failed: no direct download"),
-        "the tool and its error line follow: {out}"
-    );
+#[tokio::test]
+async fn the_final_summary_of_a_halted_turn_gives_a_reason_and_names_the_tools() {
+    crate::agent::session_host::test_support::with_native_security(async {
+        let out = super::super::stop_policy::deterministic_final_summary(
+            &[result("install_item", false, "no direct download")],
+            Some(STOP_NOTE),
+        );
+        assert!(
+            out.starts_with("I stopped this turn early because the same step kept failing."),
+            "lead missing: {out}"
+        );
+        assert!(
+            !out.contains("Stopping:"),
+            "the stop note is not quoted: {out}"
+        );
+        assert!(
+            out.contains(if cfg!(feature = "security-module") {
+                "- `install_item` failed: no direct download"
+            } else {
+                "- `install_item` failed: [REDACTED]"
+            }),
+            "the tool and its error line follow: {out}"
+        );
+    })
+    .await;
 }
 
 /// The wrap-up is grounded in the records it is handed, and only a halted run

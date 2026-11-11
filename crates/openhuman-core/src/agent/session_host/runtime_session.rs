@@ -4,8 +4,14 @@
 //! transcripts, prefixes, snapshots, resume, and persistence.
 
 mod bound_history;
+mod compact;
+pub use compact::{CompactOptions, CompactOutcome};
 #[path = "runtime_session_enrichment.rs"]
 mod enrichment;
+pub(super) mod memory_block;
+mod memory_block_ready;
+pub(crate) use memory_block_ready::invalidate as invalidate_ready_memory_blocks;
+pub use memory_block_ready::MemoryBlockPrewarm;
 mod permanent;
 mod post_commit;
 #[path = "runtime_session/prelude.rs"]

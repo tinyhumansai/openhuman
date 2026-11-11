@@ -230,6 +230,10 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agenten & Autonomie',
   'settings.devGroups.automationIntegrations': 'Automatisierung & Integrationen',
   'settings.tokenUsage.title': 'Token-Einsparungen',
+  'settings.secretGrant.title':
+    'OpenHuman erlauben, deine gespeicherten Geheimnisse zu entsperren?',
+  'settings.secretGrant.subtitle':
+    'Zum Speichern dieser Einstellung ist deine einmalige Zustimmung zur Verschlüsselung nötig. Lehne ab, um das Speichern abzubrechen.',
   'settings.tokenUsage.menuDesc':
     'Komprimierungseinstellungen und wie viele Tokens und Dollar sie eingespart haben',
   'settings.tokenUsage.saving': 'Wird gespeichert…',
@@ -3992,6 +3996,10 @@ const messages: TranslationMap = {
     'Der Agent hat die maximale Anzahl an Werkzeugschritten für einen Durchlauf ausgeführt, ohne fertig zu werden. Das bedeutet meist, dass ein Werkzeug immer wieder fehlgeschlagen ist (oft wegen eines Ratenlimits bei einem Webabruf). Du kannst dieselbe Frage in diesem Thread erneut stellen, sobald das Limit aufgehoben ist.',
   'chat_error.turn_timeout':
     'Dieser Durchlauf hat sein Zeitbudget überschritten, ohne fertig zu werden, und wurde gestoppt, damit er nicht hängt. Das bedeutet meist, dass ein Werkzeugaufruf oder ein delegierter Subagent steckengeblieben ist. Du kannst deine Frage in diesem Thread erneut stellen.',
+  'chat_error.disk_full':
+    'Dein Datenträger ist voll, deshalb konnte diese Unterhaltung nicht gespeichert werden. Gib etwas Speicherplatz frei und sende deine Nachricht dann in diesem Thread erneut.',
+  'chat_error.prompt_screened':
+    'Die Sicherheitsprüfung von OpenHuman hat diese Nachricht zurückgehalten, daher wurde sie nicht an das Modell gesendet. Wenn sie Anweisungen an einen Assistenten zitiert (zum Beispiel aus einer Webseite oder E-Mail), entferne sie und versuche es erneut. Wenn auch normale Nachrichten zurückgehalten werden, ist das Sicherheitsmodul möglicherweise nicht verfügbar: Starte OpenHuman neu und versuche es erneut.',
   'chat_error.empty_response':
     'Das Modell hat eine leere Antwort geliefert. Bitte versuche es erneut. Wenn das weiter passiert, probiere ein anderes Modell aus oder prüfe die Einrichtung unter Verbindungen → API-Schlüssel → LLM.',
   'chat_error.chat_template_rejected':
@@ -4494,6 +4502,10 @@ const messages: TranslationMap = {
     'Der Mikrofonzugriff wurde verweigert. Erlaube ihn in den Systemeinstellungen und versuche es erneut.',
   'voice.live.error.micUnavailable': 'Kein Mikrofon verfügbar.',
   'voice.live.error.connection': 'Verbindung zum Sprachagenten fehlgeschlagen.',
+  'voice.live.error.insufficientCredits':
+    'Für Live-Sprache brauchst du mehr Guthaben. Lade Guthaben auf, um fortzufahren.',
+  'voice.live.error.paidPlanRequired':
+    'Live-Sprache erfordert einen kostenpflichtigen Tarif. Führe ein Upgrade durch, um fortzufahren.',
   'voice.live.toolRunning': '{name} läuft',
   'voice.live.toolOk': '{name} abgeschlossen',
   'voice.live.toolFailed': '{name} fehlgeschlagen',
@@ -4783,11 +4795,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'Namespaced Prozess Gefängnis',
   'settings.sandbox.backendHint.bubblewrap': 'Leichtgewichtige Benutzernamensräume',
   'settings.sandbox.backendHint.none': 'Werkzeuge direkt ausführen, unisoliert',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Werkzeugbestand',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Werkzeuge insgesamt',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Aktivierte Werkzeuge',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP-stdio-Werkzeuge',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC-Werkzeuge',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Richtlinieneinstellungen',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Autonomiestufe',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Nur im Arbeitsbereich',
@@ -5242,6 +5249,57 @@ const messages: TranslationMap = {
 
   'settings.layout.corners.round': 'Abgerundet',
   'settings.layout.contrast.subtle': 'Dezent',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt':
+    'Richtliniendiagnosen sind in diesem Core nicht enthalten.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Aktive Sicherheitsrichtlinie',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomie',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Nur im Arbeitsbereich',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Maximale Aktionen pro Stunde',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Genehmigung bei mittlerem Risiko erforderlich',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Befehle mit hohem Risiko blockieren',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Erlaubte Befehle',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Es sind keine Befehle ausdrücklich erlaubt.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Richtlinie',
+  'settings.approvalHistory.judgeScores':
+    'Absicht {intent} · Umkehrbar {reversible} · Datenabfluss {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'im Cache',
+  'settings.approvalHistory.judgeExpires': 'Läuft ab: {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Immer erlaubte Tools',
+  'keyring.settings.toolTrustDescription':
+    'Diese Tools können in diesem Sicherheitsbereich ohne Genehmigungsabfrage ausgeführt werden.',
+  'keyring.settings.toolTrustLoading': 'Erlaubte Tools werden geladen…',
+  'keyring.settings.toolTrustLoadFailed': 'Erlaubte Tools konnten nicht geladen werden.',
+  'keyring.settings.toolTrustRevokeFailed': 'Die Tool-Freigabe konnte nicht widerrufen werden.',
+  'keyring.settings.toolTrustEmpty': 'Es sind keine Tools immer erlaubt.',
+  'keyring.settings.toolTrustRetry': 'Erneut versuchen',
+  'keyring.settings.toolTrustRevoke': 'Widerrufen',
+  'keyring.settings.toolTrustRevoking': 'Wird widerrufen…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Anfrage für Schlüsselbundzugriff',
+  'keyring.operation.description':
+    'TinySecurity möchte auf einen Schlüsselbund-Eintrag zugreifen. Prüfe den Vorgang, bevor du entscheidest.',
+  'keyring.operation.access': 'Zugriff',
+  'keyring.operation.requester': 'Angefordert von',
+  'keyring.operation.origin': 'Ursprung',
+  'keyring.operation.purpose': 'Zweck',
+  'keyring.operation.name': 'Schlüsselbund-Eintrag',
+  'keyring.operation.access.read': 'Lesen',
+  'keyring.operation.access.write': 'Schreiben',
+  'keyring.operation.access.delete': 'Löschen',
+  'keyring.operation.allow': 'Einmal erlauben',
+  'keyring.operation.deny': 'Ablehnen',
+  'keyring.operation.submitting': 'Wird gesendet…',
+  'keyring.operation.expires': 'Die Anfrage läuft in {seconds}s ab.',
+  'keyring.operation.error':
+    'Deine Entscheidung konnte nicht gesendet werden. Die Anfrage ist möglicherweise abgelaufen.',
 };
 
 export default messages;

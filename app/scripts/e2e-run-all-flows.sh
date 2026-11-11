@@ -359,6 +359,7 @@ if should_run_suite "settings"; then
   run "test/e2e/specs/settings-data-management.spec.ts"       "settings-data"             "settings"
   run "test/e2e/specs/memory-plan-required.spec.ts"           "memory-plan-required"      "settings"
   run "test/e2e/specs/settings-search.spec.ts"                "settings-search"           "settings"
+  run "test/e2e/specs/security-approval-history.spec.ts"      "security-approval-history" "settings"
   _mini_summary "settings"
 fi
 

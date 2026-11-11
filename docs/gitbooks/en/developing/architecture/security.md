@@ -19,7 +19,7 @@ It owns:
 - The pairing guard that gates public binding of the RPC server.
 - The `redact()` helper every other domain uses to keep plaintext credentials out of logs.
 
-It does not own the cross-domain `EncryptionEngine` (in `security/encryption/`) or per-channel credential storage (in `security/credentials/`).
+It does not own the cross-domain `EncryptionEngine` (in `security/encryption/`) or per-channel credential storage (in `credentials/`).
 
 ## Public surface
 
@@ -97,9 +97,9 @@ Local PII detection belongs to [`tinymemory_api::safety`](https://github.com/tin
 - `crates/openhuman-core/src/cron/ops.rs`: wraps shell jobs in `SecurityPolicy::from_config`.
 - `crates/openhuman-core/src/tools/ops.rs` and `tools/impl/{browser,document,filesystem,network,presentation,system}/`: every executable tool consults `SecurityPolicy`.
 - `crates/openhuman-core/src/tools/impl/network/{gate,mcp,mcp_server_tools}.rs`: risk-classify outbound calls.
-- `crates/openhuman-core/src/memory/guard.rs`: wraps every memory write in `security::scrub::host_policy()`.
+- `crates/openhuman-core/src/memory/host_policy.rs`: supplies TinyMemory's corroborated policy to memory write scrubbers.
 - `crates/openhuman-core/src/agent/subagent_host/`: sub-agent execution applies the host's tool policy and autonomy gate.
-- `crates/openhuman-core/src/security/credentials/`: uses `SecretStore` and `redact`.
+- `crates/openhuman-core/src/credentials/`: uses `SecretStore` and `redact`.
 
 ## Tests
 

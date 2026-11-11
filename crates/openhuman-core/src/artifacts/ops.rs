@@ -315,6 +315,7 @@ pub async fn ai_share_artifact(
     public: bool,
 ) -> Result<Outcome<Value>, String> {
     let publisher = super::artifact_publisher(config)
+        .await
         .ok_or_else(|| "sign in to share artifacts".to_string())?;
     let artifacts = super::tiny_store::artifacts_service_with_publisher(
         &config.workspace_dir,

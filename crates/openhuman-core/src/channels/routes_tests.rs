@@ -120,13 +120,13 @@ async fn handle_linked_runtime_command(
 
     ctx.channels_by_name = linked.channels();
     ctx.module_objects = linked.module_objects();
-    let core = ctx
-        .core
-        .as_ref()
-        .and_then(std::sync::Weak::upgrade)
-        .unwrap_or_else(|| {
+    let core = match ctx.core.as_ref().and_then(std::sync::Weak::upgrade) {
+        Some(core) => core,
+        None => {
             crate::channels::runtime::test_support::bind_test_core_context(ctx, linked.config())
-        });
+                .await
+        }
+    };
     crate::core::runtime::CoreContext::scope(core, async {
         let account_id = linked
             .channels()

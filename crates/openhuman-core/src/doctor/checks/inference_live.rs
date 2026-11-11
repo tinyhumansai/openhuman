@@ -85,6 +85,7 @@ impl DoctorCheck for InferenceLiveCheck {
                 &selected_config,
                 0.0,
             )
+            .await
         })
         .await
         {

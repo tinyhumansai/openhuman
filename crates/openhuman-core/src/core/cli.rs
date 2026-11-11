@@ -493,7 +493,7 @@ fn run_call_command(args: &[String]) -> Result<()> {
                     )
                     .map_err(|error| error.to_string())?;
                 }
-                crate::security::credentials::seed_api_key_from_env(&config);
+                crate::credentials::seed_api_key_from_env(&config).await;
 
                 // A one-shot CLI call does not boot the long-lived server
                 // runtime, but the agent turn still needs a real owner context
@@ -603,7 +603,18 @@ fn run_namespace_command(
         .map_err(anyhow::Error::msg)?;
 
     println!("{}", serde_json::to_string_pretty(&value)?);
+    if restart_required(&value) {
+        // EX_TEMPFAIL: the profile switch completes in the next process.
+        eprintln!("restart required to finish switching profiles");
+        std::process::exit(75);
+    }
     Ok(())
+}
+
+/// Whether an auth response asks the host to restart the process.
+fn restart_required(value: &Value) -> bool {
+    value.get("restartRequired") == Some(&Value::Bool(true))
+        || value.get("result").is_some_and(restart_required)
 }
 
 /// Parses namespace-style command-line arguments into a JSON map based on a

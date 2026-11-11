@@ -223,6 +223,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agenti e autonomia',
   'settings.devGroups.automationIntegrations': 'Automazione e integrazioni',
   'settings.tokenUsage.title': 'Risparmio di token',
+  'settings.secretGrant.title': 'Consentire a OpenHuman di sbloccare i tuoi segreti salvati?',
+  'settings.secretGrant.subtitle':
+    'Per salvare questa impostazione serve la tua approvazione una tantum per cifrarla. Nega per annullare il salvataggio.',
   'settings.tokenUsage.menuDesc':
     'Impostazioni di compressione e quanti token e dollari hanno fatto risparmiare',
   'settings.tokenUsage.saving': 'Salvataggio…',
@@ -3940,6 +3943,10 @@ const messages: TranslationMap = {
     "L'agente ha eseguito il numero massimo di passaggi con gli strumenti in un turno senza finire. Di solito significa che uno strumento continuava a fallire (spesso per un limite di richieste su un recupero web). Puoi riprovare la stessa domanda in questo thread quando il limite si sarà sbloccato.",
   'chat_error.turn_timeout':
     'Questo turno ha superato il suo limite di tempo senza finire ed è stato interrotto per non restare bloccato. Di solito significa che una chiamata a uno strumento o un sub-agente delegato si è bloccato. Puoi riprovare la tua domanda in questo thread.',
+  'chat_error.disk_full':
+    "Il disco è pieno, quindi non è stato possibile salvare questa conversazione. Libera un po' di spazio su disco, poi invia di nuovo il messaggio in questo thread.",
+  'chat_error.prompt_screened':
+    "Il controllo di sicurezza di OpenHuman ha trattenuto questo messaggio, quindi non è stato inviato al modello. Se cita istruzioni rivolte a un assistente (ad esempio da una pagina web o da un'email), rimuovile e riprova. Se vengono trattenuti anche i messaggi normali, il modulo di sicurezza potrebbe non essere disponibile: riavvia OpenHuman e riprova.",
   'chat_error.empty_response':
     'Il modello ha restituito una risposta vuota. Riprova. Se continua a succedere, prova un altro modello o controlla la sua configurazione in Connessioni → Chiavi API → LLM.',
   'chat_error.chat_template_rejected':
@@ -4430,6 +4437,10 @@ const messages: TranslationMap = {
     "L'accesso al microfono è stato negato. Consentilo nelle impostazioni di sistema e riprova.",
   'voice.live.error.micUnavailable': 'Nessun microfono disponibile.',
   'voice.live.error.connection': "Impossibile connettersi all'agente vocale.",
+  'voice.live.error.insufficientCredits':
+    'La voce dal vivo richiede più crediti. Aggiungi crediti per continuare.',
+  'voice.live.error.paidPlanRequired':
+    'La voce dal vivo richiede un piano a pagamento. Passa a un piano superiore per continuare.',
   'voice.live.toolRunning': '{name} in esecuzione',
   'voice.live.toolOk': '{name} completato',
   'voice.live.toolFailed': '{name} non riuscito',
@@ -4717,11 +4728,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'Nomespaziale processo carcere',
   'settings.sandbox.backendHint.bubblewrap': 'Nome utente leggerospazi',
   'settings.sandbox.backendHint.none': 'Eseguire strumenti direttamente, non isolati',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Inventario degli strumenti',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Strumenti totali',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Strumenti attivi',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'Strumenti MCP stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'Strumenti JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Stato dei criteri',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Livello di autonomia',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Solo nell’area di lavoro',
@@ -5167,6 +5173,58 @@ const messages: TranslationMap = {
     'La configurazione gestita richiede il login a OpenHuman e non è disponibile in modalità locale.',
   'onboarding.custom.localDefaultDisabledReason':
     'La configurazione gestita richiede un account OpenHuman. In una sessione locale configuri ogni servizio da solo.',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt':
+    'La diagnostica dei criteri non è inclusa in questo core.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Criterio di sicurezza attivo',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomia',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Solo nell’area di lavoro',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Numero massimo di azioni all’ora',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Richiedi approvazione per rischio medio',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Blocca i comandi ad alto rischio',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Comandi consentiti',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Nessun comando è consentito esplicitamente.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Criterio',
+  'settings.approvalHistory.judgeScores':
+    'Intento {intent} · Reversibile {reversible} · Esfiltrazione {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'memorizzato',
+  'settings.approvalHistory.judgeExpires': 'Scade il {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Strumenti sempre consentiti',
+  'keyring.settings.toolTrustDescription':
+    'Questi strumenti possono essere eseguiti senza richiedere approvazione in questo ambito di sicurezza.',
+  'keyring.settings.toolTrustLoading': 'Caricamento degli strumenti consentiti…',
+  'keyring.settings.toolTrustLoadFailed': 'Impossibile caricare gli strumenti consentiti.',
+  'keyring.settings.toolTrustRevokeFailed':
+    'Impossibile revocare questa autorizzazione per lo strumento.',
+  'keyring.settings.toolTrustEmpty': 'Nessuno strumento è sempre consentito.',
+  'keyring.settings.toolTrustRetry': 'Riprova',
+  'keyring.settings.toolTrustRevoke': 'Revoca',
+  'keyring.settings.toolTrustRevoking': 'Revoca in corso…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Richiesta di accesso al portachiavi',
+  'keyring.operation.description':
+    'TinySecurity richiede l’accesso a un elemento del portachiavi. Controlla l’operazione prima di decidere.',
+  'keyring.operation.access': 'Accesso',
+  'keyring.operation.requester': 'Richiesto da',
+  'keyring.operation.origin': 'Origine',
+  'keyring.operation.purpose': 'Scopo',
+  'keyring.operation.name': 'Elemento del portachiavi',
+  'keyring.operation.access.read': 'Leggere',
+  'keyring.operation.access.write': 'Scrivere',
+  'keyring.operation.access.delete': 'Eliminare',
+  'keyring.operation.allow': 'Consenti una volta',
+  'keyring.operation.deny': 'Nega',
+  'keyring.operation.submitting': 'Invio…',
+  'keyring.operation.expires': 'La richiesta scade tra {seconds}s.',
+  'keyring.operation.error':
+    'Impossibile inviare la decisione. La richiesta potrebbe essere scaduta.',
 };
 
 export default messages;

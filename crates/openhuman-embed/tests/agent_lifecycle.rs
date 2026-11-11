@@ -75,7 +75,10 @@ async fn parking_agent(
                         .tools(ToolScopeSpec::Named(vec!["write_marker".into()])),
                 )
                 .tools(move |_| {
-                    HostTurnTools::advertised(vec![Box::new(WriteMarker(file.clone()))])
+                    let file = file.clone();
+                    Box::pin(
+                        async move { HostTurnTools::advertised(vec![Box::new(WriteMarker(file))]) },
+                    )
                 }),
         )
         .expect("agent instantiates");
@@ -258,7 +261,7 @@ fn removing_an_agent_releases_everything_it_held() {
                 Duration::from_secs(10),
                 openhuman_core::core::runtime::CoreContext::scope(
                     old_context,
-                    openhuman_core::security::turn_origin::with_origin(
+                    openhuman_core::core::runtime::turn_origin::with_origin(
                         AgentTurnOrigin::WebChat {
                             thread_id: "late-lifecycle-thread".into(),
                             client_id: "late-lifecycle-client".into(),

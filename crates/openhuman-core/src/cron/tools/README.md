@@ -12,29 +12,31 @@ one-shot and recurring schedule actions.
 
 ## Registration state
 
-`crate::tools::ops::all_tools` registers `CronTool` as the compact, advertised
-scheduler surface, plus the six per-operation tools as hidden aliases behind
-it. Each per-operation tool reports `ToolExposure::Hidden` (`fn exposure`),
-which `tools/impl/meta/tool_search.rs` strips from the advertised catalogue,
-so they stay dispatchable by name (replayed transcripts, saved skills,
-`user_filter.rs` family `cron`, toolpack `scheduling`) without cluttering the
-model's tool list with six near-duplicate schemas.
+`crate::tools::ops::all_tools` registers the six per-operation tools as the
+advertised scheduler surface: each keeps the default `ToolExposure::Direct`
+and is a member of the `scheduling` tool pack (`CRON_OPERATION_TOOLS`), so the
+pack's `GroupMode` decides whether they are on the wire (`Advertised`) or
+reached through `use_skill` (`Withheld`, the default). Each carries only its
+own fields and a one-line description; the rules (grounding the time,
+confirming, delivery defaults, `NO_REPLY`) live once in the pack's guide,
+`tools/toolpacks/guides/scheduling.md`.
 
 ## Collapsed dispatch (`collapsed.rs`)
 
-`CronTool` (`CRON_TOOL_NAME = "cron"`) advertises one schema with an `action`
-field (`list` / `add` / `update` / `remove` / `run` / `runs`) instead of six
-near-duplicate schemas: four of the six take only `job_id`. Each action
-forwards to the matching per-operation tool through
-`tinytools::collapse` (`merge_action_schemas`,
-`resolve`, `args_without_action`), so schedule parsing, the `SecurityPolicy`
-check and delivery validation live in exactly one place.
+`CronTool` (`CRON_TOOL_NAME = "cron"`) dispatches the same six on one `action`
+field (`list` / `add` / `update` / `remove` / `run` / `runs`) through
+`tinytools::collapse` (`merge_action_schemas`, `resolve`,
+`args_without_action`), so schedule parsing, the `SecurityPolicy` check and
+delivery validation live in exactly one place. It is
+`ToolExposure::Deferred`: never listed up front, found by `tool_search`, and
+run when called by name, so saved skills and scripts that call `cron` keep
+working. `widen_named_scope` widens a named tool scope that lists `cron`
+to the six, which `openhuman_embed` applies to agent and profile scopes, so an
+embedder that named `cron` before the split keeps its scheduler.
 `permission_level_with_args` / `external_effect_with_args` resolve the real
 per-action answer once `action` is known; with a missing or unknown `action`
 they fall back to the strictest member (`Execute`, shared by `add` / `update`
 / `run`) and `true`, so an unparseable call over-restricts rather than under-.
-The argument-free `permission_level` / `external_effect` report the same
-strictest values.
 
 ## Per-operation tools
 
@@ -77,7 +79,7 @@ or immediately execute a stored command or agent prompt on the host.
 - `cron` domain: [`../README.md`](../README.md): job/run model, scheduler,
   delivery modes, agent-job minimum interval.
 - [`schedule.rs`](./schedule.rs): the separate `schedule` tool for recurring and
-  one-shot jobs; it is not part of the collapse above.
+  one-shot jobs; it is not part of the `scheduling` pack.
 - `crates/openhuman-core/src/tools/impl/meta/collapse.rs` (module path
   `tinytools::collapse`): the generic
   action-collapsing helper `collapsed.rs` builds on.

@@ -72,14 +72,15 @@ fn managed_native_model_exposes_tool_vision_and_physical_attempt_capabilities() 
     assert!(model.supports_input(InputModality::Image, "image/png", InputSource::Base64));
 }
 
-#[test]
-fn managed_bearer_keeps_the_stored_key_transport_guard() {
+#[tokio::test]
+async fn managed_bearer_keeps_the_stored_key_transport_guard() {
     let tmp = tempfile::TempDir::new().expect("temporary credentials");
-    openhuman_embed::__host::security::credentials::api_key::store_api_key_in(
+    openhuman_embed::__host::credentials::api_key::store_api_key_in(
         tmp.path(),
         false,
         "test-managed-key",
     )
+    .await
     .expect("store test API key");
     let options = ManagedOptions {
         openhuman_dir: Some(tmp.path().to_path_buf()),
@@ -90,28 +91,32 @@ fn managed_bearer_keeps_the_stored_key_transport_guard() {
     assert_eq!(
         options
             .resolve_bearer("https://api.tinyhumans.ai/openai/v1")
+            .await
             .expect("managed TLS endpoint accepts the API key"),
         "test-managed-key"
     );
     assert_eq!(
         options
             .resolve_bearer("http://127.0.0.1:9999/openai/v1")
+            .await
             .expect("loopback is a valid local test endpoint"),
         "test-managed-key"
     );
     let plaintext = options
         .resolve_bearer("http://api.example.test/openai/v1")
+        .await
         .expect_err("a plaintext remote endpoint must not receive the stored key");
     assert!(plaintext.to_string().contains("http://api.example.test"));
     let error = options
         .resolve_bearer("https://api.example.test/openai/v1")
+        .await
         .expect_err("a foreign HTTPS origin must not receive the stored key");
     assert!(error.to_string().contains("unmanaged or insecure"));
 }
 
-fn seed_app_session(dir: &std::path::Path, expires_at: Option<&str>) {
-    use openhuman_embed::__host::security::credentials::{
-        session_support::SESSION_EXPIRES_AT_META, AuthService, APP_SESSION_PROVIDER,
+async fn seed_app_session(dir: &std::path::Path, expires_at: Option<&str>) {
+    use openhuman_embed::__host::credentials::{
+        session_state::SESSION_EXPIRES_AT_META, AuthService, APP_SESSION_PROVIDER,
         DEFAULT_AUTH_PROFILE_NAME,
     };
     let mut metadata = std::collections::HashMap::new();
@@ -126,6 +131,7 @@ fn seed_app_session(dir: &std::path::Path, expires_at: Option<&str>) {
             metadata,
             true,
         )
+        .await
         .expect("seed app-session token");
 }
 
@@ -137,14 +143,15 @@ fn managed_options_at(dir: &std::path::Path) -> ManagedOptions {
     }
 }
 
-#[test]
-fn managed_bearer_fast_fails_an_expired_app_session() {
+#[tokio::test]
+async fn managed_bearer_fast_fails_an_expired_app_session() {
     let tmp = tempfile::TempDir::new().expect("temporary credentials");
     let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-    seed_app_session(tmp.path(), Some(&past));
+    seed_app_session(tmp.path(), Some(&past)).await;
 
     let error = managed_options_at(tmp.path())
         .resolve_bearer("http://127.0.0.1:9/openai/v1")
+        .await
         .expect_err("expired session should fail locally before transport");
     let message = error.to_string();
     assert!(message.contains("SESSION_EXPIRED"), "{message}");
@@ -154,79 +161,86 @@ fn managed_bearer_fast_fails_an_expired_app_session() {
     );
 }
 
-#[test]
-fn managed_bearer_resolves_a_future_expiry_app_session() {
+#[tokio::test]
+async fn managed_bearer_resolves_a_future_expiry_app_session() {
     let tmp = tempfile::TempDir::new().expect("temporary credentials");
     let future = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
-    seed_app_session(tmp.path(), Some(&future));
+    seed_app_session(tmp.path(), Some(&future)).await;
 
     assert_eq!(
         managed_options_at(tmp.path())
             .resolve_bearer("http://127.0.0.1:9/openai/v1")
+            .await
             .expect("a future expiry is valid"),
         "test.session.jwt"
     );
 }
 
-#[test]
-fn managed_session_bearer_refuses_a_plaintext_remote_endpoint() {
+#[tokio::test]
+async fn managed_session_bearer_refuses_a_plaintext_remote_endpoint() {
     let tmp = tempfile::TempDir::new().expect("temporary credentials");
-    seed_app_session(tmp.path(), Some("2999-01-01T00:00:00Z"));
+    seed_app_session(tmp.path(), Some("2999-01-01T00:00:00Z")).await;
     let options = managed_options_at(tmp.path());
 
     let error = options
         .resolve_bearer("http://10.0.0.1:1/openai/v1")
+        .await
         .expect_err("plaintext remote endpoint must not receive the session token");
     assert!(error.to_string().contains("insecure endpoint"), "{error}");
     assert_eq!(
         options
             .resolve_bearer("https://api.example.test/openai/v1")
+            .await
             .expect("HTTPS stays allowed"),
         "test.session.jwt"
     );
 }
 
-#[test]
-fn managed_bearer_resolves_exp_less_hosted_app_sessions() {
+#[tokio::test]
+async fn managed_bearer_resolves_exp_less_hosted_app_sessions() {
     let tmp = tempfile::TempDir::new().expect("temporary credentials");
-    seed_app_session(tmp.path(), None);
+    seed_app_session(tmp.path(), None).await;
 
     assert_eq!(
         managed_options_at(tmp.path())
             .resolve_bearer("http://127.0.0.1:9/openai/v1")
+            .await
             .expect("an exp-less hosted session resolves by presence"),
         "test.session.jwt"
     );
 }
 
-#[test]
-fn managed_api_key_precedes_an_expired_app_session() {
+#[tokio::test]
+async fn managed_api_key_precedes_an_expired_app_session() {
     let tmp = tempfile::TempDir::new().expect("temporary credentials");
     let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-    seed_app_session(tmp.path(), Some(&past));
-    openhuman_embed::__host::security::credentials::api_key::store_api_key_in(
+    seed_app_session(tmp.path(), Some(&past)).await;
+    openhuman_embed::__host::credentials::api_key::store_api_key_in(
         tmp.path(),
         false,
         "managed-api-key",
     )
+    .await
     .expect("store API key");
 
     assert_eq!(
         managed_options_at(tmp.path())
             .resolve_bearer("https://api.tinyhumans.ai/openai/v1")
+            .await
             .expect("the configured API key takes precedence"),
         "managed-api-key"
     );
 }
 
-#[test]
-fn managed_bearer_refusal_redacts_foreign_endpoint_details() {
+#[tokio::test]
+async fn managed_bearer_refusal_redacts_foreign_endpoint_details() {
     let tmp = tempfile::TempDir::new().expect("temporary credentials");
-    openhuman_embed::__host::security::credentials::api_key::store_api_key_in(
+    openhuman_embed::__host::credentials::api_key::store_api_key_in(
         tmp.path(),
         false,
         "SYNTHETIC_BEARER_MARKER",
     )
+    .await
     .expect("store test API key");
     let options = ManagedOptions {
         openhuman_dir: Some(tmp.path().to_path_buf()),
@@ -257,6 +271,7 @@ fn managed_bearer_refusal_redacts_foreign_endpoint_details() {
     ] {
         let error = options
             .resolve_bearer(endpoint)
+            .await
             .expect_err("foreign endpoint must remain rejected");
         let diagnostic = error.to_string();
         for marker in markers.into_iter().chain(["SYNTHETIC_BEARER_MARKER"]) {
@@ -354,13 +369,14 @@ async fn managed_auth_failure_expires_the_session_only_on_a_session_401() {
             .expect("event bus initialized")
             .receiver();
         let tmp = tempfile::TempDir::new().expect("temporary credentials");
-        seed_app_session(tmp.path(), Some("2999-01-01T00:00:00Z"));
+        seed_app_session(tmp.path(), Some("2999-01-01T00:00:00Z")).await;
         if api_key {
-            openhuman_embed::__host::security::credentials::api_key::store_api_key_in(
+            openhuman_embed::__host::credentials::api_key::store_api_key_in(
                 tmp.path(),
                 false,
                 "test-managed-key",
             )
+            .await
             .expect("store test API key");
         }
         let (addr, server) = serve_chat_status(status, marker).await;
@@ -381,13 +397,16 @@ async fn managed_auth_failure_expires_the_session_only_on_a_session_401() {
         server.abort();
 
         let mut source = None;
+        let mut fingerprint = None;
         loop {
             match events.try_recv() {
                 Ok(DomainEvent::SessionExpired {
                     source: value,
                     reason,
+                    credential_fingerprint: value_fingerprint,
                 }) if reason.contains(marker) => {
                     source = Some(value);
+                    fingerprint = value_fingerprint;
                     break;
                 }
                 Ok(_) | Err(tinybus::TryRecvError::Lagged(_)) => continue,
@@ -395,6 +414,18 @@ async fn managed_auth_failure_expires_the_session_only_on_a_session_401() {
             }
         }
         assert_eq!(source.as_deref(), expected, "{name}");
+        if expected.is_some() {
+            assert_eq!(
+                fingerprint.as_deref(),
+                Some(
+                    openhuman_embed::__host::credentials::backend_credential::credential_fingerprint(
+                        "test.session.jwt",
+                    )
+                    .as_str(),
+                ),
+                "managed expiry must carry the bearer used by its failed request"
+            );
+        }
     }
 }
 
@@ -406,7 +437,7 @@ async fn a_late_api_key_401_after_a_session_request_keeps_the_session() {
     use axum::http::{HeaderMap, StatusCode};
     use axum::response::IntoResponse;
     use openhuman_embed::__host::core::events::DomainEvent;
-    use openhuman_embed::__host::security::credentials::AuthService;
+    use openhuman_embed::__host::credentials::AuthService;
     use std::sync::Arc;
     use tokio::sync::Notify;
 
@@ -418,14 +449,14 @@ async fn a_late_api_key_401_after_a_session_request_keeps_the_session() {
         .expect("event bus initialized")
         .receiver();
     let tmp = tempfile::TempDir::new().expect("temporary credentials");
-    seed_app_session(tmp.path(), Some("2999-01-01T00:00:00Z"));
-    let api_key_profile =
-        openhuman_embed::__host::security::credentials::api_key::store_api_key_in(
-            tmp.path(),
-            false,
-            "test-managed-key",
-        )
-        .expect("store test API key");
+    seed_app_session(tmp.path(), Some("2999-01-01T00:00:00Z")).await;
+    let api_key_profile = openhuman_embed::__host::credentials::api_key::store_api_key_in(
+        tmp.path(),
+        false,
+        "test-managed-key",
+    )
+    .await
+    .expect("store test API key");
 
     // The API-key request is held until the session request has resolved its
     // own bearer and failed.
@@ -486,6 +517,7 @@ async fn a_late_api_key_401_after_a_session_request_keeps_the_session() {
         // The stored credential switches to the session mid-flight.
         assert!(AuthService::new(tmp.path(), false)
             .remove_profile(&api_key_profile.provider, &api_key_profile.profile_name)
+            .await
             .expect("remove test API key"));
         assert!(model
             .invoke(&(), ModelRequest::new(vec![Message::user("ping")]))
@@ -501,7 +533,7 @@ async fn a_late_api_key_401_after_a_session_request_keeps_the_session() {
 
     loop {
         match events.try_recv() {
-            Ok(DomainEvent::SessionExpired { source, reason }) => {
+            Ok(DomainEvent::SessionExpired { source, reason, .. }) => {
                 assert!(
                     !reason.contains("HOST_AUTH_LATE_API_KEY_401")
                         && !reason.contains("HOST_AUTH_SESSION_403"),

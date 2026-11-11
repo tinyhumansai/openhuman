@@ -17,13 +17,13 @@ pub use stock_prices::{
 /// TinySearch module, so `[search] enabled = false` suppresses them too;
 /// `integrations.parallel` is parsed for old config files and no longer does
 /// anything.
-pub fn build_integration_tools(
+pub async fn build_integration_tools(
     root_config: &openhuman_embed::__host::config::Config,
 ) -> Vec<Box<dyn tinytools::Tool>> {
     use std::sync::Arc;
 
     let mut tools: Vec<Box<dyn tinytools::Tool>> = Vec::new();
-    let Some(client) = super::build_client(root_config) else {
+    let Some(client) = super::build_client(root_config).await else {
         log::debug!("[integrations] build_client returned None; integration tools not registered");
         return tools;
     };

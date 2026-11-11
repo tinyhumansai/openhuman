@@ -95,7 +95,7 @@ impl OpenHumanSessionHost {
     /// # Errors
     ///
     /// As [`OpenHumanSessionHost::from_config_with_definition`].
-    pub fn from_config_host_only(
+    pub async fn from_config_host_only(
         ctx: &crate::core::runtime::DispatchCtx,
         config: &Config,
         definition: &AgentDefinition,
@@ -111,7 +111,8 @@ impl OpenHumanSessionHost {
             true,
             host,
             session_id,
-        )?;
+        )
+        .await?;
         agent.host_only = true;
         Ok(agent)
     }

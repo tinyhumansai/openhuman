@@ -58,7 +58,7 @@ async fn calls_without_a_session_fail_before_any_request() {
 #[tokio::test]
 async fn local_session_is_backend_unavailable() {
     let tmp = TempDir::new().unwrap();
-    let config = test_support::local_session(&tmp);
+    let config = test_support::local_session(&tmp).await;
     let err = list_tunnels(&config).await.unwrap_err();
     assert!(err.starts_with("BACKEND_UNAVAILABLE:"), "{err}");
     assert!(expected_error_kind(&err).is_some());
@@ -117,7 +117,7 @@ async fn tunnel_crud_round_trips_through_the_sdk() {
         .await;
 
     let tmp = TempDir::new().unwrap();
-    let config = test_support::signed_in(&tmp, &server.uri());
+    let config = test_support::signed_in(&tmp, &server.uri()).await;
 
     let out = list_tunnels(&config).await.unwrap();
     assert_eq!(out.value["tunnels"][0]["id"], json!("t-1"));

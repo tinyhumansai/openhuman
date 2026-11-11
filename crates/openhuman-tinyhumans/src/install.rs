@@ -96,6 +96,8 @@ pub(crate) struct Wiring {
     /// The hosted RPC proxies, unless [`InstallOptions::hosted_controllers`]
     /// is off.
     pub(crate) controllers: Option<ControllerExtension>,
+    /// OpenAI OAuth controllers owned by this host layer.
+    pub(crate) provider_oauth: ControllerExtension,
     /// The Jev `tool_search` ranker, unless [`InstallOptions::tool_ranker`]
     /// is off or the `jev` feature is compiled out.
     pub(crate) ranker: Option<Arc<dyn ToolRanker>>,
@@ -109,6 +111,7 @@ impl std::fmt::Debug for Wiring {
                 &self.controllers.as_ref().map(|ext| ext.group),
             )
             .field("ranker", &self.ranker.as_ref().map(|ranker| ranker.kind()))
+            .field("provider_oauth", &self.provider_oauth.group)
             .finish_non_exhaustive()
     }
 }
@@ -182,6 +185,7 @@ pub(crate) fn wiring(
         #[cfg(test)]
         transport,
         controllers,
+        provider_oauth: crate::provider_oauth::extension(),
         ranker,
     })
 }
@@ -199,6 +203,9 @@ pub(crate) fn wiring(
 /// every hosted caller in this crate sends through.
 pub fn install(options: InstallOptions) -> Result<Arc<SdkBackendTransport>, InstallError> {
     let (controllers, ranker) = prepare(&options, crate::register::DoctorRegistration::Process);
+
+    register_controller_extension(crate::provider_oauth::extension())
+        .map_err(InstallError::Registry)?;
 
     if let Some(extension) = controllers {
         // Idempotent in the core: an identical re-registration is a no-op.

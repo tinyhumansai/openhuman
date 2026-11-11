@@ -344,6 +344,7 @@ async fn cron_agent_job_uses_agent_definition_tool_scope() {
 
     let built =
         build_agent_for_cron_job(&crate::core::runtime::DispatchCtx::ambient(), &config, &job)
+            .await
             .unwrap_or_else(|error| {
                 eprintln!("failed to build cron agent: {error:#}");
                 panic!("build cron agent")

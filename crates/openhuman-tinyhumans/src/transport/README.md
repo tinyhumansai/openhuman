@@ -56,9 +56,12 @@ catch-all), so the classifiers in `client/classify.rs` and the
 integrations client see the same shapes they would see calling the SDK
 directly.
 
-One case gets a typed variant here because only this backend's wire behavior
-says what it means: a 404 on a channel-message path
-(`.../channels/<provider>/messages/<id>`).
+Two cases get a typed variant here because only this backend's wire behavior
+says what they mean: a 404 on a channel-message path
+(`.../channels/<provider>/messages/<id>`), and a billing refusal
+(`billing_refusal`: `errorCode: USER_INSUFFICIENT_CREDITS` on any non-401
+status, or a 403 whose `error` asks for credits or a paid plan), which becomes
+`BillingRefusal { refusal, status, body }`.
 
 ```text
  404 on .../channels/<p>/messages/<id>
@@ -81,7 +84,7 @@ The client recovers from the two differently (`HostedApiError` variants in
 | --- | --- |
 | [`port.rs`](port.rs) | The port: `BackendTransport`, `BackendRequest`, `BackendTransportError`, `TransportProfile`, `BaseUrlPurpose`, `QueryParam`. |
 | [`mod.rs`](mod.rs) | `SdkBackendTransport` and its `BackendTransport` impl. |
-| [`error.rs`](error.rs) | `map_sdk_error`, plus the channel-message path parser and the unmatched-route check. |
+| [`error.rs`](error.rs) | `map_sdk_error`, plus the channel-message path parser, the unmatched-route check and the billing-refusal classifier. |
 
 ## Key types and entry points
 
@@ -103,7 +106,7 @@ and answers backend-touching calls with `HostedApiError::BackendUnavailable` /
 
 - The port lives here in [`port.rs`](port.rs); the core has no copy.
   Credential resolution is the core's generic one
-  (`security::credentials::session_support`).
+  (`credentials::session state`).
 - Routes live in the vendored SDK ([`vendor/tinyhumans-sdk`](../../../../vendor/tinyhumans-sdk/),
   `tinyhumansai/tinyhumans-sdk`). A missing backend route goes into the SDK's
   route registry and is named from this crate; this transport never grows a
@@ -112,8 +115,8 @@ and answers backend-touching calls with `HostedApiError::BackendUnavailable` /
 - The hosted RPC proxies in [`../hosted/`](../hosted/README.md) do not call
   this trait. They build their own typed `TinyHumansClient` through
   `hosted::client::HostedClient`, reusing this transport's `http_client`.
-- The SDK's Socket.IO client is compiled out (`default-features = false`);
-  realtime stays on the core's `platform::socket`.
+- Socket.IO lifecycle is implemented in [`../socket/`](../socket/) using the
+  SDK's supervised `SocketConnection`; the core owns only its port contract.
 
 ## Tests
 

@@ -891,6 +891,12 @@ async fn boot_stack_with_options(
     // are installed by the TinyHumans layer, not built into the core; without
     // it every turn fails with `chat_error.inference`.
     tinyhumans_boot::boot();
+    // Signing in stores the session in the OS keyring, which asks the user
+    // first. Let the test build's responder answer for the credential store
+    // however this binary is run (scripts/test-rust-e2e.sh sets the same).
+    if std::env::var_os("OPENHUMAN_TEST_KEYRING_CONSENT").is_none() {
+        std::env::set_var("OPENHUMAN_TEST_KEYRING_CONSENT", "approve");
+    }
 
     let home_is_override = home_override.is_some();
     let tmp = tempdir().expect("tempdir");
@@ -1525,7 +1531,7 @@ async fn managed_tinysearch_answer_reaches_followup_model_request_inner() {
     let _lock = env_lock();
     let pinned = openhuman_core::modules::registry::find("tinysearch")
         .expect("TinySearch is registered in the module asset registry");
-    assert_eq!(pinned.version, "0.5.4", "use the pinned module release");
+    assert_eq!(pinned.version, "0.5.6", "use the pinned module release");
     assert!(
         std::env::var_os("OPENHUMAN_MODULE_SOURCE").is_none()
             && std::env::var_os("OPENHUMAN_MODULE_SOURCE_DIR").is_none()
@@ -1595,7 +1601,7 @@ async fn managed_tinysearch_answer_reaches_followup_model_request_inner() {
         .unwrap_or_else(|| panic!("modules_list omitted TinySearch: {modules_response}"));
     assert_eq!(
         tinysearch.get("version").and_then(Value::as_str),
-        Some("0.5.4")
+        Some("0.5.6")
     );
     assert_eq!(
         tinysearch.get("state").and_then(Value::as_str),

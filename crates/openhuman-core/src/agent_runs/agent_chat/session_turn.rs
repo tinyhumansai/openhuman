@@ -1,9 +1,11 @@
 //! Agent chat turns with the full tool-using harness.
 
 use super::envelope::AgentChatReply;
+use crate::agent::session_host::setup_report::{reported, result_outcome};
 use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 use crate::core::Outcome;
+use tinyagents_harness::observability::turn_observer::SetupPhase;
 
 use super::guards::{
     effective_agent_chat_origin, enforce_user_prompt_or_reject, grant_turn_cwd,
@@ -222,7 +224,7 @@ fn definition_for_turn(
     }
 }
 
-fn build_turn_agent(
+pub(super) async fn build_turn_agent(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     target: &AgentChatTarget<'_>,
@@ -231,10 +233,10 @@ fn build_turn_agent(
     turn_model_source: Option<(crate::agent::tinyagents::TurnModelSource, String)>,
 ) -> Result<OpenHumanSessionHost, String> {
     match target {
-        AgentChatTarget::Orchestrator => OpenHumanSessionHost::from_config(ctx, config),
+        AgentChatTarget::Orchestrator => OpenHumanSessionHost::from_config(ctx, config).await,
         AgentChatTarget::AgentId(id) => {
             log::debug!("[inference] agent_chat building agent_id={id}");
-            OpenHumanSessionHost::from_config_for_agent(ctx, config, id)
+            OpenHumanSessionHost::from_config_for_agent(ctx, config, id).await
         }
         AgentChatTarget::Definition {
             definition,
@@ -244,6 +246,7 @@ fn build_turn_agent(
         } => {
             let definition = definition_for_turn(definition, temperature);
             OpenHumanSessionHost::from_config_host_only(ctx, config, &definition, *host, session_id)
+                .await
         }
         AgentChatTarget::Definition {
             definition, host, ..
@@ -258,17 +261,22 @@ fn build_turn_agent(
                         source,
                         model,
                     )
+                    .await
                 }
                 (host, None) => match host {
-                    Some(host) => OpenHumanSessionHost::from_config_with_host_tools(
-                        ctx,
-                        config,
-                        &definition,
-                        host,
-                        session_id,
-                    ),
+                    Some(host) => {
+                        OpenHumanSessionHost::from_config_with_host_tools(
+                            ctx,
+                            config,
+                            &definition,
+                            host,
+                            session_id,
+                        )
+                        .await
+                    }
                     None => {
                         OpenHumanSessionHost::from_config_with_definition(ctx, config, &definition)
+                            .await
                     }
                 },
                 (Some(_), Some(_)) => Err(anyhow::anyhow!(
@@ -451,6 +459,30 @@ pub async fn agent_chat_reply_for_controlled(
     .await
 }
 
+/// Applies a call's model, temperature and inference route to `config`, in
+/// memory, before its session is built.
+pub(super) fn apply_turn_overrides(
+    config: &mut Config,
+    model_override: Option<String>,
+    temperature: Option<f64>,
+    route: Option<crate::config::schema::EphemeralRoute>,
+) {
+    // TAURI-RUST-RS: an upstream caller (frontend, JSON-RPC client) can pass
+    // `model_override: Some("")`. See `normalize_model_override` for the
+    // rationale — an empty / whitespace-only override collapses to `None`.
+    if let Some(model) = normalize_model_override(model_override) {
+        config.default_model = Some(model);
+    }
+    if let Some(temp) = temperature {
+        config.default_temperature = temp;
+    }
+    // After the model override, because the route pins its roles to
+    // `"<slug>:<model>"` and the model it uses is the one this call resolved.
+    if let Some(route) = route {
+        crate::config::schema::ephemeral_route::apply(config, route);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn agent_chat_reply_for_inner(
     config: &mut Config,
@@ -480,25 +512,13 @@ pub(super) async fn agent_chat_reply_for_inner(
                 "[inference] agent_chat untrusted input on a host-only agent; guard skipped"
             );
         }
-        _ => enforce_user_prompt_or_reject(message, "local_ai.ops.agent_chat")
+        _ => enforce_user_prompt_or_reject(config, message, "local_ai.ops.agent_chat")
+            .await
             .map_err(anyhow::Error::msg)?,
     }
 
-    // TAURI-RUST-RS: an upstream caller (frontend, JSON-RPC client) can pass
-    // `model_override: Some("")`. See `normalize_model_override` for the
-    // rationale — an empty / whitespace-only override collapses to `None`.
-    if let Some(model) = normalize_model_override(model_override) {
-        config.default_model = Some(model);
-    }
-    if let Some(temp) = temperature {
-        config.default_temperature = temp;
-    }
-    // After the model override, because the route pins its roles to
-    // `"<slug>:<model>"` and the model it uses is the one this call resolved.
     // Before the `cwd` clone below, so a rooted turn is routed too.
-    if let Some(route) = route {
-        crate::config::schema::ephemeral_route::apply(config, route);
-    }
+    apply_turn_overrides(config, model_override, temperature, route);
     // The conversation this turn runs in, normalised once: the factory below is
     // told the same id `set_thread_id` will bind, so a belt keyed on the
     // session cannot disagree with the session it is built for.
@@ -526,14 +546,19 @@ pub(super) async fn agent_chat_reply_for_inner(
                 "[inference] agent_chat rooting turn tools at cwd={}",
                 root.display()
             );
-            let mut agent = build_turn_agent(
-                &turn_ctx,
-                &scoped,
-                &target,
-                turn_session_id,
-                temperature,
-                turn_model_source.clone(),
+            let mut agent = reported(
+                SetupPhase::AgentOpen,
+                build_turn_agent(
+                    &turn_ctx,
+                    &scoped,
+                    &target,
+                    turn_session_id,
+                    temperature,
+                    turn_model_source.clone(),
+                ),
+                result_outcome,
             )
+            .await
             .map_err(anyhow::Error::msg)?;
             // Also thread it as the turn's workspace descriptor so acting tools
             // that read `ToolExecutionContext::workspace` (shell) resolve their
@@ -541,14 +566,19 @@ pub(super) async fn agent_chat_reply_for_inner(
             agent.set_workspace_descriptor(Some(tinytools::WorkspaceDescriptor::new(root.clone())));
             agent
         }
-        None => build_turn_agent(
-            &turn_ctx,
-            config,
-            &target,
-            turn_session_id,
-            temperature,
-            turn_model_source,
+        None => reported(
+            SetupPhase::AgentOpen,
+            build_turn_agent(
+                &turn_ctx,
+                config,
+                &target,
+                turn_session_id,
+                temperature,
+                turn_model_source,
+            ),
+            result_outcome,
         )
+        .await
         .map_err(anyhow::Error::msg)?,
     };
     // Thread-correct resume. `OpenHumanSessionHost::turn` would otherwise auto-load the
@@ -672,7 +702,7 @@ pub(super) async fn agent_chat_reply_for_inner(
     // Overwriting that with `Cli` would silently discard the caller's own
     // trust statement and hand every such turn the blanket CLI allowance
     // instead of the narrower one it asked for.
-    let run = crate::security::turn_origin::with_origin(
+    let run = crate::core::runtime::turn_origin::with_origin(
         effective_agent_chat_origin(&turn_ctx),
         agent.run_single_with_approval(message, None, approval),
     );

@@ -222,6 +222,37 @@ fn only_mongodb_is_shared_between_processes() {
     }
 }
 
+/// The installed backend is shared when its driver is, however the host
+/// installed it: by URL, with a driver name, or (not shared) with neither.
+#[test]
+fn the_installed_backend_is_shared_by_its_driver_however_it_was_installed() {
+    let _guard = test_support::install_backend_for_test(test_support::memory_backend());
+    assert!(!installed_is_shared(), "no driver known");
+
+    install_with_driver("mongodb", test_support::memory_backend());
+    assert!(installed_is_shared());
+    assert_eq!(installed_driver().as_deref(), Some("mongodb"));
+    assert_eq!(
+        installed_url(),
+        None,
+        "a driver name never opts into rebind"
+    );
+
+    install_with_driver("sqlite", test_support::memory_backend());
+    assert!(!installed_is_shared());
+
+    install_for_url("mongodb://db.example/x", test_support::memory_backend());
+    assert!(installed_is_shared());
+
+    install(test_support::memory_backend());
+    assert!(!installed_is_shared(), "a plain install forgets the driver");
+    assert_eq!(installed_driver(), None);
+
+    install_with_driver("mongodb", test_support::memory_backend());
+    assert!(clear());
+    assert!(!installed_is_shared(), "clearing forgets the driver");
+}
+
 #[test]
 fn only_mongodb_and_sqlite_have_cross_process_cas() {
     for driver in ["mongodb", "sqlite"] {
@@ -399,4 +430,41 @@ mod storage_runtime {
             }
         }
     }
+}
+
+/// A backend one test installs is not another concurrent test's storage: the
+/// slot is visible to its installer's thread only (MAIN-57).
+#[test]
+fn a_test_installed_slot_is_hidden_from_other_test_threads() {
+    let ready = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let installer = {
+        let (ready, done) = (ready.clone(), done.clone());
+        std::thread::Builder::new()
+            .name("storage::slot_probe::installer".into())
+            .spawn(move || {
+                let _guard = crate::storage::test_support::install_backend_for_test(
+                    crate::storage::test_support::memory_backend(),
+                );
+                let mine = crate::storage::installed().is_some();
+                ready.wait();
+                done.wait();
+                assert!(mine, "the installer sees its own slot");
+            })
+            .unwrap()
+    };
+    let other = std::thread::Builder::new()
+        .name("storage::slot_probe::other".into())
+        .spawn(move || {
+            ready.wait();
+            let seen = installed_url().is_some() || crate::storage::installed().is_some();
+            done.wait();
+            seen
+        })
+        .unwrap();
+    installer.join().unwrap();
+    assert!(
+        !other.join().unwrap(),
+        "another test's thread must not see the installer's backend"
+    );
 }

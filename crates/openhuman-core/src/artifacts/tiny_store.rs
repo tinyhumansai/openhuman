@@ -30,23 +30,28 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tiny_artifacts::{
     ArtifactEvent, ArtifactEventKind, ArtifactKind, ArtifactObserver, ArtifactRecord,
-    ArtifactStore, Artifacts, Author, Content, FileRef, FileStore,
+    ArtifactStore, Artifacts, FileRef, FileStore,
 };
 
 use super::files::FileRoots;
 use super::types::ArtifactKind as LegacyArtifactKind;
 use crate::security::approval::ApprovalChatContext;
-use crate::tools::per_call::{context as per_call_context, PerCallTool};
 
 /// Subdirectory under the artifacts root holding versioned records.
 const VERSIONED_SUBDIR: &str = "versioned";
 
 /// The legacy kind and file extension the UI gets for an artifact's newest
-/// version: text kinds by kind, file kinds by the file's extension.
+/// version: markdown and html by kind, text by the safe extension its title
+/// names (else `txt`), file kinds by the file's extension.
 fn legacy_shape(record: &ArtifactRecord) -> Option<(LegacyArtifactKind, String)> {
     let latest = record.latest()?;
     let shape = match record.kind {
-        ArtifactKind::Text => (LegacyArtifactKind::Document, "txt".to_string()),
+        ArtifactKind::Text => (
+            LegacyArtifactKind::Document,
+            text_extension_of_title(&record.title)
+                .unwrap_or("txt")
+                .to_string(),
+        ),
         ArtifactKind::Markdown => (LegacyArtifactKind::Document, "md".to_string()),
         ArtifactKind::Html => (LegacyArtifactKind::Document, "html".to_string()),
         ArtifactKind::Image | ArtifactKind::File => {
@@ -70,6 +75,27 @@ fn legacy_shape(record: &ArtifactRecord) -> Option<(LegacyArtifactKind, String)>
         }
     };
     Some(shape)
+}
+
+/// Plain-text formats a `text` artifact's title may name. Every one is inert
+/// when opened (no script or markup a viewer would run), so a model-written
+/// title can pick among them without widening what is served as active
+/// content. `html`, `svg`, `xml`, scripts and executables are deliberately not
+/// here: a title naming one stays `txt`.
+const TEXT_TITLE_EXTENSIONS: &[&str] = &[
+    "txt", "csv", "tsv", "ics", "vcf", "json", "jsonl", "ndjson", "log", "yaml", "yml", "toml",
+    "ini", "srt", "vtt",
+];
+
+/// The extension a `text` artifact's title asks for, when it is one of
+/// [`TEXT_TITLE_EXTENSIONS`] (matched case-insensitively and returned in its
+/// canonical lowercase form, never the title's own text).
+pub(crate) fn text_extension_of_title(title: &str) -> Option<&'static str> {
+    let (_, ext) = title.trim().rsplit_once('.')?;
+    TEXT_TITLE_EXTENSIONS
+        .iter()
+        .copied()
+        .find(|known| known.eq_ignore_ascii_case(ext))
 }
 
 pub(crate) fn legacy_kind_for_extension(ext: &str) -> LegacyArtifactKind {
@@ -171,8 +197,7 @@ async fn import_legacy_file(
     legacy: &FileRef,
     key: &str,
 ) -> anyhow::Result<FileRef> {
-    let source = roots.resolve(&legacy.key).await?;
-    let bytes = tokio::fs::read(&source.path).await?;
+    let (source, bytes) = roots.read(&legacy.key).await?;
     let media_type = legacy
         .media_type
         .as_deref()
@@ -306,11 +331,10 @@ impl LegacyUiBridge {
             if let Some(file) = latest.file.as_ref() {
                 self.write_file_version(file, &dest).await?
             } else {
-                let source = self.source_roots.resolve(&latest.body).await?;
+                let (source, bytes) = self.source_roots.read(&latest.body).await?;
                 if same_file(&source.path, &dest) {
                     tokio::fs::metadata(&dest).await?.len()
                 } else {
-                    let bytes = tokio::fs::read(&source.path).await?;
                     self.write_visible_file(&dest, &bytes, source.media_type.as_deref())
                         .await?
                 }
@@ -460,26 +484,16 @@ fn contains(folder: &Path, inside: &Path) -> bool {
     canon(inside).starts_with(canon(folder))
 }
 
-/// Why a resolved path may not be an artifact's file, if it may not: it is in
-/// a location OpenHuman never lets the agent reach (credential stores, system
-/// roots), however broad the folders around it.
-///
-/// The guard sees canonical paths, and on macOS `/etc` canonicalizes to
-/// `/private/etc`: a `/private/...` path is also checked without that prefix,
-/// as the protected prefixes name the familiar form.
-pub fn refused_path(path: &Path) -> Option<String> {
-    let forbidden = |p: &Path| crate::security::SecurityPolicy::is_always_forbidden(p);
-    let aliased = path
-        .strip_prefix("/private")
-        .ok()
-        .map(|rest| Path::new("/").join(rest));
-    (forbidden(path) || aliased.as_deref().is_some_and(forbidden))
-        .then(|| "the file is in a protected location".to_string())
-}
-
-/// [`file_roots`] as the crate's folders, with [`refused_path`] as their guard.
+/// [`file_roots`] as the crate's folders, guarded by TinySecurity's
+/// protected-path policy. The crate runs the guard on the canonical path and
+/// keeps that file open while it reads, so a protected file's bytes are never
+/// read and a swapped path cannot be read in its place.
 pub fn guarded_roots(roots: Vec<PathBuf>) -> tiny_artifacts::FileRoots {
-    tiny_artifacts::FileRoots::new(roots).with_guard(refused_path)
+    tiny_artifacts::FileRoots::new(roots).with_async_guard(|path| async move {
+        super::files::check_protected_artifact_path(&path)
+            .await
+            .err()
+    })
 }
 
 /// The artifact service for one workspace: OpenHuman's store and UI bridge,
@@ -592,128 +606,9 @@ pub fn stored_file_path(workspace_dir: &Path, file: &tiny_artifacts::FileRef) ->
     version_files_dir(workspace_dir).join(&file.key)
 }
 
-/// Build the artifact tools bound to this workspace's service: the crate's
-/// default set (`create_artifact`, `read_artifact`, `update_artifact`,
-/// `list_artifacts`), `delete_artifact` (default-off through its
-/// `tools::user_filter` family), and — only when a `publisher` exists, i.e. the
-/// user can use cloud file storage — `share_artifact`.
-///
-/// The crate's tools run without a run context, so each call builds its tool
-/// around a service whose UI bridge carries that call's chat routing
-/// ([`PerCallTool`]); the card then reaches the chat the agent is answering.
-pub fn registered_tools(
-    workspace_dir: &Path,
-    files: FileRoots,
-    action_dir: &Path,
-    publisher: Option<super::ArtifactPublisherBinder>,
-) -> Vec<Box<dyn tinytools::Tool>> {
-    let can_publish = publisher.is_some();
-    let service = {
-        let workspace_dir = workspace_dir.to_path_buf();
-        let action_dir = action_dir.to_path_buf();
-        Arc::new(move |chat: Option<&ApprovalChatContext>| {
-            Arc::new(artifacts_service_with_publisher(
-                &workspace_dir,
-                files.clone(),
-                Some(&action_dir),
-                chat,
-                publisher.as_ref(),
-            ))
-        })
-    };
-    let author = Author::agent(AGENT_AUTHOR_ID);
-    let mut tools: Vec<Box<dyn tinytools::Tool>> = Vec::new();
-    {
-        let (service, author) = (service.clone(), author.clone());
-        tools.push(Box::new(PerCallTool::new(
-            per_call_context,
-            move |context| {
-                tiny_artifacts::CreateArtifactTool::new(
-                    service(context.chat.as_ref()),
-                    author.clone(),
-                )
-            },
-        )));
-    }
-    tools.push(Box::new(tiny_artifacts::ReadArtifactTool::new(service(
-        None,
-    ))));
-    {
-        let (service, author) = (service.clone(), author.clone());
-        tools.push(Box::new(PerCallTool::new(
-            per_call_context,
-            move |context| {
-                tiny_artifacts::UpdateArtifactTool::new(
-                    service(context.chat.as_ref()),
-                    author.clone(),
-                )
-            },
-        )));
-    }
-    tools.push(Box::new(tiny_artifacts::ListArtifactsTool::new(service(
-        None,
-    ))));
-    {
-        let service = service.clone();
-        tools.push(Box::new(PerCallTool::new(
-            per_call_context,
-            move |context| tiny_artifacts::DeleteArtifactTool::new(service(context.chat.as_ref())),
-        )));
-    }
-    if can_publish {
-        tools.push(Box::new(PerCallTool::new(
-            per_call_context,
-            move |context| tiny_artifacts::ShareArtifactTool::new(service(context.chat.as_ref())),
-        )));
-    }
-    tools
-}
-
-/// Author id stamped on versions the user writes in the desktop editor.
-pub const OPERATOR_AUTHOR_ID: &str = "operator";
-
-/// Author id stamped on versions OpenHuman's agent writes — through the
-/// artifact tools and through producer tools alike. A tool run carries no
-/// agent identity, so every agent-written version is attributed to this one.
-pub const AGENT_AUTHOR_ID: &str = "openhuman";
-
-/// Append the user's edit of artifact `id` as a new operator-authored version
-/// (the preview panel's autosave). The UI bridge writes it to the files folder
-/// and updates the card. A body identical to the newest version appends
-/// nothing.
-pub async fn save_operator_version(
-    workspace_dir: &Path,
-    files: FileRoots,
-    id: &str,
-    body: &str,
-    ctx: &crate::core::runtime::DispatchCtx,
-) -> Result<SavedVersion, String> {
-    let saved = artifacts_service(workspace_dir, files, None, None, ctx)
-        .revise(
-            id,
-            Content::Text(body.to_string()),
-            &Author::operator(OPERATOR_AUTHOR_ID),
-            None,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-    if let Some(notice) = &saved.notice {
-        tracing::warn!(target: "tiny-artifacts", artifact_id = %id, "[tiny-artifacts] {notice}");
-    }
-    Ok(SavedVersion {
-        version: saved.version,
-        saved: saved.appended,
-    })
-}
-
-/// Result of [`save_operator_version`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub struct SavedVersion {
-    /// The newest version number after the call.
-    pub version: u32,
-    /// Whether a version was appended.
-    pub saved: bool,
-}
+#[path = "tiny_store_tools.rs"]
+mod tools;
+pub use tools::*;
 
 #[cfg(test)]
 #[path = "tiny_store_tests.rs"]

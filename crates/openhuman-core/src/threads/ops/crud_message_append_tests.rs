@@ -37,7 +37,7 @@ async fn setup() -> (tempfile::TempDir, crate::config::Config) {
 async fn append_with_test_config(
     request: AppendConversationMessageRequest,
     config: &crate::config::Config,
-    origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
 ) -> Result<Outcome<ApiEnvelope<ConversationMessageRecord>>, ThreadsError> {
     message_append_with_config(
         &crate::core::runtime::DispatchCtx::ambient(),
@@ -175,7 +175,7 @@ async fn external_origin_cannot_reuse_an_existing_attachment_marker() {
     )
     .await
     .unwrap();
-    let origin = crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+    let origin = crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
         sender_name: None,
         channel: "test".into(),
         sender: None,

@@ -14,6 +14,35 @@ pub struct EmbeddedReadySignal {
     pub fallback_from: Option<u16>,
 }
 
+async fn await_http_server(
+    server: &mut tokio::task::JoinHandle<std::io::Result<()>>,
+    shutdown_token: Option<&CancellationToken>,
+) -> anyhow::Result<()> {
+    let join_result = if let Some(shutdown_token) = shutdown_token {
+        tokio::select! {
+            result = &mut *server => result,
+            _ = shutdown_token.cancelled() => {
+                match tokio::time::timeout(std::time::Duration::from_secs(10), &mut *server).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        // The server has had ten seconds to drain active
+                        // requests after the host's shutdown signal.
+                        server.abort();
+                        let _ = server.await;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    } else {
+        server.await
+    };
+
+    join_result
+        .map_err(anyhow::Error::from)?
+        .map_err(anyhow::Error::from)
+}
+
 /// Spawn `runtime`'s selected background services and, when
 /// `ServiceSet::rpc_http` is set, bind the HTTP listener and serve until
 /// shutdown.
@@ -24,7 +53,7 @@ pub struct EmbeddedReadySignal {
 /// With `shutdown_token` the server stops when it is cancelled (the embedded
 /// desktop core); without one it stops on the process shutdown signal.
 pub async fn serve(
-    runtime: &CoreRuntime,
+    runtime: Arc<CoreRuntime>,
     ready_tx: Option<tokio::sync::oneshot::Sender<EmbeddedReadySignal>>,
     shutdown_token: Option<CancellationToken>,
 ) -> anyhow::Result<()> {
@@ -135,8 +164,17 @@ pub async fn serve(
         std::env::set_var("OPENHUMAN_CORE_RPC_URL", format!("http://{bind_addr}/rpc"));
     }
 
+    let preflight_gate = runtime
+        .requires_secret_preflight()
+        .then(super::auth::PreflightGate::new_active);
     let ctx = Arc::clone(runtime.context());
-    let router = super::http::build_core_http_router(runtime.services().socketio);
+    let router = match &preflight_gate {
+        Some(gate) => super::http::build_core_http_router_with_preflight(
+            runtime.normal_services().socketio,
+            gate.clone(),
+        ),
+        None => super::http::build_core_http_router(runtime.services().socketio),
+    };
     // A SaaS core scopes each request to the user the gateway names (or the
     // operator plane); a single-user core runs everything under its one
     // context.
@@ -155,16 +193,20 @@ pub async fn serve(
         ))
     };
 
-    // Await startup migrations before publishing readiness or allowing
-    // background writers to touch their crate-backed stores.
-    runtime.start_services().await;
+    // Normal boots finish migrations before readiness. Secret preflight must
+    // instead publish the restricted listener so the operator can answer the
+    // HumanOnce approval required to decrypt config; background writers stay
+    // deferred until that phase succeeds.
+    if preflight_gate.is_none() {
+        runtime.start_services().await;
+    }
 
     log::info!(
         "[core] OpenHuman core is ready — listening on http://{bind_addr} (version {})",
         crate::core_host::core::invoke::default_state().core_version
     );
     log::info!("[rpc:http] JSON-RPC — POST http://{bind_addr}/rpc (JSON-RPC 2.0)");
-    if runtime.services().socketio {
+    if runtime.normal_services().socketio {
         log::info!("[rpc:socketio] Socket.IO — ws://{bind_addr}/socket.io/ (same HTTP server)");
     } else {
         log::info!("[rpc:socketio] disabled (--jsonrpc-only)");
@@ -181,17 +223,89 @@ pub async fn serve(
     // has run. A `?` here on a server error would skip the memory teardown
     // on exactly the exits where a wedged store is likeliest, and the
     // callers only forward the error — nobody else runs the cleanup.
-    let served = if let Some(shutdown_token) = shutdown_token {
-        log::info!("[core] embedded server waiting on cancellation token for graceful shutdown");
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
+    let served = if let Some(gate) = preflight_gate {
+        let server_shutdown = shutdown_token.clone();
+        let shutdown = async move {
+            if let Some(shutdown_token) = shutdown_token {
                 shutdown_token.cancelled().await;
-            })
-            .await
+            } else {
+                crate::core_host::core::shutdown::signal().await;
+            }
+        };
+        // Keep the listener independent from startup work. In particular,
+        // `start_services()` can take time after preflight; awaiting it in the
+        // select branch used to stop polling Axum and leave even `/health`
+        // hanging while the socket was already bound.
+        let mut server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown)
+                .await
+        });
+        let preflight_runtime = Arc::clone(&runtime);
+        let mut preflight =
+            tokio::spawn(async move { preflight_runtime.complete_secret_preflight().await });
+        // Enter the shutdown select before the preflight task can run. A
+        // preflight may do synchronous work before its first await, and must
+        // not monopolize a runtime worker before cancellation is observed.
+        tokio::select! {
+            result = await_http_server(&mut server, server_shutdown.as_ref()) => {
+                preflight.abort();
+                result
+            },
+            result = &mut preflight => match result {
+                Err(error) => {
+                    server.abort();
+                    Err(anyhow::Error::from(error))
+                }
+                Ok(Err(error)) => {
+                    server.abort();
+                    Err(error)
+                }
+                Ok(Ok(())) => {
+                    log::debug!("[core] secret preflight complete; starting services");
+                    let startup_runtime = Arc::clone(&runtime);
+                    let mut service_start =
+                        tokio::spawn(async move { startup_runtime.start_services().await });
+                    tokio::select! {
+                        result = await_http_server(&mut server, server_shutdown.as_ref()) => {
+                            service_start.abort();
+                            result
+                        },
+                        result = &mut service_start => {
+                            match result {
+                                Err(error) => Err(anyhow::Error::from(error)),
+                                Ok(()) => {
+                                    // Start ordinary jobs only after credentials and
+                                    // config have been refreshed, then expose the full
+                                    // router. A concurrent shutdown must still stop
+                                    // the listener while these services are starting.
+                                    log::debug!("[core] services started; opening the full router");
+                                    gate.open();
+                            await_http_server(&mut server, server_shutdown.as_ref()).await
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else if let Some(shutdown_token) = shutdown_token {
+        log::info!("[core] embedded server waiting on cancellation token for graceful shutdown");
+        let server_shutdown = shutdown_token.clone();
+        let mut server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    shutdown_token.cancelled().await;
+                })
+                .await
+        });
+        eprintln!("serve-debug: non-preflight server started");
+        await_http_server(&mut server, Some(&server_shutdown)).await
     } else {
         axum::serve(listener, app)
             .with_graceful_shutdown(crate::core_host::core::shutdown::signal())
             .await
+            .map_err(anyhow::Error::from)
     };
     if let Err(error) = &served {
         log::warn!(
@@ -200,10 +314,23 @@ pub async fn serve(
         );
     }
 
-    runtime.exit_cleanup().await;
+    if tokio::time::timeout(std::time::Duration::from_secs(10), runtime.exit_cleanup())
+        .await
+        .is_err()
+    {
+        log::warn!("[core] runtime exit cleanup exceeded its 10-second shutdown budget");
+    }
     // Close the per-workspace background-completion logs (they replay from disk
     // on the next boot) so a data reset can delete the workspace directory.
-    crate::core_host::agent::orchestration::release_background_completion_stores().await;
+    if tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        crate::core_host::agent::orchestration::release_background_completion_stores(),
+    )
+    .await
+    .is_err()
+    {
+        log::warn!("[core] background completion stores did not close within 10 seconds");
+    }
 
     served?;
     Ok(())

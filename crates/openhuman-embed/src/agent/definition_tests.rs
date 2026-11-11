@@ -68,6 +68,36 @@ fn refresh_prompt_on_resume_reaches_the_core_definition_and_is_off_by_default() 
 }
 
 #[test]
+fn memory_block_reaches_the_core_definition_and_comes_from_a_template() {
+    let off = AgentDefinitionSpec::new().into_core("plain").unwrap();
+    assert_eq!(off.extensions.memory_block, None, "off unless asked for");
+
+    let template = AgentDefinitionSpec::new().memory_block(MemoryBlockSpec { max_tokens: 300 });
+    let inherited = AgentDefinitionSpec::new()
+        .inherit(template.clone())
+        .unwrap()
+        .into_core("inherits")
+        .unwrap();
+    assert_eq!(
+        inherited
+            .extensions
+            .memory_block
+            .map(|block| block.max_tokens),
+        Some(300)
+    );
+    let own = AgentDefinitionSpec::new()
+        .memory_block(MemoryBlockSpec { max_tokens: 900 })
+        .inherit(template)
+        .unwrap()
+        .into_core("own")
+        .unwrap();
+    assert_eq!(
+        own.extensions.memory_block.map(|block| block.max_tokens),
+        Some(900)
+    );
+}
+
+#[test]
 fn refresh_prompt_on_resume_comes_from_a_template_or_base_unless_set() {
     let template = AgentDefinitionSpec::new().refresh_prompt_on_resume(true);
     let inherited = AgentDefinitionSpec::new()
@@ -230,4 +260,24 @@ fn a_custom_base_does_not_allow_a_wider_tool_scope() {
             .into_core("widens"),
         Err(AgentError::WidensRuntime(_))
     ));
+}
+
+#[test]
+fn scheduled_actions_reaches_the_core_definition_and_never_a_delegate() {
+    let acting = AgentDefinitionSpec::new()
+        .bare_prompt("Build and test.")
+        .tools(ToolScopeSpec::Named(vec!["shell".into()]))
+        .scheduled_actions(true);
+    let def = acting.clone().into_core("builder").expect("definition");
+    assert!(def.extensions.scheduled_actions);
+    let default = AgentDefinitionSpec::new()
+        .bare_prompt("Read.")
+        .into_core("reader")
+        .expect("definition");
+    assert!(
+        !default.extensions.scheduled_actions,
+        "scheduled turns stay read-only unless the agent opts in"
+    );
+    let delegate = acting.into_subagent_core("worker").expect("definition");
+    assert!(!delegate.extensions.scheduled_actions);
 }

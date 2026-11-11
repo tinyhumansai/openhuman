@@ -13,11 +13,17 @@ pub(super) fn wrap(
     inner: Arc<dyn ChatModel<()>>,
     config: Arc<Config>,
     profile: Option<ModelProfile>,
+    controls: Option<&HostControlSlot>,
 ) -> Arc<dyn ChatModel<()>> {
+    let inner = match controls {
+        Some(controls) => controls.wrap(inner),
+        None => inner,
+    };
     let host = Arc::new(AttachmentModel {
         config: config.clone(),
         core: ctx.downgrade(),
         fallback_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+        controls: controls.cloned(),
     });
     let (max_images, image_mb) = config.multimodal.effective_limits();
     let (max_files, file_mb, text_limit) = config.multimodal_files.effective_limits();
@@ -288,7 +294,9 @@ impl MediaFallbackCache<AttachmentAccessScope> for AttachmentModel {
         _modality: InputModality,
         attachment: &ResolvedAttachment,
     ) -> Option<String> {
-        let key = self.fallback_key(&attachment.name, &attachment.mime, &attachment.bytes);
+        let key = self
+            .fallback_key(&attachment.name, &attachment.mime, &attachment.bytes)
+            .await;
         if let Some(text) = self.fallback_cache.lock().ok()?.get(&key).cloned() {
             return Some(text);
         }
@@ -306,7 +314,9 @@ impl MediaFallbackCache<AttachmentAccessScope> for AttachmentModel {
         attachment: &ResolvedAttachment,
         text: &str,
     ) {
-        let key = self.fallback_key(&attachment.name, &attachment.mime, &attachment.bytes);
+        let key = self
+            .fallback_key(&attachment.name, &attachment.mime, &attachment.bytes)
+            .await;
         if let Ok(mut cache) = self.fallback_cache.lock() {
             cache.insert(key.clone(), text.to_owned());
         }

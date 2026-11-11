@@ -32,6 +32,7 @@ async fn flows_discover_applies_the_flow_discovery_definitions_effective_iterati
         &config,
         "flow_discovery",
     )
+    .await
     .expect("build flow_discovery agent");
     assert_eq!(agent.agent_config().max_tool_iterations, expected);
 }

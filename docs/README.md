@@ -38,9 +38,8 @@ The first two are referenced from `.github/PULL_REQUEST_TEMPLATE.md`.
 ## CI
 
 - `ci-self-hosted.md` — the only explainer for the lane architecture: how
-  `ci-fast.yml` and `ci-fast-hosted.yml` call `ci-lanes.yml`, what each lane
-  covers, which checks land in which lane, and how the Hetzner EX63 microVM
-  runners are routed. Read this before adding a check to CI.
+  `ci-fast-hosted.yml` calls `ci-lanes.yml`, what each lane covers, and which
+  checks land in which lane. Read this before adding a check to CI.
 
 ## Engineering notes
 

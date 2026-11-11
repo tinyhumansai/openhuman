@@ -8,7 +8,7 @@
 use tinyagents_harness_tools::net::network::NetGate;
 
 use crate::security::egress::{
-    emit_external_transfer, local_only_tool_block, DataKind, EgressDescriptor,
+    emit_external_transfer, local_only_tool_block_blocking, DataKind, EgressDescriptor,
 };
 use crate::security::policy::CommandClass;
 use crate::security::{GateDecision, SecurityPolicy};
@@ -123,7 +123,7 @@ impl NetGate for SecurityPolicy {
     }
 
     fn local_only_block(&self, host: &str) -> Option<String> {
-        local_only_tool_block(&EgressDescriptor::network_fetch(host))
+        local_only_tool_block_blocking(&EgressDescriptor::network_fetch(host))
     }
 
     fn disclose(&self, host: &str, has_body: bool, has_headers: bool) {

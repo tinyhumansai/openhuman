@@ -147,7 +147,7 @@ async fn signed_in_with_api_key(
     )
     .await
     .unwrap();
-    assert!(api_key::has_api_key(&user_scoped));
+    assert!(api_key::has_api_key(&user_scoped).await);
     user_scoped
 }
 
@@ -184,7 +184,7 @@ async fn clearing_the_session_keeps_the_api_key_on_a_storage_backend() {
     let signed_out = crate::config::load_config_with_timeout().await.unwrap();
     assert_ne!(signed_out.config_path, user_scoped.config_path);
     assert_eq!(
-        api_key::get_api_key(&signed_out).unwrap().as_deref(),
+        api_key::get_api_key(&signed_out).await.unwrap().as_deref(),
         Some("sk-live"),
         "the API key must survive a session sign-out on a storage backend"
     );
@@ -218,8 +218,8 @@ async fn clearing_everything_removes_the_api_key_on_a_storage_backend() {
     assert_eq!(cleared["removedApiKey"], true);
 
     let signed_out = crate::config::load_config_with_timeout().await.unwrap();
-    assert_eq!(api_key::get_api_key(&signed_out).unwrap(), None);
-    assert_eq!(api_key::get_api_key(&user_scoped).unwrap(), None);
+    assert_eq!(api_key::get_api_key(&signed_out).await.unwrap(), None);
+    assert_eq!(api_key::get_api_key(&user_scoped).await.unwrap(), None);
     let state = auth_get_state(&signed_out).await.unwrap().value;
     assert!(!state.is_authenticated);
 }

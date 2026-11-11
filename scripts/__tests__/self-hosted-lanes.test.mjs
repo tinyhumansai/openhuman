@@ -1,5 +1,5 @@
 // Self-test for the CI lane flow: scripts/ci/self-hosted/{lanes-plan,lanes}.mjs
-// (run by ci-fast.yml / ci-fast-hosted.yml through ci-lanes.yml).
+// (run by ci-fast-hosted.yml through ci-lanes.yml).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -45,21 +45,6 @@ const ciLanes = fs.readFileSync(
 const ALL = Object.fromEntries(Object.keys(AREA_ENV).map((k) => [k, true]));
 const NONE = Object.fromEntries(Object.keys(AREA_ENV).map((k) => [k, false]));
 const EX63_ENV = { CI_SCRATCH_DIR: "/scratch" };
-
-test("EX63 verifies preinstalled tools before cache setup and validation", () => {
-  const privateJob = ciLanes.slice(
-    ciLanes.indexOf("  ex63:"),
-    ciLanes.indexOf("  plan:"),
-  );
-  const verify = privateJob.indexOf("- name: Verify private runner contract");
-  const cache = privateJob.indexOf("- name: Setup Tinymold");
-  const detect = privateJob.indexOf("- name: Detect changed areas");
-  const start = privateJob.indexOf("- name: Start lanes");
-  assert.ok(verify >= 0 && cache > verify && detect > cache && start > detect);
-  assert.match(privateJob, /bash scripts\/ci\/self-hosted\/verify-runner\.sh/);
-  assert.doesNotMatch(privateJob, /setup-python|apt-get|JQ_SHA256|sccache/);
-  assert.match(privateJob, /Save Tinymold cache[\s\S]*continue-on-error: true/);
-});
 
 const plans = () => [
   buildPlan({ profile: "ex63", areas: ALL, env: EX63_ENV }),
@@ -123,15 +108,12 @@ test("commands are static: no suite is ever narrowed to the diff", () => {
   }
 });
 
-test("ex63 runs the core's unit tests under nextest; hosted keeps cargo's runner", () => {
+test("every profile runs the core's unit tests under nextest (one process per test)", () => {
   for (const plan of plans()) {
     const cov = plan.lanes
       .find((l) => l.name === "rust-cov")
       .checks.find((c) => c.name === "rust-core-coverage");
-    assert.equal(
-      cov.env.OH_COV_RUNNER,
-      plan.profile === "ex63" ? "nextest" : undefined,
-    );
+    assert.equal(cov.env.OH_COV_RUNNER, "nextest");
   }
   assert.match(
     fs.readFileSync(path.join(repoRoot, ".config/nextest.toml"), "utf8"),

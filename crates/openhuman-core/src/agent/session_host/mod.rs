@@ -45,6 +45,7 @@ mod live_tools;
 mod runtime;
 mod runtime_session;
 mod session_key;
+pub(crate) mod setup_report;
 pub(crate) mod stop_policy;
 mod types;
 
@@ -55,12 +56,16 @@ pub(crate) mod test_support;
 pub use codec::OpenHumanTranscriptCodec;
 pub type OpenHumanSessionHooks =
     tinyagents_runtime::FnSessionHooks<crate::agent::tinyagents::host::OpenHumanRunContext>;
+pub(crate) use runtime_session::invalidate_ready_memory_blocks;
+pub use runtime_session::{CompactOptions, CompactOutcome, MemoryBlockPrewarm};
 pub use types::{OpenHumanSessionHost, SessionHostBuilder, TurnOverrides};
 
 // Re-export the duplicate-tool-spec guard for sibling harness modules
 // (`session::runtime`, `subagent_host`) so all provider call sites
 // share one tested implementation.
 
+#[cfg(all(test, feature = "legacy-import"))]
+mod discovery_pin_tests;
 #[cfg(test)]
 #[path = "imported_history_tests.rs"]
 mod imported_history_tests;
@@ -68,6 +73,8 @@ mod imported_history_tests;
 mod orphaned_head_resume_tests;
 #[cfg(test)]
 mod response_shape_turn_tests;
+#[cfg(all(test, feature = "legacy-import"))]
+mod result_expiry_wire_tests;
 #[cfg(test)]
 mod runtime_adapter_session_state_tests;
 #[cfg(test)]

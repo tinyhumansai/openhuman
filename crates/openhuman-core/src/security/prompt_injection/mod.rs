@@ -5,10 +5,15 @@
 
 mod detector;
 
+pub(crate) use detector::{
+    enforce_prompt_input_in, enforce_prompt_input_with_config, screening_config_in,
+    tool_scan_config,
+};
+
 pub use detector::{
     enforce_prompt_input, scan_tool_definition, PromptEnforcementAction, PromptEnforcementContext,
     PromptEnforcementDecision, PromptInjectionReason, PromptInjectionVerdict,
-    ToolDefinitionScanHit,
+    ToolDefinitionScanHit, MAX_PROMPT_BYTES,
 };
 
 #[cfg(test)]

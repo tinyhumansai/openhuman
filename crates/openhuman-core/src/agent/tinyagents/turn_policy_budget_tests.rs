@@ -84,20 +84,27 @@ fn hosted_openai_is_not_treated_as_self_hosted() {
     ));
 }
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[test]
-fn local_runtimes_and_private_endpoints_are_self_hosted() {
+fn local_runtimes_are_self_hosted_and_endpoint_classification_fails_closed() {
     assert!(provider_is_self_hosted("ollama:llama3", None));
     assert!(provider_is_self_hosted("lmstudio:m", None));
     assert!(provider_is_self_hosted("mlx:m", None));
-    assert!(provider_is_self_hosted(
+    assert!(!provider_is_self_hosted(
         "llamacpp:m",
         Some("http://127.0.0.1:8080/v1")
     ));
-    assert!(provider_is_self_hosted(
+    assert!(!provider_is_self_hosted(
         "vllm:m",
         Some("http://192.168.1.20:8000/v1")
     ));
-    assert!(provider_is_self_hosted(
+    assert!(!provider_is_self_hosted(
+        "vllm:m",
+        Some("http://0.0.0.0:8000/v1")
+    ));
+    assert!(!provider_is_self_hosted(
         "openai",
         Some("http://localhost:8080/v1")
     ));
@@ -162,4 +169,38 @@ fn a_dead_call_is_retried_at_the_same_cap_without_reasoning_and_new_calls_keep_i
             "new calls keep their reasoning"
         );
     }
+}
+
+/// With security disabled the endpoint is classified on the host: a loopback
+/// endpoint is self-hosted, a LAN one is not.
+fn assert_endpoints_classified_by_loopback() {
+    assert!(provider_is_self_hosted(
+        "llamacpp:m",
+        Some("http://127.0.0.1:8080/v1")
+    ));
+    assert!(provider_is_self_hosted(
+        "vllm:m",
+        Some("http://0.0.0.0:8000/v1")
+    ));
+    assert!(!provider_is_self_hosted(
+        "vllm:m",
+        Some("http://192.168.1.20:8000/v1")
+    ));
+    assert!(provider_is_self_hosted(
+        "openai",
+        Some("http://localhost:8080/v1")
+    ));
+}
+
+#[cfg(not(feature = "security-module"))]
+#[test]
+fn a_build_without_the_module_classifies_local_endpoints_by_loopback() {
+    assert_endpoints_classified_by_loopback();
+}
+
+#[cfg(feature = "security-module")]
+#[test]
+fn security_configured_off_classifies_local_endpoints_by_loopback() {
+    let _off = crate::security::switch::off_for_this_thread();
+    assert_endpoints_classified_by_loopback();
 }

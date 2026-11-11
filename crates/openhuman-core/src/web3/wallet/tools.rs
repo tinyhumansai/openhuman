@@ -148,9 +148,11 @@ impl WalletModuleTool {
     }
 }
 
-/// The six established wallet tools, backed by OpenHuman's module adapters.
+/// The six established wallet tools, backed by OpenHuman's module adapters,
+/// followed by the two policy-bound tools (`wallet_balances`,
+/// `wallet_execute_prepared`) from [`super::automation_tools`].
 pub fn all_agent_tools() -> Vec<Box<dyn Tool>> {
-    tinywallet_bus::tools::wallet_tool_declarations()
+    let mut tools: Vec<Box<dyn Tool>> = tinywallet_bus::tools::wallet_tool_declarations()
         .iter()
         .map(|declaration| {
             Box::new(WalletModuleTool::new(
@@ -158,5 +160,7 @@ pub fn all_agent_tools() -> Vec<Box<dyn Tool>> {
                     .expect("the declaration came from the shipped Wallet list"),
             )) as Box<dyn Tool>
         })
-        .collect()
+        .collect();
+    tools.extend(super::automation_tools::automation_tools());
+    tools
 }

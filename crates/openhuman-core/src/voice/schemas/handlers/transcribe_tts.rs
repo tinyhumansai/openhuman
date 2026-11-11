@@ -169,6 +169,7 @@ fn run_voice_reply_synthesize(
             "[voice-factory] voice_reply_synthesize dispatch provider={provider_name} voice={voice}"
         );
         let provider = crate::voice::create_tts_provider(&provider_name, &voice, &config)
+            .await
             .map_err(|e| e.to_string())?;
         to_json(
             provider
@@ -203,6 +204,7 @@ fn run_voice_stt_dispatch(
             "[voice-factory] RPC voice_stt_dispatch provider={provider_name} model={model}"
         );
         let provider = crate::voice::create_stt_provider(&provider_name, &model, &config)
+            .await
             .map_err(|e| e.to_string())?;
         let outcome = provider
             .transcribe(
@@ -259,6 +261,7 @@ fn run_voice_tts_dispatch(
             "[voice-factory] RPC voice_tts_dispatch provider={provider_name} voice={voice}"
         );
         let provider = crate::voice::create_tts_provider(&provider_name, &voice, &config)
+            .await
             .map_err(|e| e.to_string())?;
         let outcome = provider
             .synthesize(&config, &p.text, effective_voice)

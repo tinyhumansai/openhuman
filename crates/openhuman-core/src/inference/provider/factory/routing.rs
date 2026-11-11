@@ -139,12 +139,12 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
 }
 
 /// Whether the role's selected provider can be funded directly by the user.
-pub fn role_bypasses_managed_credits(role: &str, config: &Config) -> bool {
+pub async fn role_bypasses_managed_credits(role: &str, config: &Config) -> bool {
     let resolved = provider_for_role(role, config);
     let r = resolved.trim();
     let is_managed =
         r.is_empty() || r == "cloud" || r == PROVIDER_OPENHUMAN || r == BYOK_INCOMPLETE_SENTINEL;
-    let usable_byo = !is_managed && route_has_usable_credentials(r, config);
+    let usable_byo = !is_managed && route_has_usable_credentials(r, config).await;
     log::debug!(
         "[billing] role_bypasses_managed_credits role={role} resolved={resolved} \
          is_managed={is_managed} usable_byo={usable_byo}"
@@ -191,7 +191,7 @@ fn is_explicit_provider_default(model: &str, config: &Config) -> bool {
 /// True when a resolved chat-tier provider string can actually run on the
 /// user's own funding: local runtimes / claude-code carry their own creds; a
 /// concrete cloud slug requires a non-empty stored key.
-pub(super) fn route_has_usable_credentials(resolved: &str, config: &Config) -> bool {
+pub(super) async fn route_has_usable_credentials(resolved: &str, config: &Config) -> bool {
     let r = resolved.trim();
     if tinyinference_local::profile::is_local_provider_string(r)
         || r.starts_with(tinyagents_harness::providers::claude_code::PROVIDER_PREFIX)
@@ -203,7 +203,7 @@ pub(super) fn route_has_usable_credentials(resolved: &str, config: &Config) -> b
     if let Some((slug, _)) = r.split_once(':') {
         let slug = slug.trim();
         if !slug.is_empty() {
-            match lookup_key_for_slug(slug, config) {
+            match lookup_key_for_slug(slug, config).await {
                 Ok(key) => {
                     let usable = !key.trim().is_empty();
                     log::debug!(
@@ -221,6 +221,26 @@ pub(super) fn route_has_usable_credentials(resolved: &str, config: &Config) -> b
         }
     }
     false
+}
+
+/// `provider` with its model replaced by `model`, when one is given: the same
+/// provider (and so the same credentials, endpoint and route temperature)
+/// serving another model. A provider string with no model of its own (a
+/// routing sentinel such as `cloud`, or the managed backend's bare
+/// `openhuman`) is returned as is; those routes take the model from the
+/// request's pin instead.
+pub(super) fn route_with_model(provider: String, model: Option<&str>) -> String {
+    use tinyinference_providers::route::{ProviderRoute, RouteKind};
+    let Some(model) = model else {
+        return provider;
+    };
+    match ProviderRoute::parse(&provider) {
+        Some(route) if route.kind() != RouteKind::Sentinel => match route.temperature {
+            Some(temperature) => format!("{}:{model}@{temperature}", route.provider),
+            None => format!("{}:{model}", route.provider),
+        },
+        _ => provider,
+    }
 }
 
 #[cfg(test)]

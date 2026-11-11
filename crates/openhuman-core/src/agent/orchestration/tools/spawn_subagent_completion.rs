@@ -1,9 +1,9 @@
 use super::*;
 use crate::agent::orchestration::background_completions::CompletionTarget;
 use crate::agent::subagent_host::{SubagentRunOutcome, SubagentRunStatus};
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::core::runtime::{CoreContext, DispatchCtx};
 use crate::progress::AgentProgress;
-use crate::security::turn_origin::AgentTurnOrigin;
 use std::path::PathBuf;
 use std::sync::Arc;
 

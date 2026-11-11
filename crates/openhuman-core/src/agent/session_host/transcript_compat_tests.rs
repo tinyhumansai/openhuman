@@ -197,8 +197,19 @@ pub(super) fn build_host(
     native: bool,
     thread: &str,
 ) -> crate::agent::OpenHumanSessionHost {
+    build_host_with_config(root, model, native, thread, Default::default())
+}
+
+pub(super) fn build_host_with_config(
+    root: &Path,
+    model: Arc<ScriptedModel>,
+    native: bool,
+    thread: &str,
+    config: crate::config::AgentConfig,
+) -> crate::agent::OpenHumanSessionHost {
     let chat_model: Arc<dyn ChatModel<()>> = model;
     let builder = crate::agent::SessionHostBuilder::new()
+        .config(config)
         .with_session_history_locator(store_locator(root))
         .chat_model(chat_model)
         .model_name("test/session-fixture".to_string())
@@ -579,12 +590,13 @@ fn assert_retired_tool_replay(identity_bound: bool) {
         let live = crate::tools::ops::all_tools(
             Arc::new(config.clone()),
             &security,
-            crate::security::AuditLogger::disabled(),
+            crate::security::AuditSink::disabled(),
             &config.browser,
             &config.http_request,
             root.path(),
             &config,
-        );
+        )
+        .await;
         assert!(
             !live.iter().any(|tool| tool.name() == RETIRED),
             "retired tool must not be restored to the live registry"

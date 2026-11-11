@@ -20,12 +20,13 @@
 //! tinyagents harness.
 
 pub mod config;
-mod context_wiring;
+pub(crate) mod context_wiring;
 mod deadline_wind_down;
 pub mod discovery;
 pub mod host;
 pub(crate) mod hosted_error;
 pub(crate) mod journal;
+pub mod replay_pin;
 // The tool harness behind a live voice session (`voice::live`).
 #[cfg(feature = "voice")]
 pub(crate) mod live_harness;

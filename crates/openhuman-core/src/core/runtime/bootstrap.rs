@@ -20,9 +20,8 @@ pub(crate) async fn bootstrap_core_runtime(
     config: Option<crate::config::Config>,
     domains: crate::core::runtime::DomainSet,
     ctx: &DispatchCtx,
+    defer_credentials: bool,
 ) {
-    use crate::platform::socket::{set_global_socket_manager, SocketManager};
-    use std::sync::Arc;
     // `embedded_core` derived from host_kind so the rest of the function (which
     // already keys behavior off the boolean) stays unchanged.
     let embedded_core = host_kind.is_desktop_shell();
@@ -82,6 +81,7 @@ pub(crate) async fn bootstrap_core_runtime(
         embedded_core,
         domains,
         ctx,
+        defer_credentials,
     );
 
     // Latch the config-corruption recovery signal (#5167) so `app_state_snapshot`
@@ -376,10 +376,8 @@ pub(crate) async fn bootstrap_core_runtime(
     // placement rationale as the bridges above. Idempotent (OnceLock-guarded).
     crate::web_chat::register_memory_activity_surface_subscriber();
 
-    // --- Socket manager bootstrap ---
-    let socket_mgr = Arc::new(SocketManager::new());
-    set_global_socket_manager(socket_mgr.clone());
-    log::info!("[socket] SocketManager initialized and registered globally");
+    // Socket.IO is installed by the host layer (TinyHumans); core owns only
+    // the port and keeps boot independent of the SDK implementation.
 }
 
 /// Starts selected background jobs after the runtime has entered `serve()`.
@@ -412,7 +410,7 @@ pub(crate) async fn start_core_runtime_services(
         }
         None => {
             log::warn!(
-                "[socket] SocketManager unavailable during runtime service startup; auto-connect skipped"
+                "[socket] SocketPort unavailable during runtime service startup; auto-connect skipped"
             );
         }
     }

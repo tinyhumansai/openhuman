@@ -28,9 +28,27 @@ use tinyagents_harness::turn_outcome::ToolOutcomeSink;
 const BUDGET_NOTICE_THRESHOLDS: [f64; 2] = [0.5, 0.8];
 /// Longest verbatim tail of a task-state compaction (tokens).
 const TASK_STATE_KEEP_RECENT_TOKENS: u64 = 20_000;
+/// The verbatim tail of a task-state compaction: `requested` (the `[context]
+/// keep_recent_tokens` budget; unset keeps [`TASK_STATE_KEEP_RECENT_TOKENS`]),
+/// held to a fifth of a known context window.
+fn task_state_keep_recent_tokens(window: Option<u64>, requested: Option<u64>) -> u64 {
+    let budget = requested.unwrap_or(TASK_STATE_KEEP_RECENT_TOKENS);
+    window.map_or(budget, |w| (w / 5).min(budget))
+}
 /// Store the artifact index is registered under on the run context.
 const ARTIFACT_INDEX_STORE: &str =
     crate::agent::harness::tool_result_artifacts::TINYAGENTS_TOOL_RESULT_ARTIFACT_STORE;
+
+/// The model a compaction's summarizer calls, and how it calls it.
+pub(crate) struct CompactionSummarizer {
+    /// The model the summary request goes to.
+    pub(crate) model: Arc<dyn tinyinference_llm::model::ChatModel<()>>,
+    /// The id `model` calls, for the summarizer's logs and summary provenance.
+    pub(crate) model_id: String,
+    /// `[context] summarizer_tool_rendering` / `summarizer_max_output_tokens`;
+    /// the free-form (`Summary`) strategy applies them.
+    pub(crate) settings: crate::config::SummarizerSettings,
+}
 
 /// Called when the turn starts summarizing earlier conversation.
 pub(super) type CompactionNotice = Arc<dyn Fn() + Send + Sync>;
@@ -101,8 +119,9 @@ pub(super) fn install_context_ladder(
     autocompact_enabled: bool,
     compaction_trigger_tokens: Option<u64>,
     compaction_strategy: crate::config::CompactionStrategy,
+    keep_recent_tokens: Option<u64>,
     microcompact_keep_recent: usize,
-    summarizer_model: Arc<dyn tinyinference_llm::model::ChatModel<()>>,
+    summarizer: CompactionSummarizer,
     wrap_up_at_cap: bool,
     tool_outcome_sink: &ToolOutcomeSink,
     memory_turn: Option<Arc<crate::memory::lifecycle::hooks::MemoryTurn>>,
@@ -120,7 +139,8 @@ pub(super) fn install_context_ladder(
                 policy,
                 compaction_strategy,
                 context_window,
-                summarizer_model,
+                keep_recent_tokens,
+                summarizer,
                 model,
                 memory_turn,
                 compaction_notice,
@@ -168,12 +188,17 @@ pub(super) fn install_context_ladder(
 }
 
 /// The compression middleware for `strategy`: `TaskState` writes a typed
-/// checkpoint over a token-budgeted tail, `Summary` is the free-form summarizer.
-fn compression_middleware(
+/// checkpoint over a token-budgeted tail, `Summary` is the free-form summarizer,
+/// rendering tool activity and capping its output as `summarizer.settings`
+/// say. `model` is the turn's. `keep_recent_tokens` is the `[context]` tail
+/// budget: unset, a task-state compaction keeps 20k tokens and a free-form one
+/// keeps its count-based tail.
+pub(crate) fn compression_middleware(
     policy: SummarizationPolicy,
     strategy: crate::config::CompactionStrategy,
     context_window: Option<u64>,
-    summarizer_model: Arc<dyn tinyinference_llm::model::ChatModel<()>>,
+    keep_recent_tokens: Option<u64>,
+    summarizer: CompactionSummarizer,
     model: &str,
     memory_turn: Option<Arc<crate::memory::lifecycle::hooks::MemoryTurn>>,
     compaction_notice: Option<CompactionNotice>,
@@ -181,9 +206,7 @@ fn compression_middleware(
     let window = context_window.filter(|w| *w > 0);
     match strategy {
         crate::config::CompactionStrategy::TaskState => {
-            let keep_recent = window.map_or(TASK_STATE_KEEP_RECENT_TOKENS, |w| {
-                (w / 5).min(TASK_STATE_KEEP_RECENT_TOKENS)
-            });
+            let keep_recent = task_state_keep_recent_tokens(window, keep_recent_tokens);
             let chunk = window.map_or(DEFAULT_TASK_STATE_CHUNK_TOKENS, |w| {
                 (w * 2 / 5).clamp(4_000, DEFAULT_TASK_STATE_CHUNK_TOKENS)
             });
@@ -191,7 +214,7 @@ fn compression_middleware(
             let summarizer = FaultTolerantCachingSummarizer::new(
                 announced(
                     Box::new(
-                        TaskStateSummarizer::new(summarizer_model, model)
+                        TaskStateSummarizer::new(summarizer.model, summarizer.model_id)
                             .with_max_chunk_tokens(chunk),
                     ),
                     compaction_notice,
@@ -205,20 +228,104 @@ fn compression_middleware(
             .with_keep_recent_tokens(keep_recent)
         }
         crate::config::CompactionStrategy::Summary => {
-            tracing::info!(model, "[context_compression] strategy=summary");
+            let settings = summarizer.settings;
+            tracing::info!(
+                model,
+                tool_rendering = ?settings.tool_rendering,
+                max_output_tokens = ?settings.max_output_tokens,
+                "[context_compression] strategy=summary"
+            );
+            let mut model_summarizer = ModelSummarizer::new(summarizer.model, summarizer.model_id)
+                .with_tool_rendering(settings.tool_rendering);
+            if let Some(cap) = settings.max_output_tokens {
+                model_summarizer = model_summarizer.with_max_output_tokens(cap);
+            }
             let summarizer = FaultTolerantCachingSummarizer::new(
-                announced(
-                    Box::new(ModelSummarizer::new(summarizer_model, model)),
-                    compaction_notice,
-                ),
+                announced(Box::new(model_summarizer), compaction_notice),
                 &policy,
             );
-            ContextCompressionMiddleware::with_summarizer(
+            let middleware = ContextCompressionMiddleware::with_summarizer(
                 policy,
                 MemoryRecallSummarizer::wrap(Box::new(summarizer), memory_turn),
-            )
+            );
+            match keep_recent_tokens {
+                Some(tokens) => middleware.with_keep_recent_tokens(tokens),
+                None => middleware,
+            }
         }
     }
+}
+
+/// What a compaction outside a turn folds against.
+pub(crate) struct IdleFold<'a> {
+    /// The caller's threshold: the conversation is at least this large.
+    pub(crate) min_tokens: u64,
+    /// The verbatim tail in tokens; `None` sizes it as a turn would against
+    /// a `min_tokens` trigger. Either way the policy caps it at half of
+    /// `min_tokens`, as it caps a turn's tail at half its trigger.
+    pub(crate) keep_recent_tokens: Option<u64>,
+    /// `[context] compaction_strategy`.
+    pub(crate) strategy: crate::config::CompactionStrategy,
+    /// The agent model's context window, when known.
+    pub(crate) context_window: Option<u64>,
+    /// The agent's model, for logs.
+    pub(crate) model: &'a str,
+}
+
+/// `history` compacted with no model turn, or `None` when nothing was old
+/// enough to fold.
+///
+/// This is a turn's compaction, driven over one request: the same
+/// [`compression_middleware`] runs its `before_model` over `history` and its
+/// `after_agent` reports the folded transcript, which becomes a
+/// [`CompactionCarry`](tinyagents_harness::summarization::CompactionCarry)
+/// re-applied to `history` exactly as the session driver applies a turn's.
+/// The summary is placed after the system prompt (the default
+/// `SummaryPlacement::User`). The caller has already decided the
+/// conversation is at least `min_tokens`; the policy's trigger sits just
+/// below that so the middleware compacts it.
+///
+/// # Errors
+///
+/// When the middleware fails (its failure policy normally recovers instead).
+pub(crate) async fn compact_history(
+    history: &[Message],
+    fold: IdleFold<'_>,
+    summarizer: CompactionSummarizer,
+) -> tinyagents_harness::error::Result<Option<Vec<Message>>> {
+    use tinyagents_harness::context::{RunConfig, RunContext};
+    use tinyagents_harness::middleware::{AgentRun, Middleware};
+
+    let trigger = fold.min_tokens.saturating_sub(1).max(1);
+    let Some(policy) = compression_policy(fold.context_window, Some(trigger)) else {
+        return Ok(None);
+    };
+    let mut mw = compression_middleware(
+        policy,
+        fold.strategy,
+        fold.context_window,
+        None,
+        summarizer,
+        fold.model,
+        None,
+        None,
+    );
+    if let Some(tokens) = fold.keep_recent_tokens {
+        mw = mw.with_keep_recent_tokens(tokens);
+    }
+    let mut ctx = RunContext::new(RunConfig::new("compact_thread"), ());
+    let mut request = tinyinference_llm::model::ModelRequest::new(history.to_vec());
+    Middleware::<(), ()>::before_model(&mw, &mut ctx, &(), &mut request).await?;
+    let mut run = AgentRun {
+        messages: history.to_vec(),
+        ..Default::default()
+    };
+    Middleware::<(), ()>::after_agent(&mw, &mut ctx, &(), &mut run).await?;
+    let carry = run
+        .compacted_history
+        .as_deref()
+        .and_then(tinyagents_harness::summarization::CompactionCarry::from_compacted_history);
+    Ok(carry.map(|carry| carry.apply(history.to_vec())))
 }
 
 #[cfg(test)]

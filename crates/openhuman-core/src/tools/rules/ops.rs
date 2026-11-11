@@ -115,20 +115,7 @@ pub fn child_rule_policy(
     def: &AgentDefinition,
 ) -> Option<Arc<ToolRulePolicy>> {
     let mut set = match parent {
-        Some(parent) => {
-            let mut inherited = ToolRuleSet::new();
-            for layer in &parent.rules.layers {
-                // Only the operator's layer is inherited; its name is set by
-                // `session_rule_set`, never taken verbatim from the author.
-                let is_operator_layer = layer.name.as_deref().is_some_and(|name| {
-                    name == OPERATOR_LAYER || name.starts_with(&format!("{OPERATOR_LAYER}:"))
-                });
-                if is_operator_layer {
-                    inherited.push(layer.clone());
-                }
-            }
-            inherited
-        }
+        Some(parent) => parent.rules.inherit_operator_layers(),
         None => session_rule_set(config, None),
     };
     if let Some(layer) = agent_rule_layer(def) {

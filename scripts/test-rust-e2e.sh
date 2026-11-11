@@ -193,6 +193,9 @@ fi
 # tests, not a logic failure. Mirror scripts/test-rust-with-mock.sh and give the
 # suite a larger stack unless the caller already pinned one explicitly.
 export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
+# Credential saves ask the user to approve each TinySecurity keyring operation;
+# the test builds answer for them (keyring_consent/test_responder.rs).
+export OPENHUMAN_TEST_KEYRING_CONSENT="${OPENHUMAN_TEST_KEYRING_CONSENT:-approve}"
 
 cd "$REPO_ROOT"
 source "$HOME/.cargo/env" 2>/dev/null || true

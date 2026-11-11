@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tinybus::module::{ModuleClient, ModuleObjectClient};
 use tinybus::EventHandler;
-use tinychannels_bus::{approvals::ReplyContext, ChannelMessage};
+use tinychannels_bus::approvals::ReplyContext;
+use tinychannels_bus::module_inbound::ChannelInboundPreparationMode;
 
 /// Captures the account configuration and reply addresses used by approvals.
 pub(crate) struct ChannelApprovalSurfaceSubscriber {
@@ -84,22 +85,30 @@ impl EventHandler<DomainEvent> for ChannelApprovalSurfaceSubscriber {
                     &self.client().await,
                     tinychannels_bus::module_inbound::PrepareChannelInboundRequest {
                         namespace: "main".into(),
-                        preparation_mode: Default::default(),
+                        preparation_mode: ChannelInboundPreparationMode::Typed,
                         session_policy: Default::default(),
-                        source: tinychannels_bus::module_inbound::ChannelInboundSource::Legacy {
-                            message: ChannelMessage {
-                                reply_to_id: None,
-                                topic_id: None,
-                                id: message_id.clone(),
-                                channel: channel.clone(),
-                                sender: sender.clone(),
-                                reply_target: reply_target.clone(),
-                                content: content.clone(),
-                                timestamp: 0,
-                                thread_ts: thread_ts.clone(),
-                                sender_name: None,
-                            },
-                            envelope: inbound_envelope.clone(),
+                        source: tinychannels_bus::module_inbound::ChannelInboundSource::Envelope {
+                            envelope: inbound_envelope.clone().unwrap_or_else(|| {
+                                tinychannels_bus::ChannelInboundEnvelope {
+                                    channel: tinychannels_bus::channel::ChannelRef {
+                                        id: channel.clone(),
+                                        account_id: None,
+                                    },
+                                    message_id: message_id.clone(),
+                                    conversation: tinychannels_bus::channel::ConversationRef {
+                                        id: reply_target.clone(),
+                                        thread_id: thread_ts.clone(),
+                                        ..Default::default()
+                                    },
+                                    sender: tinychannels_bus::channel::SenderRef {
+                                        id: sender.clone(),
+                                        ..Default::default()
+                                    },
+                                    text: content.clone(),
+                                    ..Default::default()
+                                }
+                            }),
+                            timestamp: 0,
                         },
                     },
                 )

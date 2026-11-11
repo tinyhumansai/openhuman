@@ -12,6 +12,14 @@ use tinyagents_harness_tools::fs::filesystem::{ApplyPatchTool, CsvExportTool};
 /// literal to the marker const — drift between them fails here rather than
 /// silently letting the agent grind on a doomed call. Args are the minimum
 /// needed to reach the `can_act()` check in each tool.
+// Read-only autonomy is enforced by TinySecurity's budget snapshot. A build
+// without `security-module` has no module to ask, so every gate is permissive
+// by design (`security::switch`) and the tools proceed to their own work.
+//
+// `browser_open` is not listed: it no longer gates itself (f8a08f11f8 moved
+// that to the host authorization stage), so a tool-level marker is not its
+// contract.
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn readonly_acting_tools_carry_policy_blocked_marker() {
     use crate::security::AutonomyLevel;
@@ -33,19 +41,6 @@ async fn readonly_acting_tools_carry_policy_blocked_marker() {
         (
             Box::new(CsvExportTool::new(sec.clone())),
             serde_json::json!({ "data": "col1\nval1", "filename": "x.csv" }),
-        ),
-        // The `computer`-family tools are compiled out with the
-        // `desktop-automation` feature; gate these two cases per-element so the
-        // rest of the read-only policy assertions still run in the slim build.
-        #[cfg(feature = "modules")]
-        (
-            Box::new(BrowserOpenTool::new(
-                sec.clone(),
-                Arc::new(crate::modules::browser::BrowserClient::new(Arc::new(
-                    crate::config::Config::default(),
-                ))),
-            )),
-            serde_json::json!({ "url": "https://example.com" }),
         ),
         (
             Box::new(http_request_tool(
@@ -71,17 +66,17 @@ async fn readonly_acting_tools_carry_policy_blocked_marker() {
     }
 }
 
-#[test]
-fn productivity_tools_are_registered() {
+#[tokio::test]
+async fn productivity_tools_are_registered() {
     let tmp = TempDir::new().unwrap();
-    let names = tool_names(&expansion_tools_for(&tmp));
+    let names = tool_names(&expansion_tools_for(&tmp).await);
     assert_contains_all(&names, PRODUCTIVITY_TOOLS);
 }
 
-#[test]
-fn productivity_default_off_tools_are_filtered_when_not_opted_in() {
+#[tokio::test]
+async fn productivity_default_off_tools_are_filtered_when_not_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
     let names = tool_names(&tools);
     for off in PRODUCTIVITY_DEFAULT_OFF {
@@ -98,10 +93,10 @@ fn productivity_default_off_tools_are_filtered_when_not_opted_in() {
     }
 }
 
-#[test]
-fn productivity_default_off_tools_retained_when_opted_in() {
+#[tokio::test]
+async fn productivity_default_off_tools_retained_when_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(
         &mut tools,
         &[
@@ -122,7 +117,7 @@ fn productivity_default_off_tools_retained_when_opted_in() {
 #[tokio::test]
 async fn artifacts_created_through_the_registry_are_listed() {
     let tmp = TempDir::new().unwrap();
-    let tools = expansion_tools_for(&tmp);
+    let tools = expansion_tools_for(&tmp).await;
     let created = find_tool(&tools, "create_artifact")
         .execute(serde_json::json!({ "kind": "markdown", "title": "Notes", "body": "# hi" }))
         .await
@@ -140,10 +135,10 @@ async fn artifacts_created_through_the_registry_are_listed() {
     );
 }
 
-#[test]
-fn knowledge_tools_are_registered() {
+#[tokio::test]
+async fn knowledge_tools_are_registered() {
     let tmp = TempDir::new().unwrap();
-    let names = tool_names(&expansion_tools_for(&tmp));
+    let names = tool_names(&expansion_tools_for(&tmp).await);
 
     let mut expected_tools: Vec<&str> = Vec::new();
 
@@ -189,10 +184,10 @@ fn knowledge_tools_are_registered() {
     }
 }
 
-#[test]
-fn knowledge_default_off_tools_are_filtered_when_not_opted_in() {
+#[tokio::test]
+async fn knowledge_default_off_tools_are_filtered_when_not_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
     let names = tool_names(&tools);
     let off_tools = knowledge_default_off();
@@ -211,10 +206,10 @@ fn knowledge_default_off_tools_are_filtered_when_not_opted_in() {
     }
 }
 
-#[test]
-fn knowledge_default_off_tools_retained_when_opted_in() {
+#[tokio::test]
+async fn knowledge_default_off_tools_retained_when_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["workflow_manage".to_string()]);
     let names = tool_names(&tools);
     let off_tools = knowledge_default_off();
@@ -226,17 +221,17 @@ fn knowledge_default_off_tools_retained_when_opted_in() {
     }
 }
 
-#[test]
-fn system_tools_are_registered() {
+#[tokio::test]
+async fn system_tools_are_registered() {
     let tmp = TempDir::new().unwrap();
-    let names = tool_names(&expansion_tools_for(&tmp));
+    let names = tool_names(&expansion_tools_for(&tmp).await);
     assert_contains_all(&names, SYSTEM_TOOLS);
 }
 
-#[test]
-fn system_default_off_tools_are_filtered_when_not_opted_in() {
+#[tokio::test]
+async fn system_default_off_tools_are_filtered_when_not_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
     let names = tool_names(&tools);
     for off in SYSTEM_DEFAULT_OFF {
@@ -253,10 +248,10 @@ fn system_default_off_tools_are_filtered_when_not_opted_in() {
     }
 }
 
-#[test]
-fn system_default_off_tools_retained_when_opted_in() {
+#[tokio::test]
+async fn system_default_off_tools_retained_when_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["service_lifecycle".to_string()]);
     let names = tool_names(&tools);
     for on in SYSTEM_DEFAULT_OFF {
@@ -270,7 +265,7 @@ fn system_default_off_tools_retained_when_opted_in() {
 #[tokio::test]
 async fn health_system_info_through_registry() {
     let tmp = TempDir::new().unwrap();
-    let tools = expansion_tools_for(&tmp);
+    let tools = expansion_tools_for(&tmp).await;
     let out = find_tool(&tools, "health_system_info")
         .execute(serde_json::json!({}))
         .await
@@ -278,21 +273,21 @@ async fn health_system_info_through_registry() {
     assert!(out.output_for_llm(false).contains("os"));
 }
 
-#[test]
-fn account_tools_are_registered() {
+#[tokio::test]
+async fn account_tools_are_registered() {
     let tmp = TempDir::new().unwrap();
-    let names = tool_names(&expansion_tools_for(&tmp));
+    let names = tool_names(&expansion_tools_for(&tmp).await);
     assert_contains_all(&names, ACCOUNT_TOOLS);
 }
 
-#[test]
-fn account_tools_survive_a_narrow_user_preference_set() {
+#[tokio::test]
+async fn account_tools_survive_a_narrow_user_preference_set() {
     // None of these is a user-toggleable family, so a preference snapshot that
     // names only `file_read` must leave every one of them advertised. This is
     // the assertion that would catch one of them being quietly added to
     // `TOOL_FAMILIES` as default-OFF.
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
     let names = tool_names(&tools);
     for on in ACCOUNT_TOOLS {
@@ -303,10 +298,10 @@ fn account_tools_survive_a_narrow_user_preference_set() {
     }
 }
 
-#[test]
-fn desktop_tools_are_registered() {
+#[tokio::test]
+async fn desktop_tools_are_registered() {
     let tmp = TempDir::new().unwrap();
-    let names = tool_names(&expansion_tools_for(&tmp));
+    let names = tool_names(&expansion_tools_for(&tmp).await);
     if !cfg!(feature = "modules") {
         assert!(!names.iter().any(|name| name.starts_with("desktop_")));
         return;
@@ -321,10 +316,10 @@ fn desktop_tools_are_registered() {
     );
 }
 
-#[test]
-fn desktop_default_off_tools_are_filtered_when_not_opted_in() {
+#[tokio::test]
+async fn desktop_default_off_tools_are_filtered_when_not_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(&mut tools, &["file_read".to_string()]);
     let names = tool_names(&tools);
     for off in DESKTOP_DEFAULT_OFF {
@@ -341,10 +336,10 @@ fn desktop_default_off_tools_are_filtered_when_not_opted_in() {
     }
 }
 
-#[test]
-fn desktop_default_off_tools_retained_when_opted_in() {
+#[tokio::test]
+async fn desktop_default_off_tools_retained_when_opted_in() {
     let tmp = TempDir::new().unwrap();
-    let mut tools = expansion_tools_for(&tmp);
+    let mut tools = expansion_tools_for(&tmp).await;
     filter_tools_by_user_preference(
         &mut tools,
         &[

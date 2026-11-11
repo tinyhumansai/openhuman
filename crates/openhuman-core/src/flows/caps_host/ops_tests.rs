@@ -1,12 +1,12 @@
 use super::*;
 use crate::config::Config;
-use crate::security::credentials::{HttpCredential, HttpCredentialsStore};
+use crate::flows::http_credentials::{HttpCredential, HttpCredentialsStore};
 use crate::security::SecurityPolicy;
 
 fn http_cred_store() -> (tempfile::TempDir, HttpCredentialsStore) {
     let dir = tempfile::tempdir().expect("tempdir");
-    // encrypt=true exercises the ChaCha20-Poly1305 at-rest path.
-    let store = HttpCredentialsStore::new(dir.path(), true);
+    // The focused flow tests exercise credential routing, not TinySecurity crypto.
+    let store = HttpCredentialsStore::new(dir.path(), false);
     (dir, store)
 }
 
@@ -22,7 +22,7 @@ fn policy(level: crate::security::AutonomyLevel) -> SecurityPolicy {
 // ── Codex P1: Prompt-tier decisions must escalate past a workflow's own
 // require_approval=false default, never silently auto-allow ────────────
 
-use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 
 fn workflow_origin(job_id: &str, require_approval: bool) -> AgentTurnOrigin {
     AgentTurnOrigin::TrustedAutomation {
@@ -39,8 +39,15 @@ fn agent_test_config(tmp: &tempfile::TempDir) -> Config {
         ..Config::default()
     };
     config.default_model = Some("test/session-fixture".to_string());
+    config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
-    crate::agent::session_host::test_support::install_managed_model_fixture(&config);
+    let fixture_config = config.clone();
+    crate::storage::block_on_anyhow(async move {
+        crate::agent::session_host::test_support::install_managed_model_fixture(&fixture_config)
+            .await;
+        Ok(())
+    })
+    .expect("install managed model fixture");
     config
 }
 

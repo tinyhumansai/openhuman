@@ -13,6 +13,7 @@ pub(crate) enum FailureClass {
     ActionBudget,
     MaxIterations,
     TurnTimeout,
+    DiskFull,
     EmptyResponse,
     ChatTemplateRejected,
     RateLimited,
@@ -36,6 +37,7 @@ pub(crate) enum FailureClass {
     Network,
     Inference,
     ManagedInternal,
+    PromptScreened,
 }
 
 struct OpenHumanFailureCopy;
@@ -97,6 +99,7 @@ impl FailureCopyProvider for OpenHumanFailureCopy {
             HostDefined("action_budget") => row!("chat_error.action_budget", "action_budget_exceeded", "openhuman_budget", true, "You've hit OpenHuman's per-hour action budget — this is a local safety cap, not your AI provider. The window decays gradually; you can keep chatting in this thread and tool-heavy steps will resume as the budget refills."),
             HostDefined("max_iterations") => row!("chat_error.max_iterations", "max_iterations", "agent_loop", true, "The agent ran the maximum number of tool steps for one turn without finishing. This usually means a tool kept failing (often a rate limit on a web fetch). You can retry the same question in this thread once the underlying limit clears."),
             HostDefined("turn_timeout") => row!("chat_error.turn_timeout", "turn_timeout", "agent_loop", true, "This turn ran past its time budget without finishing and was stopped so it wouldn't hang. This usually means a tool call or a delegated sub-agent stalled. You can retry your question in this thread."),
+            HostDefined("disk_full") => row!("chat_error.disk_full", "disk_full", "local_storage", true, "Your disk is full, so this conversation couldn't be saved. Free up some disk space, then send your message again in this thread."),
             HostDefined("managed_rate_limited") => row!("chat_error.managed_rate_limited", "rate_limited", "provider", true, "Your AI provider is rate-limiting requests. You can retry in this thread."),
             HostDefined("budget_exhausted") => row!("chat_error.budget_exhausted", "budget_exhausted", "openhuman_billing", false, "You're out of credits, so I can't run the managed (cloud) model right now. You can top up your credits or pick a plan to continue — or, if you've enabled a local model like Ollama, switch routing to \"Use Your Own Models\" in Connections → API keys → LLM."),
             HostDefined("managed_budget_exhausted") => row!("chat_error.managed_budget_exhausted", "budget_exhausted", "openhuman_billing", false, "You're out of credits. Top up, or switch to 'Use Your Own Models' in Settings."),
@@ -105,6 +108,7 @@ impl FailureCopyProvider for OpenHumanFailureCopy {
             HostDefined("managed_request_rejected") => row!("chat_error.managed_request_rejected", "provider_request_rejected", "provider", false, "The request was rejected — usually a model or parameter mismatch. Try a different model in Connections → API keys → LLM."),
             HostDefined("managed_malformed_request") => row!("chat_error.managed_malformed_request", "provider_request_rejected", "provider", false, "Something went wrong with this message. Try rephrasing it — or start a new thread if it keeps happening."),
             HostDefined("managed_internal") => row!("chat_error.managed_internal", "inference", "provider", true, "Something went wrong — we've been notified. Please try again."),
+            HostDefined("prompt_screened") => row!("chat_error.prompt_screened", "prompt_screened", "security", true, "OpenHuman's security screen held this message, so it wasn't sent to the model. If it quotes instructions meant for an assistant (from a web page or an email, for example), remove them and try again. If ordinary messages are being held, the security module may be unavailable: restart OpenHuman and try again."),
             HostDefined(_) => return None,
             _ => return None,
         };
@@ -125,6 +129,7 @@ pub(crate) fn failure_copy(class: FailureClass) -> FailureCopy {
         ActionBudget => FailureCopyClass::HostDefined("action_budget"),
         MaxIterations => FailureCopyClass::HostDefined("max_iterations"),
         TurnTimeout => FailureCopyClass::HostDefined("turn_timeout"),
+        DiskFull => FailureCopyClass::HostDefined("disk_full"),
         EmptyResponse => FailureCopyClass::EmptyResponse,
         ChatTemplateRejected => FailureCopyClass::ChatTemplateRejected,
         RateLimited => FailureCopyClass::RateLimited,
@@ -148,6 +153,7 @@ pub(crate) fn failure_copy(class: FailureClass) -> FailureCopy {
         Network => FailureCopyClass::Network,
         Inference => FailureCopyClass::Inference,
         ManagedInternal => FailureCopyClass::HostDefined("managed_internal"),
+        PromptScreened => FailureCopyClass::HostDefined("prompt_screened"),
     };
     failure_copy_with(&OpenHumanFailureCopy, owner_class)
         .expect("OpenHuman overrides all product-defined failure classes")

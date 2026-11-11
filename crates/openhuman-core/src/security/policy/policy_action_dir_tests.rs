@@ -64,7 +64,7 @@ async fn an_enabled_policy_can_write_into_its_action_dir_outside_the_workspace()
 
 /// An action dir at or above `workspace_dir` is NOT granted: a trusted root
 /// there would hand the whole workspace a `forbidden_paths` bypass
-/// (`check_resolved_against_forbidden` returns early for a trusted root).
+/// (TinySecurity's path policy allows trusted roots to override `forbidden_paths`).
 #[test]
 fn from_config_does_not_grant_an_action_dir_covering_the_workspace() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -86,6 +86,9 @@ fn from_config_does_not_grant_an_action_dir_covering_the_workspace() {
 /// and pointed at by absolute path. Under `workspace_only` an absolute path is
 /// refused unless a trusted root covers it, so `from_config` grants that one
 /// directory — read-only — and nothing else under the workspace.
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn tool_result_artifacts_are_readable_by_absolute_path_under_workspace_only() {
     let tmp = tempfile::tempdir().expect("tempdir");

@@ -35,7 +35,7 @@ use tinyflows::graph::stream::GraphEvent;
 use tinyflows_bus::runs::FlowRunTrigger;
 
 use crate::config::Config;
-use crate::security::credentials::session_support::direct_backend_credential;
+use crate::credentials::backend_credential::direct_backend_credential;
 
 const LOG_TARGET: &str = "flows::langfuse";
 /// Backend proxy route for legacy Langfuse ingestion (relative to the backend
@@ -509,10 +509,8 @@ pub async fn export_flow_run_trace(
     // No TinyHumans connection, or no usable credential (signed out, offline
     // local session): a configured state — `direct_backend_credential` logs
     // the reason at debug, and the export is skipped without a request.
-    let token = match direct_backend_credential(config, "flows langfuse export") {
-        Some(crate::security::credentials::session_support::BackendCredential::Session(token)) => {
-            token
-        }
+    let token = match direct_backend_credential(config, "flows langfuse export").await {
+        Some(crate::credentials::backend_credential::BackendCredential::Session(token)) => token,
         _ => {
             tracing::debug!(
                 target: LOG_TARGET,

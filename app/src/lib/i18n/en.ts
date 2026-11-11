@@ -133,6 +133,9 @@ const en: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agents & Autonomy',
   'settings.devGroups.automationIntegrations': 'Automation & Integrations',
   'settings.tokenUsage.title': 'Token savings',
+  'settings.secretGrant.title': 'Allow OpenHuman to unlock your saved secrets?',
+  'settings.secretGrant.subtitle':
+    'Saving this setting needs your one-time approval to encrypt it. Deny to cancel the save.',
   'settings.tokenUsage.menuDesc':
     'Compression settings and how many tokens and dollars they have saved',
   'settings.tokenUsage.saving': 'Saving…',
@@ -4151,6 +4154,10 @@ const en: TranslationMap = {
     'The agent ran the maximum number of tool steps for one turn without finishing. This usually means a tool kept failing (often a rate limit on a web fetch). You can retry the same question in this thread once the underlying limit clears.',
   'chat_error.turn_timeout':
     "This turn ran past its time budget without finishing and was stopped so it wouldn't hang. This usually means a tool call or a delegated sub-agent stalled. You can retry your question in this thread.",
+  'chat_error.disk_full':
+    "Your disk is full, so this conversation couldn't be saved. Free up some disk space, then send your message again in this thread.",
+  'chat_error.prompt_screened':
+    "OpenHuman's security screen held this message, so it wasn't sent to the model. If it quotes instructions meant for an assistant (from a web page or an email, for example), remove them and try again. If ordinary messages are being held, the security module may be unavailable: restart OpenHuman and try again.",
   'chat_error.empty_response':
     'The model returned an empty response. Please retry. If it keeps happening, try a different model or check its setup in Connections → API keys → LLM.',
   'chat_error.chat_template_rejected':
@@ -4632,6 +4639,8 @@ const en: TranslationMap = {
     'Microphone access was denied. Allow it in your system settings and try again.',
   'voice.live.error.micUnavailable': 'No microphone is available.',
   'voice.live.error.connection': "Couldn't connect to the voice agent.",
+  'voice.live.error.insufficientCredits': 'Live voice needs more credits. Add credits to continue.',
+  'voice.live.error.paidPlanRequired': 'Live voice requires a paid plan. Upgrade to continue.',
   'voice.live.toolRunning': 'Running {name}',
   'voice.live.toolOk': '{name} finished',
   'voice.live.toolFailed': '{name} failed',
@@ -4917,11 +4926,6 @@ const en: TranslationMap = {
   'userErrors.scope.cron': 'Scheduled job',
   'userErrors.scope.workspace': 'Workspace',
   'userErrors.scope.memory': 'Memory',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Tool inventory',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Total tools',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Enabled tools',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP stdio tools',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC tools',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Policy posture',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Autonomy level',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Workspace only',
@@ -5367,6 +5371,54 @@ const en: TranslationMap = {
   'settings.appearance.showChatMascot': 'Show Tiny on the message box',
 
   'settings.layout.corners.round': 'Rounded',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'Policy diagnostics are not built into this core.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Active security policy',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomy',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Workspace only',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Maximum actions per hour',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': 'Require approval for medium risk',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Block high-risk commands',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Allowed commands',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'No commands are explicitly allowed.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Policy',
+  'settings.approvalHistory.judgeScores':
+    'Intent {intent} · Reversible {reversible} · Exfiltration {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'cached',
+  'settings.approvalHistory.judgeExpires': 'Expires {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Always-allowed tools',
+  'keyring.settings.toolTrustDescription':
+    'These tools can run without an approval prompt in this security scope.',
+  'keyring.settings.toolTrustLoading': 'Loading allowed tools…',
+  'keyring.settings.toolTrustLoadFailed': 'Could not load allowed tools.',
+  'keyring.settings.toolTrustRevokeFailed': 'Could not revoke this tool grant.',
+  'keyring.settings.toolTrustEmpty': 'No tools are always allowed.',
+  'keyring.settings.toolTrustRetry': 'Retry',
+  'keyring.settings.toolTrustRevoke': 'Revoke',
+  'keyring.settings.toolTrustRevoking': 'Revoking…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Keyring access request',
+  'keyring.operation.description':
+    'TinySecurity is requesting access to one keyring item. Review the operation before deciding.',
+  'keyring.operation.access': 'Access',
+  'keyring.operation.requester': 'Requested by',
+  'keyring.operation.origin': 'Origin',
+  'keyring.operation.purpose': 'Purpose',
+  'keyring.operation.name': 'Keyring item',
+  'keyring.operation.access.read': 'Read',
+  'keyring.operation.access.write': 'Write',
+  'keyring.operation.access.delete': 'Delete',
+  'keyring.operation.allow': 'Allow once',
+  'keyring.operation.deny': 'Deny',
+  'keyring.operation.submitting': 'Sending…',
+  'keyring.operation.expires': 'Request expires in {seconds}s.',
+  'keyring.operation.error': 'Could not send your decision. The request may have expired.',
 };
 
 export default en;

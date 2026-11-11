@@ -78,6 +78,7 @@ pub(super) fn build_subagent_context_mw(
             // opt-outs, same as `ContextConfig::enabled && autocompact_enabled`.
             mw.autocompact_enabled = ctx.enabled && ctx.autocompact_enabled;
             mw.compaction = ctx.compaction_settings();
+            mw.keep_recent_tokens = config.context.keep_recent_tokens.map(u64::from);
             tracing::debug!(
                 tokenjuice_compaction_enabled = mw.tokenjuice_compaction_enabled,
                 compression = ?mw.tokenjuice_compression,

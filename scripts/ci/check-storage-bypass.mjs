@@ -30,6 +30,8 @@ import { stripRustComments } from "./check-crate-chain.mjs";
 import {
   validateCoverageDebt,
   validateAllowances,
+  validateRelocations,
+  historicalRelocationProof,
   historicalFindings,
 } from "./storage-bypass-debt.mjs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
@@ -306,6 +308,17 @@ async function main() {
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
+  let relocations = [];
+  try {
+    relocations = JSON.parse(
+      await readFile(
+        resolve(repoRoot, "scripts/ci/storage-bypass-relocations.json"),
+        "utf8",
+      ),
+    );
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   const raw = await collectFindings(repoRoot, { includeAllowed: true });
   let debtErrors = validateCoverageDebt(findings, baseline, extension);
   if (enforceHistory)
@@ -321,18 +334,52 @@ async function main() {
     });
     debtErrors = validateCoverageDebt(findings, baseline, extension, history);
     debtErrors.push(...validateAllowances(raw, auditedReasons, history));
+    try {
+      const relocationProof = historicalRelocationProof(
+        repoRoot,
+        { scan },
+        relocations,
+      );
+      debtErrors.push(
+        ...validateRelocations(findings, relocations, relocationProof),
+      );
+    } catch (error) {
+      debtErrors.push(`Storage relocation history unavailable: ${error.message}`);
+    }
   }
   if (debtErrors.length) {
     console.error(debtErrors.join("\n"));
     return 1;
   }
-  const { added, stale } = compare(findings, [...baseline, ...extension]);
+  const relocated = new Set(
+    relocations.map((record) => JSON.stringify([
+      record.rule,
+      record.path,
+      record.text,
+      record.occurrence,
+    ])),
+  );
+  const unrelocatedFindings = findings.filter(
+    (finding) =>
+      !relocated.has(
+        JSON.stringify([
+          finding.rule,
+          finding.path,
+          finding.text,
+          finding.occurrence,
+        ]),
+      ),
+  );
+  const { added, stale } = compare(
+    unrelocatedFindings,
+    [...baseline, ...extension],
+  );
   if (writeBaseline) {
     if (added.length) {
       console.error("Refusing baseline growth: fix new writers instead.");
       return 1;
     }
-    const retained = findings.filter(originalCore);
+    const retained = unrelocatedFindings.filter(originalCore);
     await writeFile(baselinePath, `${JSON.stringify(retained, null, 2)}\n`);
     console.log(`Tightened core debt baseline to ${retained.length} sites.`);
     return 0;

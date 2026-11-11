@@ -3,8 +3,10 @@
 The cron domain exposes the `cron.*` RPC controllers and agent tools that
 create and manage scheduled jobs. The core service drives scheduler dispatch,
 publishes health transitions, and supplies the host job handlers and delivery
-callbacks. Agents reach it through the `cron` and `schedule` tools, and the
-desktop UI through the `cron` RPC namespace.
+callbacks. Agents reach it through the `scheduling` pack's per-operation
+tools (`cron_add`, `cron_list`, `cron_update`, `cron_remove`, `cron_run`,
+`cron_runs`; the collapsed `cron` stays registered, deferred) and the
+`schedule` tool, and the desktop UI through the `cron` RPC namespace.
 
 Scheduling itself is not in core. The `tinyflows` loadable module owns the
 scheduler runtime (poll pass, process-wide run claims, retry with backoff,
@@ -54,8 +56,20 @@ scope's config, security policy and `CoreContext`. The host drives the ticks
 rather than letting the module run its own loop so the poll interval, the
 transition-only `HealthChanged` signals and the live-agent reconcile stay in one
 place, and so a test or embedder can run one deterministic pass
-(`run_live_agent_pass`). Dropping a dispatcher stops its scheduler
-(`StopScheduler`) and unserves its object.
+(`run_live_agent_pass`). A host that decides when one agent's jobs run (it
+opens agents on demand, or hands due work to a queue) runs that agent's pass
+alone with `run_agent_pass(agent_id)`, which is `Ok(None)` when the agent is
+not live and errors when the agent's config, policy or job store is
+unavailable, or a run could not be executed or recorded (a job that ran and
+failed is in its run record, not the result). It runs one batch of at most
+`scheduler.max_tasks` jobs, so a host calls it again after a full batch, and it
+stops the agent's scheduler before returning. Such a host must not also run the
+scheduler loop over that agent: the loop's scheduler owns the agent's job scope
+and the pass is refused ("a scheduler already owns this scope"). Both are the
+loop's own run, so occurrence claims keep two processes' passes from running an
+occurrence twice.
+Dropping a dispatcher stops its scheduler (`StopScheduler`) and unserves its
+object.
 
 Health is published on transitions only, so an idle queue does not put a
 steady `healthy: true` event on the bus every poll. A successful tick after a
@@ -99,15 +113,18 @@ permanent-failure classification stay in the executor and are not pluggable.
 
 `shell` jobs run through `run_job_command_with_timeout`
 ([`scheduler/shell_job.rs`](./scheduler/shell_job.rs)). Before spawning anything,
-it checks `can_act`, `is_rate_limited`, the host security policy against command
-facts returned by TinyBox `AnalyzeCommand`, and `record_action` against the
-action budget. Missing module analysis fails closed; no local parser replaces
-it. Any refusal returns a string starting `blocked by security policy:`, which
-the retry loop treats as final. Execution uses TinyBox `StartExec` on a
-module-owned passthrough resource, preserving the action directory and the
-shell's default pipeline exit status. The command has a hard 120 second timeout
-(`SHELL_JOB_TIMEOUT_SECS`); timeout cancellation and output cleanup are
-acknowledged by TinyBox before the resource is closed. With the autonomy policy
+`authorize_shell_command` checks the command with TinySecurity
+(`check_command`, `CommandFlow::Scheduled`), which also reserves it against the
+action budget. A refusal the policy decided (protected path, read-only,
+allowlist, hidden execution, high risk, category, local-only, or a `Block`
+gate) returns a string starting `blocked by security policy:`
+(`POLICY_REFUSAL_PREFIX`), which the retry loop treats as final. An unavailable
+module (fail closed) or an exhausted action budget may recover, so those stay
+retryable. Execution runs on the host (`sandbox::shell_exec::run_host`), in the
+action directory and with the shell's default pipeline exit status, under a
+hard timeout of `[cron] shell_timeout_secs` (default 120 seconds, minimum 1;
+`CronConfig::shell_timeout`); a command that outlives it is killed and the run
+fails with `job timed out after <n>s`. With the autonomy policy
 disabled (the default), most policy checks are inert; see the project
 `CLAUDE.md`.
 
@@ -129,9 +146,61 @@ disabled (the default), most policy checks are inert; see the project
    `start_cron_turn_clean` sets `suppress_transcript_autoload`. A cron agent has
    no thread, so without this its first turn would resume whatever unthreaded
    transcript was newest for that agent name.
-6. The turn runs inside `security::turn_origin::with_origin` with the origin from
+6. The turn runs inside `core::runtime::turn_origin::with_origin` with the origin from
    `origin::turn_origin_for_job_run`. The morning briefing job also runs under a
    24 hour task-recency window so task-fetch tools only return recent tasks.
+
+### Scheduled actions (opt-in)
+
+A scheduled agent turn is read-only by default: the host security gate
+(`agent/tinyagents/host/security_gate/authorize.rs`) refuses `shell` and every
+acting or external-effect tool for a `TrustedAutomation { Cron }` turn, before
+any approval setting is consulted, and the approval engine refuses a cron
+external effect (`CallOrigin::Cron`).
+
+An agent definition can lift this for the cron jobs that run it:
+
+```toml
+# <workspace>/agents/builder/agent.toml (or AgentDefinitionSpec::scheduled_actions(true))
+id = "builder"
+when_to_use = "Writes code and runs tests on a schedule"
+scheduled_actions = true
+
+[tools]
+named = ["shell", "file_read", "file_write", "browser"]
+```
+
+`origin::scheduled_actions_enabled` grants it only when the job names the agent
+in `agent_id`, the definition sets `scheduled_actions = true`, its tools are
+`named` (a wildcard scope is refused with a warning) and the process is not in
+SaaS mode. The run then executes as `TrustedAutomation { CronActions }`, and
+`run_agent_job_for_run` marks the session it built
+(`OpenHumanSessionHost::enable_scheduled_actions`). The gate skips the
+read-only cron stage only when all three hold: the `CronActions` origin, the
+marked session, and a root run (`current_run_depth() == 0`). A sub-agent the
+run spawns inherits the origin but not the mark, so it stays read-only. The
+approval engine classifies `CronActions` as `CallOrigin::TrustedAutomation`, so
+the root's tools run without a person's approval.
+
+Nothing else is lifted: the channel boundary, the autonomy tier
+(`[autonomy]`, including `workspace_only` when enabled), TinySecurity's command
+analysis and protected-path floor, the agent's `sandbox_mode`, the browser's
+allowed-websites list and its forced checkpoint before payment all still
+apply. A job created from a channel conversation keeps running as that
+channel's `ExternalChannel` turn, opted-in agent or not.
+
+The browser's `[browser] unattended_actions` list is reachable from every cron
+turn, with or without this opt-in: the `browser` tool declares no external
+effect (its consequential actions are gated inside `execute`), so the cron
+stage lets the call through to `browser_unattended::allow`, which treats both
+`Cron` and `CronActions` as unattended.
+
+A job whose `agent_id` is not live is first offered to the host through
+`HostAgentResolver::open` (an embedding host sets it with
+`RuntimeBuilder::on_missing_agent`). If the host opens the agent the job runs as
+it, and the opened agent is held only for that run. If the host has no opener or
+declines, the job fails with a logged error; it never runs as the canonical
+orchestrator or any other agent.
 
 An agent failure is classified before anything is logged. The user sees a
 canned string from `classify_agent_anyhow_for_user`
@@ -276,7 +345,7 @@ current ones, `memory_background` and `memory_sources_sync` (every 15 minutes),
 handled in `memory::bus`. `ensure_memory_jobs` is idempotent: it creates a
 missing row, reschedules a drifted one, and removes the retired
 `memory_context_refresh` row. It runs from [`core/runtime/services.rs`](../core/runtime/services.rs) and from
-[`security/credentials/ops/user_scope.rs`](../security/credentials/ops/user_scope.rs).
+[`config/user_scope.rs`](../config/user_scope.rs).
 
 ### Storage
 
@@ -347,6 +416,8 @@ feature) nothing loads and every cron call answers `COMPONENT_DISABLED:tinyflows
 - `AgentJobSpec`: the store's agent-job creation spec (from `tinyflows_bus::schedule`),
   used by `add_agent_job_from_spec`.
 - `scheduler::run(ctx, config)`: the service entry point.
+- `scheduler::run_agent_pass(agent_id)`: one live agent's due jobs, run to
+  completion.
 - `scheduler::run_job_now`: manual worker lifecycle owner used by Run Now and
   the run tool; `scheduler::execute_job_now` preserves the synchronous tuple
   adapter for existing host callers.
@@ -410,7 +481,7 @@ Cron publishes, through [`core/bus.rs`](../core/bus.rs), these `DomainEvent` var
   `find_flow_schedule_job`. These rows are never created by the `cron_add`
   tool, whose `job_type` is `shell` or `agent` only.
 - `config/ops/ui.rs` calls `seed_proactive_agents`;
-  `security/credentials/ops/user_scope.rs` calls `prune_retired_jobs` and
+  `config/user_scope.rs` calls `prune_retired_jobs` and
   `ensure_memory_jobs` on user-scope activation.
 
 ## Boundaries
@@ -431,7 +502,7 @@ Cron publishes, through [`core/bus.rs`](../core/bus.rs), these `DomainEvent` var
 
 - the LLM gate (`platform::llm_gate`) is not part of cron; it used to live here, but the poll loop does not
   consult it. Its consumers are `modules/memory_host.rs` and
-  [`security/credentials/`](../security/credentials/).
+  [`credentials/`](../credentials/).
 - Dispatch is non-blocking: the module spawns each due job, bounded by
   `scheduler.max_concurrent`, so one long job does not hold up the poll loop. A
   job is claimed (module-side, shared with Run Now) from dispatch until its run

@@ -31,9 +31,9 @@ use tinymemory_api::{Citation, LearningKind, MemoryMeta, MetaFilter, SourceKind,
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
 use crate::config::Config;
+use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 use crate::memory::types::{ForgetParams, ItemsListParams, LearnParams, RecallParams, MAX_LIMIT};
 use crate::security::policy::ToolOperation;
-use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 use crate::security::SecurityPolicy;
 use tinymemory_api::{Error, Result};
 
@@ -154,7 +154,7 @@ pub async fn remember_keyed(
     kind: LearningKind,
 ) -> Result<String> {
     // Fail with MEMORY_OFF before touching anything.
-    crate::memory::engine::resolve(config).engine()?;
+    crate::memory::engine::resolve(config).await.engine()?;
     let key_tag = flow_key_tag(flow_id, key);
     // Take a scoped snapshot before writing. If learning fails, this leaves
     // the prior value intact; deleting by these ids after learning also keeps
@@ -484,6 +484,7 @@ impl Tool for FlowMemoryRememberTool {
         if let Err(error) = self
             .security
             .enforce_tool_operation(ToolOperation::Act, "flow_memory_remember")
+            .await
         {
             return Ok(ToolResult::error(error));
         }

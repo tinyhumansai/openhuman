@@ -76,7 +76,7 @@ async fn json_rpc_cron_manual_worker_survives_caller_cancel_on_published_tinyflo
     let _source_dir_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_DIR");
     clear_forced_chat_completions();
 
-    let (artifact, _) = published_tinyflows::staged_v0_9_4_module();
+    let (artifact, _) = published_tinyflows::staged_v0_9_5_module();
     let module_path = artifact.parent().expect("native artifact directory");
     let _module_path_guard = EnvVarGuard::set_to_path("OPENHUMAN_MODULE_PATH", module_path);
 
@@ -2378,8 +2378,9 @@ async fn json_rpc_flows_list_connections_aggregates_secret_free() {
         .await
         .expect("load config to seed http_cred");
     const SECRET: &str = "sk_live_flows_list_connections_seed";
-    openhuman_core::security::credentials::HttpCredentialsStore::from_config(&seed_config)
-        .upsert(&openhuman_core::security::credentials::HttpCredential::bearer("stripe", SECRET))
+    openhuman_core::flows::http_credentials::HttpCredentialsStore::from_config(&seed_config)
+        .upsert(&openhuman_core::flows::http_credentials::HttpCredential::bearer("stripe", SECRET))
+        .await
         .expect("seed http_cred");
 
     let resp = post_json_rpc(

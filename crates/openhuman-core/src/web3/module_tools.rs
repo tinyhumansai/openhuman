@@ -3,7 +3,7 @@
 use crate::core::runtime::DispatchCtx;
 use async_trait::async_trait;
 use serde_json::Value;
-use tinytools::{Tool, ToolCallOptions, ToolExposure, ToolResult};
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolExposure, ToolResult};
 use tinywallet_bus::tools::ToolDeclaration;
 
 #[derive(Debug)]
@@ -14,6 +14,15 @@ pub(super) struct Web3ModuleTool {
 impl Web3ModuleTool {
     pub(super) const fn new(declaration: &'static ToolDeclaration) -> Self {
         Self { declaration }
+    }
+
+    /// Whether this tool signs and broadcasts (moves funds) rather than reads
+    /// or quotes.
+    fn signs_and_broadcasts(&self) -> bool {
+        matches!(
+            self.declaration.name,
+            "web3_swap_execute" | "web3_bridge_execute" | "web3_dapp_execute"
+        )
     }
 }
 
@@ -33,6 +42,21 @@ impl Tool for Web3ModuleTool {
 
     fn parameters_schema(&self) -> Value {
         self.declaration.parameters.clone()
+    }
+
+    /// The execute tools sign and broadcast a transaction; without this they
+    /// inherited the trait default (`ReadOnly`, no external effect) and the
+    /// approval gate treated a swap or bridge like a read.
+    fn permission_level(&self) -> PermissionLevel {
+        if self.signs_and_broadcasts() {
+            PermissionLevel::Write
+        } else {
+            PermissionLevel::ReadOnly
+        }
+    }
+
+    fn external_effect(&self) -> bool {
+        self.signs_and_broadcasts()
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -132,3 +156,7 @@ impl Web3ModuleTool {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "module_tools_tests.rs"]
+mod tests;

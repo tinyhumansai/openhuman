@@ -5,7 +5,7 @@
 use log::{info, warn};
 use serde_json::{json, Value};
 
-use crate::platform::socket::manager::global_socket_manager;
+use crate::platform::socket::global_socket_manager;
 
 /// Chat thread + client id the voice turn scopes as its approval / routing
 /// surface, mirroring `deliver_voice_result_to_chat`. Setting these around the

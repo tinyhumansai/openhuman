@@ -223,7 +223,7 @@ describe('rpcMethods catalog', () => {
       readWithParts('../../../../crates/openhuman-core/src/platform/health/schemas.rs'),
       readWithParts('../../../../crates/openhuman-core/src/channels/controllers/schemas.rs'),
       // The credential handoff RPCs (`auth_set_credential` / `auth_clear_credential`).
-      readWithParts('../../../../crates/openhuman-core/src/security/credentials/schemas.rs'),
+      readWithParts('../../../../crates/openhuman-core/src/credentials/schemas.rs'),
       // The channels_* namespace/function literals now live in the vendored
       // tinychannels workspace (`ChannelControllerSchema`), not in the thin
       // `crates/openhuman-core/src/channels/controllers/schemas.rs` adapter above, which

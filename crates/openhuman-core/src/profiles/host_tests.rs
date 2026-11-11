@@ -148,11 +148,12 @@ async fn selected_doctor_context_keeps_config_storage_credentials_and_provider_b
         (
             config.config_path.clone(),
             crate::storage::current_scope().unwrap(),
-            crate::security::credentials::api_key::get_api_key_read_only(config).unwrap(),
-            crate::security::credentials::session_support::load_app_session_profile_read_only(
-                config,
-            )
-            .unwrap(),
+            crate::credentials::api_key::get_api_key_read_only(config)
+                .await
+                .unwrap(),
+            crate::credentials::session_state::load_app_session_profile_read_only(config)
+                .await
+                .unwrap(),
             crate::profiles::provider_settings::ProfileProviderSettings::in_ctx(
                 &DispatchCtx::ambient(),
             )
@@ -168,11 +169,12 @@ async fn selected_doctor_context_keeps_config_storage_credentials_and_provider_b
         (
             config.config_path.clone(),
             crate::storage::current_scope().unwrap(),
-            crate::security::credentials::api_key::get_api_key_read_only(config).unwrap(),
-            crate::security::credentials::session_support::load_app_session_profile_read_only(
-                config,
-            )
-            .unwrap(),
+            crate::credentials::api_key::get_api_key_read_only(config)
+                .await
+                .unwrap(),
+            crate::credentials::session_state::load_app_session_profile_read_only(config)
+                .await
+                .unwrap(),
             crate::profiles::provider_settings::ProfileProviderSettings::in_ctx(
                 &DispatchCtx::ambient(),
             )
@@ -446,6 +448,7 @@ async fn a_reprovisioned_profile_does_not_inherit_the_old_credential() {
         "old-session",
         None,
     )
+    .await
     .unwrap();
     assert!(host.summary(&id).await.unwrap().unwrap().has_credential);
     host.deprovision(&id).await.unwrap();
@@ -512,7 +515,7 @@ async fn a_clean_reopen_does_not_recover_but_a_takeover_does() {
         .as_ref()
         .expect("test host has shared storage");
     let cluster = backend
-        .for_scope(&Scope::new(crate::storage::lease::CLUSTER_SCOPE).unwrap())
+        .for_scope(&crate::storage::Scope::new(crate::storage::lease::CLUSTER_SCOPE).unwrap())
         .unwrap();
     let lease_id = tinystoragedrivers::Key::new(format!(
         "{}/{}",

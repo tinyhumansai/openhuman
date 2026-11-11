@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { type SubagentActivity, subagentCancelResolved } from '../../../store/chatRuntimeSlice';
@@ -11,9 +11,13 @@ vi.mock('../../../components/assistant-ui/elements/task-card.aui', () => ({
 }));
 
 const append = vi.hoisted(() => vi.fn());
+// The enclosing (parent) message's parts, as `MarkdownText` reads them.
+const parentParts = vi.hoisted(() => ({ value: [] as unknown[] }));
 vi.mock('@assistant-ui/react', async importActual => ({
   ...(await importActual<typeof import('@assistant-ui/react')>()),
   useAui: () => ({ thread: { append } }),
+  useAuiState: (selector: (state: unknown) => unknown) =>
+    selector({ message: { parts: parentParts.value } }),
 }));
 
 const dispatch = vi.hoisted(() => vi.fn());
@@ -70,7 +74,12 @@ describe('SubagentTaskCard', () => {
         toolCallId="sub-1"
         args={{} as never}
         argsText="{}"
-        result={{ status: 'error', activity: { ...activity, status: 'failed' } } as never}
+        result={
+          {
+            status: 'error',
+            activity: { ...activity, status: 'failed', output: 'Validation failed.' },
+          } as never
+        }
         status={{ type: 'complete' }}
         addResult={() => {}}
         resume={() => {}}
@@ -82,9 +91,11 @@ describe('SubagentTaskCard', () => {
       'data-status',
       'failed'
     );
+    // A failure's output stays visible on the card.
+    expect(screen.getByText('Validation failed.')).toBeInTheDocument();
   });
 
-  it('keeps completed output and ignores legacy worktree fields', () => {
+  it('keeps a completed report collapsed and ignores legacy worktree fields', () => {
     const legacyActivity: SubagentActivity & {
       worktreePath: string;
       changedFiles: string[];
@@ -116,9 +127,98 @@ describe('SubagentTaskCard', () => {
       'data-status',
       'success'
     );
-    expect(screen.getByText('Research is complete.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Delegated to Researcher/i })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    );
+    expect(screen.queryByTestId('subagent-report')).toBeNull();
+    expect(screen.queryByText('Research is complete.')).toBeNull();
     expect(screen.queryByTestId('worktree-actions')).toBeNull();
     expect(screen.queryByText(/worker/)).toBeNull();
+  });
+
+  it('toggles the completed report open and closed, rendered as markdown', async () => {
+    render(
+      <SubagentTaskCard
+        type="tool-call"
+        toolName="task"
+        toolCallId="sub-report"
+        args={{} as never}
+        argsText="{}"
+        result={
+          {
+            status: 'complete',
+            activity: {
+              ...activity,
+              status: 'success',
+              output: '**Answer:** saved the flow.\n\n- trigger updated\n- step 2 shortened',
+            },
+          } as never
+        }
+        status={{ type: 'complete' }}
+        addResult={() => {}}
+        resume={() => {}}
+        respondToApproval={async () => {}}
+      />
+    );
+
+    const header = screen.getByRole('button', { name: /Delegated to Researcher/i });
+    fireEvent.click(header);
+    expect(header).toHaveAttribute('aria-expanded', 'true');
+
+    const report = await screen.findByTestId('subagent-report');
+    const strong = await within(report).findByText('Answer:');
+    expect(strong.tagName).toBe('STRONG');
+    expect(
+      within(report)
+        .getAllByRole('listitem')
+        .map(li => li.textContent)
+    ).toEqual(['trigger updated', 'step 2 shortened']);
+    expect(report.textContent).not.toContain('**');
+
+    // The same button collapses it again.
+    fireEvent.click(header);
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByTestId('subagent-report')).toBeNull();
+
+    fireEvent.click(header);
+    expect(header).toHaveAttribute('aria-expanded', 'true');
+    expect(await screen.findByTestId('subagent-report')).toBeInTheDocument();
+  });
+
+  it("leaves the report's [n] markers as text, not the parent turn's citations", async () => {
+    parentParts.value = [
+      { type: 'source', sourceType: 'url', id: 's1', url: 'https://parent.example/a' },
+    ];
+    try {
+      render(
+        <SubagentTaskCard
+          type="tool-call"
+          toolName="task"
+          toolCallId="sub-citations"
+          args={{} as never}
+          argsText="{}"
+          result={
+            {
+              status: 'complete',
+              activity: { ...activity, status: 'success', output: 'Checked the docs [1].' },
+            } as never
+          }
+          status={{ type: 'complete' }}
+          addResult={() => {}}
+          resume={() => {}}
+          respondToApproval={async () => {}}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: /Delegated to Researcher/i }));
+
+      const report = await screen.findByTestId('subagent-report');
+      await waitFor(() => expect(report.textContent).toContain('Checked the docs [1].'));
+      expect(within(report).queryByRole('button')).toBeNull();
+      expect(report.querySelector('a')).toBeNull();
+    } finally {
+      parentParts.value = [];
+    }
   });
 
   it('renders the awaiting-user reply box and lets the answer through the composer path', async () => {

@@ -227,6 +227,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agents et autonomie',
   'settings.devGroups.automationIntegrations': 'Automatisation et intégrations',
   'settings.tokenUsage.title': 'Économies de tokens',
+  'settings.secretGrant.title': 'Autoriser OpenHuman à déverrouiller vos secrets enregistrés ?',
+  'settings.secretGrant.subtitle':
+    "L'enregistrement de ce paramètre nécessite votre approbation ponctuelle pour le chiffrer. Refusez pour annuler l'enregistrement.",
   'settings.tokenUsage.menuDesc':
     'Paramètres de compression et combien de tokens et de dollars ils ont économisés',
   'settings.tokenUsage.saving': 'Enregistrement…',
@@ -3970,6 +3973,10 @@ const messages: TranslationMap = {
     "L'agent a exécuté le nombre maximal d'étapes d'outils pour un tour sans terminer. Cela signifie généralement qu'un outil a continué d'échouer (souvent à cause d'une limite de débit sur une récupération web). Vous pouvez reposer la même question dans ce fil une fois la limite levée.",
   'chat_error.turn_timeout':
     "Ce tour a dépassé son budget de temps sans se terminer et a été arrêté pour ne pas se bloquer. Cela signifie généralement qu'un appel d'outil ou un sous-agent délégué est resté bloqué. Vous pouvez reposer votre question dans ce fil.",
+  'chat_error.disk_full':
+    "Votre disque est plein, cette conversation n'a donc pas pu être enregistrée. Libérez de l'espace disque, puis renvoyez votre message dans ce fil.",
+  'chat_error.prompt_screened':
+    "Le filtre de sécurité d'OpenHuman a retenu ce message, il n'a donc pas été envoyé au modèle. S'il cite des instructions destinées à un assistant (par exemple tirées d'une page web ou d'un e-mail), retirez-les et réessayez. Si des messages ordinaires sont retenus, le module de sécurité est peut-être indisponible : redémarrez OpenHuman et réessayez.",
   'chat_error.empty_response':
     'Le modèle a renvoyé une réponse vide. Veuillez réessayer. Si cela persiste, essayez un autre modèle ou vérifiez sa configuration dans Connexions → Clés API → LLM.',
   'chat_error.chat_template_rejected':
@@ -4469,6 +4476,10 @@ const messages: TranslationMap = {
     "L'accès au micro a été refusé. Autorisez-le dans les réglages système puis réessayez.",
   'voice.live.error.micUnavailable': 'Aucun micro disponible.',
   'voice.live.error.connection': "Impossible de se connecter à l'agent vocal.",
+  'voice.live.error.insufficientCredits':
+    'La voix en direct nécessite plus de crédits. Ajoutez des crédits pour continuer.',
+  'voice.live.error.paidPlanRequired':
+    'La voix en direct nécessite un forfait payant. Passez à un forfait supérieur pour continuer.',
   'voice.live.toolRunning': '{name} en cours',
   'voice.live.toolOk': '{name} terminé',
   'voice.live.toolFailed': 'Échec de {name}',
@@ -4727,11 +4738,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': "Jalon de processus d'espacement des noms",
   'settings.sandbox.backendHint.bubblewrap': "Espaces de noms d'utilisateur légers",
   'settings.sandbox.backendHint.none': 'Exécuter les outils directement, unisolés',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Inventaire des outils',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Nombre total d’outils',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Outils activés',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'Outils MCP stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'Outils JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'État de la politique',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Niveau d’autonomie',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Espace de travail uniquement',
@@ -5217,6 +5223,56 @@ const messages: TranslationMap = {
   'settings.layout.corners.subtle': 'Discret',
 
   'settings.layout.contrast.subtle': 'Discret',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt':
+    'Les diagnostics de stratégie ne sont pas inclus dans ce noyau.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Stratégie de sécurité active',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomie',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Espace de travail uniquement',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Nombre maximal d’actions par heure',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Approbation requise pour les risques moyens',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Bloquer les commandes à haut risque',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Commandes autorisées',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Aucune commande n’est explicitement autorisée.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Politique',
+  'settings.approvalHistory.judgeScores':
+    'Intention {intent} · Réversible {reversible} · Exfiltration {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'en cache',
+  'settings.approvalHistory.judgeExpires': 'Expire le {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Outils toujours autorisés',
+  'keyring.settings.toolTrustDescription':
+    'Ces outils peuvent s’exécuter sans demander d’approbation dans ce périmètre de sécurité.',
+  'keyring.settings.toolTrustLoading': 'Chargement des outils autorisés…',
+  'keyring.settings.toolTrustLoadFailed': 'Impossible de charger les outils autorisés.',
+  'keyring.settings.toolTrustRevokeFailed': 'Impossible de révoquer cette autorisation d’outil.',
+  'keyring.settings.toolTrustEmpty': 'Aucun outil n’est toujours autorisé.',
+  'keyring.settings.toolTrustRetry': 'Réessayer',
+  'keyring.settings.toolTrustRevoke': 'Révoquer',
+  'keyring.settings.toolTrustRevoking': 'Révocation…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Demande d’accès au trousseau',
+  'keyring.operation.description':
+    'TinySecurity demande l’accès à un élément du trousseau. Vérifiez l’opération avant de décider.',
+  'keyring.operation.access': 'Accès',
+  'keyring.operation.requester': 'Demandé par',
+  'keyring.operation.origin': 'Origine',
+  'keyring.operation.purpose': 'Motif',
+  'keyring.operation.name': 'Élément du trousseau',
+  'keyring.operation.access.read': 'Lire',
+  'keyring.operation.access.write': 'Écrire',
+  'keyring.operation.access.delete': 'Supprimer',
+  'keyring.operation.allow': 'Autoriser une fois',
+  'keyring.operation.deny': 'Refuser',
+  'keyring.operation.submitting': 'Envoi…',
+  'keyring.operation.expires': 'La demande expire dans {seconds}s.',
+  'keyring.operation.error': 'Impossible d’envoyer votre décision. La demande a peut-être expiré.',
 };
 
 export default messages;

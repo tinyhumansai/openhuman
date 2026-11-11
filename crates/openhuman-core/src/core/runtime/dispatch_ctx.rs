@@ -16,6 +16,26 @@ use std::sync::Arc;
 
 use super::CoreContext;
 
+/// Trusted source attached by the transport or runtime that started a call.
+///
+/// Turn origin is intentionally separate: a user-authored chat turn may invoke
+/// agent tools, so its origin alone cannot authorize a host-only operation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InvocationSource {
+    /// No trusted transport source was attached. This is the default for
+    /// in-process calls and must not authorize user-controller operations.
+    #[default]
+    Untrusted,
+    /// A user controller call accepted by the authenticated RPC endpoint.
+    AuthenticatedUserController,
+    /// Work dispatched by an agent or one of its tools.
+    Agent,
+    /// Host automation such as a scheduled or background action.
+    Automation,
+    /// A trusted server-observed socket event.
+    SocketEvent,
+}
+
 /// The per-call context a controller handler receives.
 ///
 /// Cheap to clone (one `Arc`). It is `unbound` only when no [`CoreContext`]
@@ -25,6 +45,7 @@ use super::CoreContext;
 pub struct DispatchCtx {
     core: Option<Arc<CoreContext>>,
     headless_agent_chat: bool,
+    invocation_source: InvocationSource,
 }
 
 impl DispatchCtx {
@@ -34,6 +55,7 @@ impl DispatchCtx {
         Self {
             core: Some(core),
             headless_agent_chat: false,
+            invocation_source: InvocationSource::Untrusted,
         }
     }
 
@@ -51,6 +73,7 @@ impl DispatchCtx {
         Self {
             core: None,
             headless_agent_chat: false,
+            invocation_source: InvocationSource::Untrusted,
         }
     }
 
@@ -61,6 +84,7 @@ impl DispatchCtx {
         Self {
             core: CoreContext::default_context(),
             headless_agent_chat: false,
+            invocation_source: InvocationSource::Untrusted,
         }
     }
 
@@ -81,6 +105,7 @@ impl DispatchCtx {
         Self {
             core,
             headless_agent_chat: false,
+            invocation_source: InvocationSource::Untrusted,
         }
     }
 
@@ -153,6 +178,7 @@ impl DispatchCtx {
         Self {
             core: CoreContext::scoped_for_turn(),
             headless_agent_chat: false,
+            invocation_source: InvocationSource::Untrusted,
         }
     }
 
@@ -216,7 +242,7 @@ impl DispatchCtx {
     /// The origin of the turn this call belongs to. Only a bound context
     /// supplies one: the process default never carries authority, so an
     /// unbound call answers `None` and the gate reads it as `Unknown`.
-    pub fn turn_origin(&self) -> Option<crate::security::turn_origin::AgentTurnOrigin> {
+    pub fn turn_origin(&self) -> Option<crate::core::runtime::turn_origin::AgentTurnOrigin> {
         self.core
             .as_ref()
             .and_then(|core| core.turn_origin().cloned())
@@ -226,16 +252,21 @@ impl DispatchCtx {
     /// calling task's turn scope carries. For a handler whose context was
     /// built by a transport that does not carry the turn's origin, while a
     /// turn that called it into being still holds it (transitional, #7801).
-    pub fn turn_origin_or_scoped(&self) -> Option<crate::security::turn_origin::AgentTurnOrigin> {
+    pub fn turn_origin_or_scoped(
+        &self,
+    ) -> Option<crate::core::runtime::turn_origin::AgentTurnOrigin> {
         self.turn_origin()
             .or_else(|| Self::ambient_turn().turn_origin())
     }
     /// This context with `origin` bound as its turn origin, for a run that
     /// acts under a trusted entry point of its own (a saved flow). The base is
     /// this context, else the calling task's turn scope, the process default,
-    /// or a bare one, the same resolution `security::turn_origin::with_origin`
+    /// or a bare one, the same resolution `core::runtime::turn_origin::with_origin`
     /// scopes under. This context is not mutated.
-    pub fn with_turn_origin(&self, origin: crate::security::turn_origin::AgentTurnOrigin) -> Self {
+    pub fn with_turn_origin(
+        &self,
+        origin: crate::core::runtime::turn_origin::AgentTurnOrigin,
+    ) -> Self {
         let base = self
             .core
             .clone()
@@ -243,6 +274,27 @@ impl DispatchCtx {
             .or_else(CoreContext::default_context)
             .unwrap_or_else(CoreContext::bare);
         Self::new(base.derive_channel_turn(None, Some(origin)))
+    }
+
+    /// Read the immutable source set by the call's trusted transport.
+    pub fn invocation_source(&self) -> InvocationSource {
+        self.invocation_source
+    }
+
+    /// Mark a call accepted by the authenticated JSON-RPC controller boundary.
+    ///
+    /// This is doc-hidden host plumbing. Agent calls and generic in-process
+    /// invocations must use the default `Untrusted` source.
+    #[doc(hidden)]
+    pub fn with_authenticated_user_controller(mut self) -> Self {
+        self.invocation_source = InvocationSource::AuthenticatedUserController;
+        self
+    }
+
+    /// Mark a dispatch created by a server-observed socket event.
+    pub(crate) fn with_socket_event(mut self) -> Self {
+        self.invocation_source = InvocationSource::SocketEvent;
+        self
     }
 
     /// A non-owning handle on the bound context, for state that outlives the
@@ -285,6 +337,7 @@ impl std::fmt::Debug for DispatchCtx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DispatchCtx")
             .field("bound", &self.core.is_some())
+            .field("invocation_source", &self.invocation_source)
             .finish()
     }
 }

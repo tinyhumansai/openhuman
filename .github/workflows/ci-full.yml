@@ -148,6 +148,10 @@ jobs:
           OPENHUMAN_XDG_ROOT: /root/openhuman-rust-e2e-xdg-${{ github.run_id }}-${{ github.run_attempt }}
           RUST_BACKTRACE: "1"
 
+  security-native:
+    name: Security Native Fixture (3 OS)
+    uses: ./.github/workflows/security-native.yml
+
   build-playwright-e2e-artifact:
     name: Build Playwright E2E Artifact
     runs-on: ubuntu-22.04
@@ -469,6 +473,7 @@ jobs:
     needs:
       - unit-tests
       - rust-e2e
+      - security-native
       - build-playwright-e2e-artifact
       - playwright-e2e
       - e2e-desktop
@@ -482,6 +487,7 @@ jobs:
           declare -A results=(
             ["Full Unit Suites"]="${{ needs['unit-tests'].result }}"
             ["Rust E2E"]="${{ needs['rust-e2e'].result }}"
+            ["Security Native Fixture"]="${{ needs['security-native'].result }}"
             ["Build Playwright E2E Artifact"]="${{ needs['build-playwright-e2e-artifact'].result }}"
             ["Playwright E2E"]="${{ needs['playwright-e2e'].result }}"
             ["Desktop E2E"]="${{ needs['e2e-desktop'].result }}"

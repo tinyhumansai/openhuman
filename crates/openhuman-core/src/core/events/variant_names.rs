@@ -88,6 +88,7 @@ impl DomainEvent {
             Self::HealthChanged { .. } => "HealthChanged",
             Self::HealthRestarted { .. } => "HealthRestarted",
             Self::KeyringConsentRequired => "KeyringConsentRequired",
+            Self::KeyringAccessApprovalRequested(..) => "KeyringAccessApprovalRequested",
             Self::KeyringDecryptFailed { .. } => "KeyringDecryptFailed",
             Self::SessionExpired { .. } => "SessionExpired",
             Self::CredentialChanged { .. } => "CredentialChanged",

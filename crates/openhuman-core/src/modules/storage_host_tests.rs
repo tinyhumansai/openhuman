@@ -699,7 +699,7 @@ mod bus;
 mod queues;
 
 #[path = "storage_host_cdylib_tests.rs"]
-mod cdylib;
+pub(in crate::modules) mod cdylib;
 #[cfg(test)]
 #[path = "storage_host_stream_tests.rs"]
 mod streams;

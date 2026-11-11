@@ -117,7 +117,7 @@ pub(crate) async fn refresh_configured_tool_cache(config: &crate::config::Config
             return;
         }
     };
-    let client_config = host::client_config(config);
+    let client_config = host::client_config(config).await;
     let servers: Vec<String> = match client
         .call(&client_config, tinymcp_bus::names::methods::STATIC_LIST, ())
         .await

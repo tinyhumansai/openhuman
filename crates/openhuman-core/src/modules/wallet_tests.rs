@@ -177,7 +177,7 @@ mod attestation_guard {
     fn the_current_attested_linux_release_library_is_accepted() {
         assert!(digest_is_pinned(
             record(),
-            "8fee5f20bd58505eb2a291e565d9c83928f4418d5c114413baf55613e0120baf"
+            "ca77309f2d5cdb6d13e56cb7fc44145507a333f55c6a31729979a2782a4ab3ae"
         ));
     }
 
@@ -190,6 +190,8 @@ mod attestation_guard {
             "9459eaaf5b147bdc7f0f33f8fd1828bb50fe359002ebc7fa7efeccacbb0e70bc",
             "1e38209820ffa41857adfc32c322871bee30eec6bfc02dfae46eb7d9f6013def",
             "fd310805c667794548fae37a7f9ceb324185c7a46b6eefc30a7ea82fc428c254",
+            "8fee5f20bd58505eb2a291e565d9c83928f4418d5c114413baf55613e0120baf",
+            "92d024c6be951824070c80fdcd44661e2f47a812fd82c247a16a810680075b31",
         ] {
             assert!(!digest_is_pinned(record(), digest));
         }
@@ -201,7 +203,7 @@ mod attestation_guard {
             assets: &[],
             ..*record()
         };
-        let current_library = "8fee5f20bd58505eb2a291e565d9c83928f4418d5c114413baf55613e0120baf";
+        let current_library = "ca77309f2d5cdb6d13e56cb7fc44145507a333f55c6a31729979a2782a4ab3ae";
         assert!(digest_is_pinned(record(), current_library));
         assert!(!digest_is_pinned(&unpinned_record, current_library));
     }

@@ -243,7 +243,12 @@ impl PointedInference {
                 .to_string();
             // Like the hosted provider: the acting profile's own credential
             // rides as the bearer.
-            let token = openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential(&request.context.config)
+            let config = &request.context.config;
+            let token = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(
+                    openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential(config),
+                )
+            })
                 .map(|credential| credential.secret().to_string())
                 .map_err(tinyinference_llm::Error::Model)?;
             let wire =

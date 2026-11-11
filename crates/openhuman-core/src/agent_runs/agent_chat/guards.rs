@@ -4,7 +4,7 @@
 
 use crate::config::Config;
 use crate::security::prompt_injection::{
-    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+    enforce_prompt_input_with_config, PromptEnforcementAction, PromptEnforcementContext,
 };
 
 fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
@@ -42,11 +42,14 @@ pub(crate) fn normalize_model_override(opt: Option<String>) -> Option<String> {
     })
 }
 
-pub(crate) fn enforce_user_prompt_or_reject(
+/// Screen `prompt` with `config`, the configuration the calling op runs under
+/// (not the boot-time snapshot, which a `Normal`-booted host lacks).
+pub(crate) async fn enforce_user_prompt_or_reject(
+    config: &Config,
     prompt: &str,
     source: &'static str,
 ) -> Result<(), String> {
-    let decision = enforce_prompt_input(
+    let decision = enforce_prompt_input_with_config(
         prompt,
         PromptEnforcementContext {
             source,
@@ -54,7 +57,9 @@ pub(crate) fn enforce_user_prompt_or_reject(
             user_id: None,
             session_id: Some("local_ai"),
         },
-    );
+        Some(config),
+    )
+    .await;
     match decision.action {
         PromptEnforcementAction::Allow => Ok(()),
         PromptEnforcementAction::Blocked | PromptEnforcementAction::ReviewBlocked => {
@@ -127,14 +132,14 @@ pub(super) fn grant_turn_cwd(config: &mut Config, root: &std::path::Path) {
 /// unchanged — but `message` here is something a *person* typed, and `Cli`
 /// answers "who wrote this" with a trust answer. Its own documentation covers
 /// sub-agent and internal invocations, so
-/// [`is_user_authored`](crate::security::turn_origin::AgentTurnOrigin::is_user_authored)
+/// [`is_user_authored`](crate::core::runtime::turn_origin::AgentTurnOrigin::is_user_authored)
 /// reads `false` for it and the conversation autosave would silently drop a
 /// real user message.
 pub(super) fn effective_agent_chat_origin(
     ctx: &crate::core::runtime::DispatchCtx,
-) -> crate::security::turn_origin::AgentTurnOrigin {
+) -> crate::core::runtime::turn_origin::AgentTurnOrigin {
     ctx.turn_origin_or_scoped()
-        .unwrap_or(crate::security::turn_origin::AgentTurnOrigin::DirectChat)
+        .unwrap_or(crate::core::runtime::turn_origin::AgentTurnOrigin::DirectChat)
 }
 
 #[cfg(test)]

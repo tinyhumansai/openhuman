@@ -50,6 +50,15 @@ pub enum SandboxModeSpec {
     Sandboxed,
 }
 
+/// A memory block at the end of an agent's system prompt; see
+/// [`AgentDefinitionSpec::memory_block`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryBlockSpec {
+    /// The most tokens the block may take, its markers and instruction line
+    /// included. Memories past the budget are left out, beliefs first in.
+    pub max_tokens: u32,
+}
+
 /// Starting definition: a named built-in or a complete host-supplied definition.
 #[derive(Debug, Clone)]
 pub enum DefinitionBase {
@@ -82,6 +91,8 @@ pub struct AgentDefinitionSpec {
     /// The prompt is the whole system prompt, with nothing composed around it.
     bare_prompt: bool,
     refresh_prompt_on_resume: Option<bool>,
+    scheduled_actions: Option<bool>,
+    memory_block: Option<MemoryBlockSpec>,
     tools: Option<ToolScopeSpec>,
     disallowed_tools: Vec<String>,
     tool_rules: Option<tinytools::ToolRules>,
@@ -149,6 +160,8 @@ impl AgentDefinitionSpec {
         self.refresh_prompt_on_resume = self
             .refresh_prompt_on_resume
             .or(lower.refresh_prompt_on_resume);
+        self.scheduled_actions = self.scheduled_actions.or(lower.scheduled_actions);
+        self.memory_block = self.memory_block.or(lower.memory_block);
         self.tools = self.tools.or(lower.tools);
         self.disallowed_tools.extend(lower.disallowed_tools);
         // Tool rules must retain both layers' restrictions; core also enforces config rules.
@@ -213,6 +226,44 @@ impl AgentDefinitionSpec {
     /// state it renders (connected integrations, skills, AGENTS.md).
     pub fn refresh_prompt_on_resume(mut self, refresh: bool) -> Self {
         self.refresh_prompt_on_resume = Some(refresh);
+        self
+    }
+
+    /// Let a cron job that runs this agent use acting tools (shell, file
+    /// writes, external effects) without a person's approval.
+    ///
+    /// Off by default: a scheduled turn is read-only. On, it takes effect only
+    /// when the agent's tools are named explicitly
+    /// ([`ToolScopeSpec::Named`] or [`ToolScopeSpec::HostOnly`], never the
+    /// wildcard) and the job's target names this agent. Only the job's own
+    /// run is lifted: sub-agents it spawns stay read-only, and the autonomy
+    /// tier, TinySecurity's command analysis and protected-path floor, the
+    /// sandbox, the browser's allowed websites and its checkpoint before
+    /// payment still apply. Ignored in SaaS mode.
+    pub fn scheduled_actions(mut self, enabled: bool) -> Self {
+        self.scheduled_actions = Some(enabled);
+        self
+    }
+
+    /// End the system prompt with what long-term memory knows about the user.
+    ///
+    /// The block is read from the agent's [`MemoryBinding`](crate::MemoryBinding):
+    /// the beliefs memory built, then the durable learnings at its root,
+    /// within `spec.max_tokens`, between `<memory>` and `</memory>` and
+    /// introduced as background knowledge, not instructions. It is the
+    /// prompt's last system message, after every static byte.
+    ///
+    /// It is rendered only when a transcript generation starts: a new
+    /// thread, a resumed thread recorded without one, a turn whose prompt
+    /// changes anyway ([`refresh_prompt_on_resume`](Self::refresh_prompt_on_resume)),
+    /// and the first turn after a compaction carried an old block into a new
+    /// generation. Every other turn re-sends the recorded block byte for
+    /// byte, so the provider's prefix cache stays warm, and a memory change
+    /// on its own never seals a generation nor adds the prompt-update note.
+    /// Nothing remembered sends no block; a memory read error sends whatever
+    /// the thread recorded (none on a new thread) and the turn goes on.
+    pub fn memory_block(mut self, spec: MemoryBlockSpec) -> Self {
+        self.memory_block = Some(spec);
         self
     }
 
@@ -318,6 +369,16 @@ impl AgentDefinitionSpec {
         if let Some(refresh) = self.refresh_prompt_on_resume {
             def.extensions.refresh_prompt_on_resume = refresh;
         }
+        if let Some(enabled) = self.scheduled_actions {
+            def.extensions.scheduled_actions = enabled;
+        }
+        if let Some(block) = self.memory_block {
+            def.extensions.memory_block = Some(
+                openhuman_core::agent_registry::host_definition::MemoryBlock {
+                    max_tokens: block.max_tokens,
+                },
+            );
+        }
         if custom_base {
             if let Some(requested) = &self.tools {
                 let narrows = match (requested, &def.tools) {
@@ -381,7 +442,7 @@ impl AgentDefinitionSpec {
             def.temperature = t;
         }
         log::debug!(
-            "[embed][agent] definition id={id} prompt={} refresh_prompt_on_resume={} tools={:?} sandbox={:?} max_iterations={}",
+            "[embed][agent] definition id={id} prompt={} refresh_prompt_on_resume={} memory_block={:?} tools={:?} sandbox={:?} max_iterations={}",
             match &def.system_prompt {
                 PromptSource::Inline(_) => "inline",
                 PromptSource::File { .. } => "file",
@@ -389,6 +450,7 @@ impl AgentDefinitionSpec {
                 PromptSource::Verbatim(_) => "verbatim",
             },
             def.extensions.refresh_prompt_on_resume,
+            def.extensions.memory_block.map(|block| block.max_tokens),
             def.tools,
             def.sandbox_mode,
             def.max_iterations
@@ -406,6 +468,8 @@ impl AgentDefinitionSpec {
         def.subagents.clear();
         def.delegate_name = None;
         def.extensions.searches_connected_mcp = false;
+        // A delegate never carries the scheduled-actions opt-in.
+        def.extensions.scheduled_actions = false;
         Ok(def)
     }
 }

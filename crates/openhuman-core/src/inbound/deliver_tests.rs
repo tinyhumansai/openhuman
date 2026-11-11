@@ -613,8 +613,8 @@ async fn an_all_injection_batch_completes_without_calling_the_model() {
     );
 }
 
-#[test]
-fn a_benign_batch_passes_the_whole_turn_guard() {
+#[tokio::test]
+async fn a_pinned_prompt_is_held_when_the_security_module_is_unavailable() {
     use crate::security::prompt_injection::{
         enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
     };
@@ -637,8 +637,13 @@ fn a_benign_batch_passes_the_whole_turn_guard() {
             user_id: None,
             session_id: None,
         },
+    )
+    .await;
+    assert_eq!(
+        decision.action,
+        PromptEnforcementAction::ReviewBlocked,
+        "{prompt}"
     );
-    assert_eq!(decision.action, PromptEnforcementAction::Allow, "{prompt}");
 }
 
 #[tokio::test]

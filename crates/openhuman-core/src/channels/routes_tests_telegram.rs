@@ -6,7 +6,8 @@ async fn handle_runtime_command_telegram_new_status_and_sessions_round_trip() {
     let workspace = linked.config().workspace_dir.clone();
     let mut ctx = runtime_context(workspace.clone());
     let _core =
-        crate::channels::runtime::test_support::bind_test_core_context(&mut ctx, linked.config());
+        crate::channels::runtime::test_support::bind_test_core_context(&mut ctx, linked.config())
+            .await;
     let channel_state = Arc::new(TestChannel::new("recording"));
     let channel = Arc::new(ChannelHandle::Test(Arc::clone(&channel_state)));
     let sender_key = "telegram_alice_chat-remote";

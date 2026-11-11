@@ -9,7 +9,7 @@ use crate::security::policy::CommandClass;
 use crate::security::SecurityPolicy;
 use crate::tools;
 use crate::tools::native_ops_types::{ExecuteToolOutcome, RuntimeToolSummary};
-use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolScope};
+use tinytools::{Tool, ToolCallOptions, ToolScope};
 use tracing::{debug, trace};
 
 fn tool_scope_label(scope: ToolScope) -> &'static str {
@@ -32,57 +32,62 @@ fn summarize_tool(tool: &dyn Tool) -> RuntimeToolSummary {
     }
 }
 
-fn classify_shell_tool_call(args: &serde_json::Value) -> CommandClass {
-    // This synchronous summary API cannot ask TinyBox to analyze the command.
-    // Report the conservative class here; the invocation path performs exact
-    // module analysis before approval and execution.
-    let mut class = CommandClass::Write;
-    if let Some(declared) = args
-        .get("category")
-        .and_then(|value| value.as_str())
-        .and_then(SecurityPolicy::parse_declared_class)
-    {
-        class = class.max(declared);
-    }
-    class
-}
-
-fn command_class_for_tool(tool: &dyn Tool, args: &serde_json::Value) -> CommandClass {
+async fn command_class_for_tool(
+    security: &SecurityPolicy,
+    tool: &dyn Tool,
+    args: &serde_json::Value,
+) -> Result<CommandClass, String> {
     if tool.name() == "shell" {
-        return classify_shell_tool_call(args);
+        let declared = args
+            .get("category")
+            .and_then(|value| value.as_str())
+            .and_then(|raw| match raw.trim().to_ascii_lowercase().as_str() {
+                "read" => Some(CommandClass::Read),
+                "write" => Some(CommandClass::Write),
+                "network" => Some(CommandClass::Network),
+                "install" => Some(CommandClass::Install),
+                "destructive" => Some(CommandClass::Destructive),
+                _ => None,
+            });
+        return security
+            .classify_native_command(crate::security::policy::CommandQuery {
+                command: args
+                    .get("command")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default(),
+                declared,
+                flow: crate::security::policy::CommandFlow::Harness,
+                stage: crate::security::policy::CommandStage::Authorize,
+            })
+            .await
+            .map_err(|reason| reason.to_string());
     }
 
-    let permission = tool.permission_level_with_args(args);
-    match permission {
-        PermissionLevel::None | PermissionLevel::ReadOnly => {
-            if tool.external_effect_with_args(args) {
-                CommandClass::Network
-            } else {
-                CommandClass::Read
-            }
-        }
-        PermissionLevel::Write | PermissionLevel::Execute => {
-            if tool.external_effect_with_args(args) {
-                CommandClass::Network
-            } else {
-                CommandClass::Write
-            }
-        }
-        PermissionLevel::Dangerous => CommandClass::Destructive,
-    }
+    let answer = crate::security::policy::host_action_class(
+        tool.permission_level_with_args(args),
+        tool.external_effect_with_args(args),
+    )
+    .await?;
+    Ok(match answer {
+        tinysecurity_bus::CommandClass::Read => CommandClass::Read,
+        tinysecurity_bus::CommandClass::Write => CommandClass::Write,
+        tinysecurity_bus::CommandClass::Network => CommandClass::Network,
+        tinysecurity_bus::CommandClass::Install => CommandClass::Install,
+        tinysecurity_bus::CommandClass::Destructive => CommandClass::Destructive,
+    })
 }
 
-pub fn build_runtime_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>, String> {
+pub async fn build_runtime_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>, String> {
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ));
-    build_runtime_tools_with_security(config, security)
+    build_runtime_tools_with_security(config, security).await
 }
 
 /// Builds native tools with a caller-resolved policy snapshot.
-pub fn build_runtime_tools_with_security(
+pub async fn build_runtime_tools_with_security(
     config: &Config,
     security: Arc<SecurityPolicy>,
 ) -> Result<Vec<Box<dyn Tool>>, String> {
@@ -91,8 +96,8 @@ pub fn build_runtime_tools_with_security(
         "[native_ops] build_runtime_tools: start"
     );
     // Phase 1 of #1401: see comment in channels/runtime/startup.rs.
-    let audit = crate::security::get_or_create_workspace_audit_logger(
-        crate::config::AuditConfig::default(),
+    let audit = crate::security::get_or_create_workspace_audit_sink(
+        config.audit.clone(),
         config.workspace_dir.clone(),
     )
     .map_err(|e| e.to_string())?;
@@ -108,7 +113,8 @@ pub fn build_runtime_tools_with_security(
         &config.action_dir,
         config,
         None,
-    );
+    )
+    .await;
     debug!(
         tool_count = built.len(),
         "[native_ops] build_runtime_tools: done"
@@ -116,9 +122,10 @@ pub fn build_runtime_tools_with_security(
     Ok(built)
 }
 
-pub fn list_tools(config: &Config) -> Result<Vec<RuntimeToolSummary>, String> {
+pub async fn list_tools(config: &Config) -> Result<Vec<RuntimeToolSummary>, String> {
     debug!("[native_ops] list_tools: start");
-    let mut summaries: Vec<RuntimeToolSummary> = build_runtime_tools(config)?
+    let mut summaries: Vec<RuntimeToolSummary> = build_runtime_tools(config)
+        .await?
         .into_iter()
         .map(|tool| summarize_tool(tool.as_ref()))
         .collect();
@@ -127,7 +134,7 @@ pub fn list_tools(config: &Config) -> Result<Vec<RuntimeToolSummary>, String> {
     Ok(summaries)
 }
 
-pub fn classify_tool_call(
+pub async fn classify_tool_call(
     config: &Config,
     tool_name: &str,
     args: &serde_json::Value,
@@ -137,18 +144,18 @@ pub fn classify_tool_call(
         &config.workspace_dir,
         &config.action_dir,
     ));
-    classify_tool_call_with_security(config, security, tool_name, args)
+    classify_tool_call_with_security(config, security, tool_name, args).await
 }
 
 /// Classifies a native call using the same policy snapshot that will execute it.
-pub fn classify_tool_call_with_security(
+pub async fn classify_tool_call_with_security(
     config: &Config,
     security: Arc<SecurityPolicy>,
     tool_name: &str,
     args: &serde_json::Value,
 ) -> Result<CommandClass, String> {
     debug!(tool_name, "[native_ops] classify_tool_call: start");
-    let tools = build_runtime_tools_with_security(config, security)?;
+    let tools = build_runtime_tools_with_security(config, Arc::clone(&security)).await?;
     let tool = tools
         .into_iter()
         .find(|tool| tool.name() == tool_name)
@@ -156,7 +163,7 @@ pub fn classify_tool_call_with_security(
             debug!(tool_name, "[native_ops] classify_tool_call: tool not found");
             format!("unknown tool `{tool_name}`")
         })?;
-    let class = command_class_for_tool(tool.as_ref(), args);
+    let class = command_class_for_tool(&security, tool.as_ref(), args).await?;
     debug!(
         tool_name,
         ?class,
@@ -193,7 +200,7 @@ pub async fn execute_tool_with_security(
         tool_name,
         prefer_markdown, "[native_ops] execute_tool: start"
     );
-    let tools = build_runtime_tools_with_security(config, security)?;
+    let tools = build_runtime_tools_with_security(config, security).await?;
     trace!(
         tool_count = tools.len(),
         tool_name,

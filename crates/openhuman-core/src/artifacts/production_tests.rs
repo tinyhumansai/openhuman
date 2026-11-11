@@ -228,8 +228,12 @@ async fn a_completion_that_records_nothing_fails_the_record_too() {
 }
 
 #[cfg(unix)]
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn a_saved_version_the_card_cannot_show_succeeds_and_says_so() {
+    let _floor = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
+    );
     use std::os::unix::fs::PermissionsExt;
 
     // The CI container runs as root, which bypasses the file mode bits used

@@ -100,19 +100,6 @@ impl NativeShellRun {
 pub(crate) static USE_FIXTURE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(true);
 
-/// How a shell call that may come back before its command ends wants a
-/// sandboxed command run.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct ComeBack {
-    /// Return with the command still running once it has run this long. Only
-    /// the native backends (no sandbox, native jail) can.
-    pub(crate) yield_after: Option<Duration>,
-    /// For a backend that cannot leave a command running (Docker): the
-    /// caller's own come-back time, enforced as a deadline instead, as the
-    /// model's `timeout_secs` was before it yielded.
-    pub(crate) deadline_instead: Option<Duration>,
-}
-
 /// How a run came back: the command ended, or it was still running at its
 /// yield point and is handed over to be followed.
 pub(crate) enum ShellRunOutcome {
@@ -185,85 +172,134 @@ pub(crate) async fn run_yielding(
 async fn run_owned(
     config: &Config,
     run: NativeShellRun,
-    abandoned: tokio::sync::oneshot::Receiver<std::convert::Infallible>,
+    mut abandoned: tokio::sync::oneshot::Receiver<std::convert::Infallible>,
     meter: Option<super::shell_progress::ShellOutputMeter>,
 ) -> anyhow::Result<ShellRunOutcome> {
-    let resource = tinybox::reserve(config, contract::ReserveRequest::Resource)
-        .await
-        .map_err(|_| anyhow::anyhow!("TinyBox could not reserve a command resource"))?;
-    let timeout = run.timeout;
-    // A yield point only counts when it comes before the command's own
-    // deadline; otherwise the run ends the usual way.
-    let yield_at = run
+    let caller_wants_yield = run.yield_after.is_some();
+    let yield_after_ms = run
         .yield_after
-        .filter(|after| *after < timeout)
-        .map(|after| tokio::time::Instant::now() + after);
-    let result = async {
-        tinybox::create(
-            config,
-            contract::CreateRequest {
-                resource: resource.clone(),
-                backend: "passthrough".to_owned(),
-                host: contract::HostConfig::Local,
-                workspace: contract::Workspace::Directory(path_string(
-                    &run.workspace,
-                    "command workspace",
-                )?),
-                network: if run.isolate_network {
-                    contract::NetworkPolicy::default()
-                } else {
-                    contract::NetworkPolicy::Open
-                },
-                resources: contract::ResourceLimits::default(),
-                ports: Vec::new(),
-                env: BTreeMap::new(),
+        .or_else(|| meter.as_ref().map(|_| Duration::from_millis(50)))
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
+    let workspace = path_string(&run.workspace, "command workspace")?;
+    let request = contract::RunNativeShellRequest {
+        create: contract::CreateRequest {
+            resource: contract::ResourceId(String::new()),
+            backend: "passthrough".to_owned(),
+            host: contract::HostConfig::Local,
+            workspace: contract::Workspace::Directory(workspace),
+            network: if run.isolate_network {
+                contract::NetworkPolicy::default()
+            } else {
+                contract::NetworkPolicy::Open
             },
-        )
-        .await
-        .map_err(|error| {
-            tracing::warn!(
-                error = ?error,
-                "[sandbox:shell] TinyBox refused to create a command resource"
-            );
-            anyhow::anyhow!("TinyBox could not create a command resource")
-        })?;
-        let process = tinybox::reserve(config, contract::ReserveRequest::Process(resource.clone()))
-            .await
-            .map_err(|_| anyhow::anyhow!("TinyBox could not reserve a command process"))?;
-        let request = shell_exec_request(process, &resource, run)?;
-        let process = tinybox::start_native_shell_exec(config, request)
-            .await
-            .map_err(|_| anyhow::anyhow!("TinyBox could not start the command process"))?;
-        collect_process(config, process, timeout, yield_at, abandoned, meter).await
-    }
-    .await;
-    // Still running at its yield point: the process and its resource go to
-    // the caller, who releases them once it has stopped.
-    let result = match result {
-        Ok(Collected::Running {
+            resources: contract::ResourceLimits::default(),
+            ports: Vec::new(),
+            env: BTreeMap::new(),
+        },
+        shell: shell_exec_request(
+            contract::ResourceId(String::new()),
+            &contract::ResourceId(String::new()),
+            run,
+        )?,
+        yield_after_ms,
+    };
+    let outcome = tokio::select! {
+        biased;
+        _ = &mut abandoned => anyhow::bail!("TinyBox native shell invocation was abandoned"),
+        result = tinybox::run_native_shell(config, request) => result
+            .map_err(|error| {
+                tracing::warn!(%error, "[sandbox:shell] TinyBox native shell lifecycle failed");
+                anyhow::anyhow!("TinyBox native shell execution failed")
+            })?,
+    };
+
+    match outcome {
+        contract::RunNativeShellResult::Finished {
+            exit_code,
+            stdout,
+            stderr,
+            timed_out,
+        } => {
+            if let Some(meter) = &meter {
+                meter.record(&stdout);
+                meter.record(&stderr);
+            }
+            Ok(ShellRunOutcome::Finished(SandboxExecResult {
+                exit_code,
+                stdout: String::from_utf8_lossy(&stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                timed_out,
+            }))
+        }
+        contract::RunNativeShellResult::Running {
+            resource,
             process,
             cursor,
             stdout,
             stderr,
-        }) => {
-            tracing::debug!("[sandbox:shell] command still running at its yield point");
-            return Ok(ShellRunOutcome::Running(LiveShell {
-                stdout: String::from_utf8_lossy(&stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&stderr).into_owned(),
-                handle: super::shell_live::LiveHandle::TinyBox(
-                    super::shell_live::TinyBoxLive::new(config.clone(), resource, process, cursor),
-                ),
-            }));
+        } => {
+            if let Some(meter) = &meter {
+                meter.record(&stdout);
+                meter.record(&stderr);
+            }
+            let mut live = super::shell_live::LiveHandle::TinyBox(
+                super::shell_live::TinyBoxLive::new(config.clone(), resource, process, cursor),
+            );
+            if caller_wants_yield {
+                tracing::debug!("[sandbox:shell] command still running at its yield point");
+                return Ok(ShellRunOutcome::Running(LiveShell {
+                    stdout: String::from_utf8_lossy(&stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                    handle: live,
+                }));
+            }
+
+            let mut collected_stdout = stdout;
+            let mut collected_stderr = stderr;
+            loop {
+                let read = tokio::select! {
+                    biased;
+                    _ = &mut abandoned => {
+                        let _ = live.kill().await;
+                        anyhow::bail!("TinyBox native shell invocation was abandoned")
+                    }
+                    result = live.read(Duration::from_millis(50)) => result?,
+                };
+                if let Some(meter) = &meter {
+                    meter.record(read.stdout.as_bytes());
+                    meter.record(read.stderr.as_bytes());
+                }
+                collected_stdout.extend_from_slice(read.stdout.as_bytes());
+                collected_stderr.extend_from_slice(read.stderr.as_bytes());
+                match read.state {
+                    super::shell_live::LiveState::Running => {}
+                    super::shell_live::LiveState::Exited(exit_code) => {
+                        return Ok(ShellRunOutcome::Finished(SandboxExecResult {
+                            exit_code,
+                            stdout: String::from_utf8_lossy(&collected_stdout).into_owned(),
+                            stderr: String::from_utf8_lossy(&collected_stderr).into_owned(),
+                            timed_out: false,
+                        }));
+                    }
+                    super::shell_live::LiveState::TimedOut => {
+                        return Ok(ShellRunOutcome::Finished(SandboxExecResult {
+                            exit_code: -1,
+                            stdout: String::from_utf8_lossy(&collected_stdout).into_owned(),
+                            stderr: String::from_utf8_lossy(&collected_stderr).into_owned(),
+                            timed_out: true,
+                        }));
+                    }
+                    super::shell_live::LiveState::Stopped => {
+                        return Ok(ShellRunOutcome::Finished(SandboxExecResult {
+                            exit_code: -1,
+                            stdout: String::from_utf8_lossy(&collected_stdout).into_owned(),
+                            stderr: String::from_utf8_lossy(&collected_stderr).into_owned(),
+                            timed_out: false,
+                        }));
+                    }
+                }
+            }
         }
-        Ok(Collected::Done(output)) => Ok(ShellRunOutcome::Finished(output)),
-        Err(error) => Err(error),
-    };
-    let close = tinybox::close(config, resource).await;
-    match (result, close) {
-        (Ok(output), Ok(())) => Ok(output),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(_)) => anyhow::bail!("TinyBox did not acknowledge command cleanup"),
-        (Err(error), Err(_)) => Err(error),
     }
 }
 
@@ -299,121 +335,7 @@ pub(crate) fn shell_exec_request(
     })
 }
 
-/// What [`collect_process`] read: the whole run, or the run so far when it was
-/// still going at its yield point.
-#[cfg(feature = "modules")]
-enum Collected {
-    Done(SandboxExecResult),
-    Running {
-        process: contract::ProcessRef,
-        cursor: u64,
-        stdout: Vec<u8>,
-        stderr: Vec<u8>,
-    },
-}
-
-#[cfg(feature = "modules")]
-async fn collect_process(
-    config: &Config,
-    process: contract::ProcessRef,
-    timeout: Duration,
-    yield_at: Option<tokio::time::Instant>,
-    mut abandoned: tokio::sync::oneshot::Receiver<std::convert::Infallible>,
-    meter: Option<super::shell_progress::ShellOutputMeter>,
-) -> anyhow::Result<Collected> {
-    use contract::{ExecutionState, OutputStream};
-    use tokio::sync::oneshot::error::TryRecvError;
-
-    let deadline = tokio::time::Instant::now() + timeout;
-    let mut cursor = 0;
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let mut requested_cancel = false;
-    let timed_out = loop {
-        let caller_gone = matches!(abandoned.try_recv(), Err(TryRecvError::Closed));
-        if !requested_cancel && (caller_gone || tokio::time::Instant::now() >= deadline) {
-            if caller_gone {
-                tracing::debug!("[sandbox:shell] caller dropped its wait; cancelling the command");
-            }
-            tinybox::cancel(config, process.clone())
-                .await
-                .map_err(|_| {
-                    anyhow::anyhow!("TinyBox could not acknowledge process cancellation")
-                })?;
-            requested_cancel = true;
-        }
-        let batch = tinybox::read_output(config, process.clone(), cursor)
-            .await
-            .map_err(|_| anyhow::anyhow!("TinyBox could not read command output"))?;
-        if !batch.chunks.is_empty() && batch.next_sequence <= cursor {
-            anyhow::bail!("TinyBox returned an invalid output cursor");
-        }
-        let has_chunks = !batch.chunks.is_empty();
-        let state = batch.state;
-        for chunk in batch.chunks {
-            if let Some(meter) = &meter {
-                meter.record(&chunk.bytes);
-            }
-            match chunk.stream {
-                OutputStream::Stdout => stdout.extend_from_slice(&chunk.bytes),
-                OutputStream::Stderr => stderr.extend_from_slice(&chunk.bytes),
-            }
-        }
-        cursor = batch.next_sequence;
-        match state {
-            ExecutionState::Running => {
-                if !requested_cancel && yield_at.is_some_and(|at| tokio::time::Instant::now() >= at)
-                {
-                    return Ok(Collected::Running {
-                        process,
-                        cursor,
-                        stdout,
-                        stderr,
-                    });
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await
-            }
-            ExecutionState::Exited { .. } if has_chunks => continue,
-            ExecutionState::Exited { exit_code } => {
-                tinybox::release_output(config, process)
-                    .await
-                    .map_err(|_| anyhow::anyhow!("TinyBox could not release command output"))?;
-                return Ok(Collected::Done(SandboxExecResult {
-                    exit_code,
-                    stdout: String::from_utf8_lossy(&stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&stderr).into_owned(),
-                    timed_out: false,
-                }));
-            }
-            ExecutionState::Cancelled if has_chunks => continue,
-            ExecutionState::Cancelled => break requested_cancel,
-            ExecutionState::Failed { .. } if has_chunks => continue,
-            ExecutionState::Failed { code } => {
-                tracing::debug!(?code, "[sandbox:shell] TinyBox reported a failed execution");
-                break failure_timed_out(code)?;
-            }
-        }
-    };
-    tinybox::release_output(config, process)
-        .await
-        .map_err(|_| anyhow::anyhow!("TinyBox could not release command output"))?;
-    // What the command printed before it was stopped, both streams: a build
-    // or test killed at its deadline has usually written its progress and
-    // first errors by then. `timed_out` says why it stopped; the shell tool
-    // writes the timeout line.
-    Ok(Collected::Done(SandboxExecResult {
-        exit_code: -1,
-        stdout: String::from_utf8_lossy(&stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&stderr).into_owned(),
-        timed_out,
-    }))
-}
-
-/// What a terminal TinyBox failure means for the command. The module enforces
-/// the same runtime budget the host waits for, so a command that runs to its
-/// limit usually ends as `TimedOut` before the host's own cancel lands: that is
-/// the command's timeout, reported like one (`Ok(true)`). Anything else is a
-/// real sandbox failure, named by its code.
+/// Map a terminal TinyBox failure into the historical timeout/error behaviour.
 #[cfg(feature = "modules")]
 pub(super) fn failure_timed_out(code: contract::ExecutionFailure) -> anyhow::Result<bool> {
     use contract::ExecutionFailure;

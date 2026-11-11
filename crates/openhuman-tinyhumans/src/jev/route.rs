@@ -9,8 +9,8 @@
 //! only reaches for the other two when there is no TinyHumans credential.
 
 use openhuman_embed::__host::config::Config;
+use openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential;
 use openhuman_embed::__host::inference::provider::factory::lookup_key_for_slug;
-use openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential;
 use tinyjevclient::ClientConfig;
 use tinytools::RankError;
 
@@ -70,7 +70,7 @@ pub struct ResolvedRoute {
 
 /// Source of the two env-provided keys. A seam so tests do not touch the
 /// process environment.
-pub type EnvLookup<'a> = &'a dyn Fn(&str) -> Option<String>;
+pub type EnvLookup<'a> = &'a (dyn Fn(&str) -> Option<String> + Send + Sync);
 
 pub fn process_env(name: &str) -> Option<String> {
     std::env::var(name)
@@ -79,8 +79,9 @@ pub fn process_env(name: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-fn tinyhumans(config: &Config) -> Result<ResolvedRoute, String> {
+async fn tinyhumans(config: &Config) -> Result<ResolvedRoute, String> {
     let credential = resolve_backend_credential(config)
+        .await
         .map_err(|reason| format!("no TinyHumans credential ({reason})"))?;
     let secret = credential.into_secret();
     let mut client = ClientConfig::tinyhumans_openrouter(secret.clone());
@@ -106,15 +107,16 @@ fn typesafe(config: &Config, env: EnvLookup<'_>) -> Result<ResolvedRoute, String
     })
 }
 
-fn openrouter(config: &Config, env: EnvLookup<'_>) -> Result<ResolvedRoute, String> {
-    let secret = env(OPENROUTER_API_KEY_ENV)
-        .or_else(|| {
-            lookup_key_for_slug(OPENROUTER_SLUG, config)
-                .ok()
-                .map(|k| k.trim().to_owned())
-                .filter(|k| !k.is_empty())
-        })
-        .ok_or_else(|| {
+async fn openrouter(config: &Config, env: EnvLookup<'_>) -> Result<ResolvedRoute, String> {
+    let secret = match env(OPENROUTER_API_KEY_ENV) {
+        Some(secret) => Some(secret),
+        None => lookup_key_for_slug(OPENROUTER_SLUG, config)
+            .await
+            .ok()
+            .map(|key| key.trim().to_owned())
+            .filter(|key| !key.is_empty()),
+    }
+    .ok_or_else(|| {
             format!("no OpenRouter key ({OPENROUTER_API_KEY_ENV} is unset and no `openrouter` provider key is stored)")
         })?;
     let mut client = ClientConfig::openrouter(secret.clone());
@@ -140,15 +142,21 @@ fn base_override(config: &Config) -> Option<String> {
 
 /// Resolve the configured route. The error names every gap (never a secret) so
 /// the BM25 fallback's log line says what to set.
-pub fn resolve(config: &Config, env: EnvLookup<'_>) -> Result<ResolvedRoute, RankError> {
+pub async fn resolve(config: &Config, env: EnvLookup<'_>) -> Result<ResolvedRoute, RankError> {
     let requested = JevRoute::parse(&config.agent.tool_search.jev_route);
     let outcome = match requested {
-        JevRoute::TinyHumans => tinyhumans(config),
+        JevRoute::TinyHumans => tinyhumans(config).await,
         JevRoute::TypeSafe => typesafe(config, env),
-        JevRoute::OpenRouter => openrouter(config, env),
-        JevRoute::Auto => tinyhumans(config)
-            .or_else(|th| typesafe(config, env).map_err(|ts| format!("{th}; {ts}")))
-            .or_else(|prior| openrouter(config, env).map_err(|or| format!("{prior}; {or}"))),
+        JevRoute::OpenRouter => openrouter(config, env).await,
+        JevRoute::Auto => match tinyhumans(config).await {
+            Ok(route) => Ok(route),
+            Err(th) => match typesafe(config, env) {
+                Ok(route) => Ok(route),
+                Err(ts) => openrouter(config, env)
+                    .await
+                    .map_err(|or| format!("{th}; {ts}; {or}")),
+            },
+        },
     };
     outcome.map_err(|reason| RankError::Backend {
         reason: format!("jev route `{}` unavailable: {reason}", requested.label()),

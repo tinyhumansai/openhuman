@@ -38,7 +38,7 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use tinybus::module::{ModuleRuntime, RuntimeNames, RuntimeOptions};
+use tinybus::module::{ModuleRuntime, RuntimeNames, RuntimeOptions, SearchPathConfig};
 
 /// The module bus, built once on first use.
 static RUNTIME: OnceLock<Result<ModuleRuntime, String>> = OnceLock::new();
@@ -80,20 +80,38 @@ where
     Ok(runtime_now()?.spawn(future))
 }
 
+/// Run `future` on the module bus's own executor, starting the bus if needed
+/// but without awaiting its host callbacks. The task outlives whichever caller
+/// spawned it; work that needs the callbacks awaits [`runtime`] inside it.
+pub(crate) fn spawn_on_bus<F>(future: F) -> tinybus::Result<tokio::task::JoinHandle<F::Output>>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    Ok(runtime_now()?.spawn(future))
+}
+
 fn runtime_now() -> tinybus::Result<&'static ModuleRuntime> {
     let started = RUNTIME.get_or_init(|| {
         let names = RuntimeNames {
             thread: "openhuman-module-bus".to_string(),
             worker: "openhuman-module-worker".to_string(),
         };
-        ModuleRuntime::start_with_options(
+        let runtime = ModuleRuntime::start_with_options(
             &names,
             None,
             RuntimeOptions {
                 thread_stack_size: Some(crate::core::runtime::AGENT_WORKER_STACK_BYTES),
             },
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+        runtime
+            .host()
+            .set_search_path_config(Some(SearchPathConfig::new(
+                "OPENHUMAN_MODULE_PATH",
+                "openhuman/modules",
+            )));
+        Ok(runtime)
     });
     let runtime = started
         .as_ref()
@@ -104,6 +122,11 @@ fn runtime_now() -> tinybus::Result<&'static ModuleRuntime> {
 /// Serve the host objects modules call back into, before any module loads.
 async fn install_callbacks(runtime: &'static ModuleRuntime) -> tinybus::Result<()> {
     let connection = runtime.connection();
+
+    #[cfg(feature = "security-module")]
+    super::security::callbacks::install(connection).await?;
+    #[cfg(all(feature = "security-module", feature = "modules"))]
+    super::browser_egress_host::install(connection).await?;
 
     // The summary callback exists for the module alone; with the component off
     // the module never loads, so nothing would call it.

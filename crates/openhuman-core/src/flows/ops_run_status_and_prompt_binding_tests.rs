@@ -180,6 +180,7 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
         &config,
         "workflow_builder",
     )
+    .await
     .expect("build workflow_builder agent");
     agent.set_agent_definition_name("workflow_builder".to_string());
 
@@ -284,6 +285,7 @@ async fn flows_build_copilot_toolset_unhides_the_live_run_tools() {
         &config,
         "workflow_builder",
     )
+    .await
     .expect("build workflow_builder agent");
     agent.set_agent_definition_name("workflow_builder".to_string());
 
@@ -410,6 +412,7 @@ async fn flows_build_applies_the_builder_definitions_effective_iteration_cap() {
         &config,
         "workflow_builder",
     )
+    .await
     .expect("build workflow_builder agent");
     assert_eq!(agent.agent_config().max_tool_iterations, expected);
     assert_ne!(

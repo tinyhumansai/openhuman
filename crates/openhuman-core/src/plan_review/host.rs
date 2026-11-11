@@ -12,8 +12,8 @@ use tinytools::ToolRunContext;
 
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::core::runtime::{DispatchCtx, Tenant};
-use crate::security::turn_origin::AgentTurnOrigin;
 
 struct DomainEventNotifier;
 

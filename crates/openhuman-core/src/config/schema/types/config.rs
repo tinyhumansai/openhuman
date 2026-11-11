@@ -214,6 +214,10 @@ pub struct Config {
     #[serde(default)]
     pub autonomy: AutonomyConfig,
 
+    /// Durable security audit settings (`[audit]`).
+    #[serde(default)]
+    pub audit: AuditConfig,
+
     /// Operator tool rules (`[tool_rules]`): allow / deny / hide / approval
     /// patterns over tool names, families and tags, applied to every agent's
     /// catalogue, `tool_search` and calls. See `tinytools::ToolRules` and
@@ -240,6 +244,25 @@ pub struct Config {
     /// (#4435, epic #4256).
     #[serde(default)]
     pub privacy: PrivacyConfig,
+
+    /// Whether untrusted input is screened for prompt injection
+    /// (`[prompt_screen]`). Missing block → enforced, failing closed when
+    /// TinySecurity gives no verdict.
+    #[serde(default)]
+    pub prompt_screen: PromptScreenConfig,
+
+    /// Whether the checks OpenHuman delegates to TinySecurity run
+    /// (`[security]`). Missing block → enforced, failing closed when the
+    /// module cannot answer. `off` allows every delegated check and implies
+    /// the prompt screen is off.
+    #[serde(default)]
+    pub security: SecurityModeConfig,
+
+    /// The Jev judge's route when the host supplies its own credential.
+    /// Absent from the user wire format: it holds a secret.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub security_judge: Option<SecurityJudgeRoute>,
 
     #[serde(default)]
     pub sandbox: SandboxConfig,
@@ -290,7 +313,7 @@ pub struct Config {
     /// the agent context middleware configuration.
     #[serde(default)]
     #[schemars(with = "super::super::context::ContextConfigSchema")]
-    pub context: ContextConfig,
+    pub context: ContextSettings,
 
     #[serde(default)]
     pub model_routes: Vec<ModelRouteConfig>,
@@ -496,6 +519,11 @@ pub struct Config {
     /// Hosting provider credentials and switch (`hosting` feature).
     #[serde(default)]
     pub hosting: HostingConfig,
+
+    /// Native-wallet spend policy for executes without a per-transfer human
+    /// confirmation (`[wallet_policy]`); read by `web3::wallet::policy`.
+    #[serde(default)]
+    pub wallet_policy: WalletPolicyConfig,
 
     /// Storage backend for state on the `tinystoragedrivers` ports
     /// (`[storage]`). Empty uses the default, `sqlite:<workspace>/storage`.

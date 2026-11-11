@@ -18,7 +18,7 @@ pub struct AutonomySettingsPatch {
     /// (`AutonomyConfig::enabled`): with it off, classification, the approval
     /// gate, the allowlist, the action budget and containment are all inert,
     /// and every other field in this patch has no effect until it is `true`.
-    /// `is_always_forbidden` applies either way.
+    /// TinySecurity's protected-path floor applies either way.
     pub enabled: Option<bool>,
     /// `"readonly" | "supervised" | "full"` (case-insensitive).
     pub level: Option<String>,
@@ -60,20 +60,6 @@ pub struct AgentSettingsPatch {
     pub tool_dispatcher: Option<String>,
 }
 
-/// Partial update for the agent's editable filesystem roots.
-///
-/// `action_dir` (issue #3240) and the files folder (#5505) are editable.
-/// `workspace_dir` and `projects_dir` are intentionally read-only.
-#[derive(Debug, Clone, Default)]
-pub struct AgentPathsPatch {
-    /// New action sandbox root. `Some("")`/whitespace clears the override and
-    /// reverts to the default; `Some(path)` sets it; `None` leaves it unchanged.
-    pub action_dir: Option<String>,
-    /// New folder for agent deliverables. Same `Some("")` / `Some(path)` /
-    /// `None` semantics as `action_dir`. Affects new artifacts only.
-    pub files_dir: Option<String>,
-}
-
 /// Updates the `[autonomy]` (agent access mode) settings in the configuration.
 ///
 /// After saving, publishes a `DomainEvent::System(AutonomyConfigChanged)` so that
@@ -85,6 +71,8 @@ pub async fn apply_autonomy_settings(
 ) -> Result<Outcome<serde_json::Value>, String> {
     use crate::security::AutonomyLevel;
 
+    #[cfg(feature = "security-module")]
+    let before = config.autonomy.clone();
     // Validate before changing anything, so a rejected patch leaves `config` as it was.
     if let Some(root) = update
         .trusted_roots
@@ -97,11 +85,9 @@ pub async fn apply_autonomy_settings(
             root.path
         ));
     }
-    if let Some(enabled) = update.enabled {
-        config.autonomy.enabled = enabled;
-    }
-    if let Some(level) = update.level {
-        config.autonomy.level = match level.trim().to_ascii_lowercase().as_str() {
+    let level = match update.level.map(|level| level.trim().to_ascii_lowercase()) {
+        None => None,
+        Some(level) => Some(match level.as_str() {
             "readonly" | "read_only" | "read-only" => AutonomyLevel::ReadOnly,
             "supervised" => AutonomyLevel::Supervised,
             "full" => AutonomyLevel::Full,
@@ -110,7 +96,16 @@ pub async fn apply_autonomy_settings(
                     "invalid autonomy level '{other}' (expected readonly | supervised | full)"
                 ));
             }
-        };
+        }),
+    };
+    if update.max_actions_per_hour == Some(0) {
+        return Err("max_actions_per_hour must be at least 1 (got 0)".to_string());
+    }
+    if let Some(enabled) = update.enabled {
+        config.autonomy.enabled = enabled;
+    }
+    if let Some(level) = level {
+        config.autonomy.level = level;
     }
     if let Some(workspace_only) = update.workspace_only {
         config.autonomy.workspace_only = workspace_only;
@@ -128,11 +123,6 @@ pub async fn apply_autonomy_settings(
         config.autonomy.allow_tool_install = allow_tool_install;
     }
     if let Some(max_actions_per_hour) = update.max_actions_per_hour {
-        if max_actions_per_hour == 0 {
-            return Err(format!(
-                "max_actions_per_hour must be at least 1 (got {max_actions_per_hour})"
-            ));
-        }
         config.autonomy.max_actions_per_hour = max_actions_per_hour;
     }
     if let Some(auto_approve) = update.auto_approve {
@@ -141,13 +131,24 @@ pub async fn apply_autonomy_settings(
     if let Some(auto_approve_all) = update.auto_approve_all {
         config.autonomy.auto_approve_all = auto_approve_all;
     }
+    // The host's TinySecurity client refuses an enabled policy the module
+    // contract cannot represent (relative forbidden paths, commands with
+    // arguments): `validate` runs before every call. Saved, such a policy would
+    // make every TinySecurity check fail closed until the file was edited by
+    // hand, so refuse it here and leave the settings as they were.
+    #[cfg(feature = "security-module")]
+    if let Err(error) = crate::modules::security::validate_policy(config) {
+        log::debug!("[config][autonomy] patch rejected: {error}");
+        config.autonomy = before;
+        return Err(format!("autonomy settings not saved: {error}"));
+    }
 
     config.save().await.map_err(super::config_save_error)?;
 
     crate::security::live_policy::reload_from(&config.autonomy);
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::AutonomyConfigChanged);
 
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(
@@ -266,7 +267,7 @@ pub async fn apply_agent_settings(
         effective
     );
 
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(

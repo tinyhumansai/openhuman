@@ -119,6 +119,15 @@ pub(super) fn missing_program_nudge(tool: &str, detail: &str) -> String {
     )
 }
 
+/// A timed-out local command may have completed some of its work before it
+/// was stopped. Tell the model to reconcile that state before trying a
+/// smaller bounded command.
+pub(super) fn uncertain_timeout_nudge(tool: &str) -> String {
+    format!(
+        "The `{tool}` command timed out and may have partially completed. Reconcile its effects before retrying, then use a smaller, bounded step."
+    )
+}
+
 pub(super) fn classified_recovery_policy(
     tool: &str,
     error: &str,

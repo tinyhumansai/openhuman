@@ -68,3 +68,7 @@
 	path = vendor/tinyeventqueues
 	url = https://github.com/tinyhumansai/tinyeventqueues
 	branch = main
+[submodule "vendor/tinysecurity"]
+	path = vendor/tinysecurity
+	url = https://github.com/tinyhumansai/tinysecurity.git
+	branch = main

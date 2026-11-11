@@ -580,6 +580,21 @@ async fn chat_spawns_workflow_builder_and_saves_its_proposal() {
     })
     .await;
 
+    // The completion is then delivered by a debounced turn on the thread. Let
+    // it end, its reply stored, before step 4 scripts the orchestrator, or it
+    // takes the save's `spawn_subagent`.
+    wait_for("the builder result's delivery turn", || {
+        let rpc_base = rpc_base.clone();
+        let thread_id = thread_id.clone();
+        async move {
+            thread_messages(&rpc_base, &thread_id)
+                .await
+                .into_iter()
+                .find(|m| m["extraMetadata"]["scope"] == "background_delivery")
+        }
+    })
+    .await;
+
     // ── 4. the agent-side "save it": one flow, its schedule born disabled ──
     // The order a user takes: ask the agent to save, then press the card.
     assert_eq!(flow_count(&rpc_base).await, 0, "no flow before the save");

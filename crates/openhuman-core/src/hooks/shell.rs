@@ -115,6 +115,19 @@ fn from_selection(selection: &ShellInvocation, command: &str) -> std::process::C
     process
 }
 
+/// Select POSIX `sh` without TinyBox, for tests that run a live hook.
+#[cfg(test)]
+pub(super) fn install_posix_for_test() {
+    install(ShellInvocation {
+        flavor: tinybox_bus::ShellFlavor::Posix,
+        program: "/bin/sh".into(),
+        arguments: vec!["-c".into(), PLACEHOLDER.into()],
+        raw_arguments: None,
+        bootstrap_environment: Vec::new(),
+        remove_environment: Vec::new(),
+    });
+}
+
 #[cfg(test)]
 #[path = "shell_tests.rs"]
 mod tests;

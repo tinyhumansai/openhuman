@@ -34,6 +34,7 @@ pub mod catalogue;
 mod copilot_bus;
 mod draft_store;
 pub(crate) mod host_gates;
+pub mod http_credentials;
 pub mod memory_tools;
 pub mod node_contracts;
 pub mod ops;

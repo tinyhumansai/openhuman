@@ -87,9 +87,11 @@ owner's explicit provenance rather than inferring ownership from the provider la
 
 When ChatGPT/Codex OAuth tokens exist for the `openai` slug, the host selects the OAuth
 credential and TinyInference's `resolve_codex_routing` supplies the Codex backend route. OpenHuman
-adds the account and originator headers. The OAuth flow itself (start, complete, import from the
-Codex CLI, status, disconnect) and its token store live in [`security/credentials/openai_oauth/`](../security/credentials/openai_oauth/);
-this domain only exposes the RPC wrappers in [`ops.rs`](./ops.rs).
+adds the account and originator headers. TinyHumans owns the provider-facing OAuth start, callback
+exchange, Codex CLI import and token refresh behind the core's `ProviderCredentialSource` port.
+Core keeps profile persistence, credential lookup, status and disconnect state in
+[`credentials/openai_oauth/`](../credentials/openai_oauth/). TinyHumans registers
+the existing `inference.openai_oauth_*` RPC names.
 
 ### Local runtimes
 
@@ -191,7 +193,7 @@ picks the provider the same way a provider string does.
 | Path | What it does |
 | --- | --- |
 | [`mod.rs`](./mod.rs) | Module declarations and re-exports. Also `local_runtime_config` (projects `config.local_ai` into TinyInference's input), `local_vision_mode`, `disabled_local_ai_status`, the `LocalModelConfig` impl for `Config`, and `INFERENCE_COMPILED_IN`. |
-| `ops.rs` | `inference_*` business operations returning `Outcome<T>`: status, prompt, summarize, vision, sentiment, provider tests, model listing, settings updates, OpenAI OAuth wrappers, diagnostics. Demotes expected user-config failures to `warn!`. |
+| `ops.rs` | `inference_*` business operations returning `Outcome<T>`: status, prompt, summarize, vision, sentiment, provider tests, model listing, settings updates, diagnostics. Demotes expected user-config failures to `warn!`. |
 | [`schemas.rs`](./schemas.rs), `schemas/` | The `inference.*` controller registry. `catalog.rs` has the schemas; `prompt_handlers.rs`, `settings_handlers.rs`, `oauth_handlers.rs` and `claude_code_handlers.rs` hold the thin handlers. |
 | `context_window.rs` | Per-turn context-window inputs (override, discovery request, static and local windows); the precedence and remembered windows are `tinyinference_llm::model::context_window::ContextWindowResolver`. |
 | `model_context.rs` | Static context-window table, the remembered window lookup, and vision capability checks. |
@@ -243,8 +245,10 @@ All controllers are pushed into the registry in [`core/all.rs`](../core/all.rs) 
 - Status and settings: `status`, `get_client_config`, `update_model_settings`,
   `update_local_settings`, `diagnostics`, `provider_auth_errors`.
 - One-shot inference: `summarize`, `prompt`, `vision_prompt`, `analyze_sentiment`.
-- OpenAI/Codex OAuth: `openai_oauth_start`, `openai_oauth_complete`,
-  `openai_oauth_import_codex_cli`, `openai_oauth_status`, `openai_oauth_disconnect`.
+- OpenAI/Codex OAuth keeps the `openai_oauth_start`, `openai_oauth_complete`,
+  `openai_oauth_import_codex_cli`, `openai_oauth_status`, and
+  `openai_oauth_disconnect` RPC names. TinyHumans registers the obtain/import
+  controllers; core owns profile status and disconnect behavior.
 - Claude Code: `claude_code_status`, `claude_code_auth_status`, `claude_code_settings`,
   `claude_code_set_full_access`.
 
@@ -286,7 +290,7 @@ OpenHuman stores no model artifacts.
   providers (`tinyagents_harness::providers::{claude_agent_sdk, claude_code}`). This domain only
   supplies routing and the MCP endpoint for Claude Code.
 - `tinyjuice` owns compression; `tokenjuice/` is only the host adapter.
-- OpenAI OAuth flow and token storage belong to `security/credentials/openai_oauth/`.
+- OpenAI OAuth provider operations live in `openhuman-tinyhumans/src/provider_oauth/`; core owns the credential profile and its read/status/disconnect behavior.
 - Privacy Mode policy and egress descriptors come from `security::live_policy` and
   `security::egress`; the factory only enforces them at `access_gates.rs`.
 - Voice capture, dictation and the STT engine choice belong to `crate::voice`.

@@ -434,6 +434,7 @@ fn run_voice_test_provider(ctx: DispatchCtx, p: VoiceTestProviderParams) -> Cont
 
         if p.workload == "stt" {
             let provider = crate::voice::create_stt_provider(&p.provider, "", &config)
+                .await
                 .map_err(|e| e.to_string())?;
 
             // 0.1s of silence as WAV (16kHz mono 16-bit PCM) so the local
@@ -464,8 +465,9 @@ fn run_voice_test_provider(ctx: DispatchCtx, p: VoiceTestProviderParams) -> Cont
             };
         }
 
-        let provider =
-            crate::voice::create_tts_provider(trimmed, "", &config).map_err(|e| e.to_string())?;
+        let provider = crate::voice::create_tts_provider(trimmed, "", &config)
+            .await
+            .map_err(|e| e.to_string())?;
         match provider.synthesize(&config, "Hello", None).await {
             Ok(_outcome) => {
                 let elapsed = start.elapsed().as_millis();

@@ -102,7 +102,8 @@ pub const EVENTS_INTERFACE: &str = "ai.tinyhumans.openhuman.Events";
 /// `CronJobCompleted` tenant ownership.
 /// `3.1.0` adds `InboundTurnCompleted` and `InboundTurnFailed` (additive): a
 /// pinned inbound source's batch ran on its agent.
-pub const EVENTS_VERSION: Version = Version::new(3, 1, 0);
+/// `3.2.0` adds connection token and nonce metadata to device tunnel frames.
+pub const EVENTS_VERSION: Version = Version::new(3, 2, 0);
 
 /// The bus. Initialised once by [`init`]; safe to touch before that.
 pub static BUS: OnceBus<DomainEvent> = OnceBus::new();

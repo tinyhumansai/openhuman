@@ -74,7 +74,7 @@ impl HostUiPort {
         };
         let listed: Result<Vec<String>, _> = client
             .call(
-                &host::client_config(&self.config),
+                &host::client_config(&self.config).await,
                 tinymcp_bus::names::methods::STATIC_LIST,
                 (),
             )
@@ -88,7 +88,7 @@ impl HostUiPort {
         };
         let statuses: Result<Vec<tinymcp_bus::ConnStatus>, _> = client
             .call(
-                &host::client_config(&self.config),
+                &host::client_config(&self.config).await,
                 tinymcp_bus::names::methods::STATUS,
                 (),
             )
@@ -110,7 +110,7 @@ impl UiServerPort for HostUiPort {
 
     async fn tool_descriptor(&self, server_id: &str, tool: &str) -> Option<UiToolDescriptor> {
         let client = self.client()?;
-        let client_config = host::client_config(&self.config);
+        let client_config = host::client_config(&self.config).await;
         if self.is_installed_connected(server_id).await {
             let candidate =
                 super::decorate::installed_tool(&client, &client_config, server_id, tool).await?;
@@ -153,7 +153,8 @@ impl UiServerPort for HostUiPort {
                     meta: None,
                 })
                 .collect(),
-        );
+        )
+        .await;
         safe.iter().find(|candidate| candidate.name == tool)?;
         Some(UiToolDescriptor { meta, annotations })
     }
@@ -166,7 +167,11 @@ impl UiServerPort for HostUiPort {
             tinymcp_bus::names::methods::STATIC_READ_RESOURCE
         };
         let contents: Vec<tinymcp_bus::McpResourceContents> = client
-            .call(&host::client_config(&self.config), member, (server_id, uri))
+            .call(
+                &host::client_config(&self.config).await,
+                member,
+                (server_id, uri),
+            )
             .await
             .map_err(|error| {
                 tracing::debug!(
@@ -190,7 +195,7 @@ impl UiServerPort for HostUiPort {
         arguments: Value,
     ) -> Result<Value, String> {
         let client = self.client().ok_or("MCP module is unavailable")?;
-        let client_config = host::client_config(&self.config);
+        let client_config = host::client_config(&self.config).await;
         let member = if self.is_installed_connected(server_id).await {
             tinymcp_bus::names::methods::TOOL_CALL
         } else {

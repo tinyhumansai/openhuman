@@ -106,6 +106,19 @@ fn a_type_error_names_the_field_path() {
 }
 
 #[test]
+fn retired_sandbox_backends_fail_with_a_migration_message() {
+    for backend in ["firejail", "bubblewrap"] {
+        let error = config_from_toml_str(&format!("[sandbox]\nbackend = \"{backend}\""))
+            .expect_err("unsupported legacy sandbox backend must be rejected during config load");
+
+        assert!(
+            error.to_string().contains("TinyBox"),
+            "expected a TinyBox migration hint for {backend}: {error}"
+        );
+    }
+}
+
+#[test]
 fn a_non_finite_float_is_rejected_with_its_field_path() {
     let err = config_from_toml_str("default_temperature = nan").unwrap_err();
     assert!(
@@ -301,4 +314,31 @@ meme_cooldown = 7
         "components.memes is dropped on save"
     );
     assert_eq!(saved["components"]["search"].as_bool(), Some(false));
+}
+
+#[test]
+fn retired_matrix_and_webhook_sections_are_named_and_ignored() {
+    let contents = r#"
+[channels_config.matrix]
+homeserver = "https://matrix.invalid"
+access_token = "secret-matrix-token"
+
+[channels_config.webhook]
+port = 8080
+secret = "secret-webhook"
+
+[channels_config.telegram]
+bot_token = "telegram-token"
+allowed_users = []
+"#;
+    let document: toml::Value = toml::from_str(contents).unwrap();
+    assert_eq!(retired_channel_sections(&document), ["matrix", "webhook"]);
+    let config = config_from_toml_str(contents).expect("retired sections still load");
+    assert!(config.channels_config.telegram.is_some());
+    let saved = serde_json::to_string(&config).unwrap();
+    assert!(!saved.contains("secret-matrix-token"));
+    assert!(!saved.contains("secret-webhook"));
+
+    let plain: toml::Value = toml::from_str(SAMPLE).unwrap();
+    assert!(retired_channel_sections(&plain).is_empty());
 }

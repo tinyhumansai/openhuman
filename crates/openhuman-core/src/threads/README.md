@@ -116,7 +116,10 @@ interim title derived from the first message is written
 ([`ops/title_generation.rs`](./ops/title_generation.rs)) later asks the model for a summary title using the
 `tinyagents_harness::title` helpers. `is_replaceable_title` only allows it to
 replace the placeholder, or the interim title during the first exchange;
-anything the user typed is left alone. Logs use the `[threads:title]` prefix
+anything the user typed is left alone. That check runs before the model call,
+so every system-chosen title is written through
+`support::update_title_unless_renamed`, which re-reads the thread and keeps a
+rename the user made while the model was answering. Logs use the `[threads:title]` prefix
 and a fingerprint, never the title text.
 
 ### Working folder
@@ -124,7 +127,7 @@ and a fingerprint, never the title text.
 A thread can be bound to an `action_dir` before its first message
 (`threads.update_working_dir`). `validate_working_dir` requires an absolute,
 existing directory with no null byte and refuses anything
-`SecurityPolicy::is_always_forbidden` covers. After the first message the
+`TinySecurity protected-path policy` covers. After the first message the
 folder is fixed: a resumed session keeps its first system prompt and tool list
 verbatim, so moving it would leave the model describing one directory while
 its tools act in another. `web_chat::turn_host` reads the binding through
@@ -149,7 +152,7 @@ subscribes to `DomainEvent::ChannelMessage*` on the core bus and mirrors
 inbound and processed channel turns into the store, using
 `conversation_history_key` for the thread id. It is registered from
 `core/runtime/subscribers.rs`, `channels/runtime/startup/start_channels.rs`
-and `security/credentials/ops/user_scope.rs` (when the user dir activates).
+and `config/user_scope.rs` (when the user dir activates).
 See [store/README.md](store/README.md).
 
 ## Layout

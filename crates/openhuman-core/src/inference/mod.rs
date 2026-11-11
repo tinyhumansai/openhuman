@@ -27,6 +27,7 @@ pub mod auth_error_registry;
 pub(crate) mod context_window;
 pub mod embedding_host;
 pub(crate) mod failure_copy;
+pub(crate) mod host_controls;
 pub mod host_runtime;
 pub mod http;
 pub mod model_context;

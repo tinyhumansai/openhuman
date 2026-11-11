@@ -175,7 +175,7 @@ async fn handle_runtime_command_telegram_sessions_reports_empty_store() {
     let sent = channel_impl.sent.lock().unwrap();
     assert_eq!(sent.len(), 1);
     assert!(sent_text(&sent[0]).contains("No conversation threads yet. Send `/new` to create one."));
-    assert_eq!(sent[0].thread_id.as_deref(), Some("42"));
+    assert_eq!(sent[0].thread_ts.as_deref(), Some("42"));
 }
 
 #[tokio::test]
@@ -288,7 +288,7 @@ async fn handle_runtime_command_telegram_new_status_and_sessions_round_trip() {
     assert!(sent_text(&sent[2]).contains("→ `Telegram"));
     assert!(sent
         .iter()
-        .all(|message| message.thread_id.as_deref() == Some("42")));
+        .all(|message| message.thread_ts.as_deref() == Some("42")));
 }
 
 #[tokio::test]
@@ -330,5 +330,5 @@ async fn handle_runtime_command_telegram_new_reports_unavailable_storage() {
     );
     assert!(sent_text(&sent[0]).contains("failed to persist the chat binding"));
     assert!(sent_text(&sent[0]).contains("host storage is unavailable"));
-    assert_eq!(sent[0].thread_id.as_deref(), Some("42"));
+    assert_eq!(sent[0].thread_ts.as_deref(), Some("42"));
 }

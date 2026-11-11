@@ -183,9 +183,7 @@ async fn a_preference_still_in_the_legacy_file_gates_execution() {
     use crate::integrations::composio::module_client::module_guard;
     let _serialised = module_guard().await;
     let tmp = tempfile::tempdir().unwrap();
-    let mut config = Config::default();
-    config.workspace_dir = tmp.path().join("workspace");
-    config.config_path = tmp.path().join("config.toml");
+    let config = crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     crate::integrations::composio::file_store::save(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
@@ -222,22 +220,19 @@ async fn a_preference_still_in_the_legacy_file_gates_execution() {
 /// read a stored preference, every gate that consults it denies.
 ///
 /// The module caches its link to the host's storage on first use. Saving a
-/// preference while a backend is installed connects that link; removing the
+/// preference while a backend is served connects that link; withdrawing the
 /// backend then makes the module's next preference read fail (`Unavailable`),
 /// as a storage outage would.
 ///
-/// `module_guard` already holds the storage slot and installs a memory backend
-/// (restored on drop), so the test must not lock the slot a second time: the
-/// slot mutex is not reentrant and doing so deadlocks.
+/// `module_guard` serves module calls a memory backend (restored on drop);
+/// the test withdraws it rather than touching the process storage slot.
 #[tokio::test]
 async fn an_unreadable_preference_denies_at_every_gate() {
     use crate::integrations::composio::module_client::module_guard;
     let _serialised = module_guard().await;
     let ctx = crate::core::runtime::DispatchCtx::ambient();
     let tmp = tempfile::tempdir().unwrap();
-    let mut config = Config::default();
-    config.workspace_dir = tmp.path().join("workspace");
-    config.config_path = tmp.path().join("config.toml");
+    let config = crate::integrations::composio::module_client::test_support::config_in(tmp.path());
 
     crate::integrations::composio::ops::save_user_scope_pref(
         &ctx,
@@ -246,7 +241,10 @@ async fn an_unreadable_preference_denies_at_every_gate() {
         only(true, false, false),
     )
     .await
-    .expect("the module stores the pref while storage is installed");
+    .expect("the module stores the pref while storage is served");
+    #[cfg(feature = "modules")]
+    crate::modules::storage_host::backend_choice::withdraw_test_module_storage();
+    #[cfg(not(feature = "modules"))]
     crate::storage::clear();
 
     let read =

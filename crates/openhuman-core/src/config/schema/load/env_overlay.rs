@@ -13,6 +13,7 @@ mod proxy;
 mod runtime;
 mod search;
 mod update;
+mod wallet_policy;
 
 use super::super::proxy::{set_runtime_proxy_config, ProxyScope};
 use super::super::Config;
@@ -232,6 +233,65 @@ impl Config {
             }
         }
 
+        // One-launch overrides of the `tool_search` discovery options. The
+        // four booleans pin on each thread a session creates (see
+        // `agent::tinyagents::discovery::DiscoveryPin`), so a changed value
+        // reaches new threads only.
+        type Flag = fn(&mut crate::config::schema::ToolSearchConfig) -> &mut bool;
+        let flags: [(&str, &str, Flag); 4] = [
+            (
+                "OPENHUMAN_TOOL_SEARCH_PROMOTE_FOUND_TOOLS",
+                "agent.tool_search.promote_found_tools",
+                |c| &mut c.promote_found_tools,
+            ),
+            (
+                "OPENHUMAN_TOOL_SEARCH_COMPACT_SEARCH_RESULTS",
+                "agent.tool_search.compact_search_results",
+                |c| &mut c.compact_search_results,
+            ),
+            (
+                "OPENHUMAN_TOOL_SEARCH_COLLAPSE_SEARCH_RESULTS",
+                "agent.tool_search.collapse_search_results",
+                |c| &mut c.collapse_search_results,
+            ),
+            (
+                "OPENHUMAN_TOOL_SEARCH_REPAIR_TOOL_CALL_WRAPPER",
+                "agent.tool_search.repair_tool_call_wrapper",
+                |c| &mut c.repair_tool_call_wrapper,
+            ),
+        ];
+        for (var, path, slot) in flags {
+            let Some(raw) = env.get(var) else { continue };
+            match classify_shell_hide_window(&raw) {
+                ShellHideWindowParse::Set(value) => {
+                    *slot(&mut self.agent.tool_search) = value;
+                    tracing::debug!(var, value, "overrides {path}");
+                    self.record_env_override(env, path, &[var]);
+                }
+                ShellHideWindowParse::Unset => {}
+                ShellHideWindowParse::Unrecognized => {
+                    tracing::warn!(var, "ignoring a value that is not a boolean");
+                }
+            }
+        }
+        if let Some(raw) = env.get("OPENHUMAN_TOOL_SEARCH_MAX_LIMIT") {
+            match raw.trim().parse::<usize>() {
+                Ok(limit) if limit > 0 => {
+                    self.agent.tool_search.max_limit = limit;
+                    self.record_env_override(
+                        env,
+                        "agent.tool_search.max_limit",
+                        &["OPENHUMAN_TOOL_SEARCH_MAX_LIMIT"],
+                    );
+                }
+                _ if raw.trim().is_empty() => {}
+                _ => tracing::warn!(
+                    var = "OPENHUMAN_TOOL_SEARCH_MAX_LIMIT",
+                    "ignoring a value that is not a positive integer"
+                ),
+            }
+        }
+
         if let Some(workspace) = env.get("OPENHUMAN_WORKSPACE") {
             if !workspace.is_empty() {
                 let (_, workspace_dir) =
@@ -350,6 +410,7 @@ impl Config {
         self.apply_proxy_env(env);
         self.apply_runtime_env(env);
         self.apply_inbound_debounce_env(env);
+        self.apply_wallet_policy_env(env);
         self.apply_observability_env(env);
         self.apply_embedding_env(env);
         self.apply_update_env(env);

@@ -87,6 +87,27 @@ pub(crate) fn config_from_toml_str(contents: &str) -> anyhow::Result<Config> {
             < 14;
     crate::config::migrations::retire_cloud_provider_type::rewrite_document(&mut document)?;
     crate::config::migrations::retire_configured_agents::rewrite_document(&mut document);
+    if let Some(backend @ ("firejail" | "bubblewrap")) = document
+        .get("sandbox")
+        .and_then(|sandbox| sandbox.get("backend"))
+        .or_else(|| {
+            document
+                .get("security")
+                .and_then(|security| security.get("sandbox"))
+                .and_then(|sandbox| sandbox.get("backend"))
+        })
+        .and_then(toml::Value::as_str)
+    {
+        anyhow::bail!(
+            "unsupported sandbox backend '{backend}': this build uses TinyBox for native sandboxing; configure 'landlock', 'docker', 'auto', or 'none'"
+        );
+    }
+    for section in retired_channel_sections(&document) {
+        tracing::warn!(
+            "[config] channels_config.{section} is no longer supported and will be removed on \
+             the next config save"
+        );
+    }
     reject_non_finite_floats(&document, &mut String::new())?;
     let json = serde_json::to_string(&document)?;
     let mut unknown_keys = Vec::new();
@@ -114,6 +135,19 @@ pub(crate) fn config_from_toml_str(contents: &str) -> anyhow::Result<Config> {
             .record_migrated_key("cloud_providers[].type");
     }
     Ok(config)
+}
+
+/// Channel sections TinyChannels no longer has a config for. Serde ignores
+/// them, so they load as nothing and vanish on the next save; name them
+/// (never their values) so the user knows why.
+fn retired_channel_sections(document: &toml::Value) -> Vec<&'static str> {
+    let Some(channels) = document.get("channels_config") else {
+        return Vec::new();
+    };
+    ["matrix", "webhook"]
+        .into_iter()
+        .filter(|section| channels.get(section).is_some())
+        .collect()
 }
 
 /// JSON has no NaN or infinity: `serde_json::to_value` turns them into null,

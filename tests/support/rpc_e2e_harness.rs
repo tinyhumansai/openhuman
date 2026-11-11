@@ -1127,7 +1127,7 @@ encrypt = false
 /// Seed a backend API key in the pre-login profile used by the RPC host.
 /// `write_min_config` writes both root and `users/local` config files, but the
 /// runtime resolves credentials from the latter before a user signs in.
-pub(crate) fn store_local_profile_api_key(openhuman_dir: &Path, api_origin: &str) {
+pub(crate) async fn store_local_profile_api_key(openhuman_dir: &Path, api_origin: &str) {
     let user_scoped_dir = openhuman_dir.join("users").join("local");
     let mut config = openhuman_core::config::Config {
         config_path: user_scoped_dir.join("config.toml"),
@@ -1137,11 +1137,9 @@ pub(crate) fn store_local_profile_api_key(openhuman_dir: &Path, api_origin: &str
     };
     config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).expect("create test workspace");
-    openhuman_core::security::credentials::api_key::store_api_key(
-        &config,
-        "th_live_rpc_e2e_test_key",
-    )
-    .expect("store test backend API key");
+    openhuman_core::credentials::api_key::store_api_key(&config, "th_live_rpc_e2e_test_key")
+        .await
+        .expect("store test backend API key");
 }
 
 pub(crate) fn write_min_config_with_local_ai_disabled(openhuman_dir: &Path, api_origin: &str) {

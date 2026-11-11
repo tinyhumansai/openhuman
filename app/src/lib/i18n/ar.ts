@@ -211,6 +211,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'الوكلاء والاستقلالية',
   'settings.devGroups.automationIntegrations': 'الأتمتة والتكاملات',
   'settings.tokenUsage.title': 'توفير الرموز',
+  'settings.secretGrant.title': 'هل تسمح لـ OpenHuman بفتح أسرارك المحفوظة؟',
+  'settings.secretGrant.subtitle':
+    'يحتاج حفظ هذا الإعداد إلى موافقتك لمرة واحدة لتشفيره. ارفض لإلغاء الحفظ.',
   'settings.tokenUsage.menuDesc': 'إعدادات الضغط ومقدار ما وفّرته من رموز ودولارات',
   'settings.tokenUsage.saving': 'جارٍ الحفظ…',
   'settings.tokenUsage.saved': 'تم الحفظ',
@@ -3791,6 +3794,10 @@ const messages: TranslationMap = {
     'نفّذ الوكيل الحد الأقصى من خطوات الأدوات في دورة واحدة دون أن ينتهي. يعني هذا عادةً أن إحدى الأدوات استمرت في الفشل (غالبًا بسبب حد للمعدل عند جلب صفحة ويب). يمكنك إعادة المحاولة بالسؤال نفسه في هذا الموضوع بعد زوال الحد.',
   'chat_error.turn_timeout':
     'تجاوزت هذه الدورة ميزانيتها الزمنية دون أن تنتهي وتم إيقافها حتى لا تتعطل. يعني هذا عادةً أن استدعاء أداة أو وكيلًا فرعيًا مفوَّضًا توقف عن الاستجابة. يمكنك إعادة المحاولة بسؤالك في هذا الموضوع.',
+  'chat_error.disk_full':
+    'القرص لديك ممتلئ، لذا تعذّر حفظ هذه المحادثة. حرّر بعض المساحة على القرص، ثم أعد إرسال رسالتك في هذا الموضوع.',
+  'chat_error.prompt_screened':
+    'احتجز فحص الأمان في OpenHuman هذه الرسالة، لذلك لم تُرسل إلى النموذج. إذا كانت تقتبس تعليمات موجهة إلى مساعد (من صفحة ويب أو بريد إلكتروني مثلًا)، فاحذفها وحاول مرة أخرى. وإذا كانت الرسائل العادية تُحتجز أيضًا، فقد تكون وحدة الأمان غير متاحة: أعد تشغيل OpenHuman وحاول مرة أخرى.',
   'chat_error.empty_response':
     'أعاد النموذج ردًا فارغًا. يُرجى إعادة المحاولة. إذا استمر ذلك، فجرّب نموذجًا آخر أو راجع إعداده في الاتصالات ← مفاتيح API ← LLM.',
   'chat_error.chat_template_rejected':
@@ -4266,6 +4273,9 @@ const messages: TranslationMap = {
     'تم رفض الوصول إلى الميكروفون. اسمح به من إعدادات النظام ثم حاول مرة أخرى.',
   'voice.live.error.micUnavailable': 'لا يتوفر ميكروفون.',
   'voice.live.error.connection': 'تعذّر الاتصال بالوكيل الصوتي.',
+  'voice.live.error.insufficientCredits':
+    'يحتاج الصوت المباشر إلى رصيد إضافي. أضف رصيدًا للمتابعة.',
+  'voice.live.error.paidPlanRequired': 'يتطلب الصوت المباشر خطة مدفوعة. قم بالترقية للمتابعة.',
   'voice.live.toolRunning': 'جارٍ تشغيل {name}',
   'voice.live.toolOk': 'اكتمل {name}',
   'voice.live.toolFailed': 'فشل {name}',
@@ -4508,11 +4518,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'سجن العمليات المسروقة',
   'settings.sandbox.backendHint.bubblewrap': 'أماكن أسماء مستخدمي الوزن الخفيف',
   'settings.sandbox.backendHint.none': 'تشغيل الأدوات مباشرة، موحدة',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'جرد الأدوات',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'إجمالي الأدوات',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'الأدوات المفعّلة',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'أدوات MCP عبر stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'أدوات JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'حالة السياسة',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'مستوى الاستقلالية',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'مساحة العمل فقط',
@@ -4995,6 +5000,53 @@ const messages: TranslationMap = {
   'settings.layout.corners.subtle': 'خفيف',
 
   'settings.layout.corners.round': 'مستدير',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'تشخيص السياسات غير مضمّن في هذا النظام الأساسي.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'سياسة الأمان النشطة',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'الاستقلالية',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'مساحة العمل فقط',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'الحد الأقصى للإجراءات في الساعة',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': 'طلب الموافقة للمخاطر المتوسطة',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'حظر الأوامر عالية المخاطر',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'الأوامر المسموح بها',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': 'لا توجد أوامر مسموح بها صراحةً.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'السياسة',
+  'settings.approvalHistory.judgeScores':
+    'النية {intent} · قابلية التراجع {reversible} · تسريب البيانات {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'من الذاكرة المؤقتة',
+  'settings.approvalHistory.judgeExpires': 'تنتهي الصلاحية {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'الأدوات المسموح بها دائمًا',
+  'keyring.settings.toolTrustDescription':
+    'يمكن تشغيل هذه الأدوات دون طلب موافقة ضمن نطاق الأمان هذا.',
+  'keyring.settings.toolTrustLoading': 'جارٍ تحميل الأدوات المسموح بها…',
+  'keyring.settings.toolTrustLoadFailed': 'تعذّر تحميل الأدوات المسموح بها.',
+  'keyring.settings.toolTrustRevokeFailed': 'تعذّر إلغاء الإذن لهذه الأداة.',
+  'keyring.settings.toolTrustEmpty': 'لا توجد أدوات مسموح بها دائمًا.',
+  'keyring.settings.toolTrustRetry': 'إعادة المحاولة',
+  'keyring.settings.toolTrustRevoke': 'إلغاء',
+  'keyring.settings.toolTrustRevoking': 'جارٍ الإلغاء…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'طلب الوصول إلى سلسلة المفاتيح',
+  'keyring.operation.description':
+    'يطلب TinySecurity الوصول إلى عنصر واحد في سلسلة المفاتيح. راجع العملية قبل اتخاذ القرار.',
+  'keyring.operation.access': 'الوصول',
+  'keyring.operation.requester': 'مقدم الطلب',
+  'keyring.operation.origin': 'المصدر',
+  'keyring.operation.purpose': 'الغرض',
+  'keyring.operation.name': 'عنصر سلسلة المفاتيح',
+  'keyring.operation.access.read': 'قراءة',
+  'keyring.operation.access.write': 'كتابة',
+  'keyring.operation.access.delete': 'حذف',
+  'keyring.operation.allow': 'السماح مرة واحدة',
+  'keyring.operation.deny': 'رفض',
+  'keyring.operation.submitting': 'جارٍ الإرسال…',
+  'keyring.operation.expires': 'ينتهي الطلب خلال {seconds} ثانية.',
+  'keyring.operation.error': 'تعذر إرسال قرارك. ربما انتهت صلاحية الطلب.',
 };
 
 export default messages;

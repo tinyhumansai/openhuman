@@ -723,6 +723,7 @@ async fn json_rpc_web_chat_custom_chat_provider_with_auth_none_omits_auth_header
             &loaded_config,
             0.0,
         )
+        .await
         .expect("custom auth-none model should build");
     let direct = model
         .invoke(

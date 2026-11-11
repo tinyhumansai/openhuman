@@ -9,8 +9,8 @@ use log::{info, warn};
 use serde_json::Value;
 
 use crate::agent::session_host::OpenHumanSessionHost;
-use crate::security::turn_origin::{with_origin, AgentTurnOrigin};
-use tinyagents_harness::progress::AgentProgress;
+use crate::core::runtime::turn_origin::{with_origin, AgentTurnOrigin};
+use crate::progress::AgentProgress;
 
 use super::chat_delivery::{VOICE_CHAT_CLIENT_ID, VOICE_CHAT_THREAD_ID};
 use super::prompt::messages_to_history_pairs;
@@ -101,6 +101,7 @@ async fn build_voice_agent(
 ) -> Result<OpenHumanSessionHost, String> {
     let config = ctx.load_config().await?;
     let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, &config, "orchestrator")
+        .await
         .map_err(|e| format!("orchestrator build failed: {e}"))?;
     agent.set_event_context(format!("voice_{correlation_id}"), "voice_agent");
     // Isolate the voice transcript namespace from the chat orchestrator so a

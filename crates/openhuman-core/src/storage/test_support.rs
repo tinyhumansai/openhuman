@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-#[cfg(feature = "storage-sqlite")]
 use crate::storage::block_on_anyhow;
 use crate::storage::StorageBackend;
 
@@ -132,7 +131,6 @@ impl Drop for InstalledBackendGuard {
 /// as the fixture is retained. Use it for persistence, conditional-write,
 /// fence, and import-claim tests; the TSD memory backend does not emulate those
 /// capabilities.
-#[cfg(feature = "storage-sqlite")]
 pub struct SqliteBackend {
     _directory: tempfile::TempDir,
     /// The actual SQLite backend opened from [`Self::url`].
@@ -143,7 +141,6 @@ pub struct SqliteBackend {
 
 /// Opens an isolated on-disk SQLite backend for tests that need its real
 /// cross-process conditions or durable state.
-#[cfg(feature = "storage-sqlite")]
 pub fn sqlite_backend() -> anyhow::Result<SqliteBackend> {
     let directory = tempfile::tempdir()?;
     let url = format!("sqlite:{}", directory.path().join("storage").display());
@@ -152,7 +149,6 @@ pub fn sqlite_backend() -> anyhow::Result<SqliteBackend> {
 
 /// Opens a SQLite backend at `url`, retaining `directory` for the lifetime of
 /// the returned backend fixture.
-#[cfg(feature = "storage-sqlite")]
 pub fn sqlite_backend_in(
     directory: tempfile::TempDir,
     url: impl Into<String>,

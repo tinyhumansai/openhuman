@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn dispatch_scope_uses_explicit_origin_without_mutating_shared_context() {
     let ctx = ctx("/tmp/origin-scope");
-    let origin = crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+    let origin = crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
         sender_name: None,
         channel: "test".into(),
         sender: Some("sender".into()),
@@ -15,7 +15,7 @@ async fn dispatch_scope_uses_explicit_origin_without_mutating_shared_context() {
     CoreContext::scope_with_turn_origin(ctx.clone(), Some(origin), async {
         assert!(matches!(
             CoreContext::current_turn_origin(),
-            Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+            Some(crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
         ));
     })
     .await;
@@ -26,7 +26,7 @@ async fn dispatch_scope_uses_explicit_origin_without_mutating_shared_context() {
 #[tokio::test]
 async fn missing_child_origin_inherits_bound_external_authority() {
     let ctx = ctx("/tmp/origin-inheritance");
-    let external = crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+    let external = crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
         sender_name: None,
         channel: "test".into(),
         sender: None,
@@ -40,7 +40,7 @@ async fn missing_child_origin_inherits_bound_external_authority() {
         CoreContext::scope_with_turn_origin(parent, None, async {
             assert!(matches!(
                 CoreContext::current_turn_origin(),
-                Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+                Some(crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
             ));
         })
         .await;
@@ -50,7 +50,7 @@ async fn missing_child_origin_inherits_bound_external_authority() {
 
 #[tokio::test]
 async fn explicit_origin_scope_bridges_legacy_and_core_context_without_cross_talk() {
-    use crate::security::turn_origin::{self, AgentTurnOrigin};
+    use crate::core::runtime::turn_origin::{self, AgentTurnOrigin};
 
     let run = |workspace: &'static str, channel: &'static str| async move {
         let context = ctx(workspace);
@@ -92,7 +92,7 @@ async fn explicit_origin_scope_bridges_legacy_and_core_context_without_cross_tal
 
 #[tokio::test]
 async fn bound_external_authority_wins_over_legacy_trusted_automation() {
-    use crate::security::turn_origin::{self, AgentTurnOrigin, TrustedAutomationSource};
+    use crate::core::runtime::turn_origin::{self, AgentTurnOrigin, TrustedAutomationSource};
 
     CoreContext::scope(ctx("/tmp/origin-priority"), async {
         turn_origin::with_origin(
@@ -142,8 +142,8 @@ async fn bound_external_authority_wins_over_legacy_trusted_automation() {
 
 #[tokio::test]
 async fn concurrent_channel_turns_keep_tenant_agent_thread_and_policy_isolated() {
+    use crate::core::runtime::turn_origin::{self, AgentTurnOrigin};
     use crate::core::runtime::{ContextOverlay, DomainSet};
-    use crate::security::turn_origin::{self, AgentTurnOrigin};
 
     let barrier = Arc::new(tokio::sync::Barrier::new(2));
     let run = |label: &'static str, barrier: Arc<tokio::sync::Barrier>| async move {
@@ -215,13 +215,13 @@ async fn concurrent_channel_turns_keep_tenant_agent_thread_and_policy_isolated()
 async fn scoped_spawn_does_not_invent_missing_turn_authority() {
     CoreContext::scope(ctx("/tmp/origin-missing"), async {
         let child = crate::core::runtime::DispatchCtx::ambient()
-            .spawn(async { crate::security::turn_origin::current() })
+            .spawn(async { crate::core::runtime::turn_origin::current() })
             .await
             .unwrap();
         assert!(child.is_none());
     })
     .await;
-    assert!(crate::security::turn_origin::current().is_none());
+    assert!(crate::core::runtime::turn_origin::current().is_none());
 }
 
 /// Regression: an embedded agent's turn scopes the agent's own derived context
@@ -232,9 +232,9 @@ async fn scoped_spawn_does_not_invent_missing_turn_authority() {
 async fn a_turn_origin_survives_a_change_of_context() {
     let outer = ctx("/tmp/origin-survives-outer");
     let inner = ctx("/tmp/origin-survives-inner");
-    let origin = crate::security::turn_origin::AgentTurnOrigin::TrustedAutomation {
+    let origin = crate::core::runtime::turn_origin::AgentTurnOrigin::TrustedAutomation {
         job_id: "flow".into(),
-        source: crate::security::turn_origin::TrustedAutomationSource::Workflow {
+        source: crate::core::runtime::turn_origin::TrustedAutomationSource::Workflow {
             require_approval: true,
         },
     };
@@ -242,7 +242,7 @@ async fn a_turn_origin_survives_a_change_of_context() {
         CoreContext::scope(inner.clone(), async {
             assert!(matches!(
                 CoreContext::current_turn_origin(),
-                Some(crate::security::turn_origin::AgentTurnOrigin::TrustedAutomation { .. })
+                Some(crate::core::runtime::turn_origin::AgentTurnOrigin::TrustedAutomation { .. })
             ));
             // It is the inner context that is scoped (its own state), not the outer.
             assert!(CoreContext::current()
@@ -265,14 +265,14 @@ async fn a_turn_origin_survives_a_change_of_context() {
 async fn a_contexts_own_origin_wins_over_the_enclosing_turns() {
     let outer = ctx("/tmp/origin-own-outer");
     let inner = ctx("/tmp/origin-own-inner");
-    let own = crate::security::turn_origin::AgentTurnOrigin::Cli;
-    let enclosing = crate::security::turn_origin::AgentTurnOrigin::DirectChat;
+    let own = crate::core::runtime::turn_origin::AgentTurnOrigin::Cli;
+    let enclosing = crate::core::runtime::turn_origin::AgentTurnOrigin::DirectChat;
     let inner = inner.derive_channel_turn(None, Some(own));
     CoreContext::scope_with_turn_origin(outer, Some(enclosing), async {
         CoreContext::scope(inner, async {
             assert!(matches!(
                 CoreContext::current_turn_origin(),
-                Some(crate::security::turn_origin::AgentTurnOrigin::Cli)
+                Some(crate::core::runtime::turn_origin::AgentTurnOrigin::Cli)
             ));
         })
         .await;

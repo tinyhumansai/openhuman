@@ -24,7 +24,7 @@ assembled. It is called by the session builder
 (`channels/runtime/startup/start_channels.rs`). The order of work:
 
 ```text
- Config, SecurityPolicy, AuditLogger, RuntimeAdapter, action_dir
+ Config, SecurityPolicy, AuditSink, RuntimeAdapter, action_dir
         |
         v
  host `node` / `python3` commands used through shell
@@ -69,7 +69,7 @@ to its `DomainGroup`, by prefix for families that have one (`wallet_`,
 track the registrations.
 
 `default_tools` and `default_tools_with_runtime` build a minimal registry
-(`shell`, `file_read`, `file_write`) with a disabled audit logger. They are
+(`shell`, `file_read`, `file_write`) with a disabled audit sink. They are
 for tests and the lightweight CLI surface.
 
 ### Orchestrator tools

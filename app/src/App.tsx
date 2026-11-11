@@ -19,6 +19,7 @@ import CommandProvider from './components/commands/CommandProvider';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import KeyringConsentOverlay from './components/keyring/KeyringConsentOverlay';
+import KeyringOperationApprovalOverlay from './components/keyring/KeyringOperationApprovalOverlay';
 import AppSidebar from './components/layout/shell/AppSidebar';
 import RootShellLayout from './components/layout/shell/RootShellLayout';
 import { SidebarSlotProvider } from './components/layout/shell/SidebarSlot';
@@ -145,6 +146,7 @@ function App() {
                               <SecurityBanner />
                               {!onMobile && <AppUpdatePrompt />}
                               <KeyringConsentOverlay />
+                              <KeyringOperationApprovalOverlay />
                               <AnnouncementGate />
                             </ServiceBlockingGate>
                           </CommandProvider>
@@ -263,7 +265,10 @@ export function AppShellDesktop() {
 
   return (
     <SidebarSlotProvider>
-      <div className="relative h-screen flex flex-col overflow-hidden">
+      <div
+        data-app-focus-fallback
+        tabIndex={-1}
+        className="relative h-screen flex flex-col overflow-hidden">
         <AppBackground />
         <div className="relative z-10 flex-1 min-h-0 flex flex-col overflow-hidden">
           {chromeless ? (

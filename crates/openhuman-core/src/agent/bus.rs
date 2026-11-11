@@ -22,11 +22,11 @@ use tokio::sync::mpsc;
 
 use crate::config::MultimodalConfig;
 use crate::core::bus::BUS;
+use crate::core::runtime::turn_origin::{self, AgentTurnOrigin};
 use crate::progress::AgentProgress;
 use crate::security::prompt_injection::{
-    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+    enforce_prompt_input_in, PromptEnforcementAction, PromptEnforcementContext,
 };
-use crate::security::turn_origin::{self, AgentTurnOrigin};
 use tinyagents_session::transcript::TranscriptMessage;
 use tinytools::Tool;
 
@@ -230,7 +230,8 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
         .find(|msg| msg.role.eq_ignore_ascii_case("user"))
         .map(|msg| msg.content.as_str())
     {
-        let decision = enforce_prompt_input(
+        let decision = enforce_prompt_input_in(
+            &crate::core::runtime::DispatchCtx::ambient(),
             user_prompt,
             PromptEnforcementContext {
                 source: "agent.bus.run_turn",
@@ -238,7 +239,8 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
                 user_id: Some(channel_name.as_str()),
                 session_id: target_agent_id.as_deref(),
             },
-        );
+        )
+        .await;
         if !matches!(decision.action, PromptEnforcementAction::Allow) {
             tracing::warn!(
                 channel = %channel_name,
@@ -356,6 +358,7 @@ async fn handle_agent_run_turn_on_large_stack(
     req: AgentTurnRequest,
 ) -> Result<AgentTurnResponse, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
+    let dispatch = crate::core::runtime::DispatchCtx::ambient();
     let handle = std::thread::Builder::new()
         .name("agent-run-turn-test".to_string())
         // Match the CI test runtime's stack: LLVM instrumentation expands
@@ -366,7 +369,7 @@ async fn handle_agent_run_turn_on_large_stack(
                 .enable_all()
                 .build()
                 .expect("build agent run_turn test runtime");
-            let result = runtime.block_on(handle_agent_run_turn(req));
+            let result = runtime.block_on(dispatch.enter(handle_agent_run_turn(req)));
             let _ = tx.send(result);
         })
         .map_err(|error| format!("failed to spawn large-stack agent handler: {error}"))?;
