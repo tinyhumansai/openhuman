@@ -47,7 +47,10 @@ async fn assert_runtime_configuration() {
             enabled: false,
             ..Default::default()
         })
-        .secrets(openhuman_embed::config::SecretsConfig { encrypt: false })
+        .secrets(openhuman_embed::config::SecretsConfig {
+            encrypt: false,
+            unattended_unlock: false,
+        })
         .learning(openhuman_embed::LearningSettings {
             build_beliefs_every: 21,
             learnings_limit: 3,
