@@ -231,6 +231,21 @@ pub fn state_dir_from_config(config: &Config) -> PathBuf {
         .map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
+/// Whether `config` is the runtime config for the credential directory
+/// `state_dir` stored with `encrypt` — the same directory and the same
+/// encryption setting.
+fn config_owns_state_dir(config: &Config, state_dir: &Path, encrypt: bool) -> bool {
+    state_dir_from_config(config) == state_dir && config.secrets.encrypt == encrypt
+}
+
+/// The current dispatch's embedder config, only when it owns the credential
+/// directory `state_dir` stored with `encrypt`. A different ambient tenant
+/// never supplies cipher or keyring authority for another directory.
+pub(super) fn owning_embedder_config(state_dir: &Path, encrypt: bool) -> Option<Config> {
+    crate::core::runtime::CoreContext::current_embedder_config()
+        .filter(|config| config_owns_state_dir(config, state_dir, encrypt))
+}
+
 /// The files holding OpenHuman's own credentials for `config`, at the paths
 /// their stores write: the encrypted keyring (`secrets.enc`), the auth
 /// profiles, the HTTP credentials and the account config. A path may not
