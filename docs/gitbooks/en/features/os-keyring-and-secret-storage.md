@@ -140,7 +140,8 @@ normal desktop install) the setting is ignored, a warning is logged, and a
 person still approves each unlock. A key variable that is set but unusable
 (missing file, malformed value) also does not count. The check is on where the
 key came from, not on the kind of host: any host whose operator supplies the key
-and sets the option unlocks unattended.
+and sets the option unlocks unattended. A SaaS core ignores the setting: its users approve
+the unlock in chat.
 
 The host still goes through the same one-time approval; it approves the request
 itself instead of waiting. Each unattended unlock is logged under
