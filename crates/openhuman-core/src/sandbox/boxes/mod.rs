@@ -42,7 +42,10 @@ pub use bus_driver::BusBoxDriver;
 pub use files::{read_file_in, write_file_in, MAX_FILE_BYTES};
 pub use registry::BoxRegistry;
 pub(crate) use registry::BOX_WORKDIR;
-pub use types::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, RegistryLimits};
+pub use types::{
+    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxRetention, BoxSettings, RegistryLimits,
+    RetainPolicy, AGENT37_WORKDIR, MAX_IDLE_SLEEP_SECS, MIN_IDLE_SLEEP_SECS, OPENSHELL_WORKDIR,
+};
 
 use super::types::SandboxExecResult;
 use crate::config::{Config, OpenShellRuntimeConfig};
