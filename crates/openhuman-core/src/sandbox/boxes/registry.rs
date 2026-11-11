@@ -36,6 +36,7 @@ use tokio::time::Instant;
 
 use sha2::{Digest, Sha256};
 
+use super::cleanup::{spawn_detached, Cleanups, Detached};
 use super::{
     BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, OwnerScope, RegistryLimits,
     Retention,
@@ -65,13 +66,14 @@ const TIMED_OUT_EXIT: i32 = 124;
 pub(crate) const REAP_EVERY_AT_MOST: Duration = Duration::from_secs(30);
 
 /// Who an entry's box is for: the tenant within its scope.
-type Owner = (OwnerScope, Tenant);
+pub(super) type Owner = (OwnerScope, Tenant);
 
 /// One live box per [`Tenant`] and [`OwnerScope`], over a [`BoxDriver`].
 pub struct BoxRegistry<D: BoxDriver> {
     driver: Arc<D>,
     limits: RegistryLimits,
     entries: Mutex<HashMap<Owner, Entry>>,
+    cleanups: Arc<Cleanups>,
     reaper: Once,
 }
 
@@ -85,6 +87,10 @@ struct Entry {
 struct Slot {
     /// Held while the box is created, so concurrent first commands make one.
     create_gate: tokio::sync::Mutex<()>,
+    /// Held while a command runs in the box, so commands on one box run one
+    /// at a time. A caller waiting here has armed nothing, so giving up while
+    /// it waits never closes the box under the command that holds the gate.
+    exec_gate: tokio::sync::Mutex<()>,
     state: Mutex<SlotState>,
 }
 
@@ -117,12 +123,22 @@ impl Slot {
         true
     }
 
-    /// Drop `resource` if it is still the slot's box.
-    fn forget(&self, resource: &str) {
+    /// Give up `resource` as the slot's box, returning its cleanup (already
+    /// pending). `None` when the slot no longer owns it: it was retired, so
+    /// the retirement took the box and its cleanup, or it was given up
+    /// already. A stale command must not then close a replacement's box.
+    fn surrender(
+        &self,
+        resource: &str,
+        cleanups: &Arc<Cleanups>,
+        owner: &Owner,
+    ) -> Option<Detached> {
         let mut state = self.state();
-        if state.resource.as_deref() == Some(resource) {
-            state.resource = None;
+        if state.resource.as_deref() != Some(resource) {
+            return None;
         }
+        state.resource = None;
+        Some(cleanups.detach(owner.clone(), resource.to_owned()))
     }
 
     /// Retire the slot and hand back its box to close.
@@ -154,6 +170,11 @@ impl<D: BoxDriver> Drop for Lease<'_, D> {
 struct Running<D: BoxDriver> {
     driver: Arc<D>,
     retained: bool,
+    cleanups: Arc<Cleanups>,
+    owner: Owner,
+    /// Captured while the command is armed: a cancelled command may be dropped
+    /// outside any runtime context, and its box must still be let go of.
+    runtime: tokio::runtime::Handle,
     slot: Arc<Slot>,
     resource: Option<String>,
 }
@@ -170,20 +191,22 @@ impl<D: BoxDriver> Drop for Running<D> {
         let Some(resource) = self.resource.take() else {
             return;
         };
-        self.slot.forget(&resource);
         tracing::debug!(
             resource = %resource,
             retained = self.retained,
             "[sandbox:box] command cancelled; letting go of its box"
         );
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        let Some(detached) = self.slot.surrender(&resource, &self.cleanups, &self.owner) else {
+            tracing::debug!("[sandbox:box] the box was already let go of; nothing to clean up");
             return;
         };
-        let driver = Arc::clone(&self.driver);
-        let retained = self.retained;
-        // A cleanup of a box this registry no longer tracks, by id; it acts
-        // under no tenant's context, so it carries none.
-        runtime.spawn(async move { let_go_with(driver.as_ref(), retained, &resource).await });
+        // The box is let go of on a task of its own; the handle is not needed.
+        drop(spawn_detached(
+            &self.driver,
+            self.retained,
+            &self.runtime,
+            detached,
+        ));
     }
 }
 
@@ -200,6 +223,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
             driver,
             limits,
             entries: Mutex::new(HashMap::new()),
+            cleanups: Arc::new(Cleanups::default()),
             reaper: Once::new(),
         })
     }
@@ -236,15 +260,21 @@ impl<D: BoxDriver> BoxRegistry<D> {
         let lease = self
             .check_out((settings.owner_scope.clone(), tenant.clone()))
             .await?;
+        // One command at a time per box: a command queued behind another arms
+        // nothing until it runs, so cancelling it cannot close the box the
+        // running command is using.
+        let slot = Arc::clone(&lease.slot);
+        let _turn = slot.exec_gate.lock().await;
         let mut replaced = false;
         loop {
-            let resource = self
-                .resource_for(&lease.owner, &lease.slot, settings)
-                .await?;
+            let resource = self.resource_for(&lease.owner, &slot, settings).await?;
             let running = Running {
                 driver: Arc::clone(&self.driver),
                 retained: self.limits.retain.is_some(),
-                slot: Arc::clone(&lease.slot),
+                cleanups: Arc::clone(&self.cleanups),
+                owner: lease.owner.clone(),
+                runtime: tokio::runtime::Handle::current(),
+                slot: Arc::clone(&slot),
                 resource: Some(resource.clone()),
             };
             let outcome = self.run(&resource, settings, request).await;
@@ -256,16 +286,20 @@ impl<D: BoxDriver> BoxRegistry<D> {
                         timeout_secs = whole_seconds(request.timeout),
                         "[sandbox:box] box did not answer by the deadline; letting it go"
                     );
-                    lease.slot.forget(&resource);
-                    self.let_go(&resource).await;
+                    if let Some(detached) = slot.surrender(&resource, &self.cleanups, &lease.owner)
+                    {
+                        self.let_go_all(vec![detached]).await;
+                    }
                     return Ok(backstop_timed_out(request.timeout));
                 }
                 Err(BoxError::UnknownResource) => {
                     // "Gone" is inferred after a failed exec, so the box may
                     // still exist on the gateway: let go of it rather than
                     // leak it (a retained box is only forgotten).
-                    lease.slot.forget(&resource);
-                    self.let_go(&resource).await;
+                    if let Some(detached) = slot.surrender(&resource, &self.cleanups, &lease.owner)
+                    {
+                        self.let_go_all(vec![detached]).await;
+                    }
                     if replaced {
                         return Err(BoxError::UnknownResource);
                     }
@@ -283,9 +317,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
     pub async fn reap(&self, now: Instant) -> usize {
         let idle = self.take_idle(&mut self.entries(), now);
         let reaped = idle.len();
-        for resource in idle {
-            self.let_go(&resource).await;
-        }
+        self.let_go_all(idle).await;
         if reaped > 0 {
             tracing::debug!(
                 reaped,
@@ -300,29 +332,44 @@ impl<D: BoxDriver> BoxRegistry<D> {
     /// retained). A command still running in one fails rather than starting
     /// another box.
     pub async fn release(&self, tenant: &Tenant) {
-        let mut resources = Vec::new();
-        self.entries().retain(|(_, owner), entry| {
+        let mut detached = Vec::new();
+        self.entries().retain(|(scope, owner), entry| {
             if owner != tenant {
                 return true;
             }
-            resources.extend(entry.slot.retire());
+            let key = (scope.clone(), owner.clone());
+            detached.extend(
+                entry
+                    .slot
+                    .retire()
+                    .map(|resource| self.cleanups.detach(key.clone(), resource)),
+            );
             false
         });
-        for resource in resources {
-            self.let_go(&resource).await;
-        }
+        self.let_go_all(detached).await;
+        // Cleanups begun earlier for this tenant (a command that gave up) are
+        // waited for too, so none outlives the release.
+        self.cleanups
+            .settle_matching(|(_, owner)| owner == tenant)
+            .await;
     }
 
     /// Let go of every box: closed, or forgotten when retained.
     pub async fn shutdown(&self) {
-        let resources: Vec<String> = self
+        let detached: Vec<Detached> = self
             .entries()
             .drain()
-            .filter_map(|(_, entry)| entry.slot.retire())
+            .filter_map(|(owner, entry)| {
+                entry
+                    .slot
+                    .retire()
+                    .map(|resource| self.cleanups.detach(owner, resource))
+            })
             .collect();
-        for resource in resources {
-            self.let_go(&resource).await;
-        }
+        self.let_go_all(detached).await;
+        // Cleanups already pending (a command that gave up) finish before
+        // shutdown returns, so no box is left open once the runtime ends.
+        self.cleanups.settle_matching(|_| true).await;
     }
 
     /// Start the background reaper, once; it stops when the registry drops.
@@ -355,13 +402,16 @@ impl<D: BoxDriver> BoxRegistry<D> {
     /// gives up while reaped boxes are let go of still ends it.
     async fn check_out(&self, owner: Owner) -> Result<Lease<'_, D>, BoxError> {
         let (held, reaped) = self.hold(&owner, Instant::now());
+        // Every reaped box is scheduled before anything is awaited, so
+        // cancelling this call cannot leave one unclosed.
+        let cleanups = self.schedule(reaped);
         let lease = held.map(|slot| Lease {
             registry: self,
             owner,
             slot,
         });
-        for resource in reaped {
-            self.let_go(&resource).await;
+        for handle in cleanups {
+            self.log_cleanup(handle.await);
         }
         lease.ok_or_else(|| {
             tracing::warn!(
@@ -375,13 +425,13 @@ impl<D: BoxDriver> BoxRegistry<D> {
     /// Count a command against `tenant`'s entry, making the entry when there
     /// is room (after reaping idle boxes if there is not). Returns the slot,
     /// or `None` at capacity, and the reaped boxes to close.
-    fn hold(&self, owner: &Owner, now: Instant) -> (Option<Arc<Slot>>, Vec<String>) {
+    fn hold(&self, owner: &Owner, now: Instant) -> (Option<Arc<Slot>>, Vec<Detached>) {
         let mut entries = self.entries();
         let mut reaped = Vec::new();
         if !entries.contains_key(owner) && entries.len() >= self.limits.max_live {
             reaped = self.take_idle(&mut entries, now);
             if entries.len() >= self.limits.max_live && self.limits.retain.is_some() {
-                reaped.extend(take_least_recently_used(&mut entries));
+                reaped.extend(take_least_recently_used(&mut entries, &self.cleanups));
             }
             if entries.len() >= self.limits.max_live {
                 return (None, reaped);
@@ -414,14 +464,19 @@ impl<D: BoxDriver> BoxRegistry<D> {
     }
 
     /// Remove idle entries and return their boxes to close.
-    fn take_idle(&self, entries: &mut HashMap<Owner, Entry>, now: Instant) -> Vec<String> {
+    fn take_idle(&self, entries: &mut HashMap<Owner, Entry>, now: Instant) -> Vec<Detached> {
         let ttl = self.limits.idle_ttl;
         let mut resources = Vec::new();
-        entries.retain(|_, entry| {
+        entries.retain(|owner, entry| {
             let idle =
                 entry.in_flight == 0 && now.saturating_duration_since(entry.last_used) >= ttl;
             if idle {
-                resources.extend(entry.slot.retire());
+                resources.extend(
+                    entry
+                        .slot
+                        .retire()
+                        .map(|resource| self.cleanups.detach(owner.clone(), resource)),
+                );
             }
             !idle
         });
@@ -434,7 +489,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
     /// retried as a disposable box.
     async fn resource_for(
         &self,
-        (scope, tenant): &Owner,
+        owner: &Owner,
         slot: &Slot,
         settings: &BoxSettings,
     ) -> Result<String, BoxError> {
@@ -445,6 +500,10 @@ impl<D: BoxDriver> BoxRegistry<D> {
         if let Some(resource) = slot.current()? {
             return Ok(resource);
         }
+        // A box let go of for this owner may still be closing; a new one made
+        // now could adopt the same instance, so wait for it first.
+        self.cleanups.settle(owner).await;
+        let (scope, tenant) = owner;
         let retention: Option<Retention> = self
             .limits
             .retain
@@ -456,7 +515,8 @@ impl<D: BoxDriver> BoxRegistry<D> {
         );
         let resource = self.driver.create(settings, retention.as_ref()).await?;
         if !slot.store(&resource) {
-            self.let_go(&resource).await;
+            let detached = self.cleanups.detach(owner.clone(), resource);
+            self.let_go_all(vec![detached]).await;
             return Err(BoxError::Released);
         }
         tracing::debug!(resource = %resource, "[sandbox:box] box ready");
@@ -486,26 +546,32 @@ impl<D: BoxDriver> BoxRegistry<D> {
 
     /// Let go of a box this registry no longer tracks: forget a retained one
     /// (its backend keeps it, asleep), close any other. A failure is logged.
-    async fn let_go(&self, resource: &str) {
-        let_go_with(self.driver.as_ref(), self.limits.retain.is_some(), resource).await;
+    /// The cleanup runs on its own task and is awaited here, so a caller
+    /// dropped meanwhile still leaves the cleanup to finish.
+    /// Spawn the cleanups of detached boxes, each on its own task. Must be
+    /// called from within the runtime.
+    fn schedule(&self, detached: Vec<Detached>) -> Vec<tokio::task::JoinHandle<()>> {
+        let runtime = tokio::runtime::Handle::current();
+        let retained = self.limits.retain.is_some();
+        detached
+            .into_iter()
+            .map(|detached| spawn_detached(&self.driver, retained, &runtime, detached))
+            .collect()
     }
-}
 
-/// Let go of `resource` through `driver`: forget it when `retained`, close it
-/// otherwise. A failure is logged.
-async fn let_go_with<D: BoxDriver>(driver: &D, retained: bool, resource: &str) {
-    let outcome = if retained {
-        driver.forget(resource).await
-    } else {
-        driver.close(resource).await
-    };
-    if let Err(error) = outcome {
-        tracing::warn!(
-            resource = %resource,
-            retained,
-            error = %error,
-            "[sandbox:box] letting go of a box failed"
-        );
+    /// Let go of detached boxes and wait for each cleanup to finish. They are
+    /// all scheduled before the first await, so a caller dropped meanwhile
+    /// still leaves every cleanup to run.
+    async fn let_go_all(&self, detached: Vec<Detached>) {
+        for handle in self.schedule(detached) {
+            self.log_cleanup(handle.await);
+        }
+    }
+
+    fn log_cleanup(&self, outcome: Result<(), tokio::task::JoinError>) {
+        if let Err(error) = outcome {
+            tracing::warn!(%error, "[sandbox:box] a box cleanup task ended abnormally");
+        }
     }
 }
 
@@ -562,13 +628,17 @@ fn backstop_timed_out(timeout: Duration) -> SandboxExecResult {
 /// Remove the least recently used entry with no command in flight and
 /// return its box to let go of. Only a retaining registry does this: its box
 /// is forgotten, not deleted, so the tenant finds it again next time.
-fn take_least_recently_used(entries: &mut HashMap<Owner, Entry>) -> Option<String> {
+fn take_least_recently_used(
+    entries: &mut HashMap<Owner, Entry>,
+    cleanups: &Arc<Cleanups>,
+) -> Option<Detached> {
     let owner = entries
         .iter()
         .filter(|(_, entry)| entry.in_flight == 0)
         .min_by_key(|(_, entry)| entry.last_used)
         .map(|(owner, _)| owner.clone())?;
-    entries.remove(&owner).and_then(|entry| entry.slot.retire())
+    let resource = entries.remove(&owner)?.slot.retire()?;
+    Some(cleanups.detach(owner, resource))
 }
 
 /// The opaque key a retaining backend keeps `tenant`'s box under within

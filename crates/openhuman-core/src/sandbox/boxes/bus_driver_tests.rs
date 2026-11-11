@@ -261,3 +261,69 @@ fn a_reservation_kept_after_create_answers_is_not_abandoned() {
     AbandonGuard::new("r-1", |_| abandoned.set(true)).keep();
     assert!(!abandoned.get());
 }
+
+#[test]
+fn a_call_with_modules_disabled_keeps_the_configuration_cleanups_use() {
+    let mut enabled = config_in("/enabled");
+    enabled.modules.enabled = true;
+    let driver = BusBoxDriver::new(enabled, BoxBackend::Agent37);
+
+    let mut disabled = config_in("/disabled");
+    disabled.modules.enabled = false;
+    let own = driver.config(&ModuleConfig::new(&disabled));
+    assert_eq!(
+        own.workspace_dir, disabled.workspace_dir,
+        "the call itself keeps its own"
+    );
+
+    // A later cleanup, outside any call, must still reach the module with
+    // the configuration that has it enabled.
+    assert_eq!(
+        driver.config(&ModuleConfig::default()).workspace_dir,
+        config_in("/enabled").workspace_dir
+    );
+}
+
+#[test]
+fn a_failed_create_closes_its_reservation() {
+    let abandoned = std::cell::RefCell::new(Vec::new());
+    let guard = AbandonGuard::new("r-1".to_owned(), |resource| {
+        abandoned.borrow_mut().push(resource);
+    });
+
+    let result = settle_create(guard, Err("create refused".to_owned()));
+
+    assert_eq!(result, Err(BoxError::Driver("create refused".to_owned())));
+    assert_eq!(*abandoned.borrow(), vec!["r-1".to_owned()]);
+}
+
+#[test]
+fn a_created_box_keeps_its_reservation_and_is_returned() {
+    let abandoned = std::cell::Cell::new(false);
+    let guard = AbandonGuard::new("r-1".to_owned(), |_| abandoned.set(true));
+
+    let result = settle_create(guard, Ok(info("ready")));
+
+    assert_eq!(result, Ok("r-1".to_owned()));
+    assert!(!abandoned.get());
+}
+
+#[test]
+fn a_box_is_cleaned_up_with_the_configuration_it_was_created_under() {
+    let driver = BusBoxDriver::new(config_in("/created"), BoxBackend::Agent37);
+    let created_under = driver.config(&ModuleConfig::default());
+    driver.remember("box-0", &created_under);
+
+    // A later call replaces the most recent configuration.
+    driver.config(&ModuleConfig::new(&config_in("/later")));
+
+    assert_eq!(
+        driver.config_of("box-0").workspace_dir,
+        config_in("/created").workspace_dir
+    );
+    assert_eq!(
+        driver.config_of("box-9").workspace_dir,
+        config_in("/later").workspace_dir,
+        "a box never recorded falls back to the most recent configuration"
+    );
+}

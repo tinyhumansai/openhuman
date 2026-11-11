@@ -14,8 +14,10 @@
 //!   refused, never sent to a shared box. Boxes are also kept per
 //!   [`OwnerScope`]: the active workspace (which is per signed-in user) and,
 //!   on agent37, `[runtime.agent37] retention_namespace`, hashed. Equal
-//!   tenants of two users, two hosts or two deployments sharing one agent37
-//!   key therefore never share a box.
+//!   tenants of two users or two hosts never share a box. Two deployments
+//!   share a box only when they share an agent37 key, tenant and workspace
+//!   path *and* leave `retention_namespace` blank; distinct nonblank
+//!   namespaces keep them apart.
 //! - **Created once, reused, let go of.** Concurrent first commands make one
 //!   box. A box idle for the registry's TTL is let go of by a background
 //!   reaper, and `max_live` caps the boxes held at once.
@@ -44,6 +46,7 @@
 
 #[cfg(feature = "modules")]
 mod bus_driver;
+mod cleanup;
 mod files;
 mod registry;
 mod types;

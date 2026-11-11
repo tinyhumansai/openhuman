@@ -856,7 +856,7 @@
     "type": "std::sync::OnceLock<ProcessRegistry>",
     "count": 1,
     "category": "B",
-    "reason": "The process's agent37 box registry holds one box per owner, keyed on the authenticated Tenant (profile and agent) together with an OwnerScope hashed from the active workspace and [runtime.agent37] retention_namespace; a call with no tenant is refused before the registry is touched, so no two tenants, signed-in users, or deployments share a box.",
+    "reason": "The process's agent37 box registry holds one box per owner, keyed on the authenticated Tenant (profile and agent) together with an OwnerScope hashed from the active workspace and [runtime.agent37] retention_namespace; a call with no tenant is refused before the registry is touched, so no two tenants or signed-in users share a box. Deployments share a box only when they share an agent37 key, tenant and workspace path with a blank retention_namespace; distinct nonblank namespaces keep them apart.",
     "verification": "sandbox/boxes/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/boxes/registry_retain_tests.rs: equal_tenants_in_two_scopes_never_share_a_retained_box; sandbox/boxes/mod_tests.rs: an_unscoped_command_creates_no_box"
   }
 ]

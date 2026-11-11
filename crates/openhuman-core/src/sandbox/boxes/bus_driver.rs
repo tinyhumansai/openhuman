@@ -11,9 +11,11 @@
 //! without deleting anything.
 //!
 //! Each call reaches the module with the configuration of the host call it
-//! serves (carried in [`BoxSettings::module`] and [`BoxExec::module`]), not of whichever call built the
-//! process's registry; work outside any call (the idle reaper, cleanups of
-//! cancelled commands) uses the most recent call's.
+//! serves (carried in [`BoxSettings::module`] and [`BoxExec::module`]), not
+//! of whichever call built the process's registry. A box's close or forget
+//! reaches the module with the configuration it was created under, so a
+//! later call cannot redirect the cleanup of an earlier box; work outside any
+//! call (the idle reaper) uses the most recent module-enabled call's.
 //!
 //! A reservation is closed if the create it was for is cancelled before the
 //! module answers ([`AbandonGuard`]), so a cancelled first command never
@@ -25,7 +27,8 @@
 //! the module no longer knows, or one that can no longer take commands, is
 //! [`BoxError::UnknownResource`], which the registry answers with a new box.
 
-use std::sync::{Arc, PoisonError, RwLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -60,8 +63,13 @@ const LIVE_STATES: &[&str] = &["ready", "running"];
 /// A [`BoxDriver`] over the TinyBox module, for one backend, reaching the
 /// module with the configuration of the call each step belongs to.
 pub struct BusBoxDriver {
-    /// The most recent call's configuration, for work outside any call.
+    /// The configuration of the most recent call that has modules enabled,
+    /// for work outside any call; the initial configuration until such a call.
     latest: RwLock<Arc<Config>>,
+    /// The configuration each box was created under, by resource id. Its
+    /// cleanup reaches the module with that configuration, not with whichever
+    /// call replaced `latest` since.
+    created_with: Mutex<HashMap<String, Arc<Config>>>,
     backend: BoxBackend,
 }
 
@@ -71,17 +79,43 @@ impl BusBoxDriver {
     pub fn new(config: Config, backend: BoxBackend) -> Self {
         Self {
             latest: RwLock::new(Arc::new(config)),
+            created_with: Mutex::new(HashMap::new()),
             backend,
         }
     }
 
-    /// The configuration for a step now: the call's own, which also becomes
-    /// the configuration for work outside any call, or the most recent
-    /// call's when the step brought none.
+    /// Record that `resource` was created under `config`, the configuration
+    /// its create was made with.
+    fn remember(&self, resource: &str, config: &Arc<Config>) {
+        self.created_with
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(resource.to_owned(), Arc::clone(config));
+    }
+
+    /// The configuration a step on `resource` reaches the module with: the
+    /// one it was created under, or the most recent call's for a box not
+    /// recorded.
+    fn config_of(&self, resource: &str) -> Arc<Config> {
+        self.created_with
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(resource)
+            .cloned()
+            .unwrap_or_else(|| self.config(&ModuleConfig::default()))
+    }
+
+    /// The configuration for a step now: the call's own, or the most recent
+    /// module-enabled call's when the step brought none. A call that has the
+    /// module switched off never becomes the latest: later cleanups would be
+    /// refused before they reach TinyBox and leave a box untracked.
     pub(crate) fn config(&self, module: &ModuleConfig) -> Arc<Config> {
         match module.get() {
             Some(config) => {
-                *self.latest.write().unwrap_or_else(PoisonError::into_inner) = Arc::clone(config);
+                if config.modules.enabled {
+                    *self.latest.write().unwrap_or_else(PoisonError::into_inner) =
+                        Arc::clone(config);
+                }
                 Arc::clone(config)
             }
             None => Arc::clone(&self.latest.read().unwrap_or_else(PoisonError::into_inner)),
@@ -133,6 +167,27 @@ fn close_abandoned(config: Arc<Config>, resource: contract::ResourceId) {
     });
 }
 
+/// Settle a create's answer against its reservation. A created box is handed
+/// to the registry and the reservation disarmed. A failed create keeps the
+/// reservation armed, so it is closed on drop: the module may have kept the
+/// allocation even though the create reported an error, and the registry holds
+/// no id for it to clean up later.
+pub(crate) fn settle_create<T, F: FnOnce(T)>(
+    reservation: AbandonGuard<T, F>,
+    created: Result<contract::ResourceInfo, String>,
+) -> Result<String, BoxError> {
+    match created {
+        Ok(info) => {
+            reservation.keep();
+            Ok(info.resource.0)
+        }
+        Err(error) => {
+            drop(reservation);
+            Err(BoxError::Driver(error))
+        }
+    }
+}
+
 #[async_trait]
 impl BoxDriver for BusBoxDriver {
     async fn create(
@@ -154,9 +209,9 @@ impl BoxDriver for BusBoxDriver {
         });
         let request = create_request(resource, self.backend, settings, retention);
         let created = tinybox::create(&config, request).await;
-        reservation.keep();
-        let info = created.map_err(BoxError::Driver)?;
-        Ok(info.resource.0)
+        let resource = settle_create(reservation, created)?;
+        self.remember(&resource, &config);
+        Ok(resource)
     }
 
     async fn exec(&self, resource: &str, exec: &BoxExec) -> Result<BoxOutput, BoxError> {
@@ -178,12 +233,16 @@ impl BoxDriver for BusBoxDriver {
     }
 
     async fn close(&self, resource: &str) -> Result<(), BoxError> {
-        tinybox::close(
-            &self.config(&ModuleConfig::default()),
-            contract::ResourceId(resource.to_owned()),
-        )
-        .await
-        .map_err(BoxError::Driver)
+        let config = self.config_of(resource);
+        let outcome = tinybox::close(&config, contract::ResourceId(resource.to_owned()))
+            .await
+            .map_err(BoxError::Driver);
+        // The box is no longer ours to track once closed or forgotten.
+        self.created_with
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(resource);
+        outcome
     }
 
     async fn forget(&self, resource: &str) -> Result<(), BoxError> {
