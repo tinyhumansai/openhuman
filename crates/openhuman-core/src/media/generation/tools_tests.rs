@@ -318,3 +318,33 @@ async fn media_tools_from_refuses_local_references_but_not_urls() {
         .unwrap();
     assert!(!result.is_error, "{result:?}");
 }
+
+/// `.` segments and symlinks are resolved before the floor and the roots are
+/// checked, and the resolved path is what is handed back for reading.
+#[test]
+fn reference_policy_resolves_path_aliases_before_the_floor() {
+    let home = tempfile::tempdir().unwrap();
+    let home = home.path().canonicalize().unwrap();
+    std::fs::create_dir_all(home.join(".cargo")).unwrap();
+    std::fs::write(home.join(".cargo/credentials.toml"), b"token").unwrap();
+    std::fs::create_dir_all(home.join("art")).unwrap();
+    std::fs::write(home.join("art/ref.png"), b"png").unwrap();
+    let allowed = Arc::new(Mutex::new(HashSet::new()));
+    let policy = reference_policy(&home, &home, allowed, floor());
+
+    let aliased = home.join(".cargo/./credentials.toml");
+    let refusal = policy(&aliased).expect_err("a '.' alias must not split a protected pair");
+    assert!(refusal.contains("protected"), "{refusal}");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(home.join(".cargo"), home.join("art/cfg")).unwrap();
+        let refusal = policy(&home.join("art/cfg/credentials.toml"))
+            .expect_err("a symlink into a credential store is refused");
+        assert!(refusal.contains("protected"), "{refusal}");
+    }
+    assert_eq!(
+        policy(&home.join("art/./ref.png")).unwrap(),
+        home.join("art/ref.png"),
+        "the checked, resolved path is the one read"
+    );
+}
