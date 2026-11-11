@@ -233,7 +233,7 @@ pub fn state_dir_from_config(config: &Config) -> PathBuf {
 /// Whether `config` is the runtime config for the credential directory
 /// `state_dir` stored with `encrypt` — the same directory and the same
 /// encryption setting.
-fn config_owns_state_dir(config: &Config, state_dir: &Path, encrypt: bool) -> bool {
+pub(super) fn config_owns_state_dir(config: &Config, state_dir: &Path, encrypt: bool) -> bool {
     state_dir_from_config(config) == state_dir && config.secrets.encrypt == encrypt
 }
 

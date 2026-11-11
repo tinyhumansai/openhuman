@@ -96,13 +96,17 @@ pub async fn get_api_key_read_only(
 /// name, `"api-key"` included; without the marker check, such a profile
 /// would be accepted here as a TinyHumans runtime key and its bearer sent to
 /// the managed backend as one.
+///
+/// `config` is the runtime config the caller was built for (the managed model's
+/// own); it binds the store only when it owns `state_dir` with the same
+/// encryption setting, exactly as the session lookup does through
+/// [`AuthService::for_state_dir`].
 pub async fn get_api_key_in(
     state_dir: &Path,
     encrypt: bool,
     config: Option<&Config>,
 ) -> Result<Option<String>> {
-    let _ = config;
-    get_api_key_with_service(&service_in(state_dir, encrypt)).await
+    get_api_key_with_service(&service_for(state_dir, encrypt, config)).await
 }
 
 async fn get_api_key_with_service(service: &AuthService) -> Result<Option<String>> {
@@ -113,10 +117,21 @@ async fn get_api_key_with_service(service: &AuthService) -> Result<Option<String
 }
 
 // Directory-only callers may reuse the exact runtime configuration that owns
-// that credential directory. A different ambient tenant never supplies cipher authority.
-// The API key is a document secret, so the owner binds the document store
-// (`config_document`), not the keyring-backed session store.
+// that credential directory: the caller's own config first, then the ambient
+// embedder config. A config for another directory, or with another encryption
+// setting, never supplies cipher authority. The API key is a document secret,
+// so the owner binds the document store (`config_document`), not the
+// keyring-backed session store.
 fn service_in(state_dir: &Path, encrypt: bool) -> AuthService {
+    service_for(state_dir, encrypt, None)
+}
+
+fn service_for(state_dir: &Path, encrypt: bool, config: Option<&Config>) -> AuthService {
+    if let Some(config) =
+        config.filter(|config| super::core::config_owns_state_dir(config, state_dir, encrypt))
+    {
+        return AuthService::config_document(config);
+    }
     match super::core::owning_embedder_config(state_dir, encrypt) {
         Some(config) => AuthService::config_document(&config),
         None => AuthService::new(state_dir, encrypt),
