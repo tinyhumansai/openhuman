@@ -316,7 +316,7 @@ pub(crate) async fn execute_resolved(
                     .await
                     .map(ShellRunOutcome::Finished)
             }
-            // The box has its own workspace (`/sandbox`); no host path or host
+            // The box has its own workspace (its work folder); no host path or host
             // variable is sent, only the request's own environment. A box cannot
             // hand back a running command, so the caller bounded `timeout`.
             SandboxBackendKind::OpenShell => {
@@ -325,7 +325,14 @@ pub(crate) async fn execute_resolved(
                     .map_err(|error| {
                         anyhow::anyhow!("Sandbox plan could not be consumed: {error}")
                     })?;
-                crate::sandbox::boxes::execute(ctx, &config, command, &extra_env, timeout)
+                crate::sandbox::boxes::execute(
+                    ctx,
+                    &config,
+                    crate::sandbox::boxes::BoxBackend::OpenShell,
+                    command,
+                    &extra_env,
+                    timeout,
+                )
                     .await
                     .map(ShellRunOutcome::Finished)
             }
@@ -374,7 +381,14 @@ async fn execute_unchecked(
                 .map(ShellRunOutcome::Finished)
         }
         SandboxBackendKind::OpenShell => {
-            crate::sandbox::boxes::execute(ctx, &config, command, &extra_env, timeout)
+            crate::sandbox::boxes::execute(
+                    ctx,
+                    &config,
+                    crate::sandbox::boxes::BoxBackend::OpenShell,
+                    command,
+                    &extra_env,
+                    timeout,
+                )
                 .await
                 .map(ShellRunOutcome::Finished)
         }
