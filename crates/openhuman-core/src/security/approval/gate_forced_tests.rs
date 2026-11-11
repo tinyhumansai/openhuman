@@ -368,7 +368,10 @@ async fn correlated_forced_secret_grant_parks_with_its_correlation_id() {
     let pending = wait_parked(&gate).await;
     assert_eq!(pending.tool_name, "native_secret_grant");
     assert_eq!(pending.tool_call_id.as_deref(), Some("corr-1"));
-    assert_eq!(stub_of(&gate).seen().last().unwrap().variant, Variant::Forced);
+    assert_eq!(
+        stub_of(&gate).seen().last().unwrap().variant,
+        Variant::Forced
+    );
     decide_parked(&gate, &pending.request_id, ApprovalDecision::ApproveOnce);
     assert!(matches!(handle.await.unwrap(), GateOutcome::Allow));
 }

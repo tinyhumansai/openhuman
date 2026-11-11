@@ -76,7 +76,11 @@ fn parked(tool: &str, tool_call_id: Option<&str>) -> crate::security::approval::
 #[test]
 fn only_the_park_this_call_raised_is_answered() {
     let tool = "native_secret_grant";
-    assert!(is_our_park(&parked(tool, Some("corr-ours")), tool, "corr-ours"));
+    assert!(is_our_park(
+        &parked(tool, Some("corr-ours")),
+        tool,
+        "corr-ours"
+    ));
     assert!(
         !is_our_park(&parked(tool, Some("corr-theirs")), tool, "corr-ours"),
         "another caller's grant"
