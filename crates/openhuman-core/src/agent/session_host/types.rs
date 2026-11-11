@@ -549,11 +549,12 @@ pub use super::builder_config::SessionHostBuilder;
 
 // DIAGSTORM: strip fields one at a time, logging the ctx count after each.
 impl OpenHumanSessionHost {
-    pub(crate) fn diagstorm_strip(mut self, count: &dyn Fn() -> Option<usize>) {
+    pub(crate) async fn diagstorm_strip(mut self, count: &(dyn Fn() -> Option<usize> + Sync)) {
         macro_rules! step {
             ($name:literal, $e:expr) => {{
                 let before = count();
                 $e;
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 log::warn!(
                     "DIAGSTORM strip {} before={:?} after={:?}",
                     $name,
