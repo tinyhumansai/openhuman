@@ -110,9 +110,9 @@ impl<T, F: FnOnce(T)> AbandonGuard<T, F> {
         }
     }
 
-    /// The step finished: take the value back, and abandon nothing.
-    pub(crate) fn keep(mut self) -> Option<T> {
-        self.armed.take().map(|(value, _)| value)
+    /// The step finished: abandon nothing.
+    pub(crate) fn keep(mut self) {
+        self.armed = None;
     }
 }
 
