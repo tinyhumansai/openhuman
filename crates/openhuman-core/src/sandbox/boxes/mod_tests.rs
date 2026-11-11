@@ -190,6 +190,7 @@ async fn without_module_support_execution_is_refused() {
     let error = execute(
         &crate::core::runtime::DispatchCtx::unbound(),
         &crate::config::Config::default(),
+        BoxBackend::OpenShell,
         "id",
         &HashMap::new(),
         Duration::from_secs(1),
