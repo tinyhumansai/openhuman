@@ -72,7 +72,8 @@ fn tenant_context(
     workspace: &Path,
     profile: &str,
 ) -> std::sync::Arc<crate::core::runtime::CoreContext> {
-    use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet, ToolGroups};
+    use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
+    use crate::tools::toolpacks::ToolGroups;
     let mut config = crate::config::Config::default();
     config.workspace_dir = workspace.to_path_buf();
     CoreContext::for_test_with_config(DomainSet::full(), config.clone()).derive_with(
