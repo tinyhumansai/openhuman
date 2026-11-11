@@ -19,6 +19,7 @@ fn settings() -> BoxSettings {
         cpu_millis: 1_000,
         memory_bytes: 256 * 1024 * 1024,
         workdir: "/sandbox".into(),
+        owner_scope: OwnerScope::default(),
     }
 }
 
@@ -475,7 +476,31 @@ async fn a_failed_close_is_logged_not_raised() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_abandoned_command_stops_holding_its_box() {
+async fn a_cancelled_command_is_stopped_by_closing_its_box() {
+    let driver = ScriptedDriver::new();
+    driver.then(ExecStep::Hang);
+    let boxes = registry(&driver, 10);
+
+    // The caller gives up while the command is still running in the box.
+    let abandoned = tokio::time::timeout(
+        Duration::from_secs(1),
+        boxes.exec(&user("u1"), &settings(), &request("sleep 3600")),
+    )
+    .await;
+    assert!(abandoned.is_err(), "the command was still running");
+    tokio::task::yield_now().await;
+
+    assert_eq!(driver.closed(), vec!["box-0"]);
+    assert_eq!(boxes.live(), 0);
+    boxes
+        .exec(&user("u1"), &settings(), &request("pwd"))
+        .await
+        .unwrap();
+    assert_eq!(driver.exec_resources(), vec!["box-0", "box-1"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_aborted_task_stops_its_command_and_holds_no_box() {
     let driver = ScriptedDriver::new();
     driver.then(ExecStep::Hang);
     let boxes = registry(&driver, 10);
@@ -493,9 +518,10 @@ async fn an_abandoned_command_stops_holding_its_box() {
 
     running.abort();
     assert!(running.await.unwrap_err().is_cancelled());
+    tokio::task::yield_now().await;
 
-    assert_eq!(boxes.reap(Instant::now() + TTL).await, 1);
     assert_eq!(driver.closed(), vec!["box-0"]);
+    assert_eq!(boxes.reap(Instant::now() + TTL).await, 0);
 }
 
 #[test]
@@ -510,4 +536,38 @@ fn output_bytes_become_lossy_text() {
     assert_eq!(result.stderr, "oops");
     assert!(!result.timed_out);
     assert_eq!(finished(ok_output()).stdout, "ok");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_queued_command_cancelled_while_another_runs_leaves_its_box_alone() {
+    let driver = ScriptedDriver::new();
+    driver.then(ExecStep::Hang);
+    let boxes = registry(&driver, 10);
+    let running = {
+        let boxes = Arc::clone(&boxes);
+        tokio::spawn(async move {
+            boxes
+                .exec(&user("u1"), &settings(), &request("sleep 3600"))
+                .await
+        })
+    };
+    while driver.exec_resources().is_empty() {
+        tokio::task::yield_now().await;
+    }
+
+    // A second command for the same tenant queues behind the first and gives up.
+    let queued = tokio::time::timeout(
+        Duration::from_secs(1),
+        boxes.exec(&user("u1"), &settings(), &request("pwd")),
+    )
+    .await;
+    assert!(queued.is_err(), "the queued command was still waiting");
+    tokio::task::yield_now().await;
+
+    assert!(
+        driver.closed().is_empty(),
+        "giving up in the queue must not close the box the running command uses"
+    );
+    assert_eq!(driver.exec_resources(), vec!["box-0"]);
+    running.abort();
 }

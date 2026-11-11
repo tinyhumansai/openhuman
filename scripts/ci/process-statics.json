@@ -720,16 +720,6 @@
     "verification": "credentials/profiles/keychain_tests.rs: nothing_reaches_the_keyring_while_it_is_held_back"
   },
   {
-    "file": "crates/openhuman-core/src/sandbox/openshell/mod.rs",
-    "scope": "",
-    "name": "REGISTRY",
-    "type": "std::sync::OnceLock<std::sync::Arc<BoxRegistry<BusBoxDriver>>>",
-    "count": 1,
-    "category": "B",
-    "reason": "The process's OpenShell box registry holds one box per tenant, keyed on the whole authenticated Tenant (profile and agent), never the profile alone; a call with no tenant is refused before the registry is touched, so no two tenants can share a box.",
-    "verification": "sandbox/openshell/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/openshell/mod_tests.rs: an_unscoped_command_creates_no_box"
-  },
-  {
     "file": "crates/openhuman-core/src/core/runtime/context_test_support.rs",
     "scope": "",
     "name": "NATIVE_FIXTURE_RUNTIME",
@@ -810,6 +800,16 @@
     "verification": "modules/security/test_host.rs: explicit_consent"
   },
   {
+    "file": "crates/openhuman-core/src/modules/security/unattended_unlock.rs",
+    "scope": "",
+    "name": "ASSUME_OPERATOR_KEY",
+    "type": "AtomicUsize",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only (`#[cfg(test)]`): never compiled into a product build. A counter of live guards that let a test treat the keyring key as operator-supplied without changing the process-wide keyring backend; it holds a count only, returns to zero when every guard drops, and matters only to a config that also sets `secrets.unattended_unlock`.",
+    "verification": "modules/security/unattended_unlock_tests.rs: a_default_config_is_interactive"
+  },
+  {
     "file": "crates/openhuman-core/src/security/prompt_injection/scan_port.rs",
     "scope": "",
     "name": "TEST_PROMPT_SCAN_PORT",
@@ -858,5 +858,35 @@
     "category": "D",
     "reason": "TinySecurity appends every audited permission on its single init audit stream; the host keeps a ledger of it per tenant, keyed by the tenant's approval scope id and backed by that tenant's own store, and routes each batch by the correlation event id it handed out, refusing any batch it did not correlate or that spans tenants.",
     "verification": "security/approval/native/secret_scope_tests.rs: two_tenants_permission_audits_never_land_in_each_others_store"
+  },
+  {
+    "file": "crates/openhuman-core/src/sandbox/boxes/mod.rs",
+    "scope": "",
+    "name": "OPENSHELL_REGISTRY",
+    "type": "std::sync::OnceLock<ProcessRegistry>",
+    "count": 1,
+    "category": "B",
+    "reason": "The process's OpenShell box registry holds one box per owner, keyed on the authenticated Tenant (profile and agent) together with an OwnerScope hashed from the active workspace; a call with no tenant is refused before the registry is touched, so no two tenants, signed-in users share a box.",
+    "verification": "sandbox/boxes/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/boxes/registry_retain_tests.rs: equal_tenants_in_two_scopes_never_share_a_retained_box; sandbox/boxes/mod_tests.rs: an_unscoped_command_creates_no_box"
+  },
+  {
+    "file": "crates/openhuman-core/src/sandbox/boxes/mod.rs",
+    "scope": "",
+    "name": "AGENT37_REGISTRY",
+    "type": "std::sync::OnceLock<ProcessRegistry>",
+    "count": 1,
+    "category": "B",
+    "reason": "The process's agent37 box registry holds one box per owner, keyed on the authenticated Tenant (profile and agent) together with an OwnerScope hashed from the active workspace and [runtime.agent37] retention_namespace; a call with no tenant is refused before the registry is touched, so no two tenants or signed-in users share a box. Deployments share a box only when they share an agent37 key, tenant and workspace path with a blank retention_namespace; distinct nonblank namespaces keep them apart.",
+    "verification": "sandbox/boxes/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/boxes/registry_retain_tests.rs: equal_tenants_in_two_scopes_never_share_a_retained_box; sandbox/boxes/mod_tests.rs: an_unscoped_command_creates_no_box"
+  },
+  {
+    "file": "crates/openhuman-core/src/sandbox/boxes/bus_driver.rs",
+    "scope": "",
+    "name": "CALL_CONFIG",
+    "type": "Arc<Config>",
+    "count": 1,
+    "category": "A",
+    "reason": "A task-local holding the configuration of the host call a TinyBox driver step serves, set only for the duration of that call's future on its own task; nothing is shared between tasks, tenants or workspaces, and it carries module configuration, not tenant data.",
+    "verification": "sandbox/boxes/bus_driver_tests.rs: each_call_reaches_the_module_with_its_own_configuration"
   }
 ]
