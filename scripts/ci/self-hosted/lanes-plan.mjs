@@ -598,7 +598,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             // One process per test (nextest): the app tests reach the
             // TinySecurity module, which keeps its first secret scope for the
             // life of a process, so tests sharing one process fail closed.
-            " && cargo llvm-cov nextest --profile ci --no-fail-fast --no-tests=fail --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
+            " && cargo llvm-cov nextest --config-file .config/nextest.toml --profile ci --no-fail-fast --no-tests=fail --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
             " --lcov --output-path ci-out/lcov/lcov-tauri.info",
         },
       ],
