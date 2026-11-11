@@ -1,9 +1,9 @@
 //! Profile-owned host tools and a shared memory engine stay within each tenant.
 //! One runtime and one test: SaaS operating mode is process-wide.
 
-mod common;
 #[path = "profile_host_capabilities/call_tools.rs"]
 mod call_tools;
+mod common;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
