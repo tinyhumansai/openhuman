@@ -251,7 +251,6 @@ impl std::fmt::Debug for ReferenceFloor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Refusal {
     Traversal,
-    Unresolved,
     FloorUnavailable,
     Protected,
     OutsideRoots,
@@ -261,7 +260,6 @@ impl Refusal {
     fn as_str(self) -> &'static str {
         match self {
             Self::Traversal => "parent_traversal",
-            Self::Unresolved => "unresolved",
             Self::FloorUnavailable => "floor_unavailable",
             Self::Protected => "protected_floor",
             Self::OutsideRoots => "outside_roots",
@@ -340,18 +338,16 @@ impl ReferenceFloor {
     }
 }
 
-/// `path` with its `.` segments and symlinks resolved. A path that does not
-/// exist (yet) is only normalized lexically: nothing can be read from it, and
-/// `..` is refused before this runs.
-fn resolve(path: &Path) -> Result<PathBuf, std::io::Error> {
-    match path.canonicalize() {
-        Ok(resolved) => Ok(resolved),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path
-            .components()
+/// `path` with its `.` segments and symlinks resolved. A path that cannot be
+/// resolved (missing, or unreadable to this process) is only normalized
+/// lexically: nothing can be read from it, and `..` is refused before this
+/// runs.
+fn resolve(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| {
+        path.components()
             .filter(|component| !matches!(component, Component::CurDir))
-            .collect()),
-        Err(error) => Err(error),
-    }
+            .collect()
+    })
 }
 
 /// Local reference files may be read and uploaded only from the action
@@ -388,18 +384,7 @@ pub(crate) fn reference_policy(
                 format!("reference path {} may not contain '..'", path.display()),
             );
         }
-        let resolved = match resolve(path) {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                return refuse(
-                    Refusal::Unresolved,
-                    format!(
-                        "reference path {} could not be resolved: {error}",
-                        path.display()
-                    ),
-                )
-            }
-        };
+        let resolved = resolve(path);
         if let Some((refusal, message)) = floor.refusal(path, &[path, &resolved]) {
             return refuse(refusal, message);
         }

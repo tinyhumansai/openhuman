@@ -127,24 +127,32 @@ async fn list_models_reports_both_catalogs_and_defaults() {
     );
 }
 
-/// TinySecurity's floor vocabulary in the shape `ProtectedFloor2` serves it
-/// (`tinysecurity-policy` `floor_vocabulary`), with mixed case to pin the
-/// case-insensitive match.
+/// A scripted stand-in for TinySecurity's `ProtectedPath2` answer over the
+/// names these tests use (credential stores, pairs, system roots, a Windows
+/// root under any drive), case-insensitive as the module is. What the module
+/// itself answers is pinned by `reference_policy_asks_tinysecurity_for_each_path`.
 fn floor() -> ReferenceFloor {
-    ReferenceFloor::enforced(tinysecurity_bus::ProtectedFloor2 {
-        components: vec![
-            ".ssh".into(),
-            ".gnupg".into(),
-            ".AWS".into(),
-            "keychains".into(),
-        ],
-        files: vec![".netrc".into(), ".git-credentials".into()],
-        pairs: vec![
-            [".cargo".into(), "credentials.toml".into()],
-            ["microsoft".into(), "credentials".into()],
-        ],
-        prefixes: vec!["/etc".into(), "/root".into(), "c:/windows".into()],
-    })
+    ReferenceFloor::Enforced(Arc::new(|path: &Path| {
+        let lowered = path
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .replace('\\', "/");
+        let segments: Vec<&str> = lowered.split('/').filter(|s| !s.is_empty()).collect();
+        let stores = [".ssh", ".gnupg", ".aws", "keychains", ".netrc", ".git-credentials"];
+        let pairs = [[".cargo", "credentials.toml"], ["microsoft", "credentials"]];
+        let windows_root = segments.len() > 1
+            && segments[0].len() == 2
+            && segments[0].ends_with(':')
+            && segments[1] == "windows";
+        Ok(segments.iter().any(|segment| stores.contains(segment))
+            || segments
+                .windows(2)
+                .any(|w| pairs.iter().any(|[a, b]| w[0] == *a && w[1] == *b))
+            || ["/etc", "/root"]
+                .iter()
+                .any(|root| lowered == *root || lowered.starts_with(&format!("{root}/")))
+            || windows_root)
+    }))
 }
 
 fn policy_over(
