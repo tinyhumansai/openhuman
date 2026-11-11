@@ -40,7 +40,7 @@ impl std::error::Error for SecurityError {}
 #[derive(Clone)]
 pub struct Client {
     object: SecurityProxy,
-    audit_scope: Option<crate::security::approval::native::SecretScope>,
+    audit_scope: Option<crate::security::approval::native::PermissionAudit>,
 }
 
 /// One admitted security API connection. Production calls travel through the
@@ -92,12 +92,27 @@ impl SecurityProxy {
     }
 }
 
+/// What a caller sees when the module *answered no* (its `approval denied`
+/// failure: a policy denial no person can override), as opposed to failing to
+/// answer. Both fail closed; the approval engine keeps them apart so a refused
+/// scheduled job or unlabelled call is explained as such.
+pub(crate) const MODULE_REFUSED: &str = "security module refused the call";
+
+/// The module's own text for a refusal (`tinysecurity-module` `adapter.rs`).
+const MODULE_REFUSAL_MESSAGE: &str = "approval denied";
+
 /// Callers see one generic refusal; the log keeps the module's redacted reason.
+/// The one distinction kept is a policy denial ([`MODULE_REFUSED`]) from any
+/// other failure.
 fn call_failed<E: std::fmt::Display>(error: E) -> String {
+    let text = error.to_string();
     tracing::debug!(
         "[security] module call failed: {}",
-        tinybus::error::redact_values(&error.to_string())
+        tinybus::error::redact_values(&text)
     );
+    if text == tinybus::Error::failed(MODULE_REFUSAL_MESSAGE).to_string() {
+        return MODULE_REFUSED.to_owned();
+    }
     "security module call failed".to_owned()
 }
 
@@ -117,9 +132,14 @@ impl Client {
             )
             .map_err(|_| "pinned security module proxy unavailable".to_owned())?;
         let object = SecurityProxy::callback(proxy);
-        let audit_scope = super::super::ops::security_secret_scope()
-            .await
+        // Audited permissions land on the module's init audit stream; the
+        // host keeps the calling tenant's share of it in the tenant's store.
+        let tenant = super::super::ops::security_tenant(config)
+            .map(|tenant| tenant.scope.clone())
             .ok_or_else(|| "security audit scope unavailable".to_owned())?;
+        let (subject, stream_id) = super::policy::init_audit_identity();
+        let audit_scope =
+            crate::security::approval::native::permission_audit(&tenant, subject, &stream_id);
         Ok(Self {
             object,
             audit_scope: Some(audit_scope),
@@ -162,92 +182,22 @@ impl Client {
             .correlation(generation)
             .await
             .map_err(SecurityError::Unavailable)?;
-        let response: tinysecurity_bus::AuditedResponse2<D> = self
+        let event_id = audit.event_id.clone();
+        let response: Result<tinysecurity_bus::AuditedResponse2<D>, String> = self
             .object
             .call_confidential(
                 member,
                 (tinysecurity_bus::AuditedRequest2 { request, audit },),
             )
-            .await
-            .map_err(SecurityError::Unavailable)?;
+            .await;
+        scope.settle(&event_id);
+        let response = response.map_err(SecurityError::Unavailable)?;
         if !response.audit.permitted || !response.audit.committed {
             return Err(SecurityError::Unavailable(
                 "native permission audit was not committed".into(),
             ));
         }
         Ok(response.decision)
-    }
-
-    /// Run a paired-device lifecycle operation inside TinySecurity.
-    ///
-    /// The operation is confidential because it may carry a handshake frame,
-    /// an opaque pairing capability, or a host event identifier.
-    pub async fn device_pairing2(
-        &self,
-        request: tinysecurity_bus::DevicePairingRequest2,
-    ) -> Result<tinysecurity_bus::DevicePairingResponse2, SecurityError> {
-        self.object
-            .call_confidential(
-                tinysecurity_bus::names::methods::DEVICE_PAIRING2,
-                (request,),
-            )
-            .await
-            .map_err(|error| SecurityError::Unavailable(error.to_string()))
-    }
-
-    /// Admit the exact native approval scope into TinySecurity's paired-device
-    /// owner. The module derives its secret and persistence bindings from the
-    /// scope already registered at initialization.
-    pub async fn register_device_pairing_scope2(
-        &self,
-        request: tinysecurity_bus::RegisterDevicePairingScopeRequest2,
-    ) -> Result<tinysecurity_bus::DevicePairingScopeReceipt2, SecurityError> {
-        self.object
-            .call_confidential(
-                tinysecurity_bus::names::methods::REGISTER_DEVICE_PAIRING_SCOPE2,
-                (request,),
-            )
-            .await
-            .map_err(|error| SecurityError::Unavailable(error.to_string()))
-    }
-
-    /// Start an audited HumanOnce review for one native device operation.
-    pub async fn evaluate_device2(
-        &self,
-        request: tinysecurity_bus::EvaluateDeviceRequest2,
-    ) -> Result<tinysecurity_bus::ApprovalRow2, SecurityError> {
-        self.object
-            .call_confidential(
-                tinysecurity_bus::names::methods::EVALUATE_DEVICE2,
-                (request,),
-            )
-            .await
-            .map_err(|error| SecurityError::Unavailable(error.to_string()))
-    }
-
-    /// Execute only the exact native device operation reviewed by TinySecurity.
-    pub async fn execute_device2(
-        &self,
-        request: tinysecurity_bus::ExecuteDeviceRequest2,
-    ) -> Result<tinysecurity_bus::DeviceResponse2, SecurityError> {
-        self.object
-            .call_confidential(
-                tinysecurity_bus::names::methods::EXECUTE_DEVICE2,
-                (request,),
-            )
-            .await
-            .map_err(|error| SecurityError::Unavailable(error.to_string()))
-    }
-
-    /// Seal or open one live tunnel frame using TinySecurity's opaque session.
-    pub async fn device_frame2(
-        &self,
-        request: tinysecurity_bus::DeviceFrameRequest2,
-    ) -> Result<tinysecurity_bus::DeviceFrameResponse2, SecurityError> {
-        self.object
-            .call_confidential(tinysecurity_bus::names::methods::DEVICE_FRAME2, (request,))
-            .await
-            .map_err(|error| SecurityError::Unavailable(error.to_string()))
     }
 
     /// Read effective settings and advertised capabilities from the module.
@@ -728,6 +678,9 @@ impl Client {
             .map_err(|error| SecurityError::Unavailable(error.to_string()))
     }
 }
+
+#[path = "client_device.rs"]
+mod device;
 
 #[path = "client_keyring.rs"]
 mod keyring;

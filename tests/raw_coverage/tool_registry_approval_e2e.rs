@@ -545,6 +545,8 @@ async fn approval_schema_handlers_validate_params_and_surface_empty_gate_state()
         vec![
             "list_pending",
             "list_recent_decisions",
+            "list_tool_trust",
+            "revoke_tool_trust",
             "decide",
             "get_gate_state",
             "preauthorize_flow"
@@ -822,11 +824,6 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         ExecutionOutcome::Aborted,
         Some("aborted after approval"),
     );
-    gate.record_execution(
-        "missing-gate-row",
-        ExecutionOutcome::Failure,
-        Some("missing row"),
-    );
     assert!(gate.pending_for_thread("approval-raw-thread").is_none());
 
     let duplicate_decide = rpc(
@@ -935,10 +932,18 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         auto_approved.0,
         openhuman_core::security::approval::GateOutcome::Allow
     ));
-    assert_eq!(
-        auto_approved.1, None,
-        "always-allowed tools should bypass persisted approvals"
+    // No prompt was parked for it. The engine still audits the automatic
+    // approval and hands back that row's id so the caller can close it with the
+    // terminal result.
+    assert!(
+        gate.pending_for_thread("approval-auto-thread").is_none(),
+        "always-allowed tools should bypass approval prompts"
     );
+    let auto_audit_id = auto_approved
+        .1
+        .as_deref()
+        .expect("an automatic approval is audited and its row id returned");
+    gate.record_execution(auto_audit_id, ExecutionOutcome::Success, None);
 
     live_policy::install(
         Arc::new(SecurityPolicy {
@@ -964,10 +969,14 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         )
         .await;
     assert!(matches!(live_policy_auto_approved.0, GateOutcome::Allow));
-    assert_eq!(live_policy_auto_approved.1, None);
     assert!(gate
         .pending_for_thread("approval-live-policy-thread")
         .is_none());
+    let live_audit_id = live_policy_auto_approved
+        .1
+        .as_deref()
+        .expect("an automatic approval is audited and its row id returned");
+    gate.record_execution(live_audit_id, ExecutionOutcome::Success, None);
 
     let gate_for_deny_task = gate.clone();
     let deny_task = tokio::spawn(async move {
@@ -1076,7 +1085,18 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         json!({}),
     )
     .await;
-    assert!(list_failure.get("error").is_some());
+    // Pending requests live in the gate's own memory, not the store, so
+    // listing them survives a blocked store (nothing is parked here).
+    assert!(
+        list_failure.get("error").is_none(),
+        "listing pending approvals does not touch the store: {list_failure}"
+    );
+    assert_eq!(
+        payload(&list_failure, "approval_list_pending blocked store")
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
 
     let recent_failure = rpc(
         &harness.rpc_base,
@@ -1117,15 +1137,51 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     )
     .await;
     match persist_failure.0 {
+        // The former "Approval gate could not persist the request" deny came
+        // from a document-store engine whose admission wrote the workspace
+        // storage dir. The TinySecurity engine keeps admission in the module
+        // (an admitted request in a blocked workspace parks, it does not
+        // fail), so the persistence failure that remains observable here is
+        // the terminal audit write above. It latches the gate closed: the next
+        // external-effect admission is denied before the engine is asked
+        // (`gate_intercept.rs` audit latch).
         GateOutcome::Deny { reason } => {
-            assert!(reason.contains("Approval gate could not persist the request"));
+            assert!(
+                reason.contains("approval audit is unavailable"),
+                "a refused terminal audit write must fail the next admission closed: {reason}"
+            );
         }
-        other => panic!("expected persistence failure deny, got {other:?}"),
+        other => panic!("expected the audit latch to deny, got {other:?}"),
     }
     assert_eq!(persist_failure.1, None);
     assert!(gate
         .pending_for_thread("approval-persist-failure-thread")
         .is_none());
+
+    // A terminal write for a row the gate never reserved is refused too, and
+    // the latch the blocked store set above holds: every later external-effect
+    // admission stays denied. Last, because it ends the gate's useful life in
+    // this process.
+    gate.record_execution(
+        "missing-gate-row",
+        ExecutionOutcome::Failure,
+        Some("missing row"),
+    );
+    match gate
+        .intercept(
+            &Default::default(),
+            "tools.web_search",
+            "tools.web_search(query=after-missing-row)",
+            json!({ "query": "after-missing-row" }),
+        )
+        .await
+    {
+        GateOutcome::Deny { reason } => assert!(
+            reason.contains("approval audit is unavailable"),
+            "a failed terminal audit write must latch the gate closed: {reason}"
+        ),
+        other => panic!("expected the audit latch to deny, got {other:?}"),
+    }
 
     harness.rpc_join.abort();
 }

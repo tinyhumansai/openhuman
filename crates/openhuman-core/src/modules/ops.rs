@@ -211,8 +211,18 @@ pub fn resolver(config: &Config) -> Resolver {
     })
 }
 
+/// The modules whose first admission must carry a host callback binding: the
+/// security module's, and the storage callback of the modules that persist
+/// through the host. Loading one without it (the generic search-path loader
+/// initializes with no binding) leaves it serving, but unreachable through the
+/// callback-bound `ensure_loaded` path: TinyBus refuses it as "already loaded
+/// without a callback binding" and every call answers `module unavailable`.
+/// Every list that names these modules derives from this one.
+pub(super) const CALLBACK_BOUND_MODULES: [&str; 4] =
+    ["tinysecurity", "tinymcp", "tinyeventqueues", "tinychannels"];
+
 fn requires_verified_local_callbacks(id: &str) -> bool {
-    matches!(id, "tinysecurity" | "tinymcp" | "tinyeventqueues")
+    CALLBACK_BOUND_MODULES.contains(&id)
 }
 
 /// The staged artifact the callback-bound module fixture loads in isolation.
@@ -290,27 +300,38 @@ pub(crate) async fn security_cipher_consumer(
     super::security::host_callbacks::cipher_consumer().await
 }
 
+/// `config`'s live runtime secret registration on the admitted TinySecurity.
 #[cfg(feature = "security-module")]
-pub(crate) async fn security_secret_backend(
-) -> Option<std::sync::Arc<super::security::secret_backend::SecretBackend>> {
-    super::security::host_callbacks::secret_backend().await
+pub(crate) fn security_tenant(
+    config: &Config,
+) -> Option<std::sync::Arc<super::security::host_callbacks::Tenant>> {
+    if let Some(tenant) = super::security::host_callbacks::tenant(config) {
+        return Some(tenant);
+    }
+    // The test host serves a fixture's bare config under the live scope.
+    #[cfg(all(
+        not(test),
+        any(feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    if let Some(live) = super::security::test_host::live_scope_config(config) {
+        return super::security::host_callbacks::tenant(&live);
+    }
+    None
 }
 
+/// The live tenant owning secret registration `registration_id`.
 #[cfg(feature = "security-module")]
-pub(crate) async fn security_secret_scope() -> Option<crate::security::approval::native::SecretScope>
-{
-    super::security::host_callbacks::secret_scope().await
+pub(crate) fn security_tenant_by_registration(
+    registration_id: &str,
+) -> Option<std::sync::Arc<super::security::host_callbacks::Tenant>> {
+    super::security::host_callbacks::tenant_by_registration(registration_id)
 }
 
-#[cfg(feature = "security-module")]
-pub(crate) async fn security_secret_registration_id() -> Option<String> {
-    super::security::host_callbacks::secret_registration_id().await
-}
-
-/// The secret key path the admitted TinySecurity serves, if it is admitted.
+/// A secret key path TinySecurity cannot serve without a restart: none, since
+/// every secret scope registers its own runtime registration on it.
 #[cfg(feature = "security-module")]
 pub(crate) async fn security_admitted_key_path() -> Option<PathBuf> {
-    super::security::host_callbacks::admitted_key_path().await
+    None
 }
 
 #[cfg(feature = "security-module")]
@@ -330,12 +351,8 @@ async fn ensure_loaded_with_security_callback(
     id: &str,
 ) -> Result<(), String> {
     let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
-    // Captured before the load is scheduled: if the caller's runtime is
-    // released while the detached load runs, the load must not record that
-    // runtime's scope as the module's owner.
-    let epoch = super::security::host_callbacks::scope_epoch();
     callback_load::detached(resolver, async move {
-        super::security::host_callbacks::ensure_loaded(&task_resolver, &config, &id, epoch).await
+        super::security::host_callbacks::ensure_loaded(&task_resolver, &config, &id).await
     })
     .await
 }
@@ -535,6 +552,25 @@ pub fn ensure_loaded_within<'a>(
     within: Option<Duration>,
 ) -> futures::future::BoxFuture<'a, Result<(), LoadError>> {
     Box::pin(async move {
+        // A fixture that built its own configuration (an approval gate over a
+        // bare `Config`) names a secret scope the live runtime does not hold.
+        // The test host serves it the scope the module is admitted with; this
+        // is the one place every route to the module passes, and it arms the
+        // synchronous adapters with the configuration used.
+        #[cfg(all(
+            not(test),
+            feature = "security-module",
+            any(feature = "e2e-test-support", feature = "test-keyring-consent")
+        ))]
+        let live = (id == super::security::MODULE_ID)
+            .then(|| super::security::test_host::live_scope_config(config))
+            .flatten();
+        #[cfg(all(
+            not(test),
+            feature = "security-module",
+            any(feature = "e2e-test-support", feature = "test-keyring-consent")
+        ))]
+        let config = live.as_ref().unwrap_or(config);
         let resolver = resolver(config);
         let result = if needs_storage_callback(id) {
             if let Some(component) = disabled_component(config, id) {

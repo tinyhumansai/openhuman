@@ -69,6 +69,12 @@ fn contract_names() -> Vec<(&'static str, &'static str, &'static str)> {
         tinyvoice_bus::names::BUS_NAME,
         tinyvoice_bus::names::OBJECT_PATH,
     ));
+    #[cfg(feature = "security-module")]
+    names.push((
+        "tinysecurity",
+        tinysecurity_bus::names::INTERFACE,
+        tinysecurity_bus::names::OBJECT_PATH,
+    ));
     #[cfg(feature = "hosting")]
     names.push((
         "tinyhosts",
@@ -115,11 +121,12 @@ fn a_drifted_contract_constant_is_reported_as_a_mismatch() {
     feature = "web3",
     feature = "voice",
     feature = "hosting",
-    feature = "inbound-queues"
+    feature = "inbound-queues",
+    feature = "security-module"
 ))]
 #[test]
-fn a_product_feature_build_carries_all_thirteen_records() {
-    assert_eq!(ALL.len(), 13);
+fn a_product_feature_build_carries_all_fourteen_records() {
+    assert_eq!(ALL.len(), 14);
     for id in [
         "tinycomputer",
         "tinysearch",
@@ -134,6 +141,7 @@ fn a_product_feature_build_carries_all_thirteen_records() {
         "tinyflows",
         "tinyhosts",
         "tinyeventqueues",
+        "tinysecurity",
     ] {
         assert!(find(id).is_some(), "{id} missing from the registry");
     }

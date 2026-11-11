@@ -9,6 +9,7 @@ use tiny_artifacts::{Author, Content};
 
 use super::artifacts_service;
 use super::artifacts_service_with_publisher;
+use super::SavedVersion;
 use crate::artifacts::files::FileRoots;
 use crate::security::approval::ApprovalChatContext;
 use crate::tools::per_call::{context as per_call_context, PerCallTool};
@@ -46,7 +47,6 @@ pub fn registered_tools(
     let mut tools: Vec<Box<dyn tinytools::Tool>> = Vec::new();
     {
         let (service, author) = (service.clone(), author.clone());
-        let staging = crate::artifacts::box_source::staging_dir(workspace_dir);
         tools.push(Box::new(PerCallTool::new(
             per_call_context,
             move |context| {
@@ -62,7 +62,6 @@ pub fn registered_tools(
                         context.dispatch,
                     )),
                     tenant,
-                    staging.clone(),
                 )
             },
         )));
@@ -72,7 +71,6 @@ pub fn registered_tools(
     ))));
     {
         let (service, author) = (service.clone(), author.clone());
-        let staging = crate::artifacts::box_source::staging_dir(workspace_dir);
         tools.push(Box::new(PerCallTool::new(
             per_call_context,
             move |context| {
@@ -87,7 +85,6 @@ pub fn registered_tools(
                         context.dispatch,
                     )),
                     tenant,
-                    staging.clone(),
                 )
             },
         )));
@@ -146,13 +143,4 @@ pub async fn save_operator_version(
         version: saved.version,
         saved: saved.appended,
     })
-}
-
-/// Result of [`save_operator_version`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub struct SavedVersion {
-    /// The newest version number after the call.
-    pub version: u32,
-    /// Whether a version was appended.
-    pub saved: bool,
 }

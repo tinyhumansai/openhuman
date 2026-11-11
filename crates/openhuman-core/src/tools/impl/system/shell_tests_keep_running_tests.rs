@@ -18,6 +18,7 @@ fn shell() -> ShellTool {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn a_long_command_yields_and_shell_process_follows_it_to_its_end() {
+    let _storage = native_shell_storage();
     let run = test_turn_run();
     let first = ToolExecutionContext::from_run_context(&run, CallId::new("c1"));
     let result = shell()
@@ -51,6 +52,7 @@ async fn a_long_command_yields_and_shell_process_follows_it_to_its_end() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn without_a_turn_a_command_runs_to_its_end() {
+    let _storage = native_shell_storage();
     let result = shell()
         .execute(json!({"command": "echo start; sleep 2; echo done", "yield_after_secs": 30}))
         .await
@@ -65,6 +67,7 @@ async fn without_a_turn_a_command_runs_to_its_end() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn yield_after_zero_waits_for_the_end() {
+    let _storage = native_shell_storage();
     let run = test_turn_run();
     let call = ToolExecutionContext::from_run_context(&run, CallId::new("c1"));
     let result = shell()
@@ -81,6 +84,7 @@ async fn yield_after_zero_waits_for_the_end() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn a_call_that_cannot_yield_comes_back_by_the_models_time() {
+    let _storage = native_shell_storage();
     // A deliberate wait does not yield, so the model's `timeout_secs` stops it
     // instead, as `timeout_secs` did before it yielded.
     let run = test_turn_run();
@@ -104,6 +108,7 @@ async fn a_call_that_cannot_yield_comes_back_by_the_models_time() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn a_failing_end_reads_like_a_failed_shell_call() {
+    let _storage = native_shell_storage();
     let run = test_turn_run();
     let call = ToolExecutionContext::from_run_context(&run, CallId::new("c1"));
     let yielded = shell()

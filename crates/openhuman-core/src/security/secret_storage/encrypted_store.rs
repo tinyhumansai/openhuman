@@ -163,24 +163,19 @@ impl SecretStore {
             .ok_or_else(|| anyhow::anyhow!("TinySecurity configuration is unavailable"))?;
         #[cfg(feature = "security-module")]
         {
-            // Load (or confirm) the module first: the scope, consumer,
-            // registration and identity below are read from the admitted
-            // module's state and are all `None` until it has been loaded, as
-            // in a fresh process whose first secret operation is this one.
+            // Admit the module first: the secret scope and everything below it
+            // exist only once TinySecurity is loaded, and a host may reach its
+            // first cipher call before anything else asked for the module.
             let client = crate::modules::security::client(config)
                 .await
                 .map_err(anyhow::Error::new)?;
-            let scope = crate::modules::ops::security_secret_scope()
-                .await
+            let tenant = crate::modules::ops::security_tenant(config)
                 .ok_or_else(|| anyhow::anyhow!("TinySecurity secret scope is unavailable"))?;
+            let scope = tenant.scope.clone();
+            let registration_id = tenant.ids.registration_id.clone();
             let consumer = crate::modules::ops::security_cipher_consumer()
                 .await
                 .ok_or_else(|| anyhow::anyhow!("TinySecurity cipher consumer is unavailable"))?;
-            let registration_id = crate::modules::ops::security_secret_registration_id()
-                .await
-                .ok_or_else(|| {
-                    anyhow::anyhow!("TinySecurity secret registration is unavailable")
-                })?;
             let binding_identity = crate::modules::ops::security_callback_identity()
                 .await
                 .ok_or_else(|| anyhow::anyhow!("TinySecurity callback identity is unavailable"))?;

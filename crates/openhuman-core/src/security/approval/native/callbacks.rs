@@ -53,9 +53,12 @@ pub(crate) async fn append(request: AuditSinkRequest2) -> Result<AuditSinkRespon
     // The batch names its subject only by the module's identifier hash, so the
     // stream the host assigned to the subject is what identifies it; the first
     // batch fixes how the stream's subject is spelled and later ones must repeat it.
-    let scope = by_stream(&request.stream_id)
-        .await
-        .ok_or("audit sink: unknown stream")?;
+    // A tenant's approval stream is known by its id; TinySecurity's shared
+    // init stream carries audited permissions, routed by their correlation.
+    let scope = match by_stream(&request.stream_id).await {
+        Some(scope) => scope,
+        None => super::route_permission_batch(&request).ok_or("audit sink: unknown stream")?,
+    };
     if !scope.audit_scope_matches(&request.scope) {
         tracing::warn!("{LOG} audit batch names another subject than its stream's");
         return Err("audit sink: the stream belongs to another subject".into());

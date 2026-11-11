@@ -68,12 +68,12 @@ async fn parse_callback_input_rejects_blank_and_missing_state() {
 async fn complete_openai_oauth_rejects_missing_pending_session() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = runtime()
-        .block_on(complete_openai_oauth(
-            &config,
-            "http://127.0.0.1:1455/auth/callback?code=fake&state=state",
-        ))
-        .unwrap_err();
+    let err = complete_openai_oauth(
+        &config,
+        "http://127.0.0.1:1455/auth/callback?code=fake&state=state",
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("no pending OAuth session"));
 }
 
@@ -82,7 +82,7 @@ async fn complete_openai_oauth_rejects_expired_pending_session() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let pending = pending::store(&config).unwrap();
-    runtime().block_on(async {
+    (async {
         pending
             .set(
                 "openai-oauth-pending",
@@ -105,19 +105,21 @@ async fn complete_openai_oauth_rejects_expired_pending_session() {
         .unwrap_err();
         assert!(err.contains("no pending OAuth session"));
         assert!(pending.get("openai-oauth-pending").await.unwrap().is_none());
-    });
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn start_openai_oauth_keeps_the_pending_session_in_the_secret_store_not_a_file() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let start = runtime().block_on(start_openai_oauth(&config)).unwrap();
+    let start = start_openai_oauth(&config).await.unwrap();
 
     assert!(!tmp.path().join("openai-oauth-pending.json").exists());
     let pending = pending::store(&config).unwrap();
-    let stored = runtime()
-        .block_on(pending.get("openai-oauth-pending"))
+    let stored = pending
+        .get("openai-oauth-pending")
+        .await
         .unwrap()
         .expect("the session is stored");
     let doc: serde_json::Value = serde_json::from_slice(&stored).unwrap();
@@ -144,12 +146,12 @@ async fn a_legacy_pending_file_started_before_the_upgrade_still_completes_its_fl
 
     // A wrong state is rejected as a mismatch, which only happens when the
     // legacy session was found.
-    let err = runtime()
-        .block_on(complete_openai_oauth(
-            &config,
-            "http://127.0.0.1:1455/auth/callback?code=fake&state=wrong",
-        ))
-        .unwrap_err();
+    let err = complete_openai_oauth(
+        &config,
+        "http://127.0.0.1:1455/auth/callback?code=fake&state=wrong",
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("state mismatch"), "{err}");
     assert_eq!(std::fs::read_to_string(&legacy).unwrap(), bytes);
 }
@@ -158,14 +160,12 @@ async fn a_legacy_pending_file_started_before_the_upgrade_still_completes_its_fl
 async fn complete_openai_oauth_rejects_state_mismatch() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let start = runtime().block_on(start_openai_oauth(&config)).unwrap();
+    let start = start_openai_oauth(&config).await.unwrap();
     let callback = format!(
         "http://127.0.0.1:1455/auth/callback?code=fake&state=not-{}",
         start.state
     );
-    let err = runtime()
-        .block_on(complete_openai_oauth(&config, &callback))
-        .unwrap_err();
+    let err = complete_openai_oauth(&config, &callback).await.unwrap_err();
     assert!(err.contains("state mismatch"));
 }
 
@@ -270,7 +270,7 @@ async fn persist_openai_oauth_token_stores_oauth_profile_with_metadata() {
         .and_then(|set| set.expires_at)
         .is_some());
 
-    let data = AuthProfilesStore::new(tmp.path(), false)
+    let data = AuthProfilesStore::new_with_config(tmp.path(), &config)
         .load()
         .await
         .unwrap();
@@ -298,7 +298,7 @@ async fn persist_openai_oauth_token_rejects_blank_access_token() {
         "expected missing access_token error, got: {err}"
     );
 
-    let data = AuthProfilesStore::new(tmp.path(), false)
+    let data = AuthProfilesStore::new_with_config(tmp.path(), &config)
         .load()
         .await
         .unwrap();
@@ -354,8 +354,11 @@ async fn import_codex_cli_auth_file_stores_oauth_profile_with_account_metadata()
     assert_eq!(credentials.access_token, access_token);
     assert_eq!(credentials.account_id.as_deref(), Some("acct_from_file"));
     assert_eq!(
-        lookup_key_for_slug("openai", &config).await.unwrap(),
-        access_token
+        lookup_openai_bearer_token(&config)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(access_token.as_str())
     );
 }
 
@@ -516,7 +519,7 @@ async fn inference_import_codex_cli_surfaces_error_when_auth_missing() {
 async fn openai_oauth_status_reports_token_profile_as_disconnected() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
     store
         .upsert_profile(
             AuthProfile::new_token(
@@ -537,9 +540,12 @@ async fn openai_oauth_status_reports_token_profile_as_disconnected() {
 
 #[tokio::test]
 async fn lookup_key_for_slug_prefers_api_key_over_oauth_for_openai() {
+    // `lookup_key_for_slug` reads through `crate::credentials` (the host port's
+    // store), so these fixtures write the profiles that store reads.
+    use crate::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), config.secrets.encrypt, &config);
 
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
@@ -567,6 +573,9 @@ async fn lookup_key_for_slug_prefers_api_key_over_oauth_for_openai() {
 
 #[tokio::test]
 async fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_rotation() {
+    // `lookup_key_for_slug` reads through `crate::credentials` (the host port's
+    // store), so these fixtures write the profiles that store reads.
+    use crate::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
     // #5353: routing keys on *which credential is stored*, not on comparing two
     // independently-resolved OAuth tokens. Near expiry each read refreshes the
     // token and OpenAI mints a new one, so the old `access_token == bearer_key`
@@ -579,7 +588,7 @@ async fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_ro
 
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), config.secrets.encrypt, &config);
     store
         .upsert_profile(
             AuthProfile::new_oauth(
@@ -650,7 +659,7 @@ async fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_ro
 async fn lookup_openai_bearer_token_uses_oauth_when_api_key_missing() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,
@@ -671,6 +680,9 @@ async fn lookup_openai_bearer_token_uses_oauth_when_api_key_missing() {
 
 #[tokio::test]
 async fn credits_gate_bypassed_with_oauth_only_credentials() {
+    // `lookup_key_for_slug` reads through `crate::credentials` (the host port's
+    // store), so these fixtures write the profiles that store reads.
+    use crate::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
     // #3767 regression: the per-tier credits-gate bypass chains through
     // route_has_usable_credentials → lookup_key_for_slug, which falls back to
     // the OpenAI OAuth token for the `openai` slug. Pin that OAuth-only
@@ -685,7 +697,7 @@ async fn credits_gate_bypassed_with_oauth_only_credentials() {
     // No credential yet → gate stays on.
     assert!(!role_bypasses_managed_credits("chat", &config).await);
 
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), config.secrets.encrypt, &config);
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,

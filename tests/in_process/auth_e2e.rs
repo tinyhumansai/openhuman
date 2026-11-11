@@ -1104,14 +1104,39 @@ async fn auth_remote_backend_bearer_only_paths_round_trip_with_a_handed_over_ses
 }
 
 
+/// A config that admits TinySecurity for a profile store rooted in `dir`.
+fn profile_store_config(dir: &Path) -> openhuman_core::config::Config {
+    openhuman_core::config::Config {
+        config_path: dir.join("config.toml"),
+        workspace_dir: dir.join("workspace"),
+        ..Default::default()
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn credentials_profile_store_public_api_persists_updates_and_recovers_bad_files() {
     let _lock = env_lock_async().await;
     let _keyring_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
     let tmp = tempdir().expect("tempdir");
     let state_dir = tmp.path().join("profiles");
-    let store = AuthProfilesStore::new(&state_dir, true);
+    let config = profile_store_config(tmp.path());
 
+    // Encrypting secrets needs the admitted TinySecurity cipher: a store built
+    // without a config fails closed rather than writing a secret it could not
+    // encrypt.
+    let refused = AuthProfilesStore::new(&tmp.path().join("no-config"), true)
+        .upsert_profile(
+            AuthProfile::new_token("openai", "refused", "sk-never-written".to_string()),
+            true,
+        )
+        .await
+        .expect_err("a config-less encrypting store must refuse to write secrets");
+    assert!(
+        format!("{refused:#}").contains("TinySecurity configuration is unavailable"),
+        "unexpected config-less refusal: {refused:#}"
+    );
+
+    let store = AuthProfilesStore::new_with_config(&state_dir, true, &config);
     assert_eq!(store.path(), state_dir.join("auth-profiles/secrets.enc"));
     let empty = store.load().await.expect("empty store load");
     assert!(empty.profiles.is_empty());
@@ -1230,7 +1255,7 @@ async fn credentials_profile_store_public_api_persists_updates_and_recovers_bad_
     std::fs::create_dir_all(&corrupt_dir).expect("create corrupt profile dir");
     let corrupt_path = corrupt_dir.join("auth-profiles.json");
     std::fs::write(&corrupt_path, "{ not valid json").expect("write corrupt profile store");
-    let corrupt_store = AuthProfilesStore::new(&corrupt_dir, true);
+    let corrupt_store = AuthProfilesStore::new_with_config(&corrupt_dir, true, &config);
     let recovered = corrupt_store
         .load().await
         .expect("corrupt profile store recovers");
@@ -1260,10 +1285,14 @@ async fn credentials_profile_store_public_api_persists_updates_and_recovers_bad_
         .to_string(),
     )
     .expect("write legacy profile store");
-    let legacy = AuthProfilesStore::new(&legacy_dir, true)
+    let legacy = AuthProfilesStore::new_with_config(&legacy_dir, true, &config)
         .load().await
         .expect("legacy schema 0 should normalize");
-    assert_eq!(legacy.schema_version, 1);
+    assert_eq!(legacy.schema_version, 2);
+    assert!(
+        !legacy_dir.join("auth-profiles.json").exists(),
+        "the legacy document is imported once and removed"
+    );
 
     let future_dir = tmp.path().join("future");
     std::fs::create_dir_all(&future_dir).expect("create future profile dir");
@@ -1278,7 +1307,7 @@ async fn credentials_profile_store_public_api_persists_updates_and_recovers_bad_
         .to_string(),
     )
     .expect("write future profile store");
-    let future_err = AuthProfilesStore::new(&future_dir, true)
+    let future_err = AuthProfilesStore::new_with_config(&future_dir, true, &config)
         .load().await
         .expect_err("future schema should fail");
     assert!(
@@ -1389,11 +1418,14 @@ async fn credentials_profile_store_recovers_dropped_entries_empty_files_and_date
 
     let default_profiles =
         openhuman_core::credentials::profiles::AuthProfilesData::default();
-    assert_eq!(default_profiles.schema_version, 1);
+    assert_eq!(default_profiles.schema_version, 2);
     assert!(default_profiles.profiles.is_empty());
 
     let empty_path_store = AuthProfilesStore::new(Path::new(""), false);
-    assert_eq!(empty_path_store.path(), Path::new("auth-profiles.json"));
+    assert_eq!(
+        empty_path_store.path(),
+        Path::new("auth-profiles").join("secrets.enc")
+    );
 
     let empty_dir = tmp.path().join("empty-file");
     std::fs::create_dir_all(&empty_dir).expect("create empty profile dir");
@@ -1457,14 +1489,24 @@ async fn credentials_profile_store_recovers_dropped_entries_empty_files_and_date
         mixed.active_profiles.get("gitlab").map(String::as_str),
         Some("gitlab:main")
     );
-    let rewritten: Value = serde_json::from_str(
-        &std::fs::read_to_string(mixed_dir.join("auth-profiles.json"))
-            .expect("read rewritten mixed profile store"),
-    )
-    .expect("rewritten mixed store should be json");
+    // The legacy document was imported into the encrypted store; a fresh
+    // store reading it back sees only the surviving entries.
+    assert!(!mixed_dir.join("auth-profiles.json").exists());
+    assert!(mixed_store.path().exists());
+    let reread = AuthProfilesStore::new(&mixed_dir, false)
+        .load().await
+        .expect("re-read the persisted mixed store");
     assert!(
-        rewritten.pointer("/profiles/legacy:bad-kind").is_none(),
-        "dropped profile should be purged from persisted store: {rewritten}"
+        !reread.profiles.contains_key("legacy:bad-kind"),
+        "dropped profile should be purged from persisted store"
+    );
+    assert!(!reread.active_profiles.contains_key("legacy"));
+    assert_eq!(
+        reread
+            .profiles
+            .get("gitlab:main")
+            .and_then(|profile| profile.token.as_deref()),
+        Some("plain-gitlab-token")
     );
 
     let invalid_datetime_dir = tmp.path().join("invalid-datetime");
@@ -1525,27 +1567,30 @@ async fn credentials_profile_store_recovers_dropped_entries_empty_files_and_date
         .to_string(),
     )
     .expect("write missing oauth secret fixture");
-    let missing_secret = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
-        .load().await
-        .expect("oauth profile missing access token should be dropped");
+    // Only a keyring-backed store can tell that the keyring holds no access
+    // token for this row; a keyring-less view must keep a possibly
+    // keyring-held OAuth row instead of dropping it.
+    let missing_secret_config = profile_store_config(&missing_oauth_secret_dir);
+    let missing_secret =
+        AuthProfilesStore::new_with_config(&missing_oauth_secret_dir, false, &missing_secret_config)
+            .load().await
+            .expect("oauth profile missing access token should be dropped");
     assert!(missing_secret.profiles.is_empty());
     assert!(missing_secret.active_profiles.is_empty());
-    let rewritten_missing_secret: Value = serde_json::from_str(
-        &std::fs::read_to_string(missing_oauth_secret_dir.join("auth-profiles.json"))
-            .expect("read rewritten missing oauth secret profile store"),
-    )
-    .expect("rewritten missing oauth secret store should be json");
+    assert!(!missing_oauth_secret_dir.join("auth-profiles.json").exists());
+    let reread_missing_secret =
+        AuthProfilesStore::new_with_config(&missing_oauth_secret_dir, false, &missing_secret_config)
+            .load().await
+        .expect("re-read the persisted missing oauth secret store");
     assert!(
-        rewritten_missing_secret
-            .pointer("/profiles/github:missing-access")
-            .is_none(),
-        "missing oauth secret profile should be purged from persisted store: {rewritten_missing_secret}"
+        !reread_missing_secret
+            .profiles
+            .contains_key("github:missing-access"),
+        "missing oauth secret profile should be purged from persisted store"
     );
     assert!(
-        rewritten_missing_secret
-            .pointer("/active_profiles/github")
-            .is_none(),
-        "active pointer to missing oauth secret profile should be purged: {rewritten_missing_secret}"
+        !reread_missing_secret.active_profiles.contains_key("github"),
+        "active pointer to missing oauth secret profile should be purged"
     );
 
     let public_api_dir = tmp.path().join("public-api-errors");
@@ -1569,7 +1614,8 @@ async fn credentials_profile_store_round_trips_oauth_secret_fields_after_backend
     let _keyring_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "encrypted_file");
     let tmp = tempdir().expect("tempdir");
     let state_dir = tmp.path().join("json-fallback");
-    let store = AuthProfilesStore::new(&state_dir, false);
+    let store =
+        AuthProfilesStore::new_with_config(&state_dir, true, &profile_store_config(tmp.path()));
     let profile = AuthProfile::new_oauth(
         "github",
         "json-fallback",
@@ -1587,20 +1633,23 @@ async fn credentials_profile_store_round_trips_oauth_secret_fields_after_backend
     store
         .upsert_profile(profile, true).await
         .expect("upsert oauth profile after backend selection");
-    let raw: Value = serde_json::from_str(
-        &std::fs::read_to_string(state_dir.join("auth-profiles.json"))
-            .expect("read persisted auth profiles"),
-    )
-    .expect("persisted auth profiles json");
-    let persisted_access_token = raw.pointer(&format!("/profiles/{profile_id}/access_token"));
+    assert!(store.path().exists(), "the encrypted profile document is written");
+    // A keyring-less, non-decrypting view shows what the document itself
+    // holds: a keyring-owned profile is withheld, a document-held one carries
+    // only ciphertext.
+    let document_view = AuthProfilesStore::new(&state_dir, false)
+        .load().await
+        .expect("read the persisted document without the keyring");
+    let persisted_access_token = document_view
+        .profiles
+        .get(&profile_id)
+        .and_then(|profile| profile.token_set.as_ref())
+        .map(|tokens| tokens.access_token.clone());
     assert!(
-        persisted_access_token.is_some_and(|value| {
-            value.is_null()
-                || value
-                    .as_str()
-                    .is_some_and(|secret| secret.starts_with("enc2:"))
-        }),
-        "persisted profile should either keychain-strip or encrypt access token: {raw}"
+        persisted_access_token
+            .as_deref()
+            .is_none_or(|secret| secret.starts_with("enc2:")),
+        "persisted profile should either keychain-strip or encrypt access token: {persisted_access_token:?}"
     );
 
     let loaded = store.load().await.expect("reload json fallback profile");
@@ -1616,7 +1665,7 @@ async fn credentials_profile_store_round_trips_oauth_secret_fields_after_backend
     let root_path_store = AuthProfilesStore::new(Path::new("/"), false);
     assert_eq!(
         root_path_store.path(),
-        Path::new("/").join("auth-profiles.json")
+        Path::new("/").join("auth-profiles").join("secrets.enc")
     );
 }
 
@@ -1627,21 +1676,36 @@ async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_det
     let _keyring_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
     let tmp = tempdir().expect("tempdir");
 
+    let config = profile_store_config(tmp.path());
+
+    // Two state directories with the same final component name the same
+    // keyring user, so a store under `seed/` can write the keyring entry a
+    // legacy document elsewhere then reads.
+    let hit_profile_id = "github:main";
+    let seed = AuthProfilesStore::new_with_config(
+        &tmp.path().join("seed").join("keychain-hit"),
+        true,
+        &config,
+    );
+    let mut seeded = AuthProfile::new_oauth(
+        "github",
+        "main",
+        TokenSet {
+            access_token: "kc-access".to_string(),
+            refresh_token: Some("kc-refresh".to_string()),
+            id_token: Some("kc-id".to_string()),
+            expires_at: None,
+            token_type: Some("Bearer".to_string()),
+            scope: Some("repo".to_string()),
+        },
+    );
+    seeded.id = hit_profile_id.to_string();
+    seed.upsert_profile(seeded, true)
+        .await
+        .expect("seed the keyring through a config-backed store");
+
     let hit_dir = tmp.path().join("keychain-hit");
     std::fs::create_dir_all(&hit_dir).expect("create keychain hit dir");
-    let hit_profile_id = "github:main";
-    openhuman_core::security::secret_storage::set(
-        "keychain-hit",
-        &format!("auth:{hit_profile_id}"),
-        &json!({
-            "access_token": "kc-access",
-            "refresh_token": "kc-refresh",
-            "id_token": "kc-id",
-            "token": null
-        })
-        .to_string(),
-    )
-    .expect("seed file-backed keyring secret");
     std::fs::write(
         hit_dir.join("auth-profiles.json"),
         json!({
@@ -1669,7 +1733,7 @@ async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_det
         .to_string(),
     )
     .expect("write keychain hit fixture");
-    let hit_store = AuthProfilesStore::new(&hit_dir, true);
+    let hit_store = AuthProfilesStore::new_with_config(&hit_dir, true, &config);
     let hit_loaded = hit_store.load().await.expect("keychain hit should load");
     let hit_tokens = hit_loaded
         .profiles
@@ -1678,21 +1742,25 @@ async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_det
         .expect("keychain hit token set");
     assert_eq!(hit_tokens.access_token, "kc-access");
     assert_eq!(hit_tokens.refresh_token.as_deref(), Some("kc-refresh"));
-    let hit_rewritten: Value = serde_json::from_str(
-        &std::fs::read_to_string(hit_dir.join("auth-profiles.json"))
-            .expect("read rewritten keychain hit profile store"),
-    )
-    .expect("rewritten keychain hit json");
     assert!(
-        hit_rewritten
-            .get("profiles")
-            .and_then(Value::as_object)
-            .and_then(|profiles| profiles.get(hit_profile_id))
-            .and_then(|profile| profile.get("access_token"))
-            .is_none_or(Value::is_null),
-        "legacy JSON secret fields should be cleared after keychain hit: {hit_rewritten}"
+        !hit_dir.join("auth-profiles.json").exists(),
+        "the legacy document is imported into the encrypted store"
+    );
+    // Legacy document values are read in place and never promoted or
+    // rewritten during a read: a keyring-less view still sees them.
+    let hit_document_view = AuthProfilesStore::new(&hit_dir, false)
+        .load().await
+        .expect("read the imported document without the keyring");
+    assert_eq!(
+        hit_document_view
+            .profiles
+            .get(hit_profile_id)
+            .and_then(|profile| profile.token_set.as_ref())
+            .map(|tokens| tokens.access_token.as_str()),
+        Some("legacy-access")
     );
 
+    // A plaintext legacy token is imported and served from the document.
     let migrate_dir = tmp.path().join("keychain-migrate");
     std::fs::create_dir_all(&migrate_dir).expect("create keychain migrate dir");
     let migrate_profile_id = "gitlab:work";
@@ -1718,10 +1786,10 @@ async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_det
         .to_string(),
     )
     .expect("write keychain migration fixture");
-    let migrate_store = AuthProfilesStore::new(&migrate_dir, true);
+    let migrate_store = AuthProfilesStore::new_with_config(&migrate_dir, true, &config);
     let migrated = migrate_store
         .load().await
-        .expect("plaintext JSON token should migrate to keychain");
+        .expect("plaintext legacy token should import");
     assert_eq!(
         migrated
             .profiles
@@ -1729,17 +1797,47 @@ async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_det
             .and_then(|profile| profile.token.as_deref()),
         Some("plain-token-for-migration")
     );
-    let migrated_keychain = openhuman_core::security::secret_storage::get(
-        "keychain-migrate",
-        &format!("auth:{migrate_profile_id}"),
-    )
-    .expect("read migrated keychain token")
-    .expect("migrated keychain token should exist");
+    assert!(!migrate_dir.join("auth-profiles.json").exists());
+
+    // Saving through a config-backed store moves the secret to the keyring:
+    // a keyring-less view withholds the keyring-owned row.
+    migrate_store
+        .update_profile(migrate_profile_id, |_| Ok(()))
+        .await
+        .expect("re-save the imported profile");
     assert!(
-        migrated_keychain.contains("plain-token-for-migration"),
-        "migrated keychain payload should contain redacted fixture token"
+        !AuthProfilesStore::new(&migrate_dir, false)
+            .load().await
+            .expect("keyring-less view")
+            .profiles
+            .contains_key(migrate_profile_id),
+        "a saved profile's secret lives in the keyring, not the document"
+    );
+    // A copy of this document (same keyring user) proves the keyring entry
+    // exists now and is gone after removal.
+    let probe_dir = tmp.path().join("probe").join("keychain-migrate");
+    std::fs::create_dir_all(probe_dir.join("auth-profiles")).expect("create probe dir");
+    for entry in std::fs::read_dir(migrate_dir.join("auth-profiles")).expect("read store dir") {
+        let entry = entry.expect("store dir entry");
+        if entry.file_type().expect("entry type").is_file() {
+            std::fs::copy(entry.path(), probe_dir.join("auth-profiles").join(entry.file_name()))
+                .expect("copy store file");
+        }
+    }
+    let probe = AuthProfilesStore::new_with_config(&probe_dir, true, &config);
+    assert_eq!(
+        probe
+            .load().await
+            .expect("probe before removal")
+            .profiles
+            .get(migrate_profile_id)
+            .and_then(|profile| profile.token.as_deref()),
+        Some("plain-token-for-migration"),
+        "the keyring holds the saved secret"
     );
 
+    // A malformed keyring payload for a legacy row falls back to the
+    // document's own value.
     let fallback_dir = tmp.path().join("keychain-fallback");
     std::fs::create_dir_all(&fallback_dir).expect("create keychain fallback dir");
     let fallback_profile_id = "slack:bot";
@@ -1771,9 +1869,9 @@ async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_det
         .to_string(),
     )
     .expect("write keychain fallback fixture");
-    let fallback = AuthProfilesStore::new(&fallback_dir, true)
+    let fallback = AuthProfilesStore::new_with_config(&fallback_dir, true, &config)
         .load().await
-        .expect("malformed keychain payload should fall back to JSON");
+        .expect("malformed keychain payload should fall back to the document");
     assert_eq!(
         fallback
             .profiles
@@ -1783,18 +1881,17 @@ async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_det
     );
 
     assert!(
-        AuthProfilesStore::new(&migrate_dir, true)
+        AuthProfilesStore::new_with_config(&migrate_dir, true, &config)
             .remove_profile(migrate_profile_id).await
             .expect("remove migrated profile"),
         "migrated profile should be removable"
     );
     assert!(
-        openhuman_core::security::secret_storage::get(
-            "keychain-migrate",
-            &format!("auth:{migrate_profile_id}"),
-        )
-        .expect("read deleted migrated keychain token")
-        .is_none(),
+        !AuthProfilesStore::new_with_config(&probe_dir, true, &config)
+            .load().await
+            .expect("probe after removal")
+            .profiles
+            .contains_key(migrate_profile_id),
         "removing a profile should delete its keychain payload"
     );
 }

@@ -86,7 +86,7 @@
   {
     "rule": "openhuman-task-local",
     "path": "crates/openhuman-core/src/flows/caps_host/tier.rs",
-    "line": 248,
+    "line": 268,
     "text": "turn_origin::with_origin(",
     "occurrence": 1
   },

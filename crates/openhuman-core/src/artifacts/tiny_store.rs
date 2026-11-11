@@ -24,6 +24,7 @@
 //! carries the chat routing of the turn that made the change, so the card
 //! reaches that chat live.
 
+pub use super::types::SavedVersion;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

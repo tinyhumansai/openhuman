@@ -180,6 +180,7 @@
   "web_answer_tool",
   "web_contents_tool",
   "web_fetch",
+  "web_image_search_tool",
   "web_search_tool",
   "workspace_init",
   "workspace_read_persona",

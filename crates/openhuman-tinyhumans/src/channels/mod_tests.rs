@@ -168,6 +168,7 @@ async fn progressive_send_forwards_turn_and_delivery_context() {
         .and(path("/channels/telegram/messages"))
         .and(body_json(json!({
             "text": "hello",
+            "parts": [],
             "transportContext": {
                 "turnId": "turn-7",
                 "channelRef": {"id": "telegram", "accountId": "account-2"},

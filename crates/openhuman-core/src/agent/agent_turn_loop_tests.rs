@@ -196,6 +196,10 @@ async fn turn_handles_unknown_tool_gracefully() {
 
 #[tokio::test(start_paused = true)]
 async fn turn_recovers_from_tool_failure_and_tool_error() {
+    // The subject is tool recovery, not the input screen. A module-bus scan
+    // would leave this paused runtime idle, so its clock would jump to the
+    // turn deadline before TinySecurity answered.
+    let _scan = crate::security::prompt_injection::install_allowing_prompt_scan();
     let cases: [(&str, Box<dyn Tool>); 2] = [
         ("fail", Box::new(FailingTool)),
         ("panicker", Box::new(PanickingTool)),

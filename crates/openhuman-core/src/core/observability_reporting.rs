@@ -536,7 +536,8 @@ type FsLimitReports =
     std::sync::Mutex<std::collections::HashMap<(String, String, String), std::time::Instant>>;
 
 #[cfg(feature = "crash-reporting")]
-static LAST_FS_LIMIT_REPORT: std::sync::LazyLock<FsLimitReports> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+static LAST_FS_LIMIT_REPORT: std::sync::LazyLock<FsLimitReports> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 /// Returns `true` when `(kind, domain, operation)` was already reported
 /// within [`FS_ERROR_COOLDOWN`]. `kind` keeps the host-filesystem error

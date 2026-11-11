@@ -15,10 +15,16 @@ impl crate::modules::security::gap::PathValidationPort for MediaPathPort {
         _parent: bool,
     ) -> Result<tinysecurity_bus::PathValidationResult, String> {
         let path = std::path::PathBuf::from(path);
+        // Mirrors TinySecurity's admission: a media file inside the artifacts
+        // reservation is an exception of it; one filed elsewhere is an exact
+        // read-only trusted root (an exception there would be refused).
         let is_media_exception = policy
             .reserved_paths
             .iter()
-            .any(|reservation| reservation.exceptions.contains(&path));
+            .any(|reservation| reservation.exceptions.contains(&path))
+            || policy.trusted_roots.iter().any(|root| {
+                root.path == path && root.access == tinysecurity_bus::PathAccess::ReadOnly
+            });
         if is_media_exception {
             let resolved = tokio::fs::canonicalize(&path).await.unwrap_or(path);
             Ok(tinysecurity_bus::PathValidationResult::Allowed { resolved })
@@ -122,4 +128,49 @@ async fn ready_media_artifacts_are_readable_but_other_files_are_not() {
             .is_err(),
         "a cached path must not authorize a replacement file"
     );
+}
+
+/// TinySecurity refuses a whole path policy when a reservation exception is not
+/// a strict descendant of its reservation. A ready media artifact filed in the
+/// Files folder (outside `<workspace>/artifacts`) must therefore never be sent as
+/// an artifacts-reservation exception; it is an exact read-only trusted root.
+#[test]
+fn media_artifact_outside_the_artifacts_reservation_is_a_read_only_trusted_root() {
+    let tmp = TempDir::new().unwrap();
+    let workspace = tmp.path().join("workspace");
+    let filed = tmp.path().join("Files").join("image.png");
+    let inside = workspace.join("artifacts").join("image.png");
+    let policy = SecurityPolicy {
+        workspace_dir: workspace.clone(),
+        action_dir: tmp.path().join("acting"),
+        ..SecurityPolicy::default()
+    };
+    policy
+        .media_artifact_paths
+        .lock()
+        .unwrap()
+        .extend([filed.clone(), inside.clone()]);
+
+    let native = policy.native_path_policy();
+
+    for reservation in &native.reserved_paths {
+        for exception in &reservation.exceptions {
+            assert!(
+                exception != &reservation.path && exception.starts_with(&reservation.path),
+                "exception {exception:?} is outside reservation {:?}",
+                reservation.path
+            );
+        }
+    }
+    let artifacts = native
+        .reserved_paths
+        .iter()
+        .find(|reservation| reservation.path == workspace.join("artifacts"))
+        .expect("artifacts reservation");
+    assert!(artifacts.exceptions.contains(&inside));
+    assert!(!artifacts.exceptions.contains(&filed));
+    assert!(native.trusted_roots.iter().any(|root| {
+        root.path == filed && root.access == tinysecurity_bus::PathAccess::ReadOnly
+    }));
+    assert!(!native.trusted_roots.iter().any(|root| root.path == inside));
 }

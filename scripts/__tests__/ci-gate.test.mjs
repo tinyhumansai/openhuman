@@ -34,6 +34,20 @@ test("the hosted lanes passing wins and cancels the other runs still going", () 
   assert.deepEqual(verdict.cancel, [{ id: 2, name: "CI Lite" }]);
 });
 
+test("CI Lite passing wins and cancels an unfinished hosted run", () => {
+  const verdict = decide([
+    entry(HOSTED, 1, "in_progress", null, null),
+    entry(LITE, 2, "completed", "success", {
+      status: "completed",
+      conclusion: "success",
+    }),
+  ]);
+  assert.equal(verdict.state, "success");
+  assert.equal(verdict.description, "CI Lite passed");
+  assert.equal(verdict.targetUrl, "https://jobs/2");
+  assert.deepEqual(verdict.cancel, [{ id: 1, name: "CI Fast (hosted)" }]);
+});
+
 test("a skipped decisive job is not a pass: the gate stays pending on the rest", () => {
   const verdict = decide([
     entry(HOSTED, 1, "completed", "success", {

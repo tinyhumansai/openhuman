@@ -7,6 +7,21 @@ use std::sync::Arc;
 use tinytools::status::POLICY_BLOCKED_MARKER;
 
 impl SecurityPolicy {
+    /// In a test build, ask the test host for the answers a host gate caches.
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    fn prime_from_test_host(&self) {
+        crate::modules::security::test_host::prime_policy(self);
+    }
+
+    #[cfg(not(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    )))]
+    fn prime_from_test_host(&self) {}
+
     /// Whether the tier, class gate and action budget are skipped: the autonomy
     /// policy is disabled (`[autonomy] enabled = false`), or security as a whole
     /// is (`crate::security::switch`), so there is no module to keep a budget.
@@ -110,6 +125,7 @@ impl SecurityPolicy {
         if self.unchecked() {
             return true;
         }
+        self.prime_from_test_host();
         let Ok(snapshot) = self.budget_snapshot.lock() else {
             return false;
         };
@@ -192,6 +208,7 @@ impl SecurityPolicy {
         if self.unchecked() {
             return GateDecision::Allow;
         }
+        self.prime_from_test_host();
         let Ok(snapshot) = self.class_gate_snapshot.lock() else {
             return GateDecision::Block;
         };
@@ -259,6 +276,7 @@ impl SecurityPolicy {
         if self.unchecked() {
             return false;
         }
+        self.prime_from_test_host();
         let Ok(snapshot) = self.budget_snapshot.lock() else {
             return true;
         };

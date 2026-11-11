@@ -19,7 +19,8 @@ function sessionJwt(userId: string): string {
 }
 
 test.describe('keyring consent before sign-in', () => {
-  test.skip(RESPONDER_ON, 'TS-E2E S-06 needs the core test keyring responder off'); // https://github.com/tinyhumansai/openhuman/issues/8596
+  const reason = 'S-06 needs the keyring responder off';
+  test.skip(RESPONDER_ON, `${reason}: https://github.com/tinyhumansai/openhuman/issues/8598`);
 
   test('s_06 shows the sign-in keyring prompt without a socket and signs in once allowed', async ({
     page,

@@ -51,7 +51,13 @@ impl ApprovalGate {
         #[cfg(not(test))]
         let args_redacted = match self.redact_approval_arguments(args_redacted).await {
             Ok(args) => args,
-            Err(_) => {
+            Err(error) => {
+                // The reason names the failing stage, never the arguments.
+                tracing::warn!(
+                    tool = tool_name,
+                    %error,
+                    "[approval::gate] approval arguments could not be redacted; denying"
+                );
                 return (
                     GateOutcome::Deny {
                         reason: format!(

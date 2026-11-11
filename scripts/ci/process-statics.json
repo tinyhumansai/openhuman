@@ -750,6 +750,66 @@
     "verification": "security/switch_tests.rs: the_test_guard_does_not_reach_another_thread"
   },
   {
+    "file": "crates/openhuman-core/src/modules/security/test_host.rs",
+    "scope": "",
+    "name": "FIXTURE",
+    "type": "OnceLock<Option<Config>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. The one test-process fixture config the booted TinySecurity module is loaded against, so every test in the process shares the module the single process-wide registration admits; it holds a throwaway workspace path and no tenant or user data.",
+    "verification": "modules/security/test_host.rs: boot"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/security/test_host.rs",
+    "scope": "",
+    "name": "FIXTURE_KEY",
+    "type": "OnceLock<PathBuf>",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. The path of the fixture master-key file created once per test process; a path only, never key material.",
+    "verification": "modules/security/test_host.rs: fixture_config, is_fixture_scope"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/security/test_host.rs",
+    "scope": "",
+    "name": "GATE",
+    "type": "OnceLock<Arc<ApprovalGate>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. The approval gate installed once per test process, matching the one gate a booted host installs; it carries no tenant data.",
+    "verification": "modules/security/test_host.rs: answer_master_grant"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/security/test_host.rs",
+    "scope": "",
+    "name": "ABSENT",
+    "type": "std::cell::Cell<bool>",
+    "count": 1,
+    "category": "B",
+    "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. A thread-local (`#[cfg(test)]`) flag a test sets through `absent()` to see the production fail-closed path on its own thread only; it is reset by the guard's drop.",
+    "verification": "modules/security/test_host.rs: absent"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/security/test_host.rs",
+    "scope": "",
+    "name": "EXPLICIT_CONSENT",
+    "type": "std::sync::atomic::AtomicUsize",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. A counter of live guards that leave the master grant to the caller's own approval; it holds a count only and returns to zero when every guard drops.",
+    "verification": "modules/security/test_host.rs: explicit_consent"
+  },
+  {
+    "file": "crates/openhuman-core/src/security/prompt_injection/scan_port.rs",
+    "scope": "",
+    "name": "TEST_PROMPT_SCAN_PORT",
+    "type": "RefCell<Option<Arc<dyn PromptScanPort>>>",
+    "count": 1,
+    "category": "A",
+    "reason": "This cfg(test) thread-local port substitutes a scripted ScanPrompt2 answer for one test thread so start_paused tests whose subject is not the input screen do not wait on the module-bus runtime; it is test instrumentation and is not compiled into production builds.",
+    "verification": "agent/agent_turn_loop_tests.rs: turn_recovers_from_tool_failure_and_tool_error; channels/bus/subscriber_tests.rs: backend_channel_wait_does_not_cut_off_a_live_turn_after_180_seconds"
+  },
+  {
     "file": "crates/openhuman-core/src/agent/session_host/runtime_session/memory_block_ready.rs",
     "scope": "",
     "name": "READY",
@@ -768,5 +828,25 @@
     "category": "A",
     "reason": "A counter of memory-block renders left running in the background past their deadline, capped at MAX_BACKGROUND_RENDERS so a slow memory engine cannot pile up tasks and requests. It holds a number only and carries no tenant data.",
     "verification": "agent/session_host/runtime_session/memory_block_ready_tests.rs: background_renders_are_admitted_up_to_the_limit_and_freed_when_done"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/security/secret_tenants.rs",
+    "scope": "",
+    "name": "TABLE",
+    "type": "LazyLock<Mutex<Table>>",
+    "count": 1,
+    "category": "D",
+    "reason": "TinySecurity is one module per process, so its live secret registrations are recorded process-wide; every entry is keyed by the tenant's secret key path and its own registration id, each tenant gets its own registration, consumer and delivery slots, and a retired registration's ids are never handed out again.",
+    "verification": "modules/security/secret_tenants_tests.rs: every_scope_gets_its_own_registration_and_consumer"
+  },
+  {
+    "file": "crates/openhuman-core/src/security/approval/native/mod.rs",
+    "scope": "",
+    "name": "LEDGERS",
+    "type": "std::sync::OnceLock<PermissionLedgers>",
+    "count": 1,
+    "category": "D",
+    "reason": "TinySecurity appends every audited permission on its single init audit stream; the host keeps a ledger of it per tenant, keyed by the tenant's approval scope id and backed by that tenant's own store, and routes each batch by the correlation event id it handed out, refusing any batch it did not correlate or that spans tenants.",
+    "verification": "security/approval/native/secret_scope_tests.rs: two_tenants_permission_audits_never_land_in_each_others_store"
   }
 ]
