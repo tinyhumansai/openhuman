@@ -257,22 +257,43 @@ impl AuthProfilesStore {
         ))
     }
 
-    pub(super) fn read_persisted_locked(
+    /// Read the document under `lock`: from the storage backend when the lock
+    /// is a backend lease, else from the profile-local file.
+    pub(super) fn read_persisted(
         &self,
         lock: &super::lock::AuthProfileLockGuard,
     ) -> Result<PersistedAuthProfiles> {
-        if let Some(lease) = lock.backend() {
-            return match lease.read()? {
-                Some(bytes) => parse_backend_document(&bytes),
-                // First use of the backend: adopt a document a profile-local
-                // store left, read-only. The next write publishes it to the
-                // backend; the local file is never written again.
-                None => match self.read_encrypted_file_locked()? {
-                    Some(persisted) => Ok(persisted),
-                    None => self.read_file_locked(),
-                },
-            };
+        let Some(lease) = lock.backend() else {
+            return self.read_persisted_locked();
+        };
+        match lease.read()? {
+            Some(bytes) => parse_backend_document(&bytes),
+            // First use of the backend: adopt a document a profile-local
+            // store left, read-only. The next write publishes it to the
+            // backend; the local file is never written again.
+            None => match self.read_encrypted_file_locked()? {
+                Some(persisted) => Ok(persisted),
+                None => self.read_file_locked(),
+            },
         }
+    }
+
+    /// Write the document under `lock`, to wherever [`Self::read_persisted`]
+    /// read it from.
+    pub(super) fn write_persisted(
+        &self,
+        lock: &super::lock::AuthProfileLockGuard,
+        persisted: &PersistedAuthProfiles,
+    ) -> Result<()> {
+        let Some(lease) = lock.backend() else {
+            return self.write_persisted_locked(persisted);
+        };
+        let json = serde_json::to_vec(persisted).context("Failed to serialize auth profiles")?;
+        lease.write(json)
+    }
+
+    /// The profile-local document (the caller holds the local lease).
+    pub(super) fn read_persisted_locked(&self) -> Result<PersistedAuthProfiles> {
         if let Some(persisted) = self.read_encrypted_file_locked()? {
             return Ok(persisted);
         }
@@ -338,15 +359,7 @@ impl AuthProfilesStore {
         Ok(persisted)
     }
 
-    pub(super) fn write_persisted_locked(
-        &self,
-        lock: &super::lock::AuthProfileLockGuard,
-        persisted: &PersistedAuthProfiles,
-    ) -> Result<()> {
-        if let Some(lease) = lock.backend() {
-            let json = serde_json::to_vec(persisted).context("Failed to serialize auth profiles")?;
-            return lease.write(json);
-        }
+    pub(super) fn write_persisted_locked(&self, persisted: &PersistedAuthProfiles) -> Result<()> {
         self.write_persisted_locally(persisted)?;
         let _ = fs::remove_file(&self.legacy_path);
         Ok(())

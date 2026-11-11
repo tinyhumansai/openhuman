@@ -68,14 +68,14 @@ impl AuthProfilesStore {
     /// are published atomically, so this snapshot stays internally consistent.
     pub async fn load(&self) -> Result<AuthProfilesData> {
         let (persisted, can_publish) = match self.acquire_read_lock()? {
-            Some(lock) => (self.read_persisted_locked(&lock)?, true),
+            Some(lock) => (self.read_persisted(&lock)?, true),
             None => {
                 log::warn!(
                     "[auth] profile lease unavailable on a full or read-only filesystem; \
                      serving a lock-free read-only snapshot"
                 );
                 let lock = super::lock::AuthProfileLockGuard::lock_free();
-                (self.read_persisted_locked(&lock)?, false)
+                (self.read_persisted(&lock)?, false)
             }
         };
         let before = serde_json::to_vec(&persisted).context("serialize auth profile snapshot")?;
@@ -96,9 +96,9 @@ impl AuthProfilesStore {
         let candidate = serde_json::to_vec(cleaned).context("serialize cleaned auth profiles")?;
         if candidate != expected {
             let lock = self.acquire_lock()?;
-            let current = self.read_persisted_locked(&lock)?;
+            let current = self.read_persisted(&lock)?;
             if serde_json::to_vec(&current)? == expected {
-                self.write_persisted_locked(&lock, cleaned)?;
+                self.write_persisted(&lock, cleaned)?;
             }
         }
         Ok(())
@@ -107,7 +107,7 @@ impl AuthProfilesStore {
     async fn snapshot(&self) -> Result<(PersistedAuthProfiles, Vec<u8>)> {
         let persisted = {
             let lock = self.acquire_lock()?;
-            self.read_persisted_locked(&lock)?
+            self.read_persisted(&lock)?
         };
         let version = serde_json::to_vec(&persisted).context("serialize auth profile snapshot")?;
         Ok((persisted, version))
@@ -123,13 +123,13 @@ impl AuthProfilesStore {
         // candidate document before reacquiring the non-Send local lease.
         let persisted = self.prepare_persisted(data, previous).await?;
         let lock = self.acquire_lock()?;
-        let current = self.read_persisted_locked(&lock)?;
+        let current = self.read_persisted(&lock)?;
         let current_version =
             serde_json::to_vec(&current).context("serialize current auth profile snapshot")?;
         if current_version != expected_version {
             return Ok(false);
         }
-        self.write_persisted_locked(&lock, &persisted)?;
+        self.write_persisted(&lock, &persisted)?;
         Ok(true)
     }
 
@@ -188,11 +188,11 @@ impl AuthProfilesStore {
                 candidate.updated_at = Utc::now().to_rfc3339();
                 {
                     let lock = self.acquire_lock()?;
-                    let current = serde_json::to_vec(&self.read_persisted_locked(&lock)?)?;
+                    let current = serde_json::to_vec(&self.read_persisted(&lock)?)?;
                     if current != version {
                         continue;
                     }
-                    self.write_persisted_locked(&lock, &candidate)?;
+                    self.write_persisted(&lock, &candidate)?;
                 }
                 if keyring_owned {
                     if let Err(error) = self.keychain_delete_secrets(profile_id).await {
@@ -236,7 +236,7 @@ impl AuthProfilesStore {
         delete_error: anyhow::Error,
     ) -> Result<bool> {
         let lock = self.acquire_lock()?;
-        let mut current = self.read_persisted_locked(&lock)?;
+        let mut current = self.read_persisted(&lock)?;
         if !current.profiles.contains_key(profile_id) {
             if let Some(profile) = persisted_before.profiles.get(profile_id) {
                 current
@@ -251,7 +251,7 @@ impl AuthProfilesStore {
                     }
                 }
                 current.updated_at = Utc::now().to_rfc3339();
-                self.write_persisted_locked(&lock, &current)?;
+                self.write_persisted(&lock, &current)?;
             }
         }
         Err(delete_error.context("profile removal was not completed"))
