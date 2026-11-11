@@ -73,7 +73,7 @@ pub fn install(
     policy
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-keyring-consent"))]
 thread_local! {
     /// Test-only, **thread-scoped** [`PrivacyMode`] override. When set it wins
     /// over the process-global policy in [`current_privacy_mode`].
@@ -89,7 +89,10 @@ thread_local! {
     /// on the same thread while sibling tests on their own threads are unaffected.
     static TEST_PRIVACY_MODE: std::cell::Cell<Option<PrivacyMode>> =
         const { std::cell::Cell::new(None) };
+}
 
+#[cfg(test)]
+thread_local! {
     /// Test-only, thread-scoped live-policy override. Approval-gate tests run
     /// in parallel on separate `#[tokio::test]` current-thread runtimes, so a
     /// process-global override can otherwise make an unrelated test observe a
@@ -99,10 +102,10 @@ thread_local! {
 }
 
 /// RAII guard that restores the previous thread-local privacy override on drop.
-#[cfg(test)]
-pub(crate) struct TestPrivacyGuard(Option<PrivacyMode>);
+#[cfg(any(test, feature = "test-keyring-consent"))]
+pub struct TestPrivacyGuard(Option<PrivacyMode>);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-keyring-consent"))]
 impl Drop for TestPrivacyGuard {
     fn drop(&mut self) {
         TEST_PRIVACY_MODE.with(|c| c.set(self.0));
@@ -112,8 +115,13 @@ impl Drop for TestPrivacyGuard {
 /// Override [`current_privacy_mode`] for the current thread until the returned
 /// guard drops. Test-only; needs no `TEST_ENV_LOCK` because it never touches the
 /// process-global policy.
-#[cfg(test)]
-pub(crate) fn test_privacy_scope(mode: PrivacyMode) -> TestPrivacyGuard {
+///
+/// Also test support for downstream crates (the hosted embedder's egress guard
+/// tests), so they can drive a restrictive mode deterministically whether or not
+/// TinySecurity is staged. Not built into the product (`test-keyring-consent` is
+/// a test-only feature).
+#[cfg(any(test, feature = "test-keyring-consent"))]
+pub fn test_privacy_scope(mode: PrivacyMode) -> TestPrivacyGuard {
     let prev = TEST_PRIVACY_MODE.with(|c| c.replace(Some(mode)));
     TestPrivacyGuard(prev)
 }
@@ -157,7 +165,7 @@ pub(crate) fn install_scoped(
 pub fn current_privacy_mode() -> PrivacyMode {
     // Test-only per-thread override (see `TEST_PRIVACY_MODE`) wins so a test can
     // drive the egress gate without mutating the shared process-global policy.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-keyring-consent"))]
     if let Some(mode) = TEST_PRIVACY_MODE.with(|c| c.get()) {
         return mode;
     }
