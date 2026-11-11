@@ -153,7 +153,8 @@ fn inspection_embedder_at(base_url: String) -> Extensions {
                     request.model,
                     request.dimensions,
                     bearer,
-                )) as Box<dyn tinyinference_embeddings::EmbeddingModel>)
+                ))
+                    as Box<dyn tinyinference_embeddings::EmbeddingModel>)
             })
         },
     );
@@ -226,7 +227,9 @@ async fn managed_probe_reports_an_unreachable_endpoint_as_an_error() {
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].severity, FindingSeverity::Error);
     assert!(
-        findings[0].message.contains("could not complete the live probe"),
+        findings[0]
+            .message
+            .contains("could not complete the live probe"),
         "{}",
         findings[0].message
     );

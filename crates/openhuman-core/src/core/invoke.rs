@@ -215,7 +215,11 @@ fn replace(original: &str, reason: &'static str, message: String) -> SessionFail
     });
     log::debug!(
         "[invoke][session-failure] replacing auth-expired error reason={reason} structured_data={}",
-        if kept.is_some() { "kept" } else { "dropped_or_absent" }
+        if kept.is_some() {
+            "kept"
+        } else {
+            "dropped_or_absent"
+        }
     );
     let message = match kept {
         Some((data, expected_user_state)) => StructuredRpcError {

@@ -3,6 +3,10 @@
 //! This module constructs the owning `CloudEmbeddingModel` with OpenHuman's
 //! live credential resolver and the per-request egress disclosure guard. It
 //! does not wrap or forward the embedding implementation.
+//!
+//! The doctor's read-only inspection model is the one exception to the guard:
+//! it freezes the selected profile's credential, sends only the doctor's fixed
+//! probe, and never asks TinySecurity, which the doctor does not load.
 
 use std::sync::Arc;
 
@@ -37,6 +41,8 @@ pub(super) fn from_request(request: EmbeddingRequest<ProviderContext>) -> CloudE
     )
 }
 
+/// Builds the doctor's managed embedding probe from the selected profile's
+/// frozen, read-only credential.
 pub(super) async fn from_request_for_inspection(
     request: &EmbeddingRequest<ProviderContext>,
 ) -> tinyinference_embeddings::Result<CloudEmbeddingModel> {
@@ -80,7 +86,12 @@ fn cloud_model(
     dimensions: usize,
     bearer: BearerResolver,
 ) -> CloudEmbeddingModel {
-    CloudEmbeddingModel::new(managed_base_url(&api_url), model.to_owned(), dimensions, bearer)
+    CloudEmbeddingModel::new(
+        managed_base_url(&api_url),
+        model.to_owned(),
+        dimensions,
+        bearer,
+    )
 }
 
 fn managed_base_url(api_url: &Option<String>) -> String {

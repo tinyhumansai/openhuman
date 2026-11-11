@@ -132,7 +132,12 @@ async fn list_models_reports_both_catalogs_and_defaults() {
 /// case-insensitive match.
 fn floor() -> ReferenceFloor {
     ReferenceFloor::enforced(tinysecurity_bus::ProtectedFloor2 {
-        components: vec![".ssh".into(), ".gnupg".into(), ".AWS".into(), "keychains".into()],
+        components: vec![
+            ".ssh".into(),
+            ".gnupg".into(),
+            ".AWS".into(),
+            "keychains".into(),
+        ],
         files: vec![".netrc".into(), ".git-credentials".into()],
         pairs: vec![
             [".cargo".into(), "credentials.toml".into()],
@@ -200,7 +205,8 @@ fn reference_policy_applies_the_protected_floor_inside_the_roots() {
         PathBuf::from("/root/.openhuman/attachments/photo.png"),
         PathBuf::from("/etc/ssl/private.png"),
     ] {
-        let refusal = policy(&refused).expect_err(&format!("{} must be refused", refused.display()));
+        let refusal =
+            policy(&refused).expect_err(&format!("{} must be refused", refused.display()));
         assert!(
             refusal.contains("protected"),
             "{}: {refusal}",
@@ -276,14 +282,20 @@ async fn reference_floor_is_fetched_from_tinysecurity_and_fails_closed() {
     {
         let _port = install_path_floor_port(ScriptedPathFloorPort::new([], Vec::new()));
         let fetched = ReferenceFloor::fetch(None).await;
-        assert!(matches!(fetched, ReferenceFloor::Enforced(_)), "{fetched:?}");
+        assert!(
+            matches!(fetched, ReferenceFloor::Enforced(_)),
+            "{fetched:?}"
+        );
         let (action, _, _, policy) = policy_over(fetched);
         assert!(policy(&action.join("a.png")).is_ok());
         assert!(policy(&action.join(".ssh/id_rsa")).is_err());
     }
     let _port = install_unavailable_path_floor_port();
     let fetched = ReferenceFloor::fetch(None).await;
-    assert!(matches!(fetched, ReferenceFloor::Unavailable(_)), "{fetched:?}");
+    assert!(
+        matches!(fetched, ReferenceFloor::Unavailable(_)),
+        "{fetched:?}"
+    );
 }
 
 /// The sync `media_tools_from` cannot fetch the floor, so a local reference
