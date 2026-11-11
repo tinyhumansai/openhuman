@@ -115,7 +115,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
     RUST_MIN_STACK: "67108864",
     // Nextest forks per test. LLVM merges counters losslessly into eight
     // files per binary instead of retaining a separate file per process.
-    LLVM_PROFILE_FILE_NAME: "openhuman-%8m.profraw",
+    ...(ex63 ? { LLVM_PROFILE_FILE_NAME: "openhuman-%8m.profraw" } : {}),
     ...(!ex63 ? { CARGO_BUILD_JOBS: "1" } : {}),
   };
   const modulesDir = ex63
