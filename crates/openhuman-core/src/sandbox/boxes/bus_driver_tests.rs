@@ -291,3 +291,22 @@ fn a_created_box_keeps_its_reservation_and_is_returned() {
     assert_eq!(result, Ok("r-1".to_owned()));
     assert!(!abandoned.get());
 }
+
+#[tokio::test]
+async fn a_box_is_cleaned_up_with_the_configuration_it_was_created_under() {
+    let driver = BusBoxDriver::new(config_in("/created"), BoxBackend::Agent37);
+    driver.remember("box-0");
+
+    // A later call replaces the most recent configuration.
+    driver.serve(&config_in("/later"), async {}).await;
+
+    assert_eq!(
+        driver.config_of("box-0").workspace_dir,
+        config_in("/created").workspace_dir
+    );
+    assert_eq!(
+        driver.config_of("box-9").workspace_dir,
+        config_in("/later").workspace_dir,
+        "a box never recorded falls back to the most recent configuration"
+    );
+}

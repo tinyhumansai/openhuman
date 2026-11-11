@@ -12,8 +12,10 @@
 //!
 //! Each call reaches the module with the configuration of the host call it
 //! serves ([`BusBoxDriver::serve`]), not of whichever call built the
-//! process's registry; work outside any call (the idle reaper, cleanups of
-//! cancelled commands) uses the most recent call's.
+//! process's registry. A box's close or forget reaches the module with the
+//! configuration it was created under, so a later call cannot redirect the
+//! cleanup of an earlier box; work outside any call (the idle reaper) uses the
+//! most recent call's.
 //!
 //! A reservation is closed if the create it was for is cancelled before the
 //! module answers ([`AbandonGuard`]), so a cancelled first command never
@@ -25,8 +27,8 @@
 //! the module no longer knows, or one that can no longer take commands, is
 //! [`BoxError::UnknownResource`], which the registry answers with a new box.
 
-use std::future::Future;
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
