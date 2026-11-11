@@ -294,10 +294,36 @@ pub struct ToolDefinitionScanHit {
     pub verdict: PromptInjectionVerdict,
 }
 
+/// The configuration tool-definition scans run with: the embedder's, else the
+/// loaded one.
+///
+/// A host booted `Normal` (the CLI's `serve`) has no embedder snapshot, but it
+/// does have a persisted config; requiring the snapshot made every scan there
+/// report `scan.unavailable`. `None` only when no config can be loaded, which
+/// callers treat as the scanner being unavailable (fail closed).
+pub(crate) async fn tool_scan_config() -> Option<crate::config::Config> {
+    if let Some(config) = crate::core::runtime::CoreContext::current_embedder_config() {
+        return Some(config);
+    }
+    match crate::core::runtime::DispatchCtx::ambient()
+        .load_config()
+        .await
+    {
+        Ok(config) => Some(config),
+        Err(error) => {
+            tracing::debug!(
+                %error,
+                "[prompt_injection] tool_scan_config: config load failed; scan unavailable"
+            );
+            None
+        }
+    }
+}
+
 /// Scan tool metadata through TinySecurity. Failure is represented as a hit.
 /// With security disabled nothing is scanned and there is no hit.
 pub async fn scan_tool_definition(field: &str, text: &str) -> Option<ToolDefinitionScanHit> {
-    let config = crate::core::runtime::CoreContext::current_embedder_config();
+    let config = tool_scan_config().await;
     if crate::security::switch::disabled_for(config.as_ref()).is_some() {
         return None;
     }

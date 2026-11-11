@@ -272,6 +272,7 @@ jobs:
             cron::documents_port::tests::a_collection_outside_the_schedule_port_is_refused
             cron::documents_port::tests::an_unknown_operation_is_refused_not_guessed
             cron::documents_port::tests::one_object_is_served_per_scope_and_reused
+            mcp::registry::scan_tests::a_host_without_an_embedder_config_scans_with_its_loaded_config
           )
           MODULE_TEST_SKIP_ARGS=()
           for module_test in "${MODULE_TESTS[@]}"; do

@@ -185,11 +185,23 @@ async fn created_id(tool: &BoxSourced, args: Value) -> String {
     body["artifact_id"].as_str().unwrap().to_owned()
 }
 
+/// Keeps the security module's path floor scripted for the test's lifetime
+/// when that module is built; a build without it has no floor to script.
+#[cfg(feature = "security-module")]
+fn path_floor() -> Box<dyn std::any::Any> {
+    Box::new(crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
+    ))
+}
+
+#[cfg(not(feature = "security-module"))]
+fn path_floor() -> Box<dyn std::any::Any> {
+    Box::new(())
+}
+
 #[tokio::test]
 async fn a_path_is_read_from_the_callers_box_when_the_backend_keeps_boxes() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     let bytes: Vec<u8> = (0..=255u8).cycle().take(5000).collect();
     fixture.the_box_holds(&bytes);
@@ -208,9 +220,7 @@ async fn a_path_is_read_from_the_callers_box_when_the_backend_keeps_boxes() {
 
 #[tokio::test]
 async fn a_path_inside_the_boxs_work_folder_is_read_by_its_relative_name() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     fixture.the_box_holds(b"pdf");
     let tool = fixture.tool(true, user("u1"));
@@ -240,9 +250,7 @@ async fn a_path_elsewhere_in_the_box_is_refused() {
 
 #[tokio::test]
 async fn a_path_is_read_from_the_host_when_the_backend_keeps_no_boxes() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     std::fs::write(fixture.action.join("report.pdf"), b"host bytes").unwrap();
     let tool = fixture.tool(false, user("u1"));
@@ -258,9 +266,7 @@ async fn a_path_is_read_from_the_host_when_the_backend_keeps_no_boxes() {
 
 #[tokio::test]
 async fn an_unreadable_configuration_is_a_tool_error_and_never_reads_the_host() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     // A host file of the same name: it must not be imported in the box's place.
     std::fs::write(fixture.action.join("report.pdf"), b"host bytes").unwrap();
@@ -316,9 +322,7 @@ async fn a_call_with_no_tenant_is_refused_without_touching_a_box_or_the_host() {
 
 #[tokio::test]
 async fn a_text_artifact_never_touches_a_box() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     let tool = fixture.tool(true, user("u1"));
 
@@ -369,9 +373,7 @@ fn a_box_path_is_the_name_relative_to_the_work_folder() {
 
 #[tokio::test]
 async fn an_update_reads_its_new_file_from_the_callers_box() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     fixture.the_box_holds(b"first");
     let id = created_id(&fixture.tool(true, user("u1")), file_args("a.pdf")).await;
@@ -419,7 +421,9 @@ async fn an_update_of_a_text_artifact_never_touches_a_box() {
 #[tokio::test]
 async fn a_staged_copy_is_removed_when_its_call_is_dropped_before_it_finishes() {
     let staging = tempfile::tempdir().unwrap();
-    let staged = stage(staging.path(), "out/a.pdf", b"bytes").unwrap();
+    let staged = stage(staging.path(), "out/a.pdf", b"bytes".to_vec())
+        .await
+        .unwrap();
     let dir = staged.dir.clone();
     assert!(dir.join("file.pdf").is_file());
 
@@ -432,9 +436,15 @@ async fn a_staged_copy_is_removed_when_its_call_is_dropped_before_it_finishes() 
 async fn a_box_name_the_host_cannot_hold_still_stages_with_its_extension() {
     let staging = tempfile::tempdir().unwrap();
 
-    let odd = stage(staging.path(), "out/re?port*.pdf", b"x").unwrap();
-    let no_extension = stage(staging.path(), "out/Makefile", b"x").unwrap();
-    let hostile = stage(staging.path(), "out/a.p?f", b"x").unwrap();
+    let odd = stage(staging.path(), "out/re?port*.pdf", b"x".to_vec())
+        .await
+        .unwrap();
+    let no_extension = stage(staging.path(), "out/Makefile", b"x".to_vec())
+        .await
+        .unwrap();
+    let hostile = stage(staging.path(), "out/a.p?f", b"x".to_vec())
+        .await
+        .unwrap();
 
     assert!(odd.file.ends_with("file.pdf"));
     assert!(no_extension.file.ends_with("file"));
@@ -453,9 +463,7 @@ impl RecordKinds for BrokenRecords {
 
 #[tokio::test]
 async fn an_update_whose_record_cannot_be_read_fails_instead_of_reading_the_host() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     std::fs::write(fixture.action.join("a.pdf"), b"host bytes").unwrap();
     let tool = fixture.update_tool(true, user("u1"));
@@ -476,4 +484,20 @@ async fn an_update_whose_record_cannot_be_read_fails_instead_of_reading_the_host
         result.output()
     );
     assert!(fixture.driver.calls().is_empty(), "no box was touched");
+}
+
+#[tokio::test]
+async fn a_call_cancelled_while_staging_leaves_no_copy_behind() {
+    let staging = tempfile::tempdir().unwrap();
+
+    // Poll the staging future once, so its write is started, then drop it.
+    tokio::select! {
+        biased;
+        _ = stage(staging.path(), "out/a.pdf", b"bytes".to_vec()) => unreachable!("staging cannot finish on its first poll"),
+        _ = std::future::ready(()) => {}
+    }
+    // The write finishes in its own task and its guard then removes the folder.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    assert_eq!(std::fs::read_dir(staging.path()).unwrap().count(), 0);
 }
