@@ -383,8 +383,8 @@ impl<D: BoxDriver> BoxRegistry<D> {
     pub async fn reap(&self, now: Instant) -> usize {
         let idle = self.take_idle(&mut self.entries(), now);
         let reaped = idle.len();
-        for resource in idle {
-            self.let_go(&resource).await;
+        for (owner, resource) in idle {
+            self.let_go(&owner, &resource).await;
         }
         if reaped > 0 {
             tracing::debug!(
