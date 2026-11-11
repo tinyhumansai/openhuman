@@ -76,8 +76,8 @@ impl AuthService {
     /// [`Self::new`] store over the same directory cannot see them. So a
     /// caller holding only `(state_dir, encrypt)` reads through the owning
     /// config's store: `config` when it owns the directory, else the current
-    /// dispatch's embedder config when that does (see
-    /// [`owning_embedder_config`]). A config for another directory, or with
+    /// dispatch's embedder config when that does. A config for another
+    /// directory, or with
     /// another encryption setting, never lends its authority; with no owner
     /// the store is directory-only.
     pub fn for_state_dir(state_dir: &Path, encrypt_secrets: bool, config: Option<&Config>) -> Self {
