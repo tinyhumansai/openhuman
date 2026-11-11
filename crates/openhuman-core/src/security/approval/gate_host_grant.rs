@@ -10,14 +10,49 @@
 // engine round trip a person's approval takes (`saas_host_authorised_grant`),
 // recorded under [`EMBEDDER_HOST_AUTHORISED`]. Outside the scope nothing
 // changes, and inside it a grant for any other scope is refused.
+//
+// The authorisation rides the store's `CoreContext` as a [`HostSecretGrant`].
+// It holds only on the host's own task and only until the store ends, so a
+// task spawned from inside the scope, or a context captured there and used
+// later, authorises nothing.
 
 /// The label (and approving actor) an embedder's own approval of its
 /// runtime's secret master grant is recorded under.
 pub(crate) const EMBEDDER_HOST_AUTHORISED: &str = "embedder_host_authorised";
 
-tokio::task_local! {
-    /// The `.secret_key` the host authorises, with the runtime config owning it.
-    static HOST_AUTHORISED_SECRET: (std::path::PathBuf, Config);
+/// A library host's authorisation of the secret master grant of its own
+/// runtime's config directory, carried on the context of the store it scopes
+/// ([`host_authorised_secret_grant`]).
+pub(crate) struct HostSecretGrant {
+    /// The `.secret_key` the host authorises.
+    key: std::path::PathBuf,
+    /// The runtime config owning that key.
+    config: Config,
+    /// The host's own task: the only one the grant holds on.
+    task: Option<tokio::task::Id>,
+    /// Cleared when the store the host scoped ends.
+    live: AtomicBool,
+}
+
+impl HostSecretGrant {
+    /// Whether the grant holds for work running here, now.
+    fn holds(&self) -> bool {
+        self.live.load(Ordering::Acquire) && tokio::task::try_id() == self.task
+    }
+}
+
+/// Ends a host grant when the store it authorises ends, however it ends.
+struct HostGrantEnds(Arc<HostSecretGrant>);
+
+impl Drop for HostGrantEnds {
+    fn drop(&mut self) {
+        self.0.live.store(false, Ordering::Release);
+    }
+}
+
+/// The host grant in force for work running here, if any.
+fn host_secret_grant() -> Option<Arc<HostSecretGrant>> {
+    crate::core::runtime::CoreContext::current_host_secret_grant().filter(|grant| grant.holds())
 }
 
 /// Run `fut` with the host authorising the secret master grant of `config`'s
@@ -34,14 +69,19 @@ pub async fn host_authorised_secret_grant<F: std::future::Future>(
         .unwrap_or_else(|| std::path::Path::new("."))
         .join(".secret_key");
     tracing::debug!("[security][host-grant] host authorises its own runtime's secret grant");
-    HOST_AUTHORISED_SECRET
-        .scope((key, config.clone()), fut)
-        .await
+    let grant = Arc::new(HostSecretGrant {
+        key,
+        config: config.clone(),
+        task: tokio::task::try_id(),
+        live: AtomicBool::new(true),
+    });
+    let _ends = HostGrantEnds(Arc::clone(&grant));
+    crate::core::runtime::CoreContext::scope_with_host_secret_grant(grant, fut).await
 }
 
-/// The approval label of a host-authorised grant in this task.
+/// The approval label of a host-authorised grant made here.
 fn host_grant_label() -> &'static str {
-    if HOST_AUTHORISED_SECRET.try_with(|_| ()).is_ok() && !crate::core::runtime::is_saas() {
+    if host_secret_grant().is_some() && !crate::core::runtime::is_saas() {
         EMBEDDER_HOST_AUTHORISED
     } else {
         SAAS_HOST_AUTHORISED
@@ -56,7 +96,7 @@ pub(crate) fn embedder_host_grant(
     tool_name: &str,
     args: &serde_json::Value,
 ) -> SaasHostGrant {
-    let Ok(key) = HOST_AUTHORISED_SECRET.try_with(|(key, _)| key.clone()) else {
+    let Some(grant) = host_secret_grant() else {
         return SaasHostGrant::NotApplicable;
     };
     let registration_id = args
@@ -74,7 +114,7 @@ pub(crate) fn embedder_host_grant(
         tool_name,
         &SecretGrantClaim {
             tenant_profile: Some("embedder"),
-            tenant_key: Some(&key),
+            tenant_key: Some(&grant.key),
             requested: requested
                 .as_ref()
                 .map(|(key, scope)| (key.as_path(), scope.as_str())),
@@ -91,9 +131,7 @@ pub(crate) async fn host_authorised_grant_without_gate(
     action_summary: &str,
     args: serde_json::Value,
 ) -> Option<GateOutcome> {
-    let config = HOST_AUTHORISED_SECRET
-        .try_with(|(_, config)| config.clone())
-        .ok()?;
+    let config = host_secret_grant()?.config.clone();
     match embedder_host_grant(true, tool_name, &args) {
         SaasHostGrant::Authorised { profile, scope_id } => {
             let session = format!("session-{}", uuid::Uuid::new_v4());
