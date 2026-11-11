@@ -103,6 +103,7 @@ thread_local! {
 
 /// RAII guard that restores the previous thread-local privacy override on drop.
 #[cfg(any(test, feature = "test-keyring-consent"))]
+#[must_use = "the override lasts only while the guard is alive"]
 pub struct TestPrivacyGuard(Option<PrivacyMode>);
 
 #[cfg(any(test, feature = "test-keyring-consent"))]
