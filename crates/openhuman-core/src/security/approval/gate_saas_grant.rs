@@ -290,7 +290,8 @@ impl ApprovalGate {
             prompt: Arc::clone(&surface) as Arc<dyn PromptSurface>,
         };
         let checked = self.engine.check(input).await;
-        // Every arm below settles the request itself.
+        // Each arm below settles the request, or hands it to `decide`, which
+        // re-arms the guard; no await runs in between.
         guard.disarm();
         let request_id = match checked {
             Ok(Checked::Pending { request_id, .. })
