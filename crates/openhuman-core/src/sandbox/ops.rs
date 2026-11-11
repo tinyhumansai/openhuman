@@ -11,7 +11,7 @@ pub(crate) use exec::{execute_resolved, resolve_sandbox};
 pub(crate) use policy::local_status_for_jail;
 #[cfg(test)]
 pub(crate) use policy::{
-    config_keeps_boxes, sandbox_disabled_by_host, sandbox_keeps_boxes, sandbox_off_value,
+    config_keeps_boxes, sandbox_disabled_by_host, sandbox_off_value,
 };
 pub use policy::{create_sandbox_backend, SANDBOX_ENV_PASSTHROUGH, SANDBOX_OFF_ENV};
 pub(crate) use policy::{
