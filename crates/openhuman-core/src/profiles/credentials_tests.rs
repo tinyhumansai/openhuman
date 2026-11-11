@@ -12,7 +12,12 @@ fn profile(tmp: &tempfile::TempDir, user: &str) -> Config {
     )
     .unwrap();
     let layout = ProfileLayout::new(tmp.path(), &id);
-    std::fs::create_dir_all(&layout.workspace_dir).unwrap();
+    // Both directories, as the host opens a profile: the profile's policy is
+    // enabled, and TinySecurity refuses to initialise over a missing
+    // `action_dir`. If this suite admits the module first in the process, that
+    // refusal is terminal and every later secret operation in the test binary
+    // fails as "security module unavailable".
+    crate::profiles::host::create_dirs(&layout).unwrap();
     let mut config = profile_config(&layout, &id);
     // This suite verifies tenant isolation with synthetic credentials. The
     // profile document remains encrypted at rest; native cipher consent has
