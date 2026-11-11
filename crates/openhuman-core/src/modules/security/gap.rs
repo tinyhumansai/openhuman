@@ -537,7 +537,7 @@ pub(crate) async fn protected_paths(paths: &[PathBuf]) -> Result<Vec<bool>, Stri
 
 /// `ProtectedPath2` through `config`'s module, without the test port.
 pub(super) async fn protected_paths_with_config(
-    config: &Config,
+    config: &crate::config::Config,
     paths: &[PathBuf],
 ) -> Result<Vec<bool>, String> {
     let response = super::client(config)

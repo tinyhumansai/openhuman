@@ -107,3 +107,56 @@ pub(super) fn armed_config() -> Result<Config, String> {
 fn scrub_log(text: &str) -> Option<String> {
     redact_blocking(RedactMode::CredentialsOnly, text, SYNC_TIMEOUT).ok()
 }
+
+/// A synchronous TinySecurity path decision: `Ok(true)` when the path is in
+/// the protected floor.
+pub(crate) type ProtectedPathCheck =
+    std::sync::Arc<dyn Fn(&std::path::Path) -> Result<bool, String> + Send + Sync>;
+
+const PATH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// `ProtectedPath2` for a synchronous host seam that cannot await (the media
+/// reference policy). Each call asks TinySecurity through the bounded sync
+/// bridge, so the floor decision runs in the module, never in a host copy of
+/// its algorithm. `config` names the module configuration the question goes
+/// to; `None` uses the current dispatch's. The module is asked once here, so
+/// one that cannot answer is reported before any path is.
+pub(crate) async fn protected_path_check(
+    config: Option<&Config>,
+) -> Result<ProtectedPathCheck, String> {
+    #[cfg(any(test, feature = "test-keyring-consent"))]
+    if let Some(port) = super::gap::installed_path_floor_port() {
+        port.protected_paths(&[]).await?;
+        return Ok(std::sync::Arc::new(move |path: &std::path::Path| {
+            let answers =
+                futures::executor::block_on(port.protected_paths(&[path.to_path_buf()]))?;
+            answers
+                .first()
+                .copied()
+                .ok_or_else(|| "scripted TinySecurity ProtectedPath2 gave no answer".to_owned())
+        }));
+    }
+    let config = match config {
+        Some(config) => config.clone(),
+        None => {
+            crate::core::runtime::DispatchCtx::ambient()
+                .load_config()
+                .await?
+        }
+    };
+    super::gap::protected_paths_with_config(&config, &[]).await?;
+    if !super::sync_seam::arm_current() {
+        return Err("TinySecurity sync bridge is unavailable".into());
+    }
+    Ok(std::sync::Arc::new(move |path: &std::path::Path| {
+        let config = config.clone();
+        let paths = vec![path.to_path_buf()];
+        let answers = super::sync_seam::run(PATH_CHECK_TIMEOUT, async move {
+            super::gap::protected_paths_with_config(&config, &paths).await
+        })?;
+        answers
+            .first()
+            .copied()
+            .ok_or_else(|| "TinySecurity ProtectedPath2 gave no answer".to_owned())
+    }))
+}
