@@ -601,7 +601,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           name: "tauri-coverage",
           when: areas.rustTauri,
           env: { ...covEnv },
-          needs: ["test-modules"],
+          needs: ex63 ? [] : ["test-modules"],
           run: withModules(
             "unset RUSTFLAGS RUSTC_WRAPPER" +
             " && cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml" +
@@ -612,7 +612,8 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             // TinySecurity module, which keeps its first secret scope for the
             // life of a process, so tests sharing one process fail closed.
             " && cargo llvm-cov nextest --no-fail-fast --no-tests=fail --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
-            " --lcov --output-path ci-out/lcov/lcov-tauri.info",
+              " --lcov --output-path ci-out/lcov/lcov-tauri.info",
+          ),
         },
       ],
     },
