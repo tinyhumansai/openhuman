@@ -16,17 +16,25 @@ long-lived box on an NVIDIA OpenShell gateway ([`openshell/`](./openshell/mod.rs
 declared to TinySecurity as the `tinybox-openshell` container executor. Nothing
 on the host is mounted, egress is denied, and the box comes from
 `[runtime.openshell]`. `BoxRegistry` keys boxes on the whole `Tenant` (profile
-and agent), creates each one once under concurrent first commands, reaps idle
-boxes and caps live ones; a command with no tenant (`NoTenant`) is refused,
-never run in a shared box.
+and agent) within an `OwnerScope` (a hash of the active workspace, which is
+per signed-in user, and on agent37 of `[runtime.agent37] retention_namespace`),
+creates each one once under concurrent first commands, reaps idle boxes and
+caps live ones; a command with no tenant (`NoTenant`) is refused, never run in
+a shared box. A command whose caller gives up (its future dropped) lets go of
+its box on a detached task, which stops the command; a create cancelled
+before the module answers closes its reservation.
 
 `[security.sandbox] backend = "agent37"` goes through the same registry
 ([`boxes/`](./boxes/mod.rs), `BoxBackend::Agent37`) on agent37's hosted
 service, declared as the `tinybox-agent37` container executor and refused
 under `[privacy] mode = "local_only"`. Its boxes are *retained* (box contract
 2.4): each is created with `Retention { key, idle_sleep_secs,
-delete_after_secs }`, where `key` is `boxes::owner_key`, `oh-` plus the
-SHA-256 of the whole tenant (stable, opaque, never a raw id). The service
+delete_after_secs }` (the box contract's own `tinybox_bus::Retention`), where
+`key` is `boxes::owner_key`, `oh-` plus the SHA-256 of the owner scope and the
+whole tenant (stable, opaque, never a raw id or path). Deployments sharing one
+agent37 key that could see equal tenants in equal workspace paths (staging and
+production of one service) must set distinct `retention_namespace` values;
+changing it starts each tenant on a fresh box and the old one expires. The service
 sleeps a box after `[runtime.agent37] idle_sleep_secs` (default 900, clamped
 to 300–86400), wakes it on the next command, and deletes it after
 `delete_after_secs` asleep (default 30 days). The registry never deletes a

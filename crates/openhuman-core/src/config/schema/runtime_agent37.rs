@@ -27,6 +27,14 @@
 //! so changing them takes effect on the next core start. Hosts sharing one
 //! agent37 workspace should agree on `delete_after_secs`: expiry applies it to
 //! every retained box the service lists.
+//!
+//! A retained box is found again by an opaque key hashed from the tenant, the
+//! active workspace and `retention_namespace`. Deployments that share one
+//! agent37 key and could see equal tenants in equal workspace paths (staging
+//! and production of one service, say) must each set their own
+//! `retention_namespace`; left blank, the workspace alone keeps hosts and
+//! signed-in users apart. Changing it (or the workspace) starts each tenant
+//! on a fresh box; the old one sleeps until `delete_after_secs` deletes it.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -86,6 +94,11 @@ pub struct Agent37RuntimeConfig {
     /// The most boxes this process holds a handle on at once. A box let go of
     /// to make room is left asleep, not deleted.
     pub max_live: usize,
+    /// Names this deployment among those sharing one agent37 key, so equal
+    /// tenants of two deployments never adopt each other's retained boxes.
+    /// Only its hash is used; blank (the default) scopes boxes by the active
+    /// workspace alone.
+    pub retention_namespace: String,
 }
 
 impl Agent37RuntimeConfig {
@@ -111,6 +124,7 @@ impl Default for Agent37RuntimeConfig {
             idle_sleep_secs: DEFAULT_AGENT37_IDLE_SLEEP_SECS,
             delete_after_secs: DEFAULT_AGENT37_DELETE_AFTER_SECS,
             max_live: DEFAULT_AGENT37_MAX_LIVE,
+            retention_namespace: String::new(),
         }
     }
 }
