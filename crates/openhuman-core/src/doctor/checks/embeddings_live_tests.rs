@@ -187,7 +187,11 @@ async fn mock_managed_embeddings() -> (String, Arc<AtomicUsize>) {
 }
 
 async fn detect_managed(base_url: String, tmp: &TempDir) -> Vec<crate::doctor::Finding> {
-    let ctx = DoctorCtx::from_config(managed_config_in(tmp));
+    detect_managed_with(base_url, managed_config_in(tmp)).await
+}
+
+async fn detect_managed_with(base_url: String, config: Config) -> Vec<crate::doctor::Finding> {
+    let ctx = DoctorCtx::from_config(config);
     let context = CoreContext::for_test_with_extensions(
         DomainSet::full(),
         None,
@@ -248,6 +252,32 @@ async fn local_only_privacy_refuses_the_managed_probe_before_any_request() {
         calls.load(Ordering::SeqCst),
         0,
         "local-only mode keeps the probe on this machine"
+    );
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].severity, FindingSeverity::Error);
+}
+
+/// Inspection boot installs no live policy, so the live mode reads the
+/// Standard fallback; the selected config's own `local_only` mode must still
+/// keep the managed probe (and its credential) on this machine.
+#[tokio::test]
+async fn a_local_only_selected_config_refuses_the_managed_probe_without_a_live_policy() {
+    let tmp = TempDir::new().expect("temporary config and workspace");
+    let (endpoint, calls) = mock_managed_embeddings().await;
+    let mut config = managed_config_in(&tmp);
+    config.privacy.mode = crate::config::PrivacyMode::LocalOnly;
+    assert_eq!(
+        crate::security::live_policy::current_privacy_mode(),
+        crate::config::PrivacyMode::Standard,
+        "no live policy is installed for an inspection"
+    );
+
+    let findings = detect_managed_with(endpoint, config).await;
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "the selected local-only config keeps the probe on this machine"
     );
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].severity, FindingSeverity::Error);
