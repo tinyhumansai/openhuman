@@ -262,13 +262,108 @@ impl ReferenceFloor {
 
     /// The floor over `vocabulary`, lower-cased as TinySecurity matches it.
     pub(crate) fn enforced(vocabulary: tinysecurity_bus::ProtectedFloor2) -> Self {
-        Self::Enforced(vocabulary)
+        let lower = |names: Vec<String>| -> Vec<String> {
+            names.iter().map(|name| name.to_ascii_lowercase()).collect()
+        };
+        Self::Enforced(tinysecurity_bus::ProtectedFloor2 {
+            components: lower(vocabulary.components),
+            files: lower(vocabulary.files),
+            pairs: vocabulary
+                .pairs
+                .iter()
+                .map(|[parent, child]| [parent.to_ascii_lowercase(), child.to_ascii_lowercase()])
+                .collect(),
+            prefixes: lower(vocabulary.prefixes),
+        })
     }
 
     /// Why `path` may not be read as a reference, when the floor covers it.
-    fn refusal(&self, _path: &Path) -> Option<String> {
-        None
+    fn refusal(&self, path: &Path) -> Option<String> {
+        match self {
+            Self::Disabled => None,
+            Self::Unavailable(_) => Some(format!(
+                "reference path {} refused: TinySecurity's protected-path floor is unavailable, \
+                 so local reference files cannot be checked; use a URL instead",
+                path.display()
+            )),
+            Self::Enforced(floor) => floor_covers(floor, &path.to_string_lossy()).then(|| {
+                format!(
+                    "reference path {} is in a protected location (a credential store or \
+                     system directory); use a URL or a file inside the workspace",
+                    path.display()
+                )
+            }),
+        }
     }
+}
+
+/// Whether TinySecurity's floor covers `path`: a lexical mirror of
+/// `tinysecurity-policy`'s `path::floor` over the served vocabulary. Matching
+/// is ASCII case-insensitive and treats `\` as `/`; a segment is compared up
+/// to any `:` stream suffix and without trailing spaces or dots. Credential
+/// names match at any depth, pairs as consecutive segments, and system
+/// prefixes at the root, Windows ones under any drive letter.
+fn floor_covers(floor: &tinysecurity_bus::ProtectedFloor2, path: &str) -> bool {
+    let lowered = path.to_ascii_lowercase().replace('\\', "/");
+    let normalized = ["//?/", "//./", "/??/"]
+        .iter()
+        .find_map(|namespace| lowered.strip_prefix(namespace))
+        .unwrap_or(&lowered);
+    let segments: Vec<&str> = normalized.split('/').filter(|s| !s.is_empty()).collect();
+    let parent = |segment: &&str| {
+        segment.starts_with("..") && segment.trim_end_matches([' ', '.']).is_empty()
+    };
+    if path.contains('\0') || segments.iter().any(parent) {
+        return true;
+    }
+    let names: Vec<&str> = segments
+        .iter()
+        .map(|segment| {
+            segment
+                .split(':')
+                .next()
+                .unwrap_or(segment)
+                .trim_end_matches([' ', '.'])
+        })
+        .collect();
+    let credential_name = names.iter().any(|name| {
+        floor
+            .components
+            .iter()
+            .chain(&floor.files)
+            .any(|store| store == name)
+    });
+    let credential_pair = names.windows(2).any(|window| {
+        floor
+            .pairs
+            .iter()
+            .any(|[parent, child]| window[0] == parent && window[1] == child)
+    });
+    credential_name
+        || credential_pair
+        || floor
+            .prefixes
+            .iter()
+            .any(|prefix| under_prefix(normalized, prefix))
+}
+
+/// `path` is `prefix` or below it. A drive-qualified prefix (`c:/windows`)
+/// matches under every drive letter, as TinySecurity's Windows roots do.
+fn under_prefix(path: &str, prefix: &str) -> bool {
+    let within = |path: &str, prefix: &str| {
+        path.strip_prefix(prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    };
+    let drive_relative = |path: &str| {
+        let bytes = path.as_bytes();
+        (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+            .then(|| path[2..].to_owned())
+    };
+    within(path, prefix)
+        || matches!(
+            (drive_relative(path), drive_relative(prefix)),
+            (Some(path), Some(prefix)) if within(&path, &prefix)
+        )
 }
 
 /// Local reference files may be read and uploaded only from the action
