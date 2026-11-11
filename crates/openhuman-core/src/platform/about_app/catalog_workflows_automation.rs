@@ -188,7 +188,7 @@ Capability {
         domain: "wallet",
         category: CapabilityCategory::Workflows,
         description: "Read addresses, native balances and token balances (USDC on Solana, via wallet.token_balances), prepare/confirm/execute native + token transfers (ERC20/SPL/TRC20/BEP20), and inspect transactions (status, receipt, lookup) across the connected wallet (EVM, BTC, Solana, Tron). Quote-first; signing stays local. Agent and automated executes run inside the [wallet_policy] spend policy (asset allowlist, per-transaction, rolling-day and per-recipient weekly caps) and are recorded in a persistent ledger. Switched off by [components] wallet = false, which answers COMPONENT_DISABLED:wallet and leaves keychain material, spending limits and RPC endpoints untouched.",
-        how_to: "Use wallet.* RPC methods (balances, token_balances, prepare_transfer, execute_prepared, tx_status, tx_receipt, lookup_tx, policy_get, policy_update, ledger_list) via the agent or core_rpc_relay, or via Settings > Crypto > Wallet Balances.",
+        how_to: "Use wallet.* RPC methods (balances, token_balances, prepare_transfer, execute_prepared, tx_status, tx_receipt, lookup_tx, policy_get, policy_update, ledger_list) via the agent or core_rpc_relay. Settings > Crypto > Wallet Balances shows native balances only; token balances come from wallet.token_balances or the agent's wallet_balances tool.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_CREDENTIALS,
     },
