@@ -11,6 +11,7 @@ fn settings() -> BoxSettings {
         memory_bytes: 256 * 1024 * 1024,
         workdir: "/sandbox".into(),
         owner_scope: OwnerScope::default(),
+        call: None,
     }
 }
 
@@ -109,6 +110,7 @@ fn an_exec_carries_argv_workdir_and_only_the_given_env() {
         cwd: "/sandbox".into(),
         env: env.clone(),
         deadline: Duration::from_secs(40),
+        call: None,
     };
 
     let request = exec_request("r-1", &exec);
@@ -189,37 +191,38 @@ fn config_in(workspace: &str) -> Config {
     config
 }
 
-#[tokio::test]
-async fn each_call_reaches_the_module_with_its_own_configuration() {
+#[test]
+fn each_call_reaches_the_module_with_its_own_configuration() {
     let driver = BusBoxDriver::new(config_in("/first"), BoxBackend::Agent37);
     assert_eq!(
         driver.config().workspace_dir,
         config_in("/first").workspace_dir
     );
 
-    let seen = driver
-        .serve(&config_in("/second"), async {
-            driver.config().workspace_dir.clone()
-        })
-        .await;
-    assert_eq!(seen, config_in("/second").workspace_dir);
+    let second = driver.serve(&config_in("/second"), settings());
+    assert_eq!(
+        driver.config_for(second.call.as_ref()).workspace_dir,
+        config_in("/second").workspace_dir
+    );
 
     // Two calls in flight at once each keep their own.
-    let (a, b) = tokio::join!(
-        driver.serve(&config_in("/a"), async {
-            tokio::task::yield_now().await;
-            driver.config().workspace_dir.clone()
-        }),
-        driver.serve(&config_in("/b"), async {
-            tokio::task::yield_now().await;
-            driver.config().workspace_dir.clone()
-        }),
+    let a = driver.serve(&config_in("/a"), settings());
+    let b = driver.serve(&config_in("/b"), settings());
+    assert_eq!(
+        driver.config_for(a.call.as_ref()).workspace_dir,
+        config_in("/a").workspace_dir
     );
-    assert_eq!(a, config_in("/a").workspace_dir);
-    assert_eq!(b, config_in("/b").workspace_dir);
+    assert_eq!(
+        driver.config_for(b.call.as_ref()).workspace_dir,
+        config_in("/b").workspace_dir
+    );
 
     // Work outside any call (the reaper) uses the most recent call's.
     assert_eq!(driver.config().workspace_dir, config_in("/b").workspace_dir);
+    assert_eq!(
+        driver.config_for(None).workspace_dir,
+        config_in("/b").workspace_dir
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -250,15 +253,21 @@ fn a_reservation_kept_after_create_answers_is_not_abandoned() {
     assert!(!abandoned.get());
 }
 
-#[tokio::test]
-async fn a_call_with_modules_disabled_keeps_the_configuration_cleanups_use() {
+#[test]
+fn a_call_with_modules_disabled_keeps_the_configuration_cleanups_use() {
     let mut enabled = config_in("/enabled");
     enabled.modules.enabled = true;
     let driver = BusBoxDriver::new(enabled, BoxBackend::Agent37);
 
     let mut disabled = config_in("/disabled");
     disabled.modules.enabled = false;
-    driver.serve(&disabled, async {}).await;
+    let call = driver.serve(&disabled, settings());
+
+    // The call itself still reaches the module with its own configuration.
+    assert_eq!(
+        driver.config_for(call.call.as_ref()).workspace_dir,
+        config_in("/disabled").workspace_dir
+    );
 
     // A later cleanup, outside any call, must still reach the module with
     // the configuration that has it enabled.
@@ -292,14 +301,14 @@ fn a_created_box_keeps_its_reservation_and_is_returned() {
     assert!(!abandoned.get());
 }
 
-#[tokio::test]
-async fn a_box_is_cleaned_up_with_the_configuration_it_was_created_under() {
+#[test]
+fn a_box_is_cleaned_up_with_the_configuration_it_was_created_under() {
     let driver = BusBoxDriver::new(config_in("/created"), BoxBackend::Agent37);
     let created_under = driver.config();
     driver.remember("box-0", &created_under);
 
     // A later call replaces the most recent configuration.
-    driver.serve(&config_in("/later"), async {}).await;
+    driver.serve(&config_in("/later"), settings());
 
     assert_eq!(
         driver.config_of("box-0").workspace_dir,
