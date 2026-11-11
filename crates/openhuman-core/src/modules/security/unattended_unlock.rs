@@ -213,7 +213,10 @@ pub(crate) async fn answer_master_grant(
 /// redacted away cannot be told apart and is taken as ours (one secret scope
 /// is live per process).
 fn names_registration(args: &serde_json::Value, registration_id: &str) -> bool {
-    match args.get("registration_id").and_then(serde_json::Value::as_str) {
+    match args
+        .get("registration_id")
+        .and_then(serde_json::Value::as_str)
+    {
         Some(named) => named == registration_id,
         None => true,
     }
