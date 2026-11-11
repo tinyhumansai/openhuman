@@ -253,7 +253,7 @@ impl Tool for BoxSourced {
             Ok(bytes) => bytes,
             Err(error) => return Ok(ToolResult::error(error.to_string())),
         };
-        let staged = match stage(&self.staging, &path, &bytes).await {
+        let staged = match stage(&self.staging, &path, bytes).await {
             Ok(staged) => staged,
             Err(error) => {
                 tracing::warn!(%error, "[artifacts] could not stage a sandbox file");
@@ -295,10 +295,22 @@ impl Drop for Staged {
 /// still stages.
 ///
 /// The bytes go in through the artifact crate's [`FileStore`] port, like every
-/// other artifact file, not a raw filesystem write. The folder is owned by the
-/// [`Staged`] guard from before it exists, so a call cancelled at any await
-/// point (the guard is dropped with the future) leaves no copy behind.
-async fn stage(staging: &Path, box_path: &str, bytes: &[u8]) -> std::io::Result<Staged> {
+/// other artifact file, not a raw filesystem write.
+///
+/// The write runs in a task of its own that finishes whether or not the caller
+/// is still waiting. The [`Staged`] guard lives in that task, so a call
+/// cancelled mid-write still has its folder removed, and only after the write
+/// has settled (a removal racing the storage layer's directory creation could
+/// otherwise leave the folder behind).
+async fn stage(staging: &Path, box_path: &str, bytes: Vec<u8>) -> std::io::Result<Staged> {
+    let staging = staging.to_path_buf();
+    let box_path = box_path.to_owned();
+    tokio::spawn(async move { stage_now(&staging, &box_path, &bytes).await })
+        .await
+        .map_err(std::io::Error::other)?
+}
+
+async fn stage_now(staging: &Path, box_path: &str, bytes: &[u8]) -> std::io::Result<Staged> {
     let name = match Path::new(box_path)
         .extension()
         .and_then(|extension| extension.to_str())
