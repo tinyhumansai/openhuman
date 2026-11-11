@@ -546,3 +546,49 @@ pub struct OpenHumanSessionHost {
 }
 
 pub use super::builder_config::SessionHostBuilder;
+
+// DIAGSTORM: strip fields one at a time, logging the ctx count after each.
+impl OpenHumanSessionHost {
+    pub(crate) fn diagstorm_strip(mut self, count: &dyn Fn() -> Option<usize>) {
+        macro_rules! step {
+            ($name:literal, $e:expr) => {{
+                let before = count();
+                $e;
+                log::warn!(
+                    "DIAGSTORM strip {} before={:?} after={:?}",
+                    $name,
+                    before,
+                    count()
+                );
+            }};
+        }
+        step!("runtime_session", drop(self.runtime_session.take()));
+        step!("runtime_state", self.runtime_state = Default::default());
+        step!("tools", self.tools = Arc::new(Vec::new()));
+        step!(
+            "pack_registry_handle",
+            drop(self.pack_registry_handle.take())
+        );
+        step!(
+            "synthesized_tools",
+            self.synthesized_tools = Arc::new(Vec::new())
+        );
+        step!("tool_dispatcher_etc", ());
+        step!("post_turn_hooks", self.post_turn_hooks.clear());
+        step!("host_env", self.host_env = Default::default());
+        step!(
+            "session_history_locator",
+            drop(self.session_history_locator.take())
+        );
+        step!(
+            "session_history_locator_memo",
+            drop(self.session_history_locator_memo.take())
+        );
+        step!("on_progress", drop(self.on_progress.take()));
+        step!("run_queue", drop(self.run_queue.take()));
+        step!("runtime_config", drop(self.runtime_config.take()));
+        step!("hosted_base", drop(self.hosted_base.take()));
+        step!("definition", drop(self.definition.take()));
+        step!("rest", drop(self));
+    }
+}

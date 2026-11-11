@@ -591,7 +591,7 @@ pub(crate) async fn checkin_session_agent(
     // DIAGSTORM
     let before = ctx.core().map(std::sync::Arc::strong_count);
     if std::env::var_os("DIAGSTORM_NOCACHE").is_some() {
-        drop(agent);
+        agent.diagstorm_strip(&|| ctx.core().map(std::sync::Arc::strong_count));
         log::warn!(
             "DIAGSTORM checkin dropped agent ctx_count before={before:?} after={:?}",
             ctx.core().map(std::sync::Arc::strong_count)
