@@ -36,7 +36,7 @@ fn an_eviction_storm_keeps_live_turns_controllable() {
         None,
         "max_profiles_open = 2\nidle_evict_secs = 0\n",
         Some(llm.port),
-        "info,openhuman_core::profiles=debug",
+        "debug,hyper=info,hyper_util=info,reqwest=info,h2=info,rustls=info,tungstenite=info,tokio_tungstenite=info",
     );
     for (user, name) in USERS.iter().enumerate() {
         provision(&client(), &node.base, name);
