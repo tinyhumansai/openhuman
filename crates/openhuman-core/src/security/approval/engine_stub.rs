@@ -129,6 +129,15 @@ impl StubEngine {
             .and_then(|row| row.attribution)
     }
 
+    /// The label a decision was recorded under, when one was.
+    pub(crate) fn label(&self, request_id: &str) -> Option<String> {
+        self.rows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(request_id)
+            .and_then(|row| row.label.clone())
+    }
+
     /// Every request id, oldest first.
     pub(crate) fn request_ids(&self) -> Vec<String> {
         let rows = self.rows.lock().unwrap_or_else(PoisonError::into_inner);
