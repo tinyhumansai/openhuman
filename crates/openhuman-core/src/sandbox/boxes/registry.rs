@@ -503,6 +503,11 @@ impl<D: BoxDriver> BoxRegistry<D> {
         // A box let go of for this owner may still be closing; a new one made
         // now could adopt the same instance, so wait for it first.
         self.cleanups.settle(owner).await;
+        // A release or shutdown may have retired the slot while this waited:
+        // start no create for a slot nothing will clean up.
+        if let Some(resource) = slot.current()? {
+            return Ok(resource);
+        }
         let (scope, tenant) = owner;
         let retention: Option<Retention> = self
             .limits
