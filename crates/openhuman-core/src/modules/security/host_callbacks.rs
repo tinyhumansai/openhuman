@@ -355,7 +355,7 @@ async fn register_tenant(
             workspace = %config.workspace_dir.display(),
             "[security] device pairing store could not open"
         );
-        "device pairing persistence unavailable".to_owned()
+        format!("device pairing persistence unavailable: {error:#}")
     })?;
     let backend = std::sync::Arc::new(super::secret_backend::SecretBackend::new(
         registration_id.clone(),

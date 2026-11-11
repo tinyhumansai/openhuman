@@ -1,4 +1,13 @@
+//! Tests that run the transfer commands for real, in a directory standing in
+//! for each box, so the quoting and the encoding are checked against a shell.
+
+use super::tests::*;
 use super::*;
+use crate::core::runtime::NoTenant;
+use crate::sandbox::openshell::scripted_driver::{ExecStep, ScriptedDriver};
+use crate::sandbox::openshell::{BoxOutput, RegistryLimits};
+use std::sync::Arc;
+use std::time::Duration;
 
 fn host_boxes() -> (
     tempfile::TempDir,

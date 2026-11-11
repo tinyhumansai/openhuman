@@ -152,6 +152,7 @@ async fn grounded_close_uses_the_selected_model_and_keeps_verifier_out_of_contex
         &outcome,
         None,
         None,
+        &SessionRunOptions::default(),
     )
     .await
     .expect("blank terminal reply needs a close");
@@ -198,6 +199,7 @@ async fn terminal_failed_close_requests_are_counted_without_usage() {
         &blank_outcome(false),
         None,
         None,
+        &SessionRunOptions::default(),
     )
     .await
     .expect("blank terminal reply needs a close");
@@ -244,6 +246,7 @@ async fn close_state_machine_calls_emit_correlated_native_model_events() {
             &blank_outcome(false),
             None,
             Some(&trace),
+            &SessionRunOptions::default(),
         )
         .await
         .expect("blank terminal reply needs a close");
@@ -387,6 +390,7 @@ async fn close_stream_eof_and_timeout_emit_terminal_traces_without_timeout_usage
             &blank_outcome(false),
             pending.then_some(std::time::Duration::from_secs(1)),
             Some(&trace),
+            &SessionRunOptions::default(),
         )
         .await
         .expect("blank terminal reply needs a close");
@@ -450,6 +454,7 @@ async fn required_output_repair_preserves_all_host_output_placements() {
             1,
             &mut usage,
             None,
+            &SessionRunOptions::default(),
         )
         .await
         .expect("reply lacks the required block");
@@ -575,6 +580,7 @@ async fn timed_out_repair_keeps_the_usage_of_its_answered_call() {
             2,
             &mut usage,
             None,
+            &SessionRunOptions::default(),
         ),
     )
     .await;
@@ -683,3 +689,6 @@ fn supplemental_free_route_uses_zero_catalog_rates() {
 
 #[path = "grounded_close_typed_stop_tests.rs"]
 mod typed_stop;
+
+#[path = "grounded_close_replay_tests.rs"]
+mod replay;

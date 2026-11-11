@@ -520,6 +520,11 @@ pub struct Config {
     #[serde(default)]
     pub hosting: HostingConfig,
 
+    /// Native-wallet spend policy for executes without a per-transfer human
+    /// confirmation (`[wallet_policy]`); read by `web3::wallet::policy`.
+    #[serde(default)]
+    pub wallet_policy: WalletPolicyConfig,
+
     /// Storage backend for state on the `tinystoragedrivers` ports
     /// (`[storage]`). Empty uses the default, `sqlite:<workspace>/storage`.
     #[serde(default)]

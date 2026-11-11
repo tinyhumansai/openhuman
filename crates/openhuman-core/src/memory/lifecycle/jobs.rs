@@ -110,7 +110,12 @@ pub async fn snapshot(config: &Config) -> QueueState {
 /// recorded; see `tinymemory_tools::queue::JobQueue::run` for the retry rules.
 pub async fn run(config: &Config, selection: Selection) -> Result<Vec<JobRun>> {
     let bound = engine::resolve(config).await.engine()?;
-    queue_of(&config.workspace_dir)
+    // Armed from here: a job that ran, even one that failed part way or was
+    // cancelled by a profile fence, may have changed what memory holds
+    // (beliefs built, say), so a block read before it, or a read still in
+    // flight, must not reach a later prompt. It fires on every way out.
+    let mut changed = InvalidateOnDrop::armed(config);
+    let runs = queue_of(&config.workspace_dir)
         .run(
             bound.engine,
             selection,
@@ -119,7 +124,41 @@ pub async fn run(config: &Config, selection: Selection) -> Result<Vec<JobRun>> {
         .await
         .map_err(|error| match error {
             QueueError::NoSuchJob(_) => Error::InvalidRequest(error.to_string()),
-        })
+        });
+    if runs.as_ref().map_or(true, Vec::is_empty) {
+        // Nothing ran: nothing changed.
+        changed.disarm();
+    }
+    runs
+}
+
+/// Drops the workspace's ready memory blocks and voids renders in flight when
+/// it goes out of scope, unless disarmed.
+struct InvalidateOnDrop<'a> {
+    config: &'a Config,
+    armed: bool,
+}
+
+impl<'a> InvalidateOnDrop<'a> {
+    fn armed(config: &'a Config) -> Self {
+        Self {
+            config,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for InvalidateOnDrop<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            tracing::debug!("[memory:jobs] a job run ended: dropping the workspace's ready blocks");
+            super::prefetch::invalidate(self.config);
+        }
+    }
 }
 
 /// The cron entry point: runs due jobs unless background work is paused.

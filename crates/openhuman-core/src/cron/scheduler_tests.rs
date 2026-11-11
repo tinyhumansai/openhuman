@@ -421,3 +421,39 @@ async fn a_pipeline_reports_its_last_stage_rather_than_pipefail() {
          a failure and re-status every existing job with a pipeline in it: {output}"
     );
 }
+
+/// `[cron] shell_timeout_secs` bounds a scheduled shell job instead of the
+/// former fixed 120 seconds: a command that outlives it is killed and the
+/// run fails as timed out after the configured limit.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_shell_job_honours_the_configured_timeout() {
+    let tmp = TempDir::new().unwrap();
+    // A shell job needs no inference credential, so this skips the managed
+    // key `test_config` stores.
+    let ws = tmp.path().join("workspace");
+    let mut config = Config {
+        workspace_dir: ws.clone(),
+        action_dir: ws.clone(),
+        config_path: tmp.path().join("config.toml"),
+        ..Config::default()
+    };
+    config.secrets.encrypt = false;
+    config.modules.source = crate::config::schema::ModuleSourceMode::Source;
+    tokio::fs::create_dir_all(&ws).await.unwrap();
+    config.cron.shell_timeout_secs = 1;
+    let security =
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    assert!(security.can_act(), "the fixture policy must permit acting");
+
+    let job = test_job("sleep 30");
+    let started = std::time::Instant::now();
+    let (success, output) = run_job_command_in_test_context(&config, &security, &job).await;
+
+    assert!(!success, "the job must fail on timeout: {output}");
+    assert!(output.contains("job timed out after 1s"), "{output}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "the configured 1s limit, not the old 120s default, ended the run"
+    );
+}

@@ -76,3 +76,41 @@ fn a_thread_created_with_todays_behaviour_records_nothing_and_stays_that_way() {
         );
     });
 }
+
+/// A thread whose durable history was imported has rows but no frozen prefix
+/// and no recorded options: it ran before they existed, so it keeps today's
+/// behaviour whatever the config says now, like any other unrecorded thread.
+#[test]
+fn a_thread_with_imported_history_and_no_record_keeps_todays_behaviour() {
+    use tinyagents_session::transcript::TranscriptMessage;
+
+    run_async(async {
+        // No TinySecurity module runs in a unit test, so the screen would hold the input.
+        let _off = crate::security::switch::off_for_this_thread();
+        let root = tempfile::tempdir().expect("tempdir");
+        let thread = thread_id("imported-unpinned");
+        let next = model(vec![ModelResponse::assistant("ok")], true);
+        let mut host = build_host_with_config(
+            root.path(),
+            next,
+            true,
+            &thread,
+            agent_config(no_promotion()),
+        );
+        let imported = [
+            TranscriptMessage::user("legacy question"),
+            TranscriptMessage::assistant("legacy answer"),
+        ];
+        assert!(host.adopt_imported_history(&imported).expect("adopt"));
+        host.turn("hello").await.expect("turn");
+        let session = host.session.clone().expect("bound session");
+        let records: usize = store_tree(root.path(), &thread, &session)
+            .values()
+            .map(|stored| stored.to_string().matches(DISCOVERY_METADATA_KEY).count())
+            .sum();
+        assert_eq!(
+            records, 0,
+            "the config of today must not be adopted by a thread that predates the pin"
+        );
+    });
+}

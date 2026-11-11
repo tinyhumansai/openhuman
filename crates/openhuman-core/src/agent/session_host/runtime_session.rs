@@ -10,6 +10,7 @@ pub use compact::{CompactOptions, CompactOutcome};
 mod enrichment;
 pub(super) mod memory_block;
 mod memory_block_ready;
+pub(crate) use memory_block_ready::invalidate as invalidate_ready_memory_blocks;
 pub use memory_block_ready::MemoryBlockPrewarm;
 mod permanent;
 mod post_commit;

@@ -56,6 +56,7 @@ pub(crate) mod test_support;
 pub use codec::OpenHumanTranscriptCodec;
 pub type OpenHumanSessionHooks =
     tinyagents_runtime::FnSessionHooks<crate::agent::tinyagents::host::OpenHumanRunContext>;
+pub(crate) use runtime_session::invalidate_ready_memory_blocks;
 pub use runtime_session::{CompactOptions, CompactOutcome, MemoryBlockPrewarm};
 pub use types::{OpenHumanSessionHost, SessionHostBuilder, TurnOverrides};
 

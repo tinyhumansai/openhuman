@@ -668,7 +668,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "itoa",
- "matchit",
+ "matchit 0.8.4",
  "memchr",
  "mime",
  "percent-encoding",
@@ -2602,12 +2602,12 @@ dependencies = [
 
 [[package]]
 name = "engineioxide"
-version = "0.15.2"
+version = "0.17.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2b48069eef4227bde0e5a8e0601ddabfbdef887c05b831cd314d2990726a461"
+checksum = "0615980857185ecc33fed6ec417ec64fe3e427bf1de0471bb3594132f453bdbe"
 dependencies = [
- "base64 0.22.1",
  "bytes",
+ "engineioxide-core",
  "futures-core",
  "futures-util",
  "http",
@@ -2616,15 +2616,34 @@ dependencies = [
  "hyper",
  "hyper-util",
  "pin-project-lite",
- "rand 0.8.8",
  "serde",
  "serde_json",
  "smallvec",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tokio",
- "tokio-tungstenite 0.24.0",
+ "tokio-tungstenite 0.30.0",
+ "tokio-util",
  "tower-layer",
  "tower-service",
+]
+
+[[package]]
+name = "engineioxide-core"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "118a748203198472029bf8ee196032ad375b8c454ec5fe2f00f783badf4cb9d1"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
+ "pin-project-lite",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "smallvec",
 ]
 
 [[package]]
@@ -4723,6 +4742,12 @@ name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
+
+[[package]]
+name = "matchit"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8863b587001c1b9a8a4e36008cebc6b3612cb1226fe2de94858e06092687b608"
 
 [[package]]
 name = "maybe-owned"
@@ -8344,9 +8369,9 @@ dependencies = [
 
 [[package]]
 name = "socketioxide"
-version = "0.15.2"
+version = "0.18.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "929e1bc0629c6c8ceaa39473082aa2df35a2a5f0c300382912047bd5dccb9740"
+checksum = "ef8a9378fdea634a338e8dd2cf17e81cfaaf8c04840625e4c78555c89d9ba6e9"
 dependencies = [
  "bytes",
  "engineioxide",
@@ -8355,13 +8380,12 @@ dependencies = [
  "http",
  "http-body",
  "hyper",
- "matchit",
+ "matchit 0.9.2",
  "pin-project-lite",
- "rustversion",
  "serde",
  "socketioxide-core",
  "socketioxide-parser-common",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tokio",
  "tower-layer",
  "tower-service",
@@ -8369,21 +8393,24 @@ dependencies = [
 
 [[package]]
 name = "socketioxide-core"
-version = "0.15.2"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20fbe5455c862962f547bac834bcc6db8659a7033934b9c45c6e1cfb4f9dc178"
+checksum = "2d7f9e1d60fccd6c70b158e5f0d6715f5aad5c3a49cfee0a5a4eb8edf75d1311"
 dependencies = [
+ "arbitrary",
  "bytes",
- "engineioxide",
+ "engineioxide-core",
+ "futures-core",
  "serde",
- "thiserror 1.0.69",
+ "smallvec",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "socketioxide-parser-common"
-version = "0.15.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "554757f11f7b0944334fc00765523443c39a05fcd7be69aaaffbda06fbc4cef7"
+checksum = "782f1161df52e2be178cb93536af87a101751ce7a0bb9718751e79476b3df14e"
 dependencies = [
  "bytes",
  "itoa",
@@ -10719,7 +10746,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "bitcoin",
  "bs58",
@@ -10741,7 +10768,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-bus"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -10750,7 +10777,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-crypto"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "async-trait",
  "bech32 0.12.0",
@@ -10766,7 +10793,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-module"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "async-trait",
  "bitcoin",
@@ -10795,7 +10822,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-web3"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -10814,7 +10841,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-x402"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -12194,7 +12221,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

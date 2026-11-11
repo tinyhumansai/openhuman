@@ -117,13 +117,25 @@ impl ApprovalGate {
             Some(denied) => return (denied, None),
             None => {}
         }
-        if forced
-            && !matches!(
-                &origin,
-                AgentTurnOrigin::WebChat { thread_id, client_id, .. }
-                    if !thread_id.trim().is_empty() && !client_id.trim().is_empty()
-            )
-        {
+        let routable_web_chat = matches!(
+            &origin,
+            AgentTurnOrigin::WebChat { thread_id, client_id, .. }
+                if !thread_id.trim().is_empty() && !client_id.trim().is_empty()
+        );
+        // The native secret master grant a Settings save (or a CLI call) needs
+        // has no chat to ask in; it parks unrouted for the desktop's pending
+        // queue instead of failing before anyone is asked.
+        let unrouted_secret_grant =
+            forced && !routable_web_chat && secret_grant_parks_unrouted(tool_name, &origin);
+        if unrouted_secret_grant {
+            tracing::info!(
+                tool = tool_name,
+                ?origin,
+                "[approval::gate] forced secret grant without a chat route — parking unrouted \
+                 for the desktop's pending-approval queue"
+            );
+        }
+        if forced && !routable_web_chat && !unrouted_secret_grant {
             tracing::warn!(
                 tool = tool_name,
                 ?origin,
@@ -215,6 +227,13 @@ impl ApprovalGate {
         // from bypassing the per-user decision.
         let (variant, approval_forced) =
             one_time_approval_mode(variant, forced, saas_human_approval);
+        // The unrouted secret grant has no chat surface to scope a durable
+        // answer to: it is always a one-time decision.
+        let variant = if unrouted_secret_grant {
+            Variant::Forced
+        } else {
+            variant
+        };
 
         // Chat context (thread/client id) for routing the yes/no reply — handed
         // to the turn by the web channel; absent for non-chat callers.
@@ -365,7 +384,11 @@ impl ApprovalGate {
             summary: action_summary.to_string(),
             thread: chat_thread_id,
             flow: flow_id,
-            origin: if copilot_stream {
+            origin: if unrouted_secret_grant {
+                // A person decides it, exactly as on the WebChat route; never a
+                // class the engine may approve on its own.
+                CallOrigin::Operator
+            } else if copilot_stream {
                 CallOrigin::Copilot
             } else if subagent_park {
                 CallOrigin::SubAgent
@@ -661,8 +684,11 @@ fn origin_class(origin: &AgentTurnOrigin) -> CallOrigin {
             source: TrustedAutomationSource::Cron,
             ..
         } => CallOrigin::Cron,
+        // A cron job whose agent opted into scheduled actions: the security
+        // gate admitted the call for that job's root run only, so it is judged
+        // as the user-authorized automation it is.
         AgentTurnOrigin::TrustedAutomation {
-            source: TrustedAutomationSource::Background,
+            source: TrustedAutomationSource::Background | TrustedAutomationSource::CronActions,
             ..
         }
         | AgentTurnOrigin::TrustedAutomation {

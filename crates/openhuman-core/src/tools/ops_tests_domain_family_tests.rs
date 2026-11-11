@@ -12,13 +12,15 @@ use crate::tools::filter_tools_by_user_preference;
 ///
 /// Needs the module: a build without it has security disabled, so `can_act()`
 /// is always true and no tool refuses (`crate::security::switch`).
+///
+/// `browser_open` is not listed: it no longer gates itself (f8a08f11f8 moved
+/// that to the host authorization stage), so a tool-level marker is not its
+/// contract.
 #[cfg(feature = "security-module")]
 #[tokio::test]
 async fn readonly_acting_tools_carry_policy_blocked_marker() {
     use crate::security::AutonomyLevel;
     use crate::tools::http_request_tool;
-    #[cfg(feature = "modules")]
-    use crate::tools::BrowserOpenTool;
     use tinyagents_harness_tools::fs::filesystem::{ApplyPatchTool, CsvExportTool};
     use tinytools::status::POLICY_BLOCKED_MARKER;
 
@@ -38,19 +40,6 @@ async fn readonly_acting_tools_carry_policy_blocked_marker() {
         (
             Box::new(CsvExportTool::new(sec.clone())),
             serde_json::json!({ "data": "col1\nval1", "filename": "x.csv" }),
-        ),
-        // The `computer`-family tools are compiled out with the
-        // `desktop-automation` feature; gate these two cases per-element so the
-        // rest of the read-only policy assertions still run in the slim build.
-        #[cfg(feature = "modules")]
-        (
-            Box::new(BrowserOpenTool::new(
-                sec.clone(),
-                Arc::new(crate::modules::browser::BrowserClient::new(Arc::new(
-                    crate::config::Config::default(),
-                ))),
-            )),
-            serde_json::json!({ "url": "https://example.com" }),
         ),
         (
             Box::new(http_request_tool(

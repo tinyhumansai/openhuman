@@ -38,7 +38,18 @@ fn host_with_context(
     thread: &str,
     context: crate::config::ContextSettings,
 ) -> crate::agent::OpenHumanSessionHost {
+    host_with_context_and_contract(root, model, thread, context, None)
+}
+
+fn host_with_context_and_contract(
+    root: &std::path::Path,
+    model: Arc<ScriptedModel>,
+    thread: &str,
+    context: crate::config::ContextSettings,
+    required_output: Option<crate::config::RequiredOutputContract>,
+) -> crate::agent::OpenHumanSessionHost {
     let mut config = crate::config::Config::default();
+    config.agent.required_output = required_output;
     config.workspace_dir = root.join("workspace");
     config.action_dir = root.to_path_buf();
     config.config_path = root.join("config.toml");
@@ -50,6 +61,7 @@ fn host_with_context(
     let mut host = crate::agent::SessionHostBuilder::new()
         .with_session_history_locator(store_locator(root))
         .model_name("test/session-fixture".to_string())
+        .config(config.agent.clone())
         .chat_model_with_config(chat_model, Arc::new(config))
         .tools(vec![Box::new(EchoTool)])
         .tool_dispatcher(Box::new(tinytools_agent::dialect::NativeDialect))
@@ -141,5 +153,100 @@ fn a_tool_result_is_sent_in_full_while_expiry_is_off() {
         for results in &per_turn {
             assert_full(results);
         }
+    });
+}
+
+/// A thread whose durable history was imported has rows but no frozen prefix
+/// and no recorded options: it predates the pin, so it keeps today's replay
+/// (nothing expires) whatever `[context]` says now.
+#[test]
+fn a_thread_with_imported_history_and_no_record_keeps_todays_replay() {
+    use crate::agent::tinyagents::replay_pin::REPLAY_METADATA_KEY;
+    use tinyagents_session::transcript::TranscriptMessage;
+
+    run_async(async {
+        let root = tempfile::tempdir().expect("tempdir");
+        let thread = thread_id("imported-unpinned-replay");
+        let model = Arc::new(
+            ScriptedModel::new(vec![ModelResponse::assistant("ok")]).with_profile(ModelProfile {
+                tool_calling: true,
+                ..Default::default()
+            }),
+        );
+        let mut context = crate::config::ContextSettings::default();
+        context.tool_result_max_age_turns = Some(2);
+        let mut host = host_with_context(root.path(), model, &thread, context);
+        let imported = [
+            TranscriptMessage::user("legacy question"),
+            TranscriptMessage::assistant("legacy answer"),
+        ];
+        assert!(host.adopt_imported_history(&imported).expect("adopt"));
+        host.turn("hello").await.expect("turn");
+        let session = host.session.clone().expect("bound session");
+        let records: usize =
+            super::transcript_compat_tests::store_tree(root.path(), &thread, &session)
+                .values()
+                .map(|stored| stored.to_string().matches(REPLAY_METADATA_KEY).count())
+                .sum();
+        assert_eq!(
+            records, 0,
+            "the config of today must not be adopted by a thread that predates the pin"
+        );
+    });
+}
+
+/// A required-output repair is a tools-off request built after the loop. On a
+/// thread with expiry at one user turn, a tool turn, a plain turn and a second
+/// tool turn leave the first result stale when the third turn's reply, which
+/// lacks the required block, is repaired.
+#[test]
+fn the_required_output_repair_request_carries_expired_results_as_notes() {
+    run_async(async {
+        let _off = crate::security::switch::off_for_this_thread();
+        let root = tempfile::tempdir().expect("tempdir");
+        let thread = thread_id("expiry-repair");
+        let repaired = ModelResponse::assistant("{\"answer\":\"ok\"}");
+        // Every reply lacks the block, so every turn is repaired once.
+        let script = vec![
+            response(Vec::new(), vec![call("call-1", "echo", json!({"q": "x"}))]),
+            ModelResponse::assistant("first done"),
+            repaired.clone(),
+            ModelResponse::assistant("second done"),
+            repaired.clone(),
+            response(Vec::new(), vec![call("call-2", "echo", json!({"q": "y"}))]),
+            ModelResponse::assistant("third done"),
+            repaired,
+        ];
+        let model = Arc::new(ScriptedModel::new(script).with_profile(ModelProfile {
+            tool_calling: true,
+            ..Default::default()
+        }));
+        let mut context = crate::config::ContextSettings::default();
+        context.tool_result_max_age_turns = Some(1);
+        let mut host = host_with_context_and_contract(
+            root.path(),
+            model.clone(),
+            &thread,
+            context,
+            Some(crate::config::RequiredOutputContract::new("answer")),
+        );
+        for turn in ["first", "second", "third"] {
+            host.turn(turn).await.expect("turn");
+        }
+        let requests = model.requests();
+        let repair = requests.last().expect("the third turn's repair request");
+        assert!(repair.tools.is_empty(), "the last request is the repair");
+        let results = tool_results(repair);
+        assert_eq!(results.len(), 2, "{results:?}");
+        assert!(
+            results[0].starts_with("[used echo:"),
+            "the stale result must go out as a note, got {:?}",
+            results[0]
+        );
+        assert!(
+            results[1].contains(TOOL_BODY),
+            "this turn's own result stays whole, got {:?}",
+            results[1]
+        );
     });
 }

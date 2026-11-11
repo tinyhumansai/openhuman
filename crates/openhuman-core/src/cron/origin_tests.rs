@@ -154,7 +154,7 @@ fn channel_origin_job_runs_as_external_channel_turn() {
         thread_id: None,
         channel_session: Some(Box::new(test_channel_session())),
     }));
-    match turn_origin_for_job_run(&job, "run-1") {
+    match turn_origin_for_job_run(&job, "run-1", true) {
         AgentTurnOrigin::ExternalChannel {
             sender_name: _,
             channel,
@@ -186,7 +186,7 @@ fn web_and_origin_less_jobs_keep_trusted_cron() {
     ] {
         let job = job_with_origin(origin);
         assert!(matches!(
-            turn_origin_for_job_run(&job, "r"),
+            turn_origin_for_job_run(&job, "r", false),
             AgentTurnOrigin::TrustedAutomation {
                 source: TrustedAutomationSource::Cron,
                 ..
@@ -314,4 +314,115 @@ fn announce_to_own_chat_keeps_the_gate_unless_the_origin_is_retained() {
         "delivery": {"mode": "announce", "channel": "telegram", "to": "42"}
     });
     assert!(is_self_scoped_agent_job(&current, Some(&ch())));
+}
+
+// ── scheduled-actions opt-in ───────────────────────────────────────
+
+fn acting_definition(
+    scheduled_actions: bool,
+    tools: tinyagents_definition::ToolScope,
+) -> crate::agent_registry::host_definition::AgentDefinition {
+    let mut def = crate::agent_registry::host_definition::AgentDefinition {
+        id: "builder".into(),
+        tools,
+        ..Default::default()
+    };
+    def.extensions.scheduled_actions = scheduled_actions;
+    def
+}
+
+fn named_tools() -> tinyagents_definition::ToolScope {
+    tinyagents_definition::ToolScope::Named(vec!["shell".into(), "browser".into()])
+}
+
+fn job_for_agent(agent_id: Option<&str>) -> CronJob {
+    let mut job = job_with_origin(None);
+    job.agent_id = agent_id.map(str::to_string);
+    job
+}
+
+#[test]
+fn opted_in_agent_with_named_tools_enables_scheduled_actions_for_its_job() {
+    assert!(scheduled_actions_enabled(
+        &job_for_agent(Some("builder")),
+        &acting_definition(true, named_tools()),
+    ));
+}
+
+#[test]
+fn scheduled_actions_stay_off_without_every_opt_in_condition() {
+    // Default definition: no opt-in.
+    assert!(!scheduled_actions_enabled(
+        &job_for_agent(Some("builder")),
+        &acting_definition(false, named_tools()),
+    ));
+    // The opt-in with a wildcard tool scope is refused.
+    assert!(!scheduled_actions_enabled(
+        &job_for_agent(Some("builder")),
+        &acting_definition(true, tinyagents_definition::ToolScope::Wildcard),
+    ));
+    // A job that does not name its agent never qualifies.
+    assert!(!scheduled_actions_enabled(
+        &job_for_agent(None),
+        &acting_definition(true, named_tools()),
+    ));
+}
+
+#[test]
+fn opted_in_job_without_a_channel_origin_runs_as_cron_actions() {
+    for origin in [
+        None,
+        Some(JobOrigin::Web {
+            thread_id: "t".into(),
+            agent_id: None,
+        }),
+    ] {
+        let job = job_with_origin(origin);
+        assert!(matches!(
+            turn_origin_for_job_run(&job, "r", true),
+            AgentTurnOrigin::TrustedAutomation {
+                source: TrustedAutomationSource::CronActions,
+                ..
+            }
+        ));
+    }
+}
+
+#[test]
+fn scheduled_actions_never_widen_a_channel_origin_job() {
+    let job = job_with_origin(Some(JobOrigin::Channel {
+        channel: "telegram".into(),
+        reply_target: "42".into(),
+        history_key: "k".into(),
+        sender: Some("alice".into()),
+        thread_id: None,
+        channel_session: Some(Box::new(test_channel_session())),
+    }));
+    assert!(matches!(
+        turn_origin_for_job_run(&job, "r", true),
+        AgentTurnOrigin::ExternalChannel { .. }
+    ));
+}
+
+#[test]
+fn agent_definition_toml_parses_the_scheduled_actions_opt_in() {
+    let def: crate::agent_registry::host_definition::AgentDefinition = toml::from_str(
+        r#"
+id = "builder"
+when_to_use = "Builds and tests code on a schedule"
+scheduled_actions = true
+
+[tools]
+named = ["shell", "file_write"]
+"#,
+    )
+    .expect("parse agent TOML");
+    assert!(def.extensions.scheduled_actions);
+    assert!(scheduled_actions_enabled(
+        &job_for_agent(Some("builder")),
+        &def
+    ));
+    let default: crate::agent_registry::host_definition::AgentDefinition =
+        toml::from_str("id = \"plain\"\nwhen_to_use = \"x\"\n").expect("parse");
+    assert!(!default.extensions.scheduled_actions);
 }

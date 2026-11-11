@@ -5,6 +5,13 @@ impl OpenHumanSessionHost {
         self.settle_headless_descendants = true;
     }
 
+    /// Marks this session as the root of an opted-in scheduled-actions cron
+    /// run. Its security gate lifts the read-only cron stage for the root run
+    /// only, and only under a `TrustedAutomationSource::CronActions` origin.
+    pub(crate) fn enable_scheduled_actions(&mut self) {
+        self.scheduled_actions = true;
+    }
+
     /// Restricts integration task-fetch tools to tasks touched within `window`
     /// on every later turn of this agent; `None` clears the restriction.
     pub fn set_task_recency_window(&mut self, window: Option<std::time::Duration>) {

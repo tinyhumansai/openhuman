@@ -72,7 +72,8 @@ test("the workflow gives every shard its own runner, cache and artifact, and han
   // Every rust-cov step is keyed on the shard groups, not the old single one.
   assert.doesNotMatch(workflow, /matrix\.group == 'rust-cov'/);
   assert.match(workflow, /startsWith\(matrix\.group, 'rust-cov-'\)/);
-  assert.match(workflow, /taiki-e\/install-action@cargo-nextest/);
+  // The shards run under nextest (one process per test, hung tests killed).
+  assert.match(workflow, /tool: cargo-llvm-cov,cargo-nextest/);
 });
 
 test("rust-cov shards get a real sandbox jail; other groups keep the default container", () => {

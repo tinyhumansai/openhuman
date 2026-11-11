@@ -223,3 +223,126 @@ fn saas_outcome_maps_an_allowlisted_verdict_to_allow() {
     let verdict = gate_verdict_with("shell", &[SaasToolGroup::HostFiles]);
     assert!(matches!(saas_outcome(verdict), GateOutcome::Deny { .. }));
 }
+
+/// Wait for the gate's single parked request, failing the test if none parks.
+async fn wait_parked(gate: &ApprovalGate) -> PendingApproval {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(row) = gate.list_pending().unwrap().into_iter().next() {
+                break row;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the forced approval never parked")
+}
+
+/// Settings saves an API key over RPC with no chat turn behind it (the origin
+/// is `Unknown`). The native secret master grant that save needs parks as an
+/// unrouted pending approval the desktop shows, instead of being denied before
+/// anyone is asked; an approval lets the save continue.
+#[tokio::test]
+async fn forced_secret_grant_without_a_chat_route_parks_unrouted_and_allows_on_approve() {
+    for origin in [
+        None,
+        Some(AgentTurnOrigin::Cli),
+        Some(AgentTurnOrigin::DirectChat),
+    ] {
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+        let worker = Arc::clone(&gate);
+        let call_origin = origin.clone();
+        let handle = tokio::spawn(async move {
+            let call = worker.intercept_forced(
+                "native_secret_grant",
+                "Unlock configuration secrets",
+                serde_json::json!({"registration_id": "opaque-registration"}),
+            );
+            match call_origin {
+                Some(origin) => turn_origin::with_origin(origin, call).await,
+                None => call.await,
+            }
+        });
+        let pending = wait_parked(&gate).await;
+        assert_eq!(pending.tool_name, "native_secret_grant", "{origin:?}");
+        assert_eq!(pending.action_summary, "Unlock configuration secrets");
+        assert!(
+            !handle.is_finished(),
+            "{origin:?}: must wait for the person"
+        );
+        let seen = stub_of(&gate).seen();
+        let call = seen.last().expect("the engine was asked");
+        assert_eq!(call.variant, Variant::Forced, "{origin:?}: one-time grant");
+        assert_eq!(call.thread, None, "{origin:?}: no chat thread to route to");
+        assert_eq!(
+            call.origin,
+            CallOrigin::Operator,
+            "{origin:?}: a person decides"
+        );
+        decide_parked(&gate, &pending.request_id, ApprovalDecision::ApproveOnce);
+        assert!(
+            matches!(handle.await.unwrap(), GateOutcome::Allow),
+            "{origin:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn forced_secret_grant_without_a_chat_route_fails_closed_on_deny() {
+    let (gate, _dir) = test_gate();
+    let gate = Arc::new(gate);
+    let worker = Arc::clone(&gate);
+    let handle = tokio::spawn(async move {
+        worker
+            .intercept_forced(
+                "native_secret_grant",
+                "Unlock configuration secrets",
+                serde_json::json!({"registration_id": "opaque-registration"}),
+            )
+            .await
+    });
+    let pending = wait_parked(&gate).await;
+    decide_parked(&gate, &pending.request_id, ApprovalDecision::Deny);
+    match handle.await.unwrap() {
+        GateOutcome::Deny { reason } => assert!(reason.contains("denied"), "{reason}"),
+        other => panic!("a denied secret grant must fail closed, got {other:?}"),
+    }
+    assert!(gate.list_pending().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn forced_secret_grant_from_automation_or_a_channel_still_denies_without_asking() {
+    let (gate, _dir) = test_gate();
+    for origin in [
+        AgentTurnOrigin::TrustedAutomation {
+            job_id: "cron-1".into(),
+            source: TrustedAutomationSource::Cron,
+        },
+        AgentTurnOrigin::TrustedAutomation {
+            job_id: "bg-1".into(),
+            source: TrustedAutomationSource::Background,
+        },
+        AgentTurnOrigin::ExternalChannel {
+            channel: "telegram".into(),
+            sender: None,
+            sender_name: None,
+            reply_target: "chat".into(),
+            message_id: "m".into(),
+            history_key: None,
+            channel_session: None,
+        },
+    ] {
+        let outcome = turn_origin::with_origin(
+            origin.clone(),
+            gate.intercept_forced(
+                "native_secret_grant",
+                "Unlock configuration secrets",
+                serde_json::json!({"registration_id": "opaque-registration"}),
+            ),
+        )
+        .await;
+        assert!(matches!(outcome, GateOutcome::Deny { .. }), "{origin:?}");
+    }
+    assert!(gate.list_pending().unwrap().is_empty());
+}

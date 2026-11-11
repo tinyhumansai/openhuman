@@ -14,6 +14,7 @@ pub(crate) use scan_port::{
 
 pub(crate) use detector::{
     enforce_prompt_input_in, enforce_prompt_input_with_config, screening_config_in,
+    tool_scan_config,
 };
 
 pub use detector::{

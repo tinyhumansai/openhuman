@@ -16,6 +16,7 @@ mod parse_source;
 mod provenance;
 mod saas_scope;
 mod secrets;
+pub(crate) use secrets::{secret_slots, SecretSlot};
 pub(crate) mod source;
 
 pub(crate) use diagnostics::{ConfigLoadFallback, ConfigParseError, LoadDiagnostics};

@@ -249,6 +249,7 @@ fn the_codec_records_replay_options_on_the_first_new_row_only_once() {
         tool_result_max_age_turns: Some(6),
         tool_result_exempt_tools: vec!["tool_search".into()],
         replay_reasoning: ReasoningReplay::CurrentTurn,
+        keep_recent_tokens: None,
     };
     let context = OpenHumanRunContext::new();
     context.session_sidecar.lock().unwrap().replay_record = Some(wanted.clone());
@@ -407,4 +408,160 @@ fn replay_pin_survives_compaction() {
         )
         .unwrap();
     assert_eq!(ReplayOptions::recorded_in(&rows), None);
+}
+
+fn turn_options(context: OpenHumanRunContext) -> TranscriptTurnOptions<OpenHumanRunContext> {
+    TranscriptTurnOptions {
+        request_id: Some("turn".into()),
+        thread_id: None,
+        stream: false,
+        resume: ResumeMode::Never,
+        context,
+    }
+}
+
+/// A host that forces new discovery options onto a thread records them on a
+/// later row. A compaction that keeps the system row (and the older pin on it)
+/// but folds that later row away must not hand the thread back to the older
+/// pin.
+#[test]
+fn a_forced_discovery_pin_survives_compaction_that_folds_its_row_but_keeps_an_older_pin() {
+    use crate::agent::tinyagents::discovery::DiscoveryOptions;
+
+    let first = DiscoveryOptions {
+        collapse_search_results: true,
+        ..DiscoveryOptions::TODAY
+    };
+    let forced = DiscoveryOptions {
+        compact_search_results: true,
+        ..DiscoveryOptions::TODAY
+    };
+    let started = OpenHumanRunContext::new();
+    started.session_sidecar.lock().unwrap().discovery_record = Some(first);
+    let one = vec![
+        Message::system("prompt"),
+        Message::user("one"),
+        Message::assistant("first answer"),
+    ];
+    let prior = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &one, &turn_options(started))
+        .unwrap();
+
+    // The host forces new options on the second turn: recorded on its user row.
+    let forcing = OpenHumanRunContext::new();
+    forcing.session_sidecar.lock().unwrap().discovery_record = Some(forced);
+    let mut two = one.clone();
+    two.push(Message::user("two"));
+    two.push(Message::assistant("second answer"));
+    let prior = OpenHumanTranscriptCodec
+        .reconcile(&prior, &one, &two, &turn_options(forcing))
+        .unwrap();
+    assert_eq!(DiscoveryOptions::recorded_in(&prior), Some(forced));
+
+    // The compaction keeps the system row, so the older pin survives on it,
+    // and folds the forced row into a summary.
+    let compacted = vec![
+        Message::system("prompt"),
+        Message::user("summary of the first two turns"),
+        Message::assistant("second answer"),
+    ];
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(
+            &prior,
+            &two,
+            &compacted,
+            &turn_options(OpenHumanRunContext::new()),
+        )
+        .unwrap();
+    assert_eq!(
+        DiscoveryOptions::recorded_in(&rows),
+        Some(forced),
+        "the thread keeps the options it was last forced onto"
+    );
+    assert_eq!(
+        rows[0], prior[0],
+        "the retained system row is not rewritten"
+    );
+}
+
+/// Forcing options on the turn that also compacts: the fresh rows come before
+/// a retained row that still carries the old pin, which would win on every
+/// later turn.
+#[test]
+fn a_forced_discovery_pin_beats_an_older_pin_on_a_row_the_compaction_retained() {
+    use crate::agent::tinyagents::discovery::DiscoveryOptions;
+
+    let older = DiscoveryOptions {
+        collapse_search_results: true,
+        ..DiscoveryOptions::TODAY
+    };
+    let forced = DiscoveryOptions {
+        compact_search_results: true,
+        ..DiscoveryOptions::TODAY
+    };
+    let history = vec![
+        Message::system("prompt"),
+        Message::user("one"),
+        Message::assistant("first answer"),
+        Message::user("two"),
+        Message::assistant("second answer"),
+    ];
+    let mut prior = OpenHumanTranscriptCodec
+        .reconcile(
+            &[],
+            &[],
+            &history,
+            &turn_options(OpenHumanRunContext::new()),
+        )
+        .unwrap();
+    assert!(older.record_on(&mut prior, &[false, false, false, true, false]));
+
+    let forcing = OpenHumanRunContext::new();
+    forcing.session_sidecar.lock().unwrap().discovery_record = Some(forced);
+    let compacted = vec![
+        Message::system("prompt with a fresh memory block"),
+        Message::user("summary of the first turn"),
+        history[3].clone(),
+        history[4].clone(),
+    ];
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(&prior, &history, &compacted, &turn_options(forcing))
+        .unwrap();
+    assert_eq!(DiscoveryOptions::recorded_in(&rows), Some(forced));
+    assert_eq!(rows[2], prior[3], "the retained row is not rewritten");
+}
+
+/// A retry of an interrupted message can reach the codec before the model has
+/// answered, so the turn has no fresh row. Forcing options then has nowhere to
+/// be recorded, and the codec must not rewrite a stored row to make room: the
+/// commit would stop extending the thread and open a new generation.
+#[test]
+fn a_forced_discovery_pin_never_rewrites_a_stored_row_when_the_turn_has_no_fresh_row() {
+    use crate::agent::tinyagents::discovery::DiscoveryOptions;
+
+    let started = DiscoveryOptions {
+        collapse_search_results: true,
+        ..DiscoveryOptions::TODAY
+    };
+    let forced = DiscoveryOptions {
+        compact_search_results: true,
+        ..DiscoveryOptions::TODAY
+    };
+    let first = OpenHumanRunContext::new();
+    first.session_sidecar.lock().unwrap().discovery_record = Some(started);
+    let history = vec![
+        Message::system("prompt"),
+        Message::user("one"),
+        Message::assistant("first answer"),
+    ];
+    let prior = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &history, &turn_options(first))
+        .unwrap();
+
+    let forcing = OpenHumanRunContext::new();
+    forcing.session_sidecar.lock().unwrap().discovery_record = Some(forced);
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(&prior, &history, &history, &turn_options(forcing))
+        .unwrap();
+    assert_eq!(rows, prior, "no stored row is touched");
 }

@@ -156,12 +156,13 @@ impl OpenHumanSessionHost {
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .context_window = context_window;
                         // The thread's discovery options: chosen from the config
-                        // by the turn that prepares its first prompt and recorded
-                        // with it, read back from the transcript on every other.
-                        let generation_start = super::turn::prepare_prefix_for_turn(
-                            new_session,
-                            view.prefix_is_frozen,
-                        );
+                        // by the turn that creates the thread and recorded with
+                        // it, read back from the transcript on every other. A
+                        // thread that has history but no frozen prefix (imported
+                        // rows) is not new: it predates the pin and keeps
+                        // today's behaviour, however its prefix gets prepared.
+                        let generation_start =
+                            super::turn::starts_thread(new_session, view.raw_history);
                         let discovery = crate::agent::tinyagents::discovery::resolve(
                             &prelude.config.tool_search,
                             view.raw_history,
@@ -273,6 +274,10 @@ impl OpenHumanSessionHost {
                                 )
                             })?;
                         middleware.transcript_snapshot = Some(transcript_snapshot);
+                        // A tail the thread pinned wins over the configured one.
+                        middleware.keep_recent_tokens = replay
+                            .effective
+                            .keep_recent_tokens_or(middleware.keep_recent_tokens);
                         options.run_context.data.context_middleware = Some(middleware);
                         options.run_context.data.current_tools = Some(current_tools);
                         if !turn.overrides.suppress_tools {

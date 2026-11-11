@@ -423,8 +423,10 @@ impl Config {
         // `0` or an empty value removes a cap set in `config.toml`.
         if let Some(raw) = env.get("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS") {
             let cap = match raw.trim() {
-                "" | "0" => Some(None),
+                "" => Some(None),
                 value => match value.parse::<u64>() {
+                    // Every spelling of zero (`0`, `00`) clears the cap.
+                    Ok(0) => Some(None),
                     Ok(chars) => Some(Some(chars)),
                     Err(_) => {
                         tracing::warn!(
@@ -435,6 +437,11 @@ impl Config {
                 },
             };
             if let Some(cap) = cap {
+                if cap.is_none() {
+                    tracing::debug!(
+                        "[config] OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS clears the search contents cap"
+                    );
+                }
                 self.search.contents_max_chars = cap;
                 self.record_env_override(
                     env,

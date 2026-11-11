@@ -228,16 +228,20 @@ fn compaction_carries_the_record_onto_the_first_row_of_the_new_generation() {
         TranscriptMessage::system("refreshed prompt"),
         TranscriptMessage::new("user", "summary"),
     ];
-    assert!(carry_forward(&prior, &mut next));
+    assert!(carry_forward(&prior, &mut next, None));
     assert_eq!(DiscoveryOptions::recorded_in(&next), Some(options));
     assert!(next[1].extra_metadata.is_none());
 
     // Already there, or nothing to carry: nothing is rewritten.
     let before = next.clone();
-    assert!(!carry_forward(&prior, &mut next));
+    assert!(!carry_forward(&prior, &mut next, None));
     assert_eq!(next, before);
     let mut bare = vec![TranscriptMessage::system("prompt")];
-    assert!(!carry_forward(&[TranscriptMessage::system("p")], &mut bare));
+    assert!(!carry_forward(
+        &[TranscriptMessage::system("p")],
+        &mut bare,
+        None
+    ));
     assert!(bare[0].extra_metadata.is_none());
-    assert!(!carry_forward(&prior, &mut []));
+    assert!(!carry_forward(&prior, &mut [], None));
 }

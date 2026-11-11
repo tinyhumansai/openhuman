@@ -87,7 +87,11 @@ impl TranscriptCodec<OpenHumanRunContext> for OpenHumanTranscriptCodec {
         // the new generation's first row. An ordinary turn keeps the row that
         // holds them, so this does nothing there. Out-of-band compaction
         // (`compact_bound_history`) and an in-turn one both come through here.
-        crate::agent::tinyagents::discovery::carry_forward(&prior, &mut reconciled.rows);
+        crate::agent::tinyagents::discovery::carry_forward(
+            &prior,
+            &mut reconciled.rows,
+            sidecar.discovery_record.as_ref(),
+        );
         // Likewise the history-replay options (result expiry, reasoning replay).
         if let Some(options) = &sidecar.replay_record {
             options.record_on(&mut reconciled.rows, &reconciled.fresh);

@@ -56,8 +56,13 @@ fn prelude(config: &Config, prompt: &str, refresh: bool) -> OpenHumanTurnPrelude
     state.prelude.clone().expect("prelude")
 }
 
-/// Files `text` as a learning every agent under the config's root sees.
-async fn learn(engine: &tinymemory_api::conformance::ReferenceEngine, config: &Config, text: &str) {
+/// Files `text` as a learning every agent under the config's root sees,
+/// returning its id.
+async fn learn(
+    engine: &tinymemory_api::conformance::ReferenceEngine,
+    config: &Config,
+    text: &str,
+) -> String {
     let (_, identity) = crate::memory::lifecycle::current_agent_memory(
         config,
         &tinymemory_tools::layout::identity::Identity::root(),
@@ -75,7 +80,9 @@ async fn learn(engine: &tinymemory_api::conformance::ReferenceEngine, config: &C
             },
         ))
         .await
-        .expect("stored");
+        .expect("stored")
+        .id
+        .0
 }
 
 fn block(text: &str) -> Message {
@@ -433,6 +440,14 @@ fn with_deadline(mut config: Config, ms: u64) -> Config {
     config
 }
 
+/// Held by a test whose render is in flight across awaits, so another test's
+/// engine invalidation (which voids every render in flight) cannot reach it.
+fn undisturbed() -> std::sync::RwLockWriteGuard<'static, ()> {
+    crate::memory::engine::CACHE_STABLE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 const SLOW: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// A resumed thread whose recorded prefix carries a block and whose prompt is
@@ -492,6 +507,7 @@ async fn a_cold_thread_sends_no_block_when_the_render_lapses() {
 
 #[tokio::test(start_paused = true)]
 async fn deferred_memory_block_is_used_next_generation() {
+    let _stable = undisturbed();
     let tmp = tempfile::tempdir().unwrap();
     let config = with_deadline(config_in(&tmp), 300);
     let engine = SlowEngine::new(SLOW);
@@ -531,6 +547,7 @@ async fn deferred_memory_block_is_used_next_generation() {
 
 #[tokio::test(start_paused = true)]
 async fn a_render_inside_the_deadline_is_used_and_not_kept_for_later() {
+    let _stable = undisturbed();
     let tmp = tempfile::tempdir().unwrap();
     let config = with_deadline(config_in(&tmp), 300);
     let engine = SlowEngine::new(std::time::Duration::from_millis(100));
@@ -551,6 +568,7 @@ async fn a_render_inside_the_deadline_is_used_and_not_kept_for_later() {
 
 #[tokio::test(start_paused = true)]
 async fn prewarmed_memory_block_skips_render_on_turn() {
+    let _stable = undisturbed();
     let tmp = tempfile::tempdir().unwrap();
     // No deadline: the turn must not render at all.
     let config = config_in(&tmp);
@@ -584,6 +602,7 @@ async fn prewarmed_memory_block_skips_render_on_turn() {
 
 #[tokio::test(start_paused = true)]
 async fn a_prewarm_is_taken_by_one_generation_start_only() {
+    let _stable = undisturbed();
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
     let engine = SlowEngine::new(std::time::Duration::from_millis(10));
@@ -636,3 +655,9 @@ async fn an_agent_without_a_memory_block_has_nothing_to_prewarm() {
         MemoryBlockPrewarm::Unavailable
     );
 }
+
+#[path = "memory_block_invalidation_tests.rs"]
+mod invalidation;
+
+#[path = "memory_block_voiding_tests.rs"]
+mod voiding;

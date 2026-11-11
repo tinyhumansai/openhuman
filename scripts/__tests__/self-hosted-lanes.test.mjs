@@ -116,7 +116,7 @@ test("commands are static: no suite is ever narrowed to the diff", () => {
   }
 });
 
-test("both profiles run the core's unit tests under nextest", () => {
+test("every profile runs the core's unit tests under nextest (one process per test)", () => {
   for (const plan of plans()) {
     const cov = plan.lanes
       .find((l) => l.name === "rust-cov")

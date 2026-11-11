@@ -163,7 +163,8 @@ impl OpenHumanHostBundleFactory {
             .with_input_screening(!turn.untrusted_input_turn)
             .with_approval(turn.approval.clone())
             .with_dispatch(turn.dispatch_ctx())
-            .with_headless_descendant_settlement(turn.headless_descendant_settlement);
+            .with_headless_descendant_settlement(turn.headless_descendant_settlement)
+            .with_scheduled_actions(turn.scheduled_actions);
         if let Some(policy) = inputs.tool_policy {
             security = security.with_tool_policy(policy);
         }
