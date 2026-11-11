@@ -213,7 +213,9 @@ impl BoxDriver for BusBoxDriver {
         });
         let request = create_request(resource, self.backend, settings, retention);
         let created = tinybox::create(&config, request).await;
-        settle_create(reservation, created)
+        let resource = settle_create(reservation, created)?;
+        self.remember(&resource);
+        Ok(resource)
     }
 
     async fn exec(&self, resource: &str, exec: &BoxExec) -> Result<BoxOutput, BoxError> {
