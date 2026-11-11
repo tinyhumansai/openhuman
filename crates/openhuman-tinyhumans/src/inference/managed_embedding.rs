@@ -16,7 +16,8 @@ use crate::backend::url::effective_api_url;
 use crate::client::endpoint::is_managed_endpoint_for_api_key;
 
 /// Builds the owning cloud embedding implementation with the credential scope
-/// and turn context supplied by the inference registry.
+/// and turn context supplied by the inference registry. Every batch it sends
+/// first passes the TinySecurity egress guard.
 pub(super) fn from_request(request: EmbeddingRequest<ProviderContext>) -> CloudEmbeddingModel {
     let context = request
         .context
@@ -33,7 +34,6 @@ pub(super) fn from_request(request: EmbeddingRequest<ProviderContext>) -> CloudE
         &request.model,
         request.dimensions,
         context.chat.clone(),
-        None,
     )
 }
 
@@ -57,15 +57,37 @@ pub(super) async fn from_request_for_inspection(
                 "selected managed embedding credential is unavailable".to_owned(),
             )
         })?;
-    Ok(build_cloud_model(
+    // No egress guard: the doctor never loads TinySecurity, and this model
+    // only ever carries the doctor's fixed probe string. The core runs the
+    // host-side local-only check before asking for it, as for the chat probe.
+    // Real embedding traffic is built by `from_request`, which keeps the guard.
+    let frozen: BearerResolver = Arc::new(move || {
+        let bearer = bearer.clone();
+        Box::pin(async move { Ok(bearer) })
+    });
+    Ok(cloud_model(
         config.api_url.clone(),
-        context.state_dir.clone(),
-        context.secrets_encrypt,
         &request.model,
         request.dimensions,
-        None,
-        Some(bearer),
+        frozen,
     ))
+}
+
+/// The managed endpoint's embedding model with `bearer`, and no host policy.
+fn cloud_model(
+    api_url: Option<String>,
+    model: &str,
+    dimensions: usize,
+    bearer: BearerResolver,
+) -> CloudEmbeddingModel {
+    CloudEmbeddingModel::new(managed_base_url(&api_url), model.to_owned(), dimensions, bearer)
+}
+
+fn managed_base_url(api_url: &Option<String>) -> String {
+    format!(
+        "{}/openai/v1",
+        effective_api_url(api_url).trim_end_matches('/')
+    )
 }
 
 fn build_cloud_model(
@@ -75,21 +97,12 @@ fn build_cloud_model(
     model: &str,
     dimensions: usize,
     chat: Option<ApprovalChatContext>,
-    frozen_bearer: Option<String>,
 ) -> CloudEmbeddingModel {
-    let base_url = format!(
-        "{}/openai/v1",
-        effective_api_url(&api_url).trim_end_matches('/')
-    );
-    let key_endpoint = base_url.clone();
+    let key_endpoint = managed_base_url(&api_url);
     let bearer: BearerResolver = Arc::new(move || {
-        let frozen_bearer = frozen_bearer.clone();
         let state_dir = state_dir.clone();
         let key_endpoint = key_endpoint.clone();
         Box::pin(async move {
-            if let Some(bearer) = frozen_bearer {
-                return Ok(bearer);
-            }
             // A stored TinyHumans API key is the bearer outright, with the
             // plaintext guard: never put the key on a non-HTTPS, non-loopback wire.
             if let Some(key) = openhuman_embed::__host::credentials::api_key::get_api_key_in(
@@ -131,8 +144,7 @@ fn build_cloud_model(
         Ok(())
     });
 
-    CloudEmbeddingModel::new(base_url, model.to_owned(), dimensions, bearer)
-        .with_egress_guard(egress_guard)
+    cloud_model(api_url, model, dimensions, bearer).with_egress_guard(egress_guard)
 }
 
 #[cfg(test)]
