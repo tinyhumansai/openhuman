@@ -517,18 +517,20 @@ async fn a_command_waiting_on_a_cleanup_creates_nothing_once_the_slot_is_retired
         let boxes = Arc::clone(&boxes);
         tokio::spawn(async move { boxes.exec(&user("u1"), &settings(), &request("pwd")).await })
     };
-    for _ in 0..10 {
-        tokio::task::yield_now().await;
-    }
+    // Under paused time the clock only advances once every other task is
+    // blocked, so this returns exactly when the spawned task has run as far
+    // as it can; no yield count to guess.
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     // Shutdown retires the waiter's empty slot while it waits.
     let shutting_down = {
         let boxes = Arc::clone(&boxes);
         tokio::spawn(async move { boxes.shutdown().await })
     };
-    for _ in 0..10 {
-        tokio::task::yield_now().await;
-    }
+    // Under paused time the clock only advances once every other task is
+    // blocked, so this returns exactly when the spawned task has run as far
+    // as it can; no yield count to guess.
+    tokio::time::sleep(Duration::from_millis(1)).await;
     gate.notify_one();
 
     assert!(matches!(waiting.await.unwrap(), Err(BoxError::Released)));
