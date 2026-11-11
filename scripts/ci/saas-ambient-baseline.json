@@ -631,15 +631,15 @@
   },
   {
     "rule": "bare-spawn",
-    "path": "crates/openhuman-core/src/sandbox/native_jail.rs",
-    "line": 130,
+    "path": "crates/openhuman-core/src/sandbox/boxes/registry.rs",
+    "line": 256,
     "text": "tokio::spawn(async move {",
     "occurrence": 1
   },
   {
     "rule": "bare-spawn",
-    "path": "crates/openhuman-core/src/sandbox/openshell/registry.rs",
-    "line": 231,
+    "path": "crates/openhuman-core/src/sandbox/native_jail.rs",
+    "line": 130,
     "text": "tokio::spawn(async move {",
     "occurrence": 1
   },
