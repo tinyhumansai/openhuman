@@ -211,7 +211,7 @@ pub(super) fn enforce_local_only_endpoint(role: &str, endpoint: &str) -> anyhow:
 /// an external chat provider when the live policy is local-only. Reads the live
 /// privacy mode (defaults to `Standard`/allow when no session policy is
 /// installed). See [`local_only_violation`] for the pure decision.
-pub(super) fn enforce_local_only_inference(role: &str, provider: &str) -> anyhow::Result<()> {
+pub(crate) fn enforce_local_only_inference(role: &str, provider: &str) -> anyhow::Result<()> {
     let mode = crate::security::live_policy::current_privacy_mode();
     match local_only_violation(mode, provider) {
         None => {
