@@ -68,6 +68,36 @@ impl AuthService {
         }
     }
 
+    /// The profile store for a credential directory known by its path, bound
+    /// to the runtime config that owns that directory.
+    ///
+    /// Sign-in writes the app session through [`Self::from_config`], whose
+    /// store keeps secrets in the keyring under `security-module`; a plain
+    /// [`Self::new`] store over the same directory cannot see them. So a
+    /// caller holding only `(state_dir, encrypt)` reads through the owning
+    /// config's store: `config` when it owns the directory, else the current
+    /// dispatch's embedder config when that does (see
+    /// [`owning_embedder_config`]). A config for another directory, or with
+    /// another encryption setting, never lends its authority; with no owner
+    /// the store is directory-only.
+    pub fn for_state_dir(state_dir: &Path, encrypt_secrets: bool, config: Option<&Config>) -> Self {
+        if let Some(config) =
+            config.filter(|config| config_owns_state_dir(config, state_dir, encrypt_secrets))
+        {
+            return Self::from_config(config);
+        }
+        match owning_embedder_config(state_dir, encrypt_secrets) {
+            Some(config) => Self::from_config(&config),
+            None => {
+                log::debug!(
+                    "[auth] no runtime config owns state_dir={}; using a directory-only store",
+                    state_dir.display()
+                );
+                Self::new(state_dir, encrypt_secrets)
+            }
+        }
+    }
+
     pub async fn load_profiles(&self) -> Result<AuthProfilesData> {
         self.store.load().await
     }
