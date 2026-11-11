@@ -55,13 +55,15 @@ const VIDEO_DESCRIPTION: &str = "Generate a short video clip via OpenRouter (def
 /// reference-file policy, the files roots and the video wait come from
 /// `root_config`; `allowed_references` is the session's shared allowlist of
 /// artifact paths. The generators come from the host that owns the media
-/// service (the core has none of its own).
-pub fn media_tools_for_config(
+/// service (the core has none of its own). TinySecurity's protected-path
+/// floor is fetched here, once, for the sync reference policy.
+pub async fn media_tools_for_config(
     generators: MediaGenerators,
     root_config: &Config,
     action_dir: &Path,
     allowed_references: MediaReferenceAllowlist,
 ) -> Vec<Box<dyn Tool>> {
+    let floor = ReferenceFloor::fetch(Some(root_config)).await;
     media_tools_from_with_allowlist(
         generators,
         action_dir,
@@ -72,12 +74,15 @@ pub fn media_tools_for_config(
         // multi-minute wait is not silent.
         WaitPolicy::new(VIDEO_POLL_INTERVAL, VIDEO_WAIT_BUDGET),
         allowed_references,
+        floor,
     )
 }
 
 /// Builds the tool set over any generators (the managed ones in production,
 /// mocks in tests), writing under `action_dir`; `video_wait` bounds each
-/// video job.
+/// video job. It has no async context to fetch TinySecurity's protected-path
+/// floor, so it fails closed: local reference files are refused and URL
+/// references still work.
 pub fn media_tools_from(
     generators: MediaGenerators,
     action_dir: &Path,
@@ -92,6 +97,7 @@ pub fn media_tools_from(
         files_dir,
         video_wait,
         Arc::new(Mutex::new(HashSet::new())),
+        ReferenceFloor::Unavailable("media_tools_from does not fetch TinySecurity's floor".into()),
     )
 }
 
@@ -102,6 +108,7 @@ fn media_tools_from_with_allowlist(
     files_dir: impl Into<crate::artifacts::FileRoots>,
     video_wait: WaitPolicy,
     allowed_artifacts: MediaReferenceAllowlist,
+    floor: ReferenceFloor,
 ) -> Vec<Box<dyn Tool>> {
     let files = files_dir.into();
     let generators = Arc::new(generators);
@@ -113,6 +120,7 @@ fn media_tools_from_with_allowlist(
         action_dir,
         workspace_dir,
         Arc::clone(&allowed_artifacts),
+        floor,
     ));
     let output_blobs = Arc::clone(&output.blobs);
     let image_tool = |image: &Arc<dyn ImageGenerator>| {
@@ -208,13 +216,70 @@ fn video_tool(
         .with_wait_policy(wait)
 }
 
+/// TinySecurity's protected-path floor for local reference files. The
+/// reference policy is a sync callback that cannot ask the module per path, so
+/// the floor vocabulary is fetched once, when the tool set is built, and
+/// matched lexically ([`floor_covers`]).
+#[derive(Debug, Clone)]
+pub(crate) enum ReferenceFloor {
+    /// Security is disabled, so no floor applies; the same switch as
+    /// `SecurityPolicy::is_always_forbidden_async` for the other file tools.
+    Disabled,
+    /// TinySecurity's floor vocabulary, lower-cased for matching.
+    Enforced(tinysecurity_bus::ProtectedFloor2),
+    /// The floor could not be fetched: every local reference is refused.
+    Unavailable(String),
+}
+
+impl ReferenceFloor {
+    /// Asks TinySecurity for its floor vocabulary unless security is disabled
+    /// for `config` (or the process). A failed query fails closed.
+    pub(crate) async fn fetch(config: Option<&Config>) -> Self {
+        if let Some(reason) = crate::security::switch::disabled_for(config) {
+            log::debug!(
+                "[media][reference] security disabled ({}); no protected floor",
+                reason.describe()
+            );
+            return Self::Disabled;
+        }
+        #[cfg(feature = "security-module")]
+        {
+            match crate::modules::security::gap::protected_floor().await {
+                Ok(floor) => Self::enforced(floor),
+                Err(error) => {
+                    log::debug!(
+                        "[media][reference] protected floor unavailable; local references refused: {error}"
+                    );
+                    Self::Unavailable(error)
+                }
+            }
+        }
+        #[cfg(not(feature = "security-module"))]
+        {
+            Self::Unavailable("TinySecurity is not built into this host".into())
+        }
+    }
+
+    /// The floor over `vocabulary`, lower-cased as TinySecurity matches it.
+    pub(crate) fn enforced(vocabulary: tinysecurity_bus::ProtectedFloor2) -> Self {
+        Self::Enforced(vocabulary)
+    }
+
+    /// Why `path` may not be read as a reference, when the floor covers it.
+    fn refusal(&self, _path: &Path) -> Option<String> {
+        None
+    }
+}
+
 /// Local reference files may be read and uploaded only from the action
 /// directory or the workspace directory, never through `..`, and never from
-/// an always-forbidden location (credential stores, system roots).
+/// a location TinySecurity's protected floor covers (credential stores,
+/// system roots) — session-filed artifacts included.
 pub(crate) fn reference_policy(
     action_dir: &Path,
     workspace_dir: &Path,
     allowed_artifacts: MediaReferenceAllowlist,
+    floor: ReferenceFloor,
 ) -> tinyagents_harness::media::ReferencePathPolicy {
     let roots: Vec<PathBuf> = vec![action_dir.to_path_buf(), workspace_dir.to_path_buf()];
     Arc::new(move |path: &Path| {
@@ -223,6 +288,10 @@ pub(crate) fn reference_policy(
                 "reference path {} may not contain '..'",
                 path.display()
             ));
+        }
+        if let Some(refusal) = floor.refusal(path) {
+            log::debug!("[media][reference] refused local reference: {refusal}");
+            return Err(refusal);
         }
         let is_filed_artifact = allowed_artifacts
             .lock()
