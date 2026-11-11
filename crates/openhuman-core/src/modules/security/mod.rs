@@ -23,6 +23,7 @@ pub(crate) mod sync_seam;
 #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
 pub(crate) mod test_host;
 pub(crate) mod text;
+pub(crate) mod unattended_unlock;
 
 #[cfg(test)]
 #[path = "security_tests.rs"]
