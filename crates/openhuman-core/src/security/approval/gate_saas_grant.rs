@@ -142,6 +142,49 @@ impl PromptSurface for HostGrantSurface {
 }
 
 impl ApprovalGate {
+    /// The gate's answer for a SaaS secret master grant nobody can be asked
+    /// about, `None` for every other call (including one a person will
+    /// decide on a routable WebChat turn).
+    #[allow(clippy::too_many_arguments)]
+    async fn saas_host_grant_outcome(
+        &self,
+        dispatch: &crate::core::runtime::DispatchCtx,
+        saas: bool,
+        human_will_decide: bool,
+        forced: bool,
+        tool_name: &str,
+        action_summary: &str,
+        args_redacted: &serde_json::Value,
+    ) -> Option<(GateOutcome, Option<String>)> {
+        if human_will_decide {
+            return None;
+        }
+        match saas_host_grant(dispatch, saas, forced, tool_name, args_redacted) {
+            SaasHostGrant::NotApplicable => None,
+            SaasHostGrant::Authorised { profile, scope_id } => Some(
+                self.saas_host_authorised_grant(
+                    tool_name,
+                    action_summary,
+                    args_redacted.clone(),
+                    &profile,
+                    &scope_id,
+                )
+                .await,
+            ),
+            SaasHostGrant::Refused(why) => {
+                tracing::warn!(why, "[security][saas-grant] host authorisation refused");
+                Some((
+                    GateOutcome::Deny {
+                        reason: format!(
+                            "{POLICY_DENIED_MARKER} The host cannot authorise '{tool_name}': {why}."
+                        ),
+                    },
+                    None,
+                ))
+            }
+        }
+    }
+
     /// Approve a SaaS tenant's own secret master grant as the host. The
     /// engine makes the request durable exactly as for a person, then the
     /// host decides it once under [`SAAS_HOST_AUTHORISED`]. Any other answer

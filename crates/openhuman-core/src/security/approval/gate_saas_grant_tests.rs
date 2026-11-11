@@ -2,7 +2,9 @@ use super::*;
 use std::path::{Path, PathBuf};
 
 fn key(profile: &str) -> PathBuf {
-    Path::new("/srv/saas/users").join(profile).join(".secret_key")
+    Path::new("/srv/saas/users")
+        .join(profile)
+        .join(".secret_key")
 }
 
 fn claim<'a>(

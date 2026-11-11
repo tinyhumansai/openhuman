@@ -93,34 +93,13 @@ impl ApprovalGate {
         let dispatch = crate::core::runtime::DispatchCtx::ambient();
         let saas = crate::core::runtime::is_saas();
         let saas_human_approval = saas_prompt_needed(&dispatch, saas, &origin, tool_name, forced);
-        // A SaaS tenant's own secret master grant, with nobody to ask: the host
-        // approves it itself, audited; any other SaaS secret grant is refused.
-        if !saas_human_approval {
-            match saas_host_grant(&dispatch, saas, forced, tool_name, &args_redacted) {
-                SaasHostGrant::Authorised { profile, scope_id } => {
-                    return self
-                        .saas_host_authorised_grant(
-                            tool_name,
-                            action_summary,
-                            args_redacted,
-                            &profile,
-                            &scope_id,
-                        )
-                        .await;
-                }
-                SaasHostGrant::Refused(why) => {
-                    tracing::warn!(why, "[security][saas-grant] host authorisation refused");
-                    return (
-                        GateOutcome::Deny {
-                            reason: format!(
-                                "{POLICY_DENIED_MARKER} The host cannot authorise '{tool_name}': {why}."
-                            ),
-                        },
-                        None,
-                    );
-                }
-                SaasHostGrant::NotApplicable => {}
-            }
+        // A SaaS tenant's own secret master grant with nobody to ask
+        // (`gate_saas_grant.rs`).
+        if let Some(decided) = self
+            .saas_host_grant_outcome(&dispatch, saas, saas_human_approval, forced, tool_name, action_summary, &args_redacted)
+            .await
+        {
+            return decided;
         }
         // Deployment-allowlisted tools retain their audited automatic path.
         // A rejected tool can reach the normal approval engine only when this
