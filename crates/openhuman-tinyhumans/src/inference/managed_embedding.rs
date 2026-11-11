@@ -140,6 +140,7 @@ fn bearer_resolver(key_endpoint: String, context: &EmbeddingCallContext) -> Bear
             if let Some(key) = openhuman_embed::__host::credentials::api_key::get_api_key_in(
                 &state_dir,
                 secrets_encrypt,
+                config.as_deref(),
             )
             .await
             .map_err(|error| tinyinference_embeddings::Error::Embedding(error.to_string()))?

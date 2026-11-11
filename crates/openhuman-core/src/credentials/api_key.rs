@@ -96,7 +96,12 @@ pub async fn get_api_key_read_only(
 /// name, `"api-key"` included; without the marker check, such a profile
 /// would be accepted here as a TinyHumans runtime key and its bearer sent to
 /// the managed backend as one.
-pub async fn get_api_key_in(state_dir: &Path, encrypt: bool) -> Result<Option<String>> {
+pub async fn get_api_key_in(
+    state_dir: &Path,
+    encrypt: bool,
+    config: Option<&Config>,
+) -> Result<Option<String>> {
+    let _ = config;
     get_api_key_with_service(&service_in(state_dir, encrypt)).await
 }
 
@@ -138,7 +143,7 @@ fn api_key_from_profile(profile: AuthProfile) -> Option<String> {
 /// so a corrupt profile file degrades to the session path instead of
 /// panicking a hot path; the error is logged.
 pub async fn has_api_key_in(state_dir: &Path, encrypt: bool) -> bool {
-    match get_api_key_in(state_dir, encrypt).await {
+    match get_api_key_in(state_dir, encrypt, None).await {
         Ok(key) => key.is_some(),
         Err(e) => {
             log::debug!("[credentials][api-key] store read failed, treating as absent: {e:#}");

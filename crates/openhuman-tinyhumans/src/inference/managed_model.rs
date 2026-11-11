@@ -56,6 +56,7 @@ impl ManagedOptions {
         if let Some(key) = openhuman_embed::__host::credentials::api_key::get_api_key_in(
             &self.state_dir(),
             self.secrets_encrypt,
+            self.config.as_deref(),
         )
         .await?
         {
