@@ -251,6 +251,7 @@ use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn client_for(server: &MockServer) -> Arc<IntegrationClient> {
+    crate::test_workspace::isolate();
     Arc::new(IntegrationClient::new(server.uri(), "tok".to_string()))
 }
 
