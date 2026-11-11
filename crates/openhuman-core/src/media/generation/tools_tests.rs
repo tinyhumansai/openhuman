@@ -281,6 +281,61 @@ fn reference_policy_without_security_keeps_only_the_roots() {
     assert!(policy(&action.join("../x.png")).is_err());
 }
 
+/// The real TinySecurity module answers each path (`ProtectedPath2`), reached
+/// through the builder's own config with no ambient dispatch context, as a
+/// SaaS tool build has.
+#[cfg(feature = "security-module")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reference_policy_asks_tinysecurity_for_each_path() {
+    let config = crate::modules::security::test_host::boot().expect("staged TinySecurity module");
+    assert!(crate::core::runtime::CoreContext::current_embedder_config().is_none());
+    let fetched = ReferenceFloor::fetch(Some(&config)).await;
+    assert!(matches!(fetched, ReferenceFloor::Enforced(_)), "{fetched:?}");
+
+    let home = tempfile::tempdir().unwrap();
+    let home = home.path().canonicalize().unwrap();
+    for file in [
+        "Pictures/cat.png",
+        ".ssh/id_rsa",
+        ".SSH/id_rsa",
+        ".aws/credentials",
+        ".netrc",
+        ".cargo/credentials.toml",
+        ".cargo/config.toml",
+    ] {
+        std::fs::create_dir_all(home.join(file).parent().unwrap()).unwrap();
+        std::fs::write(home.join(file), b"fixture").unwrap();
+    }
+    let allowed = Arc::new(Mutex::new(HashSet::new()));
+    let policy = reference_policy(&home, &home, allowed, fetched);
+    let policy = move |path: PathBuf| {
+        let policy = Arc::clone(&policy);
+        std::thread::spawn(move || policy(&path)).join().unwrap()
+    };
+
+    assert_eq!(
+        policy(home.join("Pictures/cat.png")).unwrap(),
+        home.join("Pictures/cat.png")
+    );
+    assert!(
+        policy(home.join(".cargo/config.toml")).is_ok(),
+        "a pair matches only as a pair"
+    );
+    for refused in [
+        home.join(".ssh/id_rsa"),
+        home.join(".SSH/id_rsa"),
+        home.join(".aws/credentials"),
+        home.join(".netrc"),
+        home.join(".cargo/credentials.toml"),
+        home.join(".cargo/./credentials.toml"),
+        PathBuf::from("/etc/passwd"),
+    ] {
+        let refusal = policy(refused.clone())
+            .expect_err(&format!("{} must be refused", refused.display()));
+        assert!(refusal.contains("protected"), "{}: {refusal}", refused.display());
+    }
+}
+
 #[cfg(feature = "security-module")]
 #[tokio::test]
 async fn reference_floor_is_fetched_from_tinysecurity_and_fails_closed() {
@@ -288,7 +343,8 @@ async fn reference_floor_is_fetched_from_tinysecurity_and_fails_closed() {
         install_path_floor_port, install_unavailable_path_floor_port, ScriptedPathFloorPort,
     };
     {
-        let _port = install_path_floor_port(ScriptedPathFloorPort::new([], Vec::new()));
+        let protected = PathBuf::from("/home/user/OpenHuman/projects/.ssh/id_rsa");
+        let _port = install_path_floor_port(ScriptedPathFloorPort::new([protected], Vec::new()));
         let fetched = ReferenceFloor::fetch(None).await;
         assert!(
             matches!(fetched, ReferenceFloor::Enforced(_)),
