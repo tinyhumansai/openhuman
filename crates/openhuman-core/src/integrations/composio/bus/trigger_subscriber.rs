@@ -211,7 +211,7 @@ pub(super) async fn route_trigger(
         match crate::inbound::events::composio(&envelope) {
             Ok(event) => {
                 let client = client.unwrap_or_else(|| crate::modules::ops::client(config.clone()));
-                let offered = crate::inbound::route::offer(config, &client, event).await;
+                let offered = crate::inbound::route::offer_or_direct(config, &client, event).await;
                 if offered.is_queued() {
                     tracing::debug!(
                         label = %envelope.display_label,

@@ -275,7 +275,7 @@ pub(super) async fn route_agent_trigger(
         match crate::inbound::events::webhook(envelope, correlation_id) {
             Ok(event) => {
                 let client = client.unwrap_or_else(|| crate::modules::ops::client(config.clone()));
-                if crate::inbound::route::offer(config, &client, event)
+                if crate::inbound::route::offer_or_direct(config, &client, event)
                     .await
                     .is_queued()
                 {

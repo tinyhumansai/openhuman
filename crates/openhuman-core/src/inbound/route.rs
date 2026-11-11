@@ -15,10 +15,12 @@
 //! failure that does not (a timeout, a transport fault) sends the event again:
 //! `Ingest` is idempotent on `source:event_id`, so an event the module did
 //! persist comes back `Duplicate` rather than queued twice. Only when every
-//! attempt is ambiguous does the caller fall back to the direct path, and
-//! that one case can triage an event the queues also deliver; it is logged.
-//! Callers run the hand-off in their own task, never on a bus subscriber's
-//! loop.
+//! attempt is ambiguous does the caller fall back to the direct path. The
+//! queues may hold that event all the same, so a caller with a direct path
+//! offers through [`offer_or_direct`], which settles who runs it
+//! ([`super::claims`]): the queues when they delivered it meanwhile, the
+//! direct path otherwise, recorded so a later `Deliver` skips it. Callers
+//! run the hand-off in their own task, never on a bus subscriber's loop.
 
 use std::time::Duration;
 
@@ -29,6 +31,8 @@ use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::modules::event_queues;
+
+use super::claims::Claims;
 
 /// What became of an offered event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,16 +84,78 @@ async fn attempt(client: &ModuleClient, event: &InboundEvent, deadline: Duration
     }
 }
 
-/// Offer `event` to the inbound event queues through `client`.
+/// How a hand-off ended.
+enum HandOff {
+    /// Settled: the queues answered, or proved they never saw the event.
+    Settled(Offered),
+    /// Every attempt was ambiguous: the queues may hold the event.
+    Ambiguous(String),
+}
+
+/// Offer `event` to the inbound event queues through `client`, for a caller
+/// with no direct path of its own: on [`Offered::Direct`] it reports the
+/// failure, and an event the queues did hold is delivered once by them.
 pub async fn offer(config: &Config, client: &ModuleClient, event: InboundEvent) -> Offered {
     if !super::active(config) {
         return Offered::Direct("inbound event queues inactive".to_owned());
     }
+    match hand_off(client, event, &ATTEMPT_DEADLINES).await {
+        HandOff::Settled(offered) => offered,
+        HandOff::Ambiguous(why) => Offered::Direct(why),
+    }
+}
+
+/// Offer `event` like [`offer`], for a caller that runs its direct path on
+/// [`Offered::Direct`]. When every attempt is ambiguous the event goes to
+/// the direct path only if the queues have not delivered it meanwhile, and
+/// is recorded so they skip it if they deliver it later.
+pub async fn offer_or_direct(
+    config: &Config,
+    client: &ModuleClient,
+    event: InboundEvent,
+) -> Offered {
+    offer_or_direct_with(config, client, event, Claims::global(), &ATTEMPT_DEADLINES).await
+}
+
+async fn offer_or_direct_with(
+    config: &Config,
+    client: &ModuleClient,
+    event: InboundEvent,
+    claims: &Claims,
+    deadlines: &[Duration],
+) -> Offered {
+    if !super::active(config) {
+        return Offered::Direct("inbound event queues inactive".to_owned());
+    }
+    let now_ms = || chrono::Utc::now().timestamp_millis();
+    claims.attach(config, now_ms());
+    let key = event.dedupe_key();
+    claims.open(&key);
+    match hand_off(client, event, deadlines).await {
+        HandOff::Settled(offered) => {
+            claims.close(&key);
+            offered
+        }
+        HandOff::Ambiguous(why) => {
+            if claims.take_direct(&key, now_ms()) {
+                Offered::Direct(why)
+            } else {
+                tracing::info!(
+                    key = %key,
+                    "[inbound] ingest never answered, but the queues delivered the event; not taking the direct path"
+                );
+                Offered::Queued(Disposition::Accepted)
+            }
+        }
+    }
+}
+
+async fn hand_off(client: &ModuleClient, event: InboundEvent, deadlines: &[Duration]) -> HandOff {
     let source = event.source.clone();
     let event_id = event.event_id.clone();
     let mut last = String::new();
     let mut answered = None;
-    for (n, deadline) in ATTEMPT_DEADLINES.into_iter().enumerate() {
+    for (n, &deadline) in deadlines.iter().enumerate() {
         if n > 0 {
             tokio::time::sleep(RESEND_PAUSE).await;
         }
@@ -105,7 +171,7 @@ pub async fn offer(config: &Config, client: &ModuleClient, event: InboundEvent) 
                     error = %error,
                     "[inbound] queues unavailable; taking the direct path"
                 );
-                return Offered::Direct(format!("ingest failed: {error}"));
+                return HandOff::Settled(Offered::Direct(format!("ingest failed: {error}")));
             }
             Attempt::Unknown(error) => {
                 tracing::warn!(
@@ -124,13 +190,13 @@ pub async fn offer(config: &Config, client: &ModuleClient, event: InboundEvent) 
             source = %source,
             event_id = %event_id,
             error = %last,
-            "[inbound] ingest never answered; taking the direct path (the queues may also deliver it)"
+            "[inbound] ingest never answered; the queues may hold the event"
         );
-        return Offered::Direct(format!("ingest failed: {last}"));
+        return HandOff::Ambiguous(format!("ingest failed: {last}"));
     };
     let Some(result) = response.results.into_iter().next() else {
         tracing::warn!(source = %source, "[inbound] ingest answered no result; taking the direct path");
-        return Offered::Direct("ingest answered no result".to_owned());
+        return HandOff::Settled(Offered::Direct("ingest answered no result".to_owned()));
     };
     let reason = result
         .reason
@@ -155,7 +221,7 @@ pub async fn offer(config: &Config, client: &ModuleClient, event: InboundEvent) 
             });
         }
     }
-    Offered::Queued(result.disposition)
+    HandOff::Settled(Offered::Queued(result.disposition))
 }
 
 #[cfg(test)]

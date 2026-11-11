@@ -41,6 +41,11 @@
 //! callback deadline (`[inbound] triage_timeout_ms`, at most 25 s), and a
 //! turn that was already accepted is accepted again without triage, so a
 //! redelivery that raced a slow answer never applies a second decision.
+//!
+//! An event its offer already ran on the caller's direct path (every
+//! `Ingest` attempt was ambiguous, yet the module persisted it,
+//! [`super::claims`]) is left out of its turn and dropped with the reason
+//! `handled_directly`; a turn left with no events is accepted as it is.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -51,6 +56,7 @@ use tinyeventqueues_bus::{
     DeliverStatus, InboundEvent, Lane, SalienceClass, Turn,
 };
 
+use super::claims::Claims;
 use super::events::{digest_envelope, envelope_of};
 use super::pinned::{Delivered, Pinned};
 use super::results::Results;
@@ -159,6 +165,11 @@ pub struct Deliverer {
     inbound: tokio::sync::OnceCell<Arc<InboundConfig>>,
     /// What runs pinned sources' turns: given, or built on first use.
     pinned: tokio::sync::OnceCell<Option<Pinned>>,
+    /// Who ran events whose offers were ambiguous.
+    claims: &'static Claims,
+    /// Whether `claims` was attached to the configured storage (done on
+    /// first use, or not at all when the deliverer was given its settings).
+    claims_attached: tokio::sync::OnceCell<()>,
 }
 
 impl std::fmt::Debug for Deliverer {
@@ -179,8 +190,11 @@ impl Deliverer {
     /// It has no pinned sources unless given some ([`Self::with_inbound`]).
     #[must_use]
     pub fn new(runner: Arc<dyn TriageRunner>, ctx: DispatchCtx, timeout: Duration) -> Self {
-        Self::build(runner, ctx, tokio::sync::OnceCell::new_with(Some(timeout)))
-            .with_inbound(InboundConfig::default())
+        let mut deliverer =
+            Self::build(runner, ctx, tokio::sync::OnceCell::new_with(Some(timeout)))
+                .with_inbound(InboundConfig::default());
+        deliverer.claims_attached = tokio::sync::OnceCell::new_with(Some(()));
+        deliverer
     }
 
     /// A deliverer whose triage timeout is `[inbound] triage_timeout_ms`, read
@@ -209,6 +223,8 @@ impl Deliverer {
             accepted: Mutex::new(Accepted::default()),
             inbound: tokio::sync::OnceCell::new(),
             pinned: tokio::sync::OnceCell::new(),
+            claims: Claims::global(),
+            claims_attached: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -396,6 +412,32 @@ impl Deliverer {
         }
     }
 
+    /// The claims, attached to the configured storage on first use.
+    async fn claims(&self) -> &Claims {
+        self.claims_attached
+            .get_or_init(|| async {
+                match self.ctx.load_config().await {
+                    Ok(config) => self.claims.attach(&config, (self.now_ms)()),
+                    Err(error) => {
+                        tracing::debug!(error = %error, "[inbound] config unavailable; claims kept in memory only");
+                    }
+                }
+            })
+            .await;
+        self.claims
+    }
+
+    /// `turn` without the events their offers already ran directly, each
+    /// dropped; `None` when that left none (a turn that came with none is
+    /// returned as it is, to be rejected).
+    async fn without_direct(&self, mut turn: Turn) -> Option<Turn> {
+        if turn.events.is_empty() {
+            return Some(turn);
+        }
+        self.claims().await.leave_out_direct(&mut turn);
+        (!turn.events.is_empty()).then_some(turn)
+    }
+
     fn classified(&self) -> std::sync::MutexGuard<'_, Classified> {
         self.classified
             .lock()
@@ -464,6 +506,11 @@ impl Deliverer {
             );
             return DeliverResponse::new(DeliverStatus::Accepted);
         }
+        let turn_id = turn.turn_id.clone();
+        let Some(turn) = self.without_direct(turn).await else {
+            self.accepted().remember(&turn_id);
+            return DeliverResponse::new(DeliverStatus::Accepted);
+        };
         if let Some((name, source)) = self.pinned_source(&turn.events).await {
             let remaining = self.budget.saturating_sub(started.elapsed());
             let status = self.deliver_pinned(&turn, &name, &source, remaining).await;
