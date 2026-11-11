@@ -57,13 +57,13 @@ pub(crate) async fn append(request: AuditSinkRequest2) -> Result<AuditSinkRespon
     // init stream carries audited permissions, routed by their correlation.
     let scope = match by_stream(&request.stream_id).await {
         Some(scope) => scope,
-        None => super::route_permission_batch(&request).ok_or_else(|| { eprintln!("DIAGXX append unknown stream {} events={}", request.stream_id, request.events.len()); "audit sink: unknown stream" })?,
+        None => super::route_permission_batch(&request).ok_or("audit sink: unknown stream")?,
     };
     if !scope.audit_scope_matches(&request.scope) {
         tracing::warn!("{LOG} audit batch names another subject than its stream's");
         return Err("audit sink: the stream belongs to another subject".into());
     }
-    let receipt = scope.rows.append(&request).await.inspect_err(|e| eprintln!("DIAGXX rows.append: {e}"))?;
+    let receipt = scope.rows.append(&request).await?;
     tracing::trace!(new_tail = receipt.new_tail, "{LOG} audit batch committed");
     Ok(receipt)
 }

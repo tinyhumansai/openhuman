@@ -254,7 +254,6 @@ mod native {
             },
             Err(error) => {
                 log::warn!("[privacy][egress-enforce] module unavailable: {error}");
-                eprintln!("DIAGXX privacy unavailable: {error}");
                 Outcome::Unavailable
             }
         }

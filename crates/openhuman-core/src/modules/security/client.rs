@@ -106,7 +106,6 @@ const MODULE_REFUSAL_MESSAGE: &str = "approval denied";
 /// other failure.
 fn call_failed<E: std::fmt::Display>(error: E) -> String {
     let text = error.to_string();
-    eprintln!("DIAGXX call_failed: {text}");
     tracing::debug!(
         "[security] module call failed: {}",
         tinybus::error::redact_values(&text)
