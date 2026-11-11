@@ -286,7 +286,7 @@ pub(crate) async fn enforce_prompt_input_with_config(
         let (config, input) = (config.clone(), input.to_owned());
         // The bus task starts with no ambient context: carry the caller's, or
         // a SaaS tenant's scan loads TinySecurity with no storage scope.
-        let scan = (async move {
+        let scan = crate::core::runtime::CoreContext::propagate(async move {
             let _ = crate::modules::security::ensure_loaded(&config).await;
             scan_within_budget(&config, &input).await
         });
