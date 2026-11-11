@@ -3,8 +3,8 @@
 //! Nothing here needs more than [`BoxDriver::exec`]: a file travels as base64
 //! inside the argument of a `sh -c` command, so every box driver supports it
 //! and no box contract grows. Paths are relative to the box's work folder
-//! ([`BOX_WORKDIR`](super::registry::BOX_WORKDIR), the directory every command
-//! runs in), and every path that reaches the shell is single-quoted and
+//! ([`BoxSettings::workdir`], the directory every command runs in: `/sandbox`
+//! on OpenShell, `/home/node` on agent37), and every path that reaches the shell is single-quoted and
 //! written as `./<path>`, so a file named `-` is a file and not an option or
 //! standard input. Every command first resolves the path inside the box and
 //! refuses one that leaves the work folder (a symlink pointing out of it
@@ -38,7 +38,6 @@ use std::time::Duration;
 use base64::Engine as _;
 
 use super::{tenant_for_box, BoxDriver, BoxError, BoxRegistry, BoxRequest, BoxSettings};
-use crate::config::OpenShellRuntimeConfig;
 use crate::core::runtime::{NoTenant, Tenant};
 use crate::sandbox::types::SandboxExecResult;
 
@@ -83,11 +82,11 @@ const DETAIL_MAX_CHARS: usize = 200;
 /// [`BoxError::NoTenant`], [`BoxError::InvalidPath`] and
 /// [`BoxError::FileTooLarge`] (over [`MAX_FILE_BYTES`]) before any box is
 /// touched; [`BoxError::FileTransfer`] when a command fails (the part file is
-/// removed); otherwise the settings and registry errors.
+/// removed); otherwise the registry errors.
 pub async fn write_file_in<D: BoxDriver>(
     registry: &BoxRegistry<D>,
     tenant: Result<Tenant, NoTenant>,
-    openshell: &OpenShellRuntimeConfig,
+    settings: &BoxSettings,
     path: &str,
     bytes: &[u8],
 ) -> Result<(), BoxError> {
@@ -100,11 +99,10 @@ pub async fn write_file_in<D: BoxDriver>(
             limit: MAX_FILE_BYTES,
         });
     }
-    let settings = BoxSettings::from_config(openshell)?;
     let target = Target {
         registry,
         tenant: &tenant,
-        settings: &settings,
+        settings,
         path,
     };
 
@@ -141,21 +139,20 @@ pub async fn write_file_in<D: BoxDriver>(
 /// touched; [`BoxError::FileNotFound`] when `path` is not a regular file;
 /// [`BoxError::FileTooLarge`] over the limit; [`BoxError::ShortRead`] when
 /// fewer bytes arrive than the file's size; [`BoxError::FileTransfer`] when a
-/// command fails; otherwise the settings and registry errors.
+/// command fails; otherwise the registry errors.
 pub async fn read_file_in<D: BoxDriver>(
     registry: &BoxRegistry<D>,
     tenant: Result<Tenant, NoTenant>,
-    openshell: &OpenShellRuntimeConfig,
+    settings: &BoxSettings,
     path: &str,
     max_bytes: u64,
 ) -> Result<Vec<u8>, BoxError> {
     let tenant = tenant_for_box(tenant)?;
     check_path(path)?;
-    let settings = BoxSettings::from_config(openshell)?;
     let target = Target {
         registry,
         tenant: &tenant,
-        settings: &settings,
+        settings,
         path,
     };
 
@@ -228,7 +225,7 @@ impl<D: BoxDriver> Target<'_, D> {
     async fn run(&self, command: &str) -> Result<SandboxExecResult, BoxError> {
         tracing::debug!(
             path_len = self.path.len(),
-            "[sandbox:openshell] running a file transfer command"
+            "[sandbox:box] running a file transfer command"
         );
         let request = BoxRequest {
             command: command.to_owned(),

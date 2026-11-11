@@ -1,7 +1,7 @@
 use super::*;
 use crate::core::runtime::NoTenant;
-use crate::sandbox::openshell::scripted_driver::{Call, ExecStep, ScriptedDriver};
-use crate::sandbox::openshell::{BoxOutput, RegistryLimits};
+use crate::sandbox::boxes::scripted_driver::{Call, ExecStep, ScriptedDriver};
+use crate::sandbox::boxes::{BoxOutput, RegistryLimits};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,12 +18,15 @@ pub(super) fn registry(driver: &Arc<ScriptedDriver>) -> Arc<BoxRegistry<Scripted
         RegistryLimits {
             idle_ttl: Duration::from_secs(900),
             max_live: 10,
+            retain: None,
         },
     )
 }
 
-pub(super) fn config() -> OpenShellRuntimeConfig {
-    OpenShellRuntimeConfig::default()
+/// The settings of an OpenShell box with the default `[runtime.openshell]`.
+pub(super) fn config() -> BoxSettings {
+    BoxSettings::from_config(&crate::config::OpenShellRuntimeConfig::default())
+        .expect("the default OpenShell settings are valid")
 }
 
 /// Every byte value, so NUL and bytes that are not UTF-8 are in the file.

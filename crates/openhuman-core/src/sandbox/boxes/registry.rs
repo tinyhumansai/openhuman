@@ -1,5 +1,13 @@
 //! [`BoxRegistry`]: one live box per tenant, created on first use, reused,
-//! and closed when idle, released, or no longer answering.
+//! and let go of when idle, released, or no longer answering.
+//!
+//! A registry over a backend that keeps boxes for their owners
+//! ([`RegistryLimits::retain`], agent37) creates each box with its tenant's
+//! [`owner_key`], and letting go of a box only forgets it
+//! ([`BoxDriver::forget`]): the backend sleeps it, and the next command finds
+//! the same box again under the same key. Because forgetting costs nothing, a
+//! full retaining registry also forgets its least recently used idle box to
+//! make room. Every other registry (OpenShell) closes boxes it lets go of.
 //!
 //! State lives in one map behind a `std` mutex that is never held across an
 //! `.await`. Each tenant's entry counts the commands in flight on it and when
@@ -14,12 +22,20 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use super::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, RegistryLimits};
+use sha2::{Digest, Sha256};
+
+use super::{
+    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxRetention, BoxSettings, RegistryLimits,
+};
 use crate::core::runtime::Tenant;
 use crate::sandbox::types::SandboxExecResult;
 
-/// The working directory commands run in: the box's own workspace.
-pub(crate) const BOX_WORKDIR: &str = "/sandbox";
+/// Prefix of every [`owner_key`], naming who chose the key.
+const OWNER_KEY_PREFIX: &str = "oh-";
+
+/// Domain separation for the [`owner_key`] hash, versioned so a change to the
+/// derivation can never collide with keys already in use.
+const OWNER_KEY_DOMAIN: &[u8] = b"openhuman.sandbox.box-owner.v1\0";
 
 /// Seconds `timeout` waits after its signal before it kills the command.
 const KILL_AFTER_SECS: &str = "5";
@@ -155,27 +171,30 @@ impl<D: BoxDriver> BoxRegistry<D> {
         let lease = self.check_out(tenant).await?;
         let mut replaced = false;
         loop {
-            let resource = self.resource_for(&lease.slot, settings).await?;
-            match self.run(&resource, request).await {
+            let resource = self
+                .resource_for(&lease.tenant, &lease.slot, settings)
+                .await?;
+            match self.run(&resource, settings, request).await {
                 Ok(Run::Finished(output)) => return Ok(finished(output)),
                 Ok(Run::BackstopFired) => {
                     tracing::warn!(
                         timeout_secs = whole_seconds(request.timeout),
-                        "[sandbox:openshell] box did not answer by the deadline; closing it"
+                        "[sandbox:box] box did not answer by the deadline; letting it go"
                     );
                     lease.slot.forget(&resource);
-                    self.close_quietly(&resource).await;
+                    self.let_go(&resource).await;
                     return Ok(backstop_timed_out(request.timeout));
                 }
                 Err(BoxError::UnknownResource) => {
                     // "Gone" is inferred after a failed exec, so the box may
-                    // still exist on the gateway: close it rather than leak it.
+                    // still exist on the gateway: let go of it rather than
+                    // leak it (a retained box is only forgotten).
                     lease.slot.forget(&resource);
-                    self.close_quietly(&resource).await;
+                    self.let_go(&resource).await;
                     if replaced {
                         return Err(BoxError::UnknownResource);
                     }
-                    tracing::warn!("[sandbox:openshell] box is gone; retrying in a new box");
+                    tracing::warn!("[sandbox:box] box is gone; retrying in a new box");
                     replaced = true;
                 }
                 Err(error) => return Err(error),
@@ -183,33 +202,39 @@ impl<D: BoxDriver> BoxRegistry<D> {
         }
     }
 
-    /// Close every box idle since `now - idle_ttl` or earlier with no command
-    /// in flight; returns how many were closed.
+    /// Let go of every box idle since `now - idle_ttl` or earlier with no
+    /// command in flight (closed, or forgotten when retained); returns how
+    /// many.
     pub async fn reap(&self, now: Instant) -> usize {
         let idle = self.take_idle(&mut self.entries(), now);
-        let closed = idle.len();
+        let reaped = idle.len();
         for resource in idle {
-            self.close_quietly(&resource).await;
+            self.let_go(&resource).await;
         }
-        if closed > 0 {
-            tracing::debug!(closed, "[sandbox:openshell] reaped idle boxes");
+        if reaped > 0 {
+            tracing::debug!(
+                reaped,
+                retained = self.limits.retain.is_some(),
+                "[sandbox:box] reaped idle boxes"
+            );
         }
-        closed
+        reaped
     }
 
-    /// Close `tenant`'s box, if it has one. A command still running in it
-    /// fails rather than starting another box.
+    /// Let go of `tenant`'s box, if it has one (closed, or forgotten when
+    /// retained). A command still running in it fails rather than starting
+    /// another box.
     pub async fn release(&self, tenant: &Tenant) {
         let resource = self
             .entries()
             .remove(tenant)
             .and_then(|entry| entry.slot.retire());
         if let Some(resource) = resource {
-            self.close_quietly(&resource).await;
+            self.let_go(&resource).await;
         }
     }
 
-    /// Close every box.
+    /// Let go of every box: closed, or forgotten when retained.
     pub async fn shutdown(&self) {
         let resources: Vec<String> = self
             .entries()
@@ -217,7 +242,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
             .filter_map(|(_, entry)| entry.slot.retire())
             .collect();
         for resource in resources {
-            self.close_quietly(&resource).await;
+            self.let_go(&resource).await;
         }
     }
 
@@ -250,12 +275,12 @@ impl<D: BoxDriver> BoxRegistry<D> {
     async fn check_out(&self, tenant: &Tenant) -> Result<Lease<'_, D>, BoxError> {
         let (held, reaped) = self.hold(tenant, Instant::now());
         for resource in reaped {
-            self.close_quietly(&resource).await;
+            self.let_go(&resource).await;
         }
         let Some(slot) = held else {
             tracing::warn!(
                 max_live = self.limits.max_live,
-                "[sandbox:openshell] refusing a new box: at capacity"
+                "[sandbox:box] refusing a new box: at capacity"
             );
             return Err(BoxError::AtCapacity);
         };
@@ -274,6 +299,9 @@ impl<D: BoxDriver> BoxRegistry<D> {
         let mut reaped = Vec::new();
         if !entries.contains_key(tenant) && entries.len() >= self.limits.max_live {
             reaped = self.take_idle(&mut entries, now);
+            if entries.len() >= self.limits.max_live && self.limits.retain.is_some() {
+                reaped.extend(take_least_recently_used(&mut entries));
+            }
             if entries.len() >= self.limits.max_live {
                 return (None, reaped);
             }
@@ -319,8 +347,16 @@ impl<D: BoxDriver> BoxRegistry<D> {
         resources
     }
 
-    /// The slot's box, created now if it has none.
-    async fn resource_for(&self, slot: &Slot, settings: &BoxSettings) -> Result<String, BoxError> {
+    /// The slot's box, created now if it has none. A retaining registry
+    /// creates it with `tenant`'s retention, so the backend hands back the box
+    /// it already keeps for the tenant; a refusal is returned as it is, never
+    /// retried as a disposable box.
+    async fn resource_for(
+        &self,
+        tenant: &Tenant,
+        slot: &Slot,
+        settings: &BoxSettings,
+    ) -> Result<String, BoxError> {
         if let Some(resource) = slot.current()? {
             return Ok(resource);
         }
@@ -328,22 +364,35 @@ impl<D: BoxDriver> BoxRegistry<D> {
         if let Some(resource) = slot.current()? {
             return Ok(resource);
         }
-        tracing::debug!(image = %settings.image, "[sandbox:openshell] creating a box");
-        let resource = self.driver.create(settings).await?;
+        let retention: Option<BoxRetention> = self
+            .limits
+            .retain
+            .map(|policy| policy.for_owner(owner_key(tenant)));
+        tracing::debug!(
+            image = %settings.image,
+            retained = retention.is_some(),
+            "[sandbox:box] creating a box"
+        );
+        let resource = self.driver.create(settings, retention.as_ref()).await?;
         if !slot.store(&resource) {
-            self.close_quietly(&resource).await;
+            self.let_go(&resource).await;
             return Err(BoxError::Released);
         }
-        tracing::debug!(resource = %resource, "[sandbox:openshell] box ready");
+        tracing::debug!(resource = %resource, "[sandbox:box] box ready");
         Ok(resource)
     }
 
-    async fn run(&self, resource: &str, request: &BoxRequest) -> Result<Run, BoxError> {
+    async fn run(
+        &self,
+        resource: &str,
+        settings: &BoxSettings,
+        request: &BoxRequest,
+    ) -> Result<Run, BoxError> {
         let secs = whole_seconds(request.timeout);
         let deadline = Duration::from_secs(secs).saturating_add(BACKSTOP_MARGIN);
         let exec = BoxExec {
             argv: timeout_argv(secs, &request.command),
-            cwd: BOX_WORKDIR.to_owned(),
+            cwd: settings.workdir.clone(),
             env: request.env.clone(),
             deadline,
         };
@@ -353,12 +402,21 @@ impl<D: BoxDriver> BoxRegistry<D> {
         }
     }
 
-    async fn close_quietly(&self, resource: &str) {
-        if let Err(error) = self.driver.close(resource).await {
+    /// Let go of a box this registry no longer tracks: forget a retained one
+    /// (its backend keeps it, asleep), close any other. A failure is logged.
+    async fn let_go(&self, resource: &str) {
+        let retained = self.limits.retain.is_some();
+        let outcome = if retained {
+            self.driver.forget(resource).await
+        } else {
+            self.driver.close(resource).await
+        };
+        if let Err(error) = outcome {
             tracing::warn!(
                 resource = %resource,
+                retained,
                 error = %error,
-                "[sandbox:openshell] closing a box failed"
+                "[sandbox:box] letting go of a box failed"
             );
         }
     }
@@ -414,6 +472,45 @@ fn backstop_timed_out(timeout: Duration) -> SandboxExecResult {
     }
 }
 
+/// Remove the least recently used entry with no command in flight and
+/// return its box to let go of. Only a retaining registry does this: its box
+/// is forgotten, not deleted, so the tenant finds it again next time.
+fn take_least_recently_used(entries: &mut HashMap<Tenant, Entry>) -> Option<String> {
+    let tenant = entries
+        .iter()
+        .filter(|(_, entry)| entry.in_flight == 0)
+        .min_by_key(|(_, entry)| entry.last_used)
+        .map(|(tenant, _)| tenant.clone())?;
+    entries
+        .remove(&tenant)
+        .and_then(|entry| entry.slot.retire())
+}
+
+/// The opaque key a retaining backend keeps `tenant`'s box under: `oh-`
+/// and the hex SHA-256 of the whole tenant (profile and agent, each
+/// length-prefixed and marked present or absent), so it is stable across
+/// restarts, distinct per tenant, never a raw id, and within the backend's
+/// key alphabet (`[A-Za-z0-9_-]`, 67 characters).
+pub fn owner_key(tenant: &Tenant) -> String {
+    let mut hash = Sha256::new();
+    hash.update(OWNER_KEY_DOMAIN);
+    for part in [&tenant.profile, &tenant.agent] {
+        match part {
+            None => hash.update([0u8]),
+            Some(value) => {
+                hash.update([1u8]);
+                hash.update((value.len() as u64).to_le_bytes());
+                hash.update(value.as_bytes());
+            }
+        }
+    }
+    format!("{OWNER_KEY_PREFIX}{}", hex::encode(hash.finalize()))
+}
+
 #[cfg(test)]
 #[path = "registry_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "registry_retain_tests.rs"]
+mod retain_tests;

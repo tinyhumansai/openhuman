@@ -1,10 +1,9 @@
 use super::*;
 use crate::artifacts::tiny_store::{artifacts_service, version_files_dir};
 use crate::artifacts::{read_artifact_bytes, FileRoots};
-use crate::config::OpenShellRuntimeConfig;
 use crate::core::runtime::DispatchCtx;
-use crate::sandbox::openshell::scripted_driver::{Call, ExecStep, ScriptedDriver};
-use crate::sandbox::openshell::{read_file_in, BoxOutput, BoxRegistry, RegistryLimits};
+use crate::sandbox::boxes::scripted_driver::{Call, ExecStep, ScriptedDriver};
+use crate::sandbox::boxes::{read_file_in, BoxOutput, BoxRegistry, BoxSettings, RegistryLimits};
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -33,8 +32,9 @@ struct ScriptedBoxes {
 
 #[async_trait]
 impl BoxFiles for ScriptedBoxes {
-    async fn keeps_boxes(&self) -> Result<bool, BoxError> {
+    async fn work_folder(&self) -> Result<Option<&'static str>, BoxError> {
         self.keeps
+            .map(|keeps| keeps.then_some("/sandbox"))
             .ok_or_else(|| BoxError::Driver("cannot read the configuration: unreadable".into()))
     }
 
@@ -47,7 +47,8 @@ impl BoxFiles for ScriptedBoxes {
         read_file_in(
             &self.registry,
             tenant,
-            &OpenShellRuntimeConfig::default(),
+            &BoxSettings::from_config(&crate::config::OpenShellRuntimeConfig::default())
+                .expect("the default OpenShell settings are valid"),
             path,
             max_bytes,
         )
@@ -115,6 +116,7 @@ impl Fixture {
             RegistryLimits {
                 idle_ttl: Duration::from_secs(900),
                 max_live: 10,
+                retain: None,
             },
         );
         let service = Arc::new(service);
@@ -378,10 +380,29 @@ async fn the_tool_keeps_the_artifact_tools_name_and_schema() {
 
 #[test]
 fn a_box_path_is_the_name_relative_to_the_work_folder() {
-    assert_eq!(box_path("report.pdf"), "report.pdf");
-    assert_eq!(box_path("/sandbox/out/report.pdf"), "out/report.pdf");
-    assert_eq!(box_path("/sandboxed/report.pdf"), "/sandboxed/report.pdf");
-    assert_eq!(box_path("/sandbox"), "/sandbox");
+    assert_eq!(box_path("report.pdf", "/sandbox"), "report.pdf");
+    assert_eq!(
+        box_path("/sandbox/out/report.pdf", "/sandbox"),
+        "out/report.pdf"
+    );
+    assert_eq!(
+        box_path("/sandboxed/report.pdf", "/sandbox"),
+        "/sandboxed/report.pdf"
+    );
+    assert_eq!(box_path("/sandbox", "/sandbox"), "/sandbox");
+}
+
+#[test]
+fn an_agent37_box_path_is_relative_to_its_home() {
+    assert_eq!(
+        box_path("/home/node/out/report.pdf", "/home/node"),
+        "out/report.pdf"
+    );
+    // Another backend's work folder is just an absolute path here.
+    assert_eq!(
+        box_path("/sandbox/out/report.pdf", "/home/node"),
+        "/sandbox/out/report.pdf"
+    );
 }
 
 #[tokio::test]

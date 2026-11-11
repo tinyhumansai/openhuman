@@ -1,4 +1,14 @@
-//! [`BusBoxDriver`]: boxes through the TinyBox module's `openshell` backend.
+//! [`BusBoxDriver`]: boxes through the TinyBox module's `openshell` or
+//! `agent37` backend.
+//!
+//! A retained box (agent37) is created with the contract 2.4
+//! [`contract::Retention`]: the module adopts the box it already keeps under
+//! the owner's key, or creates one that sleeps when idle. A module older than
+//! 2.4 never sees the request: every call first requires a compatible
+//! contract, and this host is built against 2.4. Forgetting a retained box is
+//! the module's `Close`, which for a retained box drops only the module's
+//! handle and leaves the instance, so the module's resource slots are freed
+//! without deleting anything.
 //!
 //! Each step is one bus call (`Reserve` + `Create`, `Exec`, `Close`). The
 //! module's error names do not cross the bus client (it reports only
@@ -10,12 +20,23 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use super::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings};
+use super::{BoxBackend, BoxDriver, BoxError, BoxExec, BoxOutput, BoxRetention, BoxSettings};
 use crate::config::Config;
 use crate::modules::tinybox::{self, contract};
 
 /// The TinyBox backend name for OpenShell boxes.
-pub(crate) const BACKEND: &str = "openshell";
+pub(crate) const OPENSHELL_BACKEND: &str = "openshell";
+
+/// The TinyBox backend name for agent37 boxes.
+pub(crate) const AGENT37_BACKEND: &str = "agent37";
+
+/// The TinyBox backend name `backend` creates its boxes with.
+pub(crate) fn module_backend(backend: BoxBackend) -> &'static str {
+    match backend {
+        BoxBackend::OpenShell => OPENSHELL_BACKEND,
+        BoxBackend::Agent37 => AGENT37_BACKEND,
+    }
+}
 
 /// How long past the registry's own deadline the bus waits for an exec reply,
 /// so the registry's backstop always decides first.
@@ -25,25 +46,32 @@ pub(crate) const BUS_REPLY_GRACE: Duration = Duration::from_secs(5);
 const LIVE_STATES: &[&str] = &["ready", "running"];
 
 /// A [`BoxDriver`] over the TinyBox module, using the module configuration it
-/// was built with.
+/// was built with, for one backend.
 pub struct BusBoxDriver {
     config: Config,
+    backend: BoxBackend,
 }
 
 impl BusBoxDriver {
-    /// A driver that reaches the module with `config`'s module settings.
-    pub fn new(config: Config) -> Self {
-        Self { config }
+    /// A driver that reaches the module with `config`'s module settings and
+    /// creates `backend`'s boxes.
+    pub fn new(config: Config, backend: BoxBackend) -> Self {
+        Self { config, backend }
     }
 }
 
 #[async_trait]
 impl BoxDriver for BusBoxDriver {
-    async fn create(&self, settings: &BoxSettings) -> Result<String, BoxError> {
+    async fn create(
+        &self,
+        settings: &BoxSettings,
+        retention: Option<&BoxRetention>,
+    ) -> Result<String, BoxError> {
         let resource = tinybox::reserve(&self.config, contract::ReserveRequest::Resource)
             .await
             .map_err(BoxError::Driver)?;
-        let info = tinybox::create(&self.config, create_request(resource, settings))
+        let request = create_request(resource, self.backend, settings, retention);
+        let info = tinybox::create(&self.config, request)
             .await
             .map_err(BoxError::Driver)?;
         Ok(info.resource.0)
@@ -71,17 +99,26 @@ impl BoxDriver for BusBoxDriver {
             .await
             .map_err(BoxError::Driver)
     }
+
+    async fn forget(&self, resource: &str) -> Result<(), BoxError> {
+        // The module's Close on a retained box drops its handle and keeps the
+        // instance (contract 2.4); see the module docs above.
+        self.close(resource).await
+    }
 }
 
-/// An OpenShell box: the image, no network, no published ports, and no
-/// environment from the host.
+/// A box on `backend`: the image (a template name on agent37), no network,
+/// no published ports, no environment from the host, and the retention a
+/// retaining registry asked for.
 pub(crate) fn create_request(
     resource: contract::ResourceId,
+    backend: BoxBackend,
     settings: &BoxSettings,
+    retention: Option<&BoxRetention>,
 ) -> contract::CreateRequest {
     contract::CreateRequest {
         resource,
-        backend: BACKEND.to_owned(),
+        backend: module_backend(backend).to_owned(),
         host: contract::HostConfig::Local,
         workspace: contract::Workspace::Image(settings.image.clone()),
         network: contract::NetworkPolicy::Denied,
@@ -92,6 +129,11 @@ pub(crate) fn create_request(
         },
         ports: Vec::new(),
         env: std::collections::BTreeMap::new(),
+        retention: retention.map(|retention| contract::Retention {
+            key: retention.key.clone(),
+            idle_sleep_secs: retention.idle_sleep_secs,
+            delete_after_secs: retention.delete_after_secs,
+        }),
     }
 }
 

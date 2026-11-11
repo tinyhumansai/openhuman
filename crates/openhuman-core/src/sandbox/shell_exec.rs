@@ -195,6 +195,7 @@ async fn run_owned(
             resources: contract::ResourceLimits::default(),
             ports: Vec::new(),
             env: BTreeMap::new(),
+            retention: None,
         },
         shell: shell_exec_request(
             contract::ResourceId(String::new()),
