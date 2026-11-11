@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::sandbox::boxes::scripted_driver::{ExecStep, ScriptedDriver};
+use crate::sandbox::boxes::ModuleConfig;
 use crate::sandbox::boxes::{RetainPolicy, Retention};
 use std::collections::BTreeMap;
 

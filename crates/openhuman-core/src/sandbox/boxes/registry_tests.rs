@@ -1,5 +1,6 @@
 use super::*;
 use crate::sandbox::boxes::scripted_driver::{ok_output, Call, ExecStep, ScriptedDriver};
+use crate::sandbox::boxes::ModuleConfig;
 use std::collections::BTreeMap;
 use tokio::sync::Notify;
 

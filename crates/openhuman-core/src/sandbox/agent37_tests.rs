@@ -3,6 +3,7 @@
 //! lifecycle itself is the shared registry's, tested in `boxes`.
 
 use super::*;
+use crate::sandbox::boxes::ModuleConfig;
 use crate::sandbox::boxes::{
     BoxError, BoxSettings, OwnerScope, RegistryLimits, RetainPolicy, AGENT37_WORKDIR,
 };
