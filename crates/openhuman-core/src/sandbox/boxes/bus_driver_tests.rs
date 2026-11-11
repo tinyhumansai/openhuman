@@ -6,13 +6,14 @@ fn settings() -> BoxSettings {
         image: "registry.example/agent:1".into(),
         cpu_millis: 750,
         memory_bytes: 256 * 1024 * 1024,
+        workdir: "/sandbox".into(),
     }
 }
 
 fn info(state: &str) -> contract::ResourceInfo {
     contract::ResourceInfo {
         resource: contract::ResourceId("r-1".into()),
-        backend: BACKEND.into(),
+        backend: OPENSHELL_BACKEND.into(),
         state: state.into(),
         published_ports: Vec::new(),
     }
@@ -20,7 +21,12 @@ fn info(state: &str) -> contract::ResourceInfo {
 
 #[test]
 fn a_box_is_an_openshell_image_with_no_network_no_ports_and_no_host_env() {
-    let request = create_request(contract::ResourceId("r-1".into()), &settings());
+    let request = create_request(
+        contract::ResourceId("r-1".into()),
+        BoxBackend::OpenShell,
+        &settings(),
+        None,
+    );
 
     assert_eq!(request.resource, contract::ResourceId("r-1".into()));
     assert_eq!(request.backend, "openshell");
@@ -41,6 +47,52 @@ fn a_box_is_an_openshell_image_with_no_network_no_ports_and_no_host_env() {
     assert_eq!(
         request.resources.disk_bytes,
         contract::ResourceLimits::default().disk_bytes
+    );
+}
+
+#[test]
+fn an_openshell_box_is_never_retained() {
+    let request = create_request(
+        contract::ResourceId("r-1".into()),
+        BoxBackend::OpenShell,
+        &settings(),
+        None,
+    );
+    assert_eq!(request.retention, None);
+}
+
+#[test]
+fn an_agent37_box_starts_from_its_template_and_carries_its_owners_retention() {
+    let settings = BoxSettings::from_agent37(&crate::config::Agent37RuntimeConfig::default())
+        .expect("the default agent37 settings are valid");
+    let retention = BoxRetention {
+        key: "oh-abc".into(),
+        idle_sleep_secs: 900,
+        delete_after_secs: 2_592_000,
+    };
+
+    let request = create_request(
+        contract::ResourceId("r-1".into()),
+        BoxBackend::Agent37,
+        &settings,
+        Some(&retention),
+    );
+
+    assert_eq!(request.backend, "agent37");
+    assert_eq!(
+        request.workspace,
+        contract::Workspace::Image("agent37-base".into())
+    );
+    assert_eq!(request.network, contract::NetworkPolicy::Denied);
+    assert_eq!(request.resources.cpu_millis, 2_000);
+    assert_eq!(request.resources.memory_bytes, 4 * 1024 * 1024 * 1024);
+    assert_eq!(
+        request.retention,
+        Some(contract::Retention {
+            key: "oh-abc".into(),
+            idle_sleep_secs: 900,
+            delete_after_secs: 2_592_000,
+        })
     );
 }
 

@@ -194,6 +194,7 @@ pub(super) fn create_request(
         resources: contract::ResourceLimits::default(),
         ports,
         env: env.clone(),
+        retention: None,
     }
 }
 

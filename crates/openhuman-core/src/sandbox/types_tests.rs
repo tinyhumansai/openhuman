@@ -73,13 +73,13 @@ fn the_openshell_kind_is_named_openshell_on_the_wire() {
 }
 
 #[test]
-fn only_the_openshell_backend_keeps_a_box_between_commands() {
+fn the_openshell_and_agent37_backends_keep_a_box_between_commands() {
     assert!(SandboxBackendKind::OpenShell.keeps_boxes());
+    assert!(SandboxBackendKind::Agent37.keeps_boxes());
     for backend in [
         SandboxBackendKind::None,
         SandboxBackendKind::Local,
         SandboxBackendKind::Docker,
-        SandboxBackendKind::Agent37,
     ] {
         assert!(!backend.keeps_boxes(), "{backend:?}");
     }

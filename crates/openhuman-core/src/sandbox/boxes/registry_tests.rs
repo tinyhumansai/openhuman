@@ -1,5 +1,5 @@
 use super::*;
-use crate::sandbox::openshell::scripted_driver::{ok_output, Call, ExecStep, ScriptedDriver};
+use crate::sandbox::boxes::scripted_driver::{ok_output, Call, ExecStep, ScriptedDriver};
 use std::collections::BTreeMap;
 use tokio::sync::Notify;
 
@@ -9,6 +9,7 @@ fn limits(max_live: usize) -> RegistryLimits {
     RegistryLimits {
         idle_ttl: TTL,
         max_live,
+        retain: None,
     }
 }
 
@@ -17,6 +18,7 @@ fn settings() -> BoxSettings {
         image: "registry.example/agent:1".into(),
         cpu_millis: 1_000,
         memory_bytes: 256 * 1024 * 1024,
+        workdir: "/sandbox".into(),
     }
 }
 
@@ -82,7 +84,7 @@ async fn the_box_enforces_the_deadline_from_its_own_workspace() {
     assert_eq!(exec.cwd, "/sandbox");
     assert_eq!(exec.env, request.env);
     assert_eq!(exec.deadline, Duration::from_secs(30) + BACKSTOP_MARGIN);
-    assert_eq!(driver.calls()[0], Call::Create(settings()));
+    assert_eq!(driver.calls()[0], Call::Create(settings(), None));
 }
 
 #[test]
@@ -253,7 +255,7 @@ async fn reaping_an_idle_box_makes_room_for_a_new_tenant() {
         .unwrap();
     let created = calls
         .iter()
-        .rposition(|call| matches!(call, Call::Create(_)))
+        .rposition(|call| matches!(call, Call::Create(..)))
         .unwrap();
     assert!(closed < created);
     assert_eq!(boxes.live(), 1);
