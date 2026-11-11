@@ -26,6 +26,18 @@ fn profile(tmp: &tempfile::TempDir, user: &str) -> Config {
     config
 }
 
+/// The fixture is a profile as the host opens it: an enabled policy over
+/// directories that exist, so whichever test admits TinySecurity first in the
+/// process does not fault it for the whole test binary.
+#[test]
+fn the_profile_fixture_has_the_directories_its_enabled_policy_names() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = profile(&tmp, "fixture");
+    assert!(config.autonomy.enabled);
+    assert!(config.workspace_dir.is_dir());
+    assert!(config.action_dir.is_dir(), "TinySecurity requires action_dir");
+}
+
 #[tokio::test]
 async fn each_profile_resolves_only_its_own_credential() {
     let tmp = tempfile::tempdir().unwrap();
