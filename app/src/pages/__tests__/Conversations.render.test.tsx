@@ -836,6 +836,11 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
   it('replaces the route when deleting the currently-routed thread', async () => {
     const thread = makeThread({ id: 't-del', title: 'Deletable Thread' });
     mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    vi.mocked(threadApi.createNewThread).mockImplementationOnce(async () => {
+      const created = makeThread({ id: 'new-thread', title: 'New Thread' });
+      mockGetThreads.mockResolvedValue({ threads: [created], count: 1 });
+      return created;
+    });
 
     await act(async () => {
       await renderConversationsRoute('/chat/t-del', { thread: selectedThreadState(thread) });
@@ -849,7 +854,261 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     await waitFor(() => expect(threadApi.deleteThread).toHaveBeenCalledWith('t-del'));
-    expect(screen.getByTestId('route-path')).toHaveTextContent('/chat');
+    await waitFor(() =>
+      expect(screen.getByTestId('route-path')).toHaveTextContent('/chat/new-thread')
+    );
+    expect(threadApi.createNewThread).toHaveBeenCalledTimes(1);
+  });
+
+  it('selects the newest visible thread after deleting the active thread', async () => {
+    const deleted = makeThread({
+      id: 't-old',
+      title: 'Older Thread',
+      lastMessageAt: '2026-01-01T00:00:00.000Z',
+    });
+    const newer = makeThread({
+      id: 't-new',
+      title: 'Newer Thread',
+      lastMessageAt: '2026-01-02T00:00:00.000Z',
+    });
+    const worker = makeThread({
+      id: 'worker-1',
+      title: 'Worker',
+      parentThreadId: 't-old',
+      labels: ['tasks'],
+      lastMessageAt: '2026-01-03T00:00:00.000Z',
+    });
+    let live = [worker, newer, deleted];
+    mockGetThreads.mockImplementation(async () => ({ threads: [...live], count: live.length }));
+    vi.mocked(threadApi.deleteThread).mockImplementationOnce(async (threadId: string) => {
+      live = live.filter(thread => thread.id !== threadId);
+      return { deleted: true };
+    });
+
+    let store!: ReturnType<typeof buildStore>;
+    await act(async () => {
+      store = await renderConversationsRoute('/chat/t-old', {
+        thread: selectedThreadState(deleted),
+      });
+    });
+    await openSidebar();
+
+    const row = await screen.findByTestId('thread-row-t-old');
+    await userEvent.click(within(row.parentElement!).getByRole('button', { name: 'More options' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    });
+
+    await waitFor(() => expect(store.getState().thread.selectedThreadId).toBe('t-new'));
+    await waitFor(() => expect(screen.getByTestId('route-path').textContent).toBe('/chat'));
+    expect(threadApi.createNewThread).not.toHaveBeenCalled();
+  });
+
+  it('creates a new conversation when the last visible thread is deleted', async () => {
+    const general = makeThread({ id: 't-gen', title: 'Only Conversation' });
+    const worker = makeThread({
+      id: 'worker-1',
+      title: 'Task: describe screenshot',
+      parentThreadId: 't-gen',
+      labels: ['tasks'],
+      lastMessageAt: '2026-01-02T00:00:00.000Z',
+    });
+    let live = [worker, general];
+    mockGetThreads.mockImplementation(async () => ({ threads: [...live], count: live.length }));
+    vi.mocked(threadApi.deleteThread).mockImplementationOnce(async (threadId: string) => {
+      live = live.filter(thread => thread.id !== threadId);
+      return { deleted: true };
+    });
+    vi.mocked(threadApi.createNewThread).mockImplementationOnce(async () => {
+      const created = makeThread({ id: 'new-thread', title: 'New Thread' });
+      live = [created, ...live];
+      return created;
+    });
+
+    let store!: ReturnType<typeof buildStore>;
+    await act(async () => {
+      store = await renderConversationsRoute('/chat/t-gen', {
+        thread: selectedThreadState(general),
+      });
+    });
+    await openSidebar();
+
+    const row = await screen.findByTestId('thread-row-t-gen');
+    await userEvent.click(within(row.parentElement!).getByRole('button', { name: 'More options' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    });
+
+    await waitFor(() => expect(store.getState().thread.selectedThreadId).toBe('new-thread'));
+    await waitFor(() =>
+      expect(screen.getByTestId('route-path')).toHaveTextContent('/chat/new-thread')
+    );
+    expect(threadApi.createNewThread).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('textbox', { name: 'Message input' })).not.toBeDisabled();
+  });
+
+  it('creates exactly one blank thread when deleting the last routed thread', async () => {
+    const general = makeThread({ id: 't-gen', title: 'Only Conversation' });
+    let live = [general];
+    mockGetThreads.mockImplementation(async () => ({ threads: [...live], count: live.length }));
+    let resolveDelete!: () => void;
+    vi.mocked(threadApi.deleteThread).mockImplementationOnce(
+      () =>
+        new Promise<{ deleted: boolean }>(resolve => {
+          live = [];
+          resolveDelete = () => resolve({ deleted: true });
+        })
+    );
+    vi.mocked(threadApi.createNewThread).mockImplementationOnce(async () => {
+      const created = makeThread({ id: 'new-thread', title: 'New Thread' });
+      live = [created];
+      return created;
+    });
+
+    let store!: ReturnType<typeof buildStore>;
+    await act(async () => {
+      store = await renderConversationsRoute('/chat/t-gen', {
+        thread: selectedThreadState(general),
+      });
+    });
+    await openSidebar();
+
+    const row = await screen.findByTestId('thread-row-t-gen');
+    await userEvent.click(within(row.parentElement!).getByRole('button', { name: 'More options' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    });
+
+    expect(threadApi.deleteThread).toHaveBeenCalledWith('t-gen');
+    expect(threadApi.createNewThread).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveDelete();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(threadApi.createNewThread).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(store.getState().thread.selectedThreadId).toBe('new-thread'));
+    await waitFor(() =>
+      expect(screen.getByTestId('route-path')).toHaveTextContent('/chat/new-thread')
+    );
+  });
+
+  it('starts only one create when New conversation is clicked during a pending last-thread delete', async () => {
+    const general = makeThread({ id: 't-gen', title: 'Only Conversation' });
+    let live = [general];
+    let holdDeleteRefresh = false;
+    let releaseDeleteRefresh!: () => void;
+    mockGetThreads.mockImplementation(async () => {
+      if (holdDeleteRefresh) {
+        holdDeleteRefresh = false;
+        await new Promise<void>(resolve => {
+          releaseDeleteRefresh = resolve;
+        });
+      }
+      return { threads: [...live], count: live.length };
+    });
+    vi.mocked(threadApi.deleteThread).mockImplementationOnce(async (threadId: string) => {
+      live = live.filter(thread => thread.id !== threadId);
+      holdDeleteRefresh = true;
+      return { deleted: true };
+    });
+    let resolveCreate!: (thread: Thread) => void;
+    vi.mocked(threadApi.createNewThread).mockImplementationOnce(
+      () =>
+        new Promise<Thread>(resolve => {
+          resolveCreate = resolve;
+        })
+    );
+
+    let store!: ReturnType<typeof buildStore>;
+    await act(async () => {
+      store = await renderConversationsRoute('/chat/t-gen', {
+        thread: selectedThreadState(general),
+      });
+    });
+    await openSidebar();
+
+    const row = await screen.findByTestId('thread-row-t-gen');
+    await userEvent.click(within(row.parentElement!).getByRole('button', { name: 'More options' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    });
+
+    await waitFor(() => expect(threadApi.deleteThread).toHaveBeenCalledWith('t-gen'));
+    await waitFor(() => expect(store.getState().thread.selectedThreadId).toBeNull());
+    await waitFor(() => expect(releaseDeleteRefresh).toBeDefined());
+
+    await userEvent.click(screen.getByTestId('new-thread-button'));
+    await waitFor(() => expect(threadApi.createNewThread).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      releaseDeleteRefresh();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(threadApi.createNewThread).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('route-path').textContent).toBe('/chat/t-gen');
+
+    const created = makeThread({ id: 'new-thread', title: 'New Thread' });
+    live = [created];
+    await act(async () => {
+      resolveCreate(created);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(store.getState().thread.selectedThreadId).toBe('new-thread'));
+  });
+
+  it('keeps the route on a thread opened while the delete is pending', async () => {
+    const deleted = makeThread({ id: 't-del', title: 'Deletable Thread' });
+    const other = makeThread({
+      id: 't-other',
+      title: 'Other Thread',
+      lastMessageAt: '2026-01-02T00:00:00.000Z',
+    });
+    let live = [deleted, other];
+    mockGetThreads.mockImplementation(async () => ({ threads: [...live], count: live.length }));
+    let resolveDelete!: () => void;
+    vi.mocked(threadApi.deleteThread).mockImplementationOnce(async (threadId: string) => {
+      live = live.filter(thread => thread.id !== threadId);
+      return new Promise<{ deleted: boolean }>(resolve => {
+        resolveDelete = () => resolve({ deleted: true });
+      });
+    });
+
+    let store!: ReturnType<typeof buildStore>;
+    await act(async () => {
+      store = await renderConversationsRoute('/chat/t-del', {
+        thread: selectedThreadState(deleted),
+      });
+    });
+    await openSidebar();
+
+    const row = await screen.findByTestId('thread-row-t-del');
+    await userEvent.click(within(row.parentElement!).getByRole('button', { name: 'More options' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    });
+    await waitFor(() => expect(threadApi.deleteThread).toHaveBeenCalledWith('t-del'));
+
+    await userEvent.click(await screen.findByTestId('thread-row-t-other'));
+    await waitFor(() => expect(screen.getByTestId('route-path').textContent).toBe('/chat/t-other'));
+
+    await act(async () => {
+      resolveDelete();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await waitFor(() =>
+      expect(store.getState().thread.threads.map(thread => thread.id)).toEqual(['t-other'])
+    );
+
+    expect(screen.getByTestId('route-path').textContent).toBe('/chat/t-other');
+    expect(threadApi.createNewThread).not.toHaveBeenCalled();
   });
 
   it('handles /new from the composer without a selected thread or sending chat text', async () => {
