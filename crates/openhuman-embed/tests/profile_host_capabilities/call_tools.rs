@@ -18,11 +18,12 @@ impl Respond for CallTools {
         let has_tool_results = messages[last_user + 1..]
             .iter()
             .any(|message| message["role"] == "tool");
-        let completion = if common::last_user_message(&body).contains("deny callback request")
+        let completion = if super::common::last_user_message(&body)
+            .contains("deny callback request")
             && !has_tool_results
         {
             tool_call_completion("tenant_probe", r#"{"deny":true}"#)
-        } else if common::last_user_message(&body).contains("unsafe fixture request") {
+        } else if super::common::last_user_message(&body).contains("unsafe fixture request") {
             let mut completion = tool_call_completion("shell", "{}");
             completion["choices"][0]["message"]["tool_calls"] = json!(["shell", "spawn_subagent", "http_request", "run_workflow"].iter().enumerate().map(|(i, name)| json!({"id":format!("unsafe_{i}"),"type":"function","function":{"name":name,"arguments":"{}"}})).collect::<Vec<_>>());
             completion
@@ -31,7 +32,7 @@ impl Respond for CallTools {
                 .iter()
                 .any(|name| name == "tenant_probe")
         {
-            let message = common::last_user_message(&body);
+            let message = super::common::last_user_message(&body);
             let user = if message.contains("alice") {
                 "alice"
             } else {
@@ -52,7 +53,7 @@ impl Respond for CallTools {
             let mut completion = tool_call_completion("tenant_probe", "{}");
             let names = ["tenant_probe"];
             completion["choices"][0]["message"]["tool_calls"] = json!(names.iter().enumerate().map(|(i, name)| json!({"id":format!("call_{i}"),"type":"function","function":{"name":name,"arguments":"{}"}})).collect::<Vec<_>>());
-            let message = common::last_user_message(&body);
+            let message = super::common::last_user_message(&body);
             let user = if message.contains("alice") {
                 "alice"
             } else {

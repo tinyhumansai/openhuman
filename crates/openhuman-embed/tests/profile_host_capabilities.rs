@@ -9,10 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use call_tools::CallTools;
-use common::{
-    chat_completion, chat_requests, runtime_without_master_key, tool_call_completion, tool_names,
-    PointedInference,
-};
+use common::{chat_requests, runtime_without_master_key, tool_names, PointedInference};
 use openhuman_embed::memory::api::conformance::ReferenceEngine;
 use openhuman_embed::memory::api::{LearningKind, MemoryEngine, MemoryMeta, StoreItem};
 use openhuman_embed::profiles::ProfileCredentialKind;
@@ -24,7 +21,7 @@ use openhuman_embed::{
     ToolScopeSpec,
 };
 use serde_json::{json, Value};
-use wiremock::{Mock, Request, Respond, ResponseTemplate};
+use wiremock::{Mock, ResponseTemplate};
 
 struct TenantTool {
     name: &'static str,
