@@ -407,9 +407,14 @@ async fn scenario() {
         });
         if !refused {
             // The linked module's panic hook drops assertion payloads.
-            eprintln!("profile_host_capabilities: {name} not refused; tool results {tool_results:?}");
+            eprintln!(
+                "profile_host_capabilities: {name} not refused; tool results {tool_results:?}"
+            );
         }
-        assert!(refused, "unregistered unsafe model call {name} must be refused");
+        assert!(
+            refused,
+            "unregistered unsafe model call {name} must be refused"
+        );
     }
     assert_eq!(calls.lock().unwrap().len(), executions_before_denied_turn);
     // The operator callback refuses even a registered safe name, again as a
@@ -426,7 +431,9 @@ async fn scenario() {
             body.contains("denied tenant_probe") && body.contains("operator refused this call")
         });
     if !callback_refused {
-        eprintln!("profile_host_capabilities: the operator callback's refusal did not reach the model");
+        eprintln!(
+            "profile_host_capabilities: the operator callback's refusal did not reach the model"
+        );
     }
     assert!(
         callback_refused,

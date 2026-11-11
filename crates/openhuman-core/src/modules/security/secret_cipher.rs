@@ -51,7 +51,10 @@ async fn resolve_user_master_inner(
             let summary = "Unlock configuration secrets";
             let args = serde_json::json!({"registration_id": registration_id});
             match crate::security::approval::ApprovalGate::try_global() {
-                Some(gate) => gate.intercept_forced(MASTER_GRANT_TOOL, summary, args).await,
+                Some(gate) => {
+                    gate.intercept_forced(MASTER_GRANT_TOOL, summary, args)
+                        .await
+                }
                 // No gate yet: only a library host's own authorisation can
                 // answer (`gate_host_grant.rs`); anything else stays refused.
                 None => crate::security::approval::gate::host_authorised_grant_without_gate(

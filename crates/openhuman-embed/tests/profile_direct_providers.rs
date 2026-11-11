@@ -245,17 +245,18 @@ async fn scenario() {
             .filter(|message| message["role"] == "tool")
             .map(|message| message["content"].to_string())
             .collect();
-        let refused = tool_results
-            .iter()
-            .any(|content| {
-                content.contains("denied web_search_tool")
-                    && content.contains("outside the hosted profile capability boundary")
-            });
+        let refused = tool_results.iter().any(|content| {
+            content.contains("denied web_search_tool")
+                && content.contains("outside the hosted profile capability boundary")
+        });
         if !refused {
             // The linked module's panic hook drops assertion payloads.
             eprintln!("profile_direct_providers: tool results {tool_results:?}");
         }
-        assert!(refused, "a canonical role name is not callable: {tool_results:?}");
+        assert!(
+            refused,
+            "a canonical role name is not callable: {tool_results:?}"
+        );
         assert_eq!(exa.received_requests().await.unwrap().len(), exa_before);
     }
 }

@@ -612,9 +612,10 @@ fn one_runtime_hosts_independently_configured_agents() {
             // The workspace goes with the last holder of the runtime's guard:
             // the runtime, or a dropped agent's deferred MCP cleanup, which keeps
             // the files until the module acknowledges its close (`EphemeralRoot`).
-            common::eventually("the ephemeral workspace to be removed with its runtime", || {
-                (!workspace_dir.exists()).then_some(())
-            })
+            common::eventually(
+                "the ephemeral workspace to be removed with its runtime",
+                || (!workspace_dir.exists()).then_some(()),
+            )
             .await;
         })
         .await
