@@ -1,13 +1,25 @@
-//! The box registry's vocabulary: what a box is created with, the command it
-//! runs, what comes back, how it fails, and the [`BoxDriver`] seam that
-//! creates, runs and closes boxes.
+//! The box registry's vocabulary: what a box is created with, how long it is
+//! kept for its owner, the command it runs, what comes back, how it fails,
+//! and the [`BoxDriver`] seam that creates, runs, closes and forgets boxes.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::config::OpenShellRuntimeConfig;
+use crate::config::{Agent37RuntimeConfig, OpenShellRuntimeConfig};
+
+/// The work folder of an OpenShell box: the base image's `/sandbox` workspace.
+pub const OPENSHELL_WORKDIR: &str = "/sandbox";
+
+/// The work folder of an agent37 box: its user's home.
+pub const AGENT37_WORKDIR: &str = "/home/node";
+
+/// The fewest seconds agent37 lets a box sit idle before it sleeps.
+pub const MIN_IDLE_SLEEP_SECS: u32 = 300;
+
+/// The most seconds agent37 lets a box sit idle before it sleeps.
+pub const MAX_IDLE_SLEEP_SECS: u32 = 86_400;
 
 /// What a new box is created with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +30,8 @@ pub struct BoxSettings {
     pub cpu_millis: u32,
     /// Memory limit in bytes, always a whole number of mebibytes.
     pub memory_bytes: u64,
+    /// The folder commands run in and file paths are relative to.
+    pub workdir: String,
 }
 
 impl BoxSettings {
@@ -30,11 +44,13 @@ impl BoxSettings {
     /// not fit in bytes.
     pub fn from_config(config: &OpenShellRuntimeConfig) -> Result<Self, BoxError> {
         if config.image.trim().is_empty() {
-            return Err(BoxError::InvalidConfig("image must not be blank"));
+            return Err(BoxError::InvalidConfig(
+                "[runtime.openshell] image must not be blank",
+            ));
         }
         if config.cpu_millis == 0 || config.memory_mb == 0 {
             return Err(BoxError::InvalidConfig(
-                "cpu_millis and memory_mb must be positive",
+                "[runtime.openshell] cpu_millis and memory_mb must be positive",
             ));
         }
         let memory_bytes = config.memory_bytes().ok_or(BoxError::InvalidMemory {
@@ -44,8 +60,87 @@ impl BoxSettings {
             image: config.image.clone(),
             cpu_millis: config.cpu_millis,
             memory_bytes,
+            workdir: OPENSHELL_WORKDIR.to_owned(),
         })
     }
+
+    /// The settings `[runtime.agent37]` gives every new box. `image` carries
+    /// the template name (agent37 starts a box from a registered template,
+    /// not an OCI image). The service snaps CPU and memory up to a fixed
+    /// instance shape, so they are a request: a request over the largest
+    /// shape is logged, and a memory size too large to express in bytes asks
+    /// for the service's maximum.
+    ///
+    /// # Errors
+    ///
+    /// [`BoxError::InvalidConfig`] when `template` is blank.
+    pub fn from_agent37(config: &Agent37RuntimeConfig) -> Result<Self, BoxError> {
+        if config.template.trim().is_empty() {
+            return Err(BoxError::InvalidConfig(
+                "[runtime.agent37] template must not be blank",
+            ));
+        }
+        if config.exceeds_largest_shape() {
+            tracing::warn!(
+                cpu_millis = config.cpu_millis,
+                memory_mb = config.memory_mb,
+                "[sandbox:box] agent37 request exceeds the largest instance shape and will be capped"
+            );
+        }
+        Ok(Self {
+            image: config.template.clone(),
+            cpu_millis: config.cpu_millis,
+            memory_bytes: config.memory_bytes().unwrap_or(u64::MAX),
+            workdir: AGENT37_WORKDIR.to_owned(),
+        })
+    }
+}
+
+/// How long a retaining backend keeps a tenant's box: it sleeps after
+/// `idle_sleep_secs` without a command and is deleted after
+/// `delete_after_secs` asleep. The same for every tenant of a registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetainPolicy {
+    /// Seconds without a command before the box falls asleep.
+    pub idle_sleep_secs: u32,
+    /// Seconds a box may sleep before the backend deletes it.
+    pub delete_after_secs: u64,
+}
+
+impl RetainPolicy {
+    /// The policy `[runtime.agent37]` sets: `idle_sleep_secs` clamped to the
+    /// range agent37 accepts (300 to 86400), and a zero `delete_after_secs`
+    /// (which would delete a box as soon as it sleeps) raised to 1.
+    pub fn from_agent37(config: &Agent37RuntimeConfig) -> Self {
+        Self {
+            idle_sleep_secs: config
+                .idle_sleep_secs
+                .clamp(MIN_IDLE_SLEEP_SECS, MAX_IDLE_SLEEP_SECS),
+            delete_after_secs: config.delete_after_secs.max(1),
+        }
+    }
+
+    /// This policy for the box of the owner `key` names.
+    pub fn for_owner(self, key: String) -> BoxRetention {
+        BoxRetention {
+            key,
+            idle_sleep_secs: self.idle_sleep_secs,
+            delete_after_secs: self.delete_after_secs,
+        }
+    }
+}
+
+/// What a retained box is created with: its owner's key and how long it is
+/// kept. A later create with the same key finds the same box again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoxRetention {
+    /// An opaque, stable key for the box's owner, derived from the tenant
+    /// (never a raw id): `[A-Za-z0-9_-]`, at most 128 characters.
+    pub key: String,
+    /// Seconds without a command before the box falls asleep.
+    pub idle_sleep_secs: u32,
+    /// Seconds a box may sleep before the backend deletes it.
+    pub delete_after_secs: u64,
 }
 
 /// Registry-wide bounds, fixed when the registry is built.
@@ -55,6 +150,10 @@ pub struct RegistryLimits {
     pub idle_ttl: Duration,
     /// The most boxes alive at once.
     pub max_live: usize,
+    /// `Some` for a backend that keeps each tenant's box for it: boxes are
+    /// created with the tenant's [`BoxRetention`], and the registry only
+    /// ever forgets them ([`BoxDriver::forget`]), never closes them.
+    pub retain: Option<RetainPolicy>,
 }
 
 impl RegistryLimits {
@@ -65,6 +164,20 @@ impl RegistryLimits {
         Self {
             idle_ttl: Duration::from_secs(config.idle_ttl_secs.max(1)),
             max_live: config.max_live.max(1),
+            retain: None,
+        }
+    }
+
+    /// The bounds `[runtime.agent37]` sets. A box is kept for its tenant
+    /// ([`RetainPolicy::from_agent37`]); the registry lets go of its handle
+    /// once the box has been idle as long as it takes to fall asleep, and a
+    /// zero `max_live` is raised to 1.
+    pub fn from_agent37(config: &Agent37RuntimeConfig) -> Self {
+        let retain = RetainPolicy::from_agent37(config);
+        Self {
+            idle_ttl: Duration::from_secs(u64::from(retain.idle_sleep_secs)),
+            max_live: config.max_live.max(1),
+            retain: Some(retain),
         }
     }
 }
@@ -120,16 +233,26 @@ pub enum BoxError {
     #[error("the sandbox was released while the command was running")]
     Released,
     /// The call carries no tenant, so it has no box of its own.
-    #[error("no tenant scope; refusing to run a command in a shared sandbox")]
+    #[error("no tenant scope; refusing to use a shared sandbox")]
     NoTenant,
+    /// The configured sandbox backend keeps no box per tenant, so there is no
+    /// box to run in or move files to.
+    #[error("the configured sandbox backend keeps no per-tenant box")]
+    NoBoxBackend,
+    /// The box runs on a hosted service, which local-only privacy forbids.
+    #[error(
+        "the sandbox runs on a hosted service, which [privacy] mode = \"local_only\" does not permit"
+    )]
+    LocalOnly,
     /// `[runtime.openshell] memory_mb` is too large to express in bytes.
     #[error("sandbox memory of {memory_mb} MiB is too large")]
     InvalidMemory {
         /// The configured value.
         memory_mb: u64,
     },
-    /// A `[runtime.openshell]` value is out of range.
-    #[error("invalid [runtime.openshell] setting: {0}")]
+    /// A `[runtime.openshell]` or `[runtime.agent37]` value is out of range;
+    /// the message names the table.
+    #[error("invalid sandbox setting: {0}")]
     InvalidConfig(&'static str),
     /// A variable for the command is not UTF-8.
     #[error("sandbox environment is not UTF-8")]
@@ -171,12 +294,19 @@ pub enum BoxError {
     Driver(String),
 }
 
-/// Creates, runs and closes boxes. The registry owns their lifecycle; a
-/// driver only performs each step.
+/// Creates, runs, closes and forgets boxes. The registry owns their
+/// lifecycle; a driver only performs each step.
 #[async_trait]
 pub trait BoxDriver: Send + Sync + 'static {
-    /// Create a box and return its resource id.
-    async fn create(&self, settings: &BoxSettings) -> Result<String, BoxError>;
+    /// Create a box and return its resource id. With `retention`, the box is
+    /// kept for its owner: a backend that already keeps one under the same
+    /// key hands that one back, and a backend that cannot retain boxes
+    /// refuses rather than create a disposable one.
+    async fn create(
+        &self,
+        settings: &BoxSettings,
+        retention: Option<&BoxRetention>,
+    ) -> Result<String, BoxError>;
 
     /// Run one program in the box and collect its output. A box that is gone
     /// fails with [`BoxError::UnknownResource`].
@@ -184,4 +314,9 @@ pub trait BoxDriver: Send + Sync + 'static {
 
     /// Close the box and release what it holds.
     async fn close(&self, resource: &str) -> Result<(), BoxError>;
+
+    /// Let go of a retained box: drop this host's handle on it and leave the
+    /// box, and its files, to its backend, which sleeps it when idle and
+    /// deletes it only once it has slept past its retention.
+    async fn forget(&self, resource: &str) -> Result<(), BoxError>;
 }
