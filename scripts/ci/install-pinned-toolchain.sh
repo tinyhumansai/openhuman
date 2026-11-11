@@ -17,16 +17,19 @@ if [ -z "$channel" ]; then
   exit 1
 fi
 
+# Install with the rustup component names (`-c`); `component list` prints the
+# target-suffixed names (llvm-tools-<target>), so the health check matches prefixes.
 components="rustfmt clippy llvm-tools-preview"
+installed_prefixes="rustfmt clippy llvm-tools"
 
 # A toolchain the image already ships is reused as-is: a failed download must
 # not uninstall a working pin. Healthy means cargo and rustc run from the repo
 # and every required component is installed.
 toolchain_usable() {
-  local installed c
+  local installed p
   installed="$(cd "$root" && rustup component list --toolchain "$channel" --installed 2>/dev/null)" || return 1
-  for c in $components; do
-    grep -q "^$c" <<<"$installed" || return 1
+  for p in $installed_prefixes; do
+    grep -q "^$p" <<<"$installed" || return 1
   done
   (cd "$root" && cargo --version && rustc --version) >/dev/null 2>&1
 }
