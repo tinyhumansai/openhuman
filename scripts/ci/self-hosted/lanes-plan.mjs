@@ -62,7 +62,6 @@ export const HOSTED_GROUPS = [
 
 const CORE_PRODUCT = '"$(bash scripts/ci/product-features.sh --core)"';
 
-
 /**
  * Build the lane plan.
  *
@@ -604,21 +603,20 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           needs: ex63 ? [] : ["test-modules"],
           run: withModules(
             "unset RUSTFLAGS RUSTC_WRAPPER" +
-            " && cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml" +
-            // No repo nextest config: the app is its own workspace, so the root
-            // `.config/nextest.toml` has no `ci` profile for it and its binary
-            // filters do not parse here; the built-in default applies.
-            // One process per test (nextest): the app tests reach the
-            // TinySecurity module, which keeps its first secret scope for the
-            // life of a process, so tests sharing one process fail closed.
-            " && cargo llvm-cov nextest --no-fail-fast --no-tests=fail --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
+              " && cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml" +
+              // No repo nextest config: the app is its own workspace, so the root
+              // `.config/nextest.toml` has no `ci` profile for it and its binary
+              // filters do not parse here; the built-in default applies.
+              // One process per test (nextest): the app tests reach the
+              // TinySecurity module, which keeps its first secret scope for the
+              // life of a process, so tests sharing one process fail closed.
+              " && cargo llvm-cov nextest --no-fail-fast --no-tests=fail --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
               " --lcov --output-path ci-out/lcov/lcov-tauri.info",
           ),
         },
       ],
     },
     {
-
       name: "pester",
       checks: [
         {
