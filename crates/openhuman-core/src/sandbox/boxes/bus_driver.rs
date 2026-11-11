@@ -26,7 +26,8 @@
 //! [`BoxError::UnknownResource`], which the registry answers with a new box.
 
 use std::future::Future;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
