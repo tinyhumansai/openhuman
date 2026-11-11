@@ -594,8 +594,19 @@ impl<D: BoxDriver> BoxRegistry<D> {
 
     /// Let go of a box this registry no longer tracks: forget a retained one
     /// (its backend keeps it, asleep), close any other. A failure is logged.
-    async fn let_go(&self, resource: &str) {
-        let_go_with(self.driver.as_ref(), self.limits.retain.is_some(), resource).await;
+    /// The cleanup runs on its own task and is awaited here, so a caller
+    /// dropped meanwhile still leaves the cleanup to finish.
+    async fn let_go(&self, owner: &Owner, resource: &str) {
+        let handle = spawn_let_go(
+            Arc::clone(&self.driver),
+            self.limits.retain.is_some(),
+            &self.cleanups,
+            owner,
+            resource.to_owned(),
+        );
+        if let Err(error) = handle.await {
+            tracing::warn!(%error, "[sandbox:box] a box cleanup task ended abnormally");
+        }
     }
 }
 
