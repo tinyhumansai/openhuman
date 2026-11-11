@@ -598,7 +598,8 @@ impl<D: BoxDriver> BoxRegistry<D> {
         );
         let resource = self.driver.create(settings, retention.as_ref()).await?;
         if !slot.store(&resource) {
-            self.let_go(owner, &resource).await;
+            let detached = self.cleanups.detach(owner.clone(), resource);
+            self.let_go_all(vec![detached]).await;
             return Err(BoxError::Released);
         }
         tracing::debug!(resource = %resource, "[sandbox:box] box ready");
