@@ -385,3 +385,44 @@ async fn equal_tenants_in_two_scopes_never_share_a_retained_box() {
     assert_eq!(forgotten, vec!["box-0", "box-1"]);
     assert_eq!(boxes.live(), 0);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_new_box_waits_for_the_owners_forget_still_in_progress() {
+    let driver = ScriptedDriver::new();
+    let boxes = retaining(&driver, 10);
+    boxes
+        .exec(&user("u1"), &settings(), &request("pwd"))
+        .await
+        .unwrap();
+    let gate = Arc::new(Notify::new());
+    driver.hold_next_forget(Arc::clone(&gate));
+
+    // The idle box is reaped; its forget waits on the gate.
+    let reaping = {
+        let boxes = Arc::clone(&boxes);
+        tokio::spawn(async move { boxes.reap(Instant::now() + TTL).await })
+    };
+    while driver.forgotten().is_empty() {
+        tokio::task::yield_now().await;
+    }
+
+    // The owner runs again while the old handle is still closing: the new
+    // box must not be created (and so must not adopt that instance) yet.
+    let again = {
+        let boxes = Arc::clone(&boxes);
+        tokio::spawn(async move {
+            boxes
+                .exec(&user("u1"), &settings(), &request("pwd"))
+                .await
+        })
+    };
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(driver.created(), 1, "the new box waited for the old forget");
+
+    gate.notify_one();
+    again.await.unwrap().unwrap();
+    reaping.await.unwrap();
+    assert_eq!(driver.created(), 2);
+}
