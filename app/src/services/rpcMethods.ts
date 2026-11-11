@@ -75,6 +75,7 @@ export const CORE_RPC_METHODS = {
   inferenceDiagnostics: 'openhuman.inference_diagnostics',
   inferenceGetClientConfig: 'openhuman.inference_get_client_config',
   inferenceListModels: 'openhuman.inference_list_models',
+  inferenceRollbackLocalSettings: 'openhuman.inference_rollback_local_settings',
   inferenceTestConnection: 'openhuman.inference_test_connection',
   inferenceTranscribe: 'openhuman.inference_transcribe',
   inferenceTranscribeBytes: 'openhuman.inference_transcribe_bytes',

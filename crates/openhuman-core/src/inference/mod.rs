@@ -30,6 +30,7 @@ pub(crate) mod failure_copy;
 pub(crate) mod host_controls;
 pub mod host_runtime;
 pub mod http;
+mod local_checkpoint;
 pub mod model_context;
 pub mod ops;
 pub mod provider;
