@@ -454,7 +454,10 @@ impl CoreContext {
         let Some(outer) = Self::scoped_for_turn() else {
             return ctx;
         };
-        let origin = outer.turn_origin.clone().filter(|_| ctx.turn_origin.is_none());
+        let origin = outer
+            .turn_origin
+            .clone()
+            .filter(|_| ctx.turn_origin.is_none());
         let grant = outer
             .host_secret_grant
             .clone()

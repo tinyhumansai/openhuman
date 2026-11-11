@@ -60,9 +60,9 @@ pub use bus_driver::BusBoxDriver;
 pub use files::{read_file_in, write_file_in, MAX_FILE_BYTES};
 pub use registry::{owner_key, BoxRegistry};
 pub use types::{
-    BoxCall, BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, OwnerScope, RegistryLimits,
-    RetainPolicy, Retention, AGENT37_WORKDIR, MAX_IDLE_SLEEP_SECS, MIN_IDLE_SLEEP_SECS,
-    OPENSHELL_WORKDIR,
+    BoxCall, BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, OwnerScope,
+    RegistryLimits, RetainPolicy, Retention, AGENT37_WORKDIR, MAX_IDLE_SLEEP_SECS,
+    MIN_IDLE_SLEEP_SECS, OPENSHELL_WORKDIR,
 };
 
 use super::types::{SandboxBackendKind, SandboxExecResult};

@@ -35,9 +35,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use super::{
-    BoxBackend, BoxCall, BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings, Retention,
-};
+use super::{BoxBackend, BoxCall, BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings, Retention};
 use crate::config::Config;
 use crate::modules::tinybox::{self, contract};
 
