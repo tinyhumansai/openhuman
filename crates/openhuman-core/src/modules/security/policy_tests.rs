@@ -186,6 +186,55 @@ fn secret_authority_boots_without_any_tenants_secret_scope() {
     );
 }
 
+/// Every tenant's secret registration draws on the one process-wide
+/// TinySecurity work budget, so it is sized for many tenants at once (the
+/// contract ceiling), not the single-scope default of four.
+#[test]
+fn secret_authority_admits_concurrent_work_across_tenants() {
+    let module =
+        module_config_for_secret_authority(&Config::default(), Some(":1.42".into()), None).unwrap();
+    let limits = module.secret.expect("the secret authority is enabled").limits;
+    assert_eq!(limits.max_in_flight, 32, "the contract's maximum");
+    assert!(limits.max_in_flight > tinysecurity_bus::SecretLimits2::default().max_in_flight);
+}
+
+/// More tenants than the single-scope default budget unlock their config
+/// secrets at the same moment, and every one of them is admitted: a tenant's
+/// master grant is never refused because other tenants hold work in flight.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_tenants_each_unlock_their_config_secrets() {
+    const TENANTS: usize = 12;
+    let root = tempfile::tempdir().unwrap();
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(TENANTS));
+    let stores = (0..TENANTS).map(|tenant| {
+        let dir = root.path().join(format!("tenant-{tenant}"));
+        let barrier = std::sync::Arc::clone(&barrier);
+        tokio::spawn(async move {
+            let config = Config {
+                config_path: dir.join("config.toml"),
+                workspace_dir: dir.join("workspace"),
+                action_dir: dir.join("workspace"),
+                ..Config::default()
+            };
+            barrier.wait().await;
+            crate::credentials::AuthService::from_config(&config)
+                .store_provider_token(
+                    crate::credentials::APP_SESSION_PROVIDER,
+                    crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
+                    &format!("session-{tenant}"),
+                    Default::default(),
+                    true,
+                )
+                .await
+                .map(|_| ())
+                .map_err(|error| format!("tenant {tenant}: {error:#}"))
+        })
+    });
+    for store in futures::future::join_all(stores).await {
+        store.expect("store task").expect("tenant unlocks its secrets");
+    }
+}
+
 /// Audited permissions are appended on the init audit stream, so the identity
 /// the host correlates them on must be exactly the one TinySecurity was given.
 #[test]
