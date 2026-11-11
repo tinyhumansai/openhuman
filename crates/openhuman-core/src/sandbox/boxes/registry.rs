@@ -1,5 +1,10 @@
 //! [`BoxRegistry`]: one live box per tenant, created on first use, reused,
-//! and let go of when idle, released, or no longer answering.
+//! and let go of when idle, released, cancelled, or no longer answering.
+//!
+//! Boxes are kept per [`OwnerScope`] and tenant: the scope (the deployment's
+//! namespace and the active workspace, from the call's [`BoxSettings`]) keeps
+//! one host's users apart from another's, and a signed-in user's from the
+//! next one's, even when their tenants are equal.
 //!
 //! A registry over a backend that keeps boxes for their owners
 //! ([`RegistryLimits::retain`], agent37) creates each box with its tenant's
@@ -15,6 +20,13 @@
 //! creation single-flight. A slot taken out of the map (released, shut down,
 //! reaped) is marked retired, so a command still running on it can never
 //! create a box nobody tracks.
+//!
+//! Every await in [`BoxRegistry::exec`] is a cancellation point, and each
+//! leaves the registry consistent: the command's hold on its entry is taken
+//! before the first await and dropped with the future, and a command dropped
+//! while it runs in a box lets go of that box on a detached task (closing it,
+//! or forgetting a retained one), which stops the command there rather than
+//! leaving it to run on with the next command queued behind it.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, Once, PoisonError, Weak};
@@ -25,7 +37,8 @@ use tokio::time::Instant;
 use sha2::{Digest, Sha256};
 
 use super::{
-    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxRetention, BoxSettings, RegistryLimits,
+    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, OwnerScope, RegistryLimits,
+    Retention,
 };
 use crate::core::runtime::Tenant;
 use crate::sandbox::types::SandboxExecResult;
@@ -34,8 +47,9 @@ use crate::sandbox::types::SandboxExecResult;
 const OWNER_KEY_PREFIX: &str = "oh-";
 
 /// Domain separation for the [`owner_key`] hash, versioned so a change to the
-/// derivation can never collide with keys already in use.
-const OWNER_KEY_DOMAIN: &[u8] = b"openhuman.sandbox.box-owner.v1\0";
+/// derivation can never collide with keys already in use. v2 folds in the
+/// [`OwnerScope`]; boxes kept under v1 keys are never adopted again and expire.
+const OWNER_KEY_DOMAIN: &[u8] = b"openhuman.sandbox.box-owner.v2\0";
 
 /// Seconds `timeout` waits after its signal before it kills the command.
 const KILL_AFTER_SECS: &str = "5";
@@ -50,11 +64,14 @@ const TIMED_OUT_EXIT: i32 = 124;
 /// The longest the background reaper waits between passes.
 pub(crate) const REAP_EVERY_AT_MOST: Duration = Duration::from_secs(30);
 
-/// One live box per [`Tenant`], over a [`BoxDriver`].
+/// Who an entry's box is for: the tenant within its scope.
+type Owner = (OwnerScope, Tenant);
+
+/// One live box per [`Tenant`] and [`OwnerScope`], over a [`BoxDriver`].
 pub struct BoxRegistry<D: BoxDriver> {
     driver: Arc<D>,
     limits: RegistryLimits,
-    entries: Mutex<HashMap<Tenant, Entry>>,
+    entries: Mutex<HashMap<Owner, Entry>>,
     reaper: Once,
 }
 
@@ -120,13 +137,53 @@ impl Slot {
 /// abandoned) ends the hold and touches the entry.
 struct Lease<'a, D: BoxDriver> {
     registry: &'a BoxRegistry<D>,
-    tenant: Tenant,
+    owner: Owner,
     slot: Arc<Slot>,
 }
 
 impl<D: BoxDriver> Drop for Lease<'_, D> {
     fn drop(&mut self) {
-        self.registry.check_in(&self.tenant, &self.slot);
+        self.registry.check_in(&self.owner, &self.slot);
+    }
+}
+
+/// A command running in a box. Dropped before [`Self::finish`] (the caller
+/// gave up), it takes the box from its slot and lets go of it on a detached
+/// task, since `Drop` cannot await: closing a box stops what runs in it, and
+/// forgetting a retained one drops the host's handle and its exec with it.
+struct Running<D: BoxDriver> {
+    driver: Arc<D>,
+    retained: bool,
+    slot: Arc<Slot>,
+    resource: Option<String>,
+}
+
+impl<D: BoxDriver> Running<D> {
+    /// The command answered (or failed); its box stays with the slot.
+    fn finish(mut self) {
+        self.resource = None;
+    }
+}
+
+impl<D: BoxDriver> Drop for Running<D> {
+    fn drop(&mut self) {
+        let Some(resource) = self.resource.take() else {
+            return;
+        };
+        self.slot.forget(&resource);
+        tracing::debug!(
+            resource = %resource,
+            retained = self.retained,
+            "[sandbox:box] command cancelled; letting go of its box"
+        );
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let driver = Arc::clone(&self.driver);
+        let retained = self.retained;
+        // A cleanup of a box this registry no longer tracks, by id; it acts
+        // under no tenant's context, so it carries none.
+        runtime.spawn(async move { let_go_with(driver.as_ref(), retained, &resource).await });
     }
 }
 
@@ -152,11 +209,19 @@ impl<D: BoxDriver> BoxRegistry<D> {
         self.entries().len()
     }
 
-    /// Run `request` in `tenant`'s box, creating the box first if it has none.
+    /// The driver this registry creates, runs and lets go of boxes with.
+    pub fn driver(&self) -> &Arc<D> {
+        &self.driver
+    }
+
+    /// Run `request` in `tenant`'s box within `settings.owner_scope`, creating
+    /// the box first if it has none.
     ///
     /// A box the driver reports gone is replaced once and the command retried.
     /// A box that does not answer by the command's deadline plus
     /// [`BACKSTOP_MARGIN`] is closed, and the command reported as timed out.
+    /// Dropping the returned future while the command runs lets go of its box
+    /// (closed, or forgotten when retained), which stops the command.
     ///
     /// # Errors
     ///
@@ -168,13 +233,23 @@ impl<D: BoxDriver> BoxRegistry<D> {
         settings: &BoxSettings,
         request: &BoxRequest,
     ) -> Result<SandboxExecResult, BoxError> {
-        let lease = self.check_out(tenant).await?;
+        let lease = self
+            .check_out((settings.owner_scope.clone(), tenant.clone()))
+            .await?;
         let mut replaced = false;
         loop {
             let resource = self
-                .resource_for(&lease.tenant, &lease.slot, settings)
+                .resource_for(&lease.owner, &lease.slot, settings)
                 .await?;
-            match self.run(&resource, settings, request).await {
+            let running = Running {
+                driver: Arc::clone(&self.driver),
+                retained: self.limits.retain.is_some(),
+                slot: Arc::clone(&lease.slot),
+                resource: Some(resource.clone()),
+            };
+            let outcome = self.run(&resource, settings, request).await;
+            running.finish();
+            match outcome {
                 Ok(Run::Finished(output)) => return Ok(finished(output)),
                 Ok(Run::BackstopFired) => {
                     tracing::warn!(
@@ -221,15 +296,19 @@ impl<D: BoxDriver> BoxRegistry<D> {
         reaped
     }
 
-    /// Let go of `tenant`'s box, if it has one (closed, or forgotten when
-    /// retained). A command still running in it fails rather than starting
+    /// Let go of `tenant`'s boxes, in every scope (closed, or forgotten when
+    /// retained). A command still running in one fails rather than starting
     /// another box.
     pub async fn release(&self, tenant: &Tenant) {
-        let resource = self
-            .entries()
-            .remove(tenant)
-            .and_then(|entry| entry.slot.retire());
-        if let Some(resource) = resource {
+        let mut resources = Vec::new();
+        self.entries().retain(|(_, owner), entry| {
+            if owner != tenant {
+                return true;
+            }
+            resources.extend(entry.slot.retire());
+            false
+        });
+        for resource in resources {
             self.let_go(&resource).await;
         }
     }
@@ -267,37 +346,39 @@ impl<D: BoxDriver> BoxRegistry<D> {
         });
     }
 
-    fn entries(&self) -> MutexGuard<'_, HashMap<Tenant, Entry>> {
+    fn entries(&self) -> MutexGuard<'_, HashMap<Owner, Entry>> {
         self.entries.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Hold `tenant`'s entry, making one when it has none and there is room.
-    async fn check_out(&self, tenant: &Tenant) -> Result<Lease<'_, D>, BoxError> {
-        let (held, reaped) = self.hold(tenant, Instant::now());
+    /// Hold `owner`'s entry, making one when it has none and there is room.
+    /// The hold is a [`Lease`] before anything is awaited, so a caller that
+    /// gives up while reaped boxes are let go of still ends it.
+    async fn check_out(&self, owner: Owner) -> Result<Lease<'_, D>, BoxError> {
+        let (held, reaped) = self.hold(&owner, Instant::now());
+        let lease = held.map(|slot| Lease {
+            registry: self,
+            owner,
+            slot,
+        });
         for resource in reaped {
             self.let_go(&resource).await;
         }
-        let Some(slot) = held else {
+        lease.ok_or_else(|| {
             tracing::warn!(
                 max_live = self.limits.max_live,
                 "[sandbox:box] refusing a new box: at capacity"
             );
-            return Err(BoxError::AtCapacity);
-        };
-        Ok(Lease {
-            registry: self,
-            tenant: tenant.clone(),
-            slot,
+            BoxError::AtCapacity
         })
     }
 
     /// Count a command against `tenant`'s entry, making the entry when there
     /// is room (after reaping idle boxes if there is not). Returns the slot,
     /// or `None` at capacity, and the reaped boxes to close.
-    fn hold(&self, tenant: &Tenant, now: Instant) -> (Option<Arc<Slot>>, Vec<String>) {
+    fn hold(&self, owner: &Owner, now: Instant) -> (Option<Arc<Slot>>, Vec<String>) {
         let mut entries = self.entries();
         let mut reaped = Vec::new();
-        if !entries.contains_key(tenant) && entries.len() >= self.limits.max_live {
+        if !entries.contains_key(owner) && entries.len() >= self.limits.max_live {
             reaped = self.take_idle(&mut entries, now);
             if entries.len() >= self.limits.max_live && self.limits.retain.is_some() {
                 reaped.extend(take_least_recently_used(&mut entries));
@@ -306,7 +387,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
                 return (None, reaped);
             }
         }
-        let entry = entries.entry(tenant.clone()).or_insert_with(|| Entry {
+        let entry = entries.entry(owner.clone()).or_insert_with(|| Entry {
             slot: Arc::new(Slot::default()),
             in_flight: 0,
             last_used: now,
@@ -317,9 +398,9 @@ impl<D: BoxDriver> BoxRegistry<D> {
     }
 
     /// End a command's hold; an entry left with no box and no command goes.
-    fn check_in(&self, tenant: &Tenant, slot: &Arc<Slot>) {
+    fn check_in(&self, owner: &Owner, slot: &Arc<Slot>) {
         let mut entries = self.entries();
-        let Some(entry) = entries.get_mut(tenant) else {
+        let Some(entry) = entries.get_mut(owner) else {
             return;
         };
         if !Arc::ptr_eq(&entry.slot, slot) {
@@ -328,12 +409,12 @@ impl<D: BoxDriver> BoxRegistry<D> {
         entry.in_flight = entry.in_flight.saturating_sub(1);
         entry.last_used = Instant::now();
         if entry.in_flight == 0 && entry.slot.state().resource.is_none() {
-            entries.remove(tenant);
+            entries.remove(owner);
         }
     }
 
     /// Remove idle entries and return their boxes to close.
-    fn take_idle(&self, entries: &mut HashMap<Tenant, Entry>, now: Instant) -> Vec<String> {
+    fn take_idle(&self, entries: &mut HashMap<Owner, Entry>, now: Instant) -> Vec<String> {
         let ttl = self.limits.idle_ttl;
         let mut resources = Vec::new();
         entries.retain(|_, entry| {
@@ -348,12 +429,12 @@ impl<D: BoxDriver> BoxRegistry<D> {
     }
 
     /// The slot's box, created now if it has none. A retaining registry
-    /// creates it with `tenant`'s retention, so the backend hands back the box
-    /// it already keeps for the tenant; a refusal is returned as it is, never
+    /// creates it with `owner`'s retention, so the backend hands back the box
+    /// it already keeps for the owner; a refusal is returned as it is, never
     /// retried as a disposable box.
     async fn resource_for(
         &self,
-        tenant: &Tenant,
+        (scope, tenant): &Owner,
         slot: &Slot,
         settings: &BoxSettings,
     ) -> Result<String, BoxError> {
@@ -364,10 +445,10 @@ impl<D: BoxDriver> BoxRegistry<D> {
         if let Some(resource) = slot.current()? {
             return Ok(resource);
         }
-        let retention: Option<BoxRetention> = self
+        let retention: Option<Retention> = self
             .limits
             .retain
-            .map(|policy| policy.for_owner(owner_key(tenant)));
+            .map(|policy| policy.for_owner(owner_key(scope, tenant)));
         tracing::debug!(
             image = %settings.image,
             retained = retention.is_some(),
@@ -405,20 +486,25 @@ impl<D: BoxDriver> BoxRegistry<D> {
     /// Let go of a box this registry no longer tracks: forget a retained one
     /// (its backend keeps it, asleep), close any other. A failure is logged.
     async fn let_go(&self, resource: &str) {
-        let retained = self.limits.retain.is_some();
-        let outcome = if retained {
-            self.driver.forget(resource).await
-        } else {
-            self.driver.close(resource).await
-        };
-        if let Err(error) = outcome {
-            tracing::warn!(
-                resource = %resource,
-                retained,
-                error = %error,
-                "[sandbox:box] letting go of a box failed"
-            );
-        }
+        let_go_with(self.driver.as_ref(), self.limits.retain.is_some(), resource).await;
+    }
+}
+
+/// Let go of `resource` through `driver`: forget it when `retained`, close it
+/// otherwise. A failure is logged.
+async fn let_go_with<D: BoxDriver>(driver: &D, retained: bool, resource: &str) {
+    let outcome = if retained {
+        driver.forget(resource).await
+    } else {
+        driver.close(resource).await
+    };
+    if let Err(error) = outcome {
+        tracing::warn!(
+            resource = %resource,
+            retained,
+            error = %error,
+            "[sandbox:box] letting go of a box failed"
+        );
     }
 }
 
@@ -475,25 +561,33 @@ fn backstop_timed_out(timeout: Duration) -> SandboxExecResult {
 /// Remove the least recently used entry with no command in flight and
 /// return its box to let go of. Only a retaining registry does this: its box
 /// is forgotten, not deleted, so the tenant finds it again next time.
-fn take_least_recently_used(entries: &mut HashMap<Tenant, Entry>) -> Option<String> {
-    let tenant = entries
+fn take_least_recently_used(entries: &mut HashMap<Owner, Entry>) -> Option<String> {
+    let owner = entries
         .iter()
         .filter(|(_, entry)| entry.in_flight == 0)
         .min_by_key(|(_, entry)| entry.last_used)
-        .map(|(tenant, _)| tenant.clone())?;
+        .map(|(owner, _)| owner.clone())?;
     entries
-        .remove(&tenant)
+        .remove(&owner)
         .and_then(|entry| entry.slot.retire())
 }
 
-/// The opaque key a retaining backend keeps `tenant`'s box under: `oh-`
-/// and the hex SHA-256 of the whole tenant (profile and agent, each
-/// length-prefixed and marked present or absent), so it is stable across
-/// restarts, distinct per tenant, never a raw id, and within the backend's
-/// key alphabet (`[A-Za-z0-9_-]`, 67 characters).
-pub fn owner_key(tenant: &Tenant) -> String {
+/// The opaque key a retaining backend keeps `tenant`'s box under within
+/// `scope`: `oh-` and the hex SHA-256 of the scope's hash (or its absence)
+/// and the whole tenant (profile and agent, each length-prefixed and marked
+/// present or absent), so it is stable across restarts, distinct per scope
+/// and tenant, never a raw id, and within the backend's key alphabet
+/// (`[A-Za-z0-9_-]`, 67 characters).
+pub fn owner_key(scope: &OwnerScope, tenant: &Tenant) -> String {
     let mut hash = Sha256::new();
     hash.update(OWNER_KEY_DOMAIN);
+    match scope.digest() {
+        None => hash.update([0u8]),
+        Some(digest) => {
+            hash.update([1u8]);
+            hash.update(digest);
+        }
+    }
     for part in [&tenant.profile, &tenant.agent] {
         match part {
             None => hash.update([0u8]),
