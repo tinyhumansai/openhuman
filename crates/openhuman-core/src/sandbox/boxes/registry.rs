@@ -329,7 +329,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
             return Ok(resource);
         }
         tracing::debug!(image = %settings.image, "[sandbox:openshell] creating a box");
-        let resource = self.driver.create(settings).await?;
+        let resource = self.driver.create(settings, None).await?;
         if !slot.store(&resource) {
             self.close_quietly(&resource).await;
             return Err(BoxError::Released);

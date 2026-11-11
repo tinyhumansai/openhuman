@@ -6,7 +6,7 @@
 //! program there with the system shell, so file transfer is tested against
 //! the commands a real box would run.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -15,14 +15,15 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::sync::Notify;
 
-use super::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings};
+use super::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxRetention, BoxSettings};
 
 /// One call the registry made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Call {
-    Create(BoxSettings),
+    Create(BoxSettings, Option<BoxRetention>),
     Exec { resource: String, exec: BoxExec },
     Close(String),
+    Forget(String),
 }
 
 /// How the next exec answers.
@@ -50,6 +51,8 @@ pub(crate) struct ScriptedDriver {
     create_failures: AtomicUsize,
     close_fails: AtomicBool,
     box_root: Mutex<Option<PathBuf>>,
+    /// Retained boxes by owner key, as a retaining backend keeps them.
+    kept: Mutex<HashMap<String, String>>,
 }
 
 impl ScriptedDriver {
@@ -95,7 +98,7 @@ impl ScriptedDriver {
     pub(crate) fn created(&self) -> usize {
         self.calls()
             .iter()
-            .filter(|call| matches!(call, Call::Create(_)))
+            .filter(|call| matches!(call, Call::Create(..)))
             .count()
     }
 
@@ -104,6 +107,27 @@ impl ScriptedDriver {
             .into_iter()
             .filter_map(|call| match call {
                 Call::Close(resource) => Some(resource),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub(crate) fn forgotten(&self) -> Vec<String> {
+        self.calls()
+            .into_iter()
+            .filter_map(|call| match call {
+                Call::Forget(resource) => Some(resource),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The retention each create asked for, in order.
+    pub(crate) fn retentions(&self) -> Vec<Option<BoxRetention>> {
+        self.calls()
+            .into_iter()
+            .filter_map(|call| match call {
+                Call::Create(_, retention) => Some(retention),
                 _ => None,
             })
             .collect()
@@ -141,8 +165,12 @@ pub(crate) fn ok_output() -> BoxOutput {
 
 #[async_trait]
 impl BoxDriver for ScriptedDriver {
-    async fn create(&self, settings: &BoxSettings) -> Result<String, BoxError> {
-        self.record(Call::Create(settings.clone()));
+    async fn create(
+        &self,
+        settings: &BoxSettings,
+        retention: Option<&BoxRetention>,
+    ) -> Result<String, BoxError> {
+        self.record(Call::Create(settings.clone(), retention.cloned()));
         let delay = *self.create_delay.lock().unwrap();
         tokio::time::sleep(delay).await;
         let failures = self.create_failures.load(Ordering::SeqCst);
@@ -150,7 +178,19 @@ impl BoxDriver for ScriptedDriver {
             self.create_failures.store(failures - 1, Ordering::SeqCst);
             return Err(BoxError::Driver("create refused".into()));
         }
+        // A retaining backend hands back the box it already keeps for the key.
+        if let Some(retention) = retention {
+            if let Some(kept) = self.kept.lock().unwrap().get(&retention.key) {
+                return Ok(kept.clone());
+            }
+        }
         let resource = format!("box-{}", self.next_id.fetch_add(1, Ordering::SeqCst));
+        if let Some(retention) = retention {
+            self.kept
+                .lock()
+                .unwrap()
+                .insert(retention.key.clone(), resource.clone());
+        }
         if let Some(dir) = self.box_dir(&resource) {
             std::fs::create_dir_all(dir).expect("create a box directory");
         }
@@ -186,6 +226,14 @@ impl BoxDriver for ScriptedDriver {
         self.record(Call::Close(resource.to_owned()));
         if self.close_fails.load(Ordering::SeqCst) {
             return Err(BoxError::Driver("close refused".into()));
+        }
+        Ok(())
+    }
+
+    async fn forget(&self, resource: &str) -> Result<(), BoxError> {
+        self.record(Call::Forget(resource.to_owned()));
+        if self.close_fails.load(Ordering::SeqCst) {
+            return Err(BoxError::Driver("forget refused".into()));
         }
         Ok(())
     }

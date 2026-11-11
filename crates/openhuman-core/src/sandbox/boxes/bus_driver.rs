@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use super::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings};
+use super::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxRetention, BoxSettings};
 use crate::config::Config;
 use crate::modules::tinybox::{self, contract};
 
@@ -39,7 +39,11 @@ impl BusBoxDriver {
 
 #[async_trait]
 impl BoxDriver for BusBoxDriver {
-    async fn create(&self, settings: &BoxSettings) -> Result<String, BoxError> {
+    async fn create(
+        &self,
+        settings: &BoxSettings,
+        _retention: Option<&BoxRetention>,
+    ) -> Result<String, BoxError> {
         let resource = tinybox::reserve(&self.config, contract::ReserveRequest::Resource)
             .await
             .map_err(BoxError::Driver)?;
@@ -70,6 +74,10 @@ impl BoxDriver for BusBoxDriver {
         tinybox::close(&self.config, contract::ResourceId(resource.to_owned()))
             .await
             .map_err(BoxError::Driver)
+    }
+
+    async fn forget(&self, resource: &str) -> Result<(), BoxError> {
+        self.close(resource).await
     }
 }
 
