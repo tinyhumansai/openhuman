@@ -308,7 +308,7 @@ fn a_box_is_cleaned_up_with_the_configuration_it_was_created_under() {
     driver.remember("box-0", &created_under);
 
     // A later call replaces the most recent configuration.
-    driver.serve(&config_in("/later"), settings());
+    let _later = driver.serve(&config_in("/later"), settings());
 
     assert_eq!(
         driver.config_of("box-0").workspace_dir,
