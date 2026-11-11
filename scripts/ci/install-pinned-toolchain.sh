@@ -17,11 +17,33 @@ if [ -z "$channel" ]; then
   exit 1
 fi
 
+components="rustfmt clippy llvm-tools-preview"
+
+# A toolchain the image already ships is reused as-is: a failed download must
+# not uninstall a working pin. Healthy means cargo and rustc run from the repo
+# and every required component is installed.
+toolchain_usable() {
+  local installed c
+  installed="$(cd "$root" && rustup component list --toolchain "$channel" --installed 2>/dev/null)" || return 1
+  for c in $components; do
+    grep -q "^$c" <<<"$installed" || return 1
+  done
+  (cd "$root" && cargo --version && rustc --version) >/dev/null 2>&1
+}
+
+if toolchain_usable; then
+  echo "[install-pinned-toolchain] $channel already usable; reusing it"
+  exit 0
+fi
+
+component_flags=()
+for c in $components; do component_flags+=(-c "$c"); done
+
 attempts="${INSTALL_TOOLCHAIN_ATTEMPTS:-3}"
 for attempt in $(seq 1 "$attempts"); do
   echo "[install-pinned-toolchain] $channel attempt $attempt/$attempts"
-  if (cd "$root" && rustup toolchain install "$channel" --profile minimal -c rustfmt -c clippy --no-self-update \
-      && cargo --version && rustc --version); then
+  if (cd "$root" && rustup toolchain install "$channel" --profile minimal "${component_flags[@]}" --no-self-update \
+      && toolchain_usable); then
     exit 0
   fi
   rustup toolchain uninstall "$channel" || true
