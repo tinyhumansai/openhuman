@@ -485,13 +485,16 @@ impl<D: BoxDriver> BoxRegistry<D> {
     /// gives up while reaped boxes are let go of still ends it.
     async fn check_out(&self, owner: Owner) -> Result<Lease<'_, D>, BoxError> {
         let (held, reaped) = self.hold(&owner, Instant::now());
+        // Every reaped box is scheduled before anything is awaited, so
+        // cancelling this call cannot leave one unclosed.
+        let cleanups = self.schedule(reaped);
         let lease = held.map(|slot| Lease {
             registry: self,
             owner,
             slot,
         });
-        for (reaped_owner, resource) in reaped {
-            self.let_go(&reaped_owner, &resource).await;
+        for handle in cleanups {
+            self.log_cleanup(handle.await);
         }
         lease.ok_or_else(|| {
             tracing::warn!(
