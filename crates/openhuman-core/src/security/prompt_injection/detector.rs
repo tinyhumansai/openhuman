@@ -305,10 +305,19 @@ pub(crate) async fn tool_scan_config() -> Option<crate::config::Config> {
     if let Some(config) = crate::core::runtime::CoreContext::current_embedder_config() {
         return Some(config);
     }
-    crate::core::runtime::DispatchCtx::ambient()
+    match crate::core::runtime::DispatchCtx::ambient()
         .load_config()
         .await
-        .ok()
+    {
+        Ok(config) => Some(config),
+        Err(error) => {
+            tracing::debug!(
+                %error,
+                "[prompt_injection] tool_scan_config: config load failed; scan unavailable"
+            );
+            None
+        }
+    }
 }
 
 /// Scan tool metadata through TinySecurity. Failure is represented as a hit.
