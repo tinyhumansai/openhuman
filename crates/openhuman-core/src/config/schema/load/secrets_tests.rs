@@ -175,7 +175,8 @@ async fn unattended_unlock_round_trips_an_encrypted_local_ai_key_without_a_perso
 }
 
 /// With the setting off (the default) the same host still parks the grant for
-/// a person, operator key or not, and a refusal fails the save closed.
+/// a person, operator key or not, and the save continues only once someone
+/// answers it.
 #[cfg(feature = "security-module")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_unattended_unlock_the_secret_grant_still_parks_for_a_person() {
@@ -210,19 +211,14 @@ async fn without_unattended_unlock_the_secret_grant_still_parks_for_a_person() {
     .expect("the grant parks for a person");
     assert!(!save.is_finished(), "the save must wait for the person");
 
-    // Another native-cipher test in this binary may answer any parked grant;
-    // only a refusal this test applied can be asserted on.
-    let refused = gate
-        .decide(&pending.request_id, ApprovalDecision::Deny)
-        .expect("deny the parked grant");
-    let result = tokio::time::timeout(std::time::Duration::from_secs(30), save)
+    // Approve rather than deny: the process gate is shared, and a pending
+    // grant found here may belong to another native-cipher test, which an
+    // approval leaves working where a refusal would break it.
+    gate.decide(&pending.request_id, ApprovalDecision::ApproveOnce)
+        .expect("approve the parked grant");
+    tokio::time::timeout(std::time::Duration::from_secs(30), save)
         .await
-        .expect("a decision ends the save")
-        .expect("save task");
-    if refused.is_some() {
-        assert!(
-            result.is_err(),
-            "a refused unlock must fail the save closed"
-        );
-    }
+        .expect("an answer ends the save")
+        .expect("save task")
+        .expect("the save succeeds once a person approves");
 }

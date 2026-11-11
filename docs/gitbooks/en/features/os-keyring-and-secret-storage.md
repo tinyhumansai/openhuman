@@ -134,9 +134,13 @@ file; `0` turns it off). The setting is off by default and takes effect only
 when the operator also supplied the keyring master key, with
 `OPENHUMAN_KEYRING_MASTER_KEY` or `OPENHUMAN_KEYRING_MASTER_KEY_FILE`, to a
 `file` or `encrypted_file` keyring. Anyone who can read that key can already
-decrypt the keyring, so a per-unlock approval protects nothing there. On a
-desktop (OS keychain, or a key OpenHuman created itself) the setting is ignored,
-a warning is logged, and a person still approves each unlock.
+decrypt the keyring, so a per-unlock approval protects nothing there. With the
+key OpenHuman manages itself (the OS keychain, or a key it created, as on a
+normal desktop install) the setting is ignored, a warning is logged, and a
+person still approves each unlock. A key variable that is set but unusable
+(missing file, malformed value) also does not count. The check is on where the
+key came from, not on the kind of host: any host whose operator supplies the key
+and sets the option unlocks unattended.
 
 The host still goes through the same one-time approval; it approves the request
 itself instead of waiting. Each unattended unlock is logged under

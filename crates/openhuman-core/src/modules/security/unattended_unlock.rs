@@ -15,8 +15,11 @@
 //! decrypt the keyring, so a person approving each unlock adds nothing there.
 //! The host then answers the grant itself, through the same gate and the same
 //! one-time TinySecurity grant a person's approval produces; nothing about the
-//! grant, its audit row or the cipher changes. A desktop (OS keychain, or a
-//! key the app minted itself) never takes this path, whatever the config says.
+//! grant, its audit row or the cipher changes. The decision rests on where the
+//! key came from, not on what kind of host this is: a desktop with its usual
+//! key (OS keychain, or one the app minted itself) never takes this path,
+//! whatever the config says; any host whose operator exports a valid key and
+//! sets the option does, which is the operator's explicit choice.
 
 use std::collections::HashSet;
 #[cfg(test)]
@@ -38,7 +41,7 @@ const POLL: Duration = Duration::from_millis(10);
 /// How this host answers the config secret master grant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnlockMode {
-    /// A person approves it (the default, and every desktop).
+    /// A person approves it (the default, and every host on its own key).
     Interactive,
     /// The host approves it for the operator.
     Unattended,
