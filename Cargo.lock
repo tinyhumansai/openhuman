@@ -9278,6 +9278,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tinybox-core",
+ "tokio",
 ]
 
 [[package]]
@@ -9314,7 +9315,7 @@ dependencies = [
  "async-trait",
  "ipnet",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.1",
  "tempfile",
  "tinybox-core",
  "tokio",
@@ -9417,7 +9418,7 @@ version = "0.2.5"
 dependencies = [
  "async-trait",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.1",
  "tinybox-core",
 ]
 
