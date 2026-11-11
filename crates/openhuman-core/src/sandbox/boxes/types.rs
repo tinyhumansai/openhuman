@@ -164,6 +164,7 @@ impl BoxSettings {
             memory_bytes,
             workdir: OPENSHELL_WORKDIR.to_owned(),
             owner_scope: OwnerScope::default(),
+            module: ModuleConfig::default(),
         })
     }
 
@@ -196,6 +197,7 @@ impl BoxSettings {
             memory_bytes: config.memory_bytes().unwrap_or(u64::MAX),
             workdir: AGENT37_WORKDIR.to_owned(),
             owner_scope: OwnerScope::default(),
+            module: ModuleConfig::default(),
         })
     }
 }
