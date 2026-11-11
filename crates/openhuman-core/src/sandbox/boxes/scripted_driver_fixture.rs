@@ -53,6 +53,8 @@ pub(crate) struct ScriptedDriver {
     box_root: Mutex<Option<PathBuf>>,
     /// Retained boxes by owner key, as a retaining backend keeps them.
     kept: Mutex<HashMap<String, String>>,
+    /// When set, the next forget waits for this notification first.
+    forget_gate: Mutex<Option<Arc<Notify>>>,
 }
 
 impl ScriptedDriver {
@@ -85,6 +87,11 @@ impl ScriptedDriver {
             .unwrap()
             .as_ref()
             .map(|root| root.join(resource))
+    }
+
+    /// Make the next forget wait for `gate` before it answers.
+    pub(crate) fn hold_next_forget(&self, gate: Arc<Notify>) {
+        *self.forget_gate.lock().unwrap() = Some(gate);
     }
 
     pub(crate) fn fail_closes(&self) {
@@ -232,6 +239,10 @@ impl BoxDriver for ScriptedDriver {
 
     async fn forget(&self, resource: &str) -> Result<(), BoxError> {
         self.record(Call::Forget(resource.to_owned()));
+        let gate = self.forget_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
         if self.close_fails.load(Ordering::SeqCst) {
             return Err(BoxError::Driver("forget refused".into()));
         }

@@ -259,3 +259,56 @@ async fn a_refused_retained_create_is_never_retried_as_a_disposable_box() {
     assert!(matches!(refused, BoxError::Driver(_)), "{refused:?}");
     assert_eq!(driver.retentions(), vec![kept_for("u1")]);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_command_cancelled_while_an_evicted_box_is_let_go_of_holds_no_slot() {
+    let driver = ScriptedDriver::new();
+    let boxes = retaining(&driver, 1);
+    boxes
+        .exec(&user("u1"), &settings(), &request("pwd"))
+        .await
+        .unwrap();
+    let gate = Arc::new(tokio::sync::Notify::new());
+    driver.hold_next_forget(Arc::clone(&gate));
+
+    // u2 takes u1's place and waits while u1's box is forgotten; the caller
+    // gives up right there.
+    let abandoned = tokio::time::timeout(
+        Duration::from_secs(1),
+        boxes.exec(&user("u2"), &settings(), &request("pwd")),
+    )
+    .await;
+
+    assert!(abandoned.is_err(), "the command was still waiting");
+    assert_eq!(driver.forgotten(), vec!["box-0"]);
+    assert_eq!(boxes.live(), 0, "the abandoned command left its entry held");
+    gate.notify_one();
+    boxes
+        .exec(&user("u3"), &settings(), &request("pwd"))
+        .await
+        .unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cancelled_command_lets_go_of_its_retained_box_and_the_next_finds_it_again() {
+    let driver = ScriptedDriver::new();
+    let boxes = retaining(&driver, 10);
+    driver.then(ExecStep::Hang);
+
+    let abandoned = tokio::time::timeout(
+        Duration::from_secs(1),
+        boxes.exec(&user("u1"), &settings(), &request("sleep 3600")),
+    )
+    .await;
+    assert!(abandoned.is_err(), "the command was still running");
+    tokio::task::yield_now().await;
+
+    assert_eq!(driver.forgotten(), vec!["box-0"]);
+    assert!(driver.closed().is_empty());
+    boxes
+        .exec(&user("u1"), &settings(), &request("ls"))
+        .await
+        .unwrap();
+    assert_eq!(driver.exec_resources(), vec!["box-0", "box-0"]);
+    assert_eq!(driver.retentions(), vec![kept_for("u1"), kept_for("u1")]);
+}

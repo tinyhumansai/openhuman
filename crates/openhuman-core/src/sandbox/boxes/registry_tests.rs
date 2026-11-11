@@ -475,7 +475,31 @@ async fn a_failed_close_is_logged_not_raised() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_abandoned_command_stops_holding_its_box() {
+async fn a_cancelled_command_is_stopped_by_closing_its_box() {
+    let driver = ScriptedDriver::new();
+    driver.then(ExecStep::Hang);
+    let boxes = registry(&driver, 10);
+
+    // The caller gives up while the command is still running in the box.
+    let abandoned = tokio::time::timeout(
+        Duration::from_secs(1),
+        boxes.exec(&user("u1"), &settings(), &request("sleep 3600")),
+    )
+    .await;
+    assert!(abandoned.is_err(), "the command was still running");
+    tokio::task::yield_now().await;
+
+    assert_eq!(driver.closed(), vec!["box-0"]);
+    assert_eq!(boxes.live(), 0);
+    boxes
+        .exec(&user("u1"), &settings(), &request("pwd"))
+        .await
+        .unwrap();
+    assert_eq!(driver.exec_resources(), vec!["box-0", "box-1"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_aborted_task_stops_its_command_and_holds_no_box() {
     let driver = ScriptedDriver::new();
     driver.then(ExecStep::Hang);
     let boxes = registry(&driver, 10);
@@ -493,9 +517,10 @@ async fn an_abandoned_command_stops_holding_its_box() {
 
     running.abort();
     assert!(running.await.unwrap_err().is_cancelled());
+    tokio::task::yield_now().await;
 
-    assert_eq!(boxes.reap(Instant::now() + TTL).await, 1);
     assert_eq!(driver.closed(), vec!["box-0"]);
+    assert_eq!(boxes.reap(Instant::now() + TTL).await, 0);
 }
 
 #[test]
