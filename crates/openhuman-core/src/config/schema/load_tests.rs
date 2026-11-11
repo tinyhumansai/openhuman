@@ -101,7 +101,10 @@ async fn preflight_config_load_preserves_sealed_secrets_until_security_is_ready(
     let config = Config {
         config_path: config_path.clone(),
         workspace_dir: root.path().join("workspace"),
-        secrets: crate::config::schema::SecretsConfig { encrypt: true },
+        secrets: crate::config::schema::SecretsConfig {
+            encrypt: true,
+            unattended_unlock: false,
+        },
         api_key: Some(sealed.clone()),
         ..Config::default()
     };
