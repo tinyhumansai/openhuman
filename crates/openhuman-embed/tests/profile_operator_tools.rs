@@ -22,9 +22,27 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 const CAP: usize = 3;
 
+/// How far ahead of the model's `cron` call the scheduled one-shot fires.
+/// Counted from the call, not from the start of the test: the scheduler
+/// refuses an `at` that has already passed, so a window that also had to
+/// cover the turns before the call failed whenever a loaded machine made
+/// them slower than the window.
+const FIRE_LEAD: chrono::Duration = chrono::Duration::seconds(5);
+
 /// Scripts the model from the last user message.
+#[derive(Default)]
 struct Script {
-    fire_at: String,
+    /// When the agent job the model scheduled fires, set as it asks for it.
+    fire_at: Arc<Mutex<Option<chrono::DateTime<chrono::Utc>>>>,
+}
+
+impl Script {
+    /// A fire time `FIRE_LEAD` from now, recorded for the test to wait on.
+    fn next_fire_at(&self) -> String {
+        let at = chrono::Utc::now() + FIRE_LEAD;
+        *self.fire_at.lock().unwrap() = Some(at);
+        at.to_rfc3339()
+    }
 }
 
 impl Respond for Script {
@@ -49,13 +67,13 @@ impl Respond for Script {
             call(
                 "cron",
                 json!({"action":"add","job_type":"agent","name":"ping",
-                    "schedule":{"kind":"at","at":self.fire_at},"prompt":"reminder ping"}),
+                    "schedule":{"kind":"at","at":self.next_fire_at()},"prompt":"reminder ping"}),
             )
         } else if prompt.contains("shell job") && results == 0 {
             call(
                 "cron",
                 json!({"action":"add","job_type":"shell","name":"sh",
-                    "schedule":{"kind":"at","at":self.fire_at},"command":"echo hi"}),
+                    "schedule":{"kind":"at","at":self.next_fire_at()},"command":"echo hi"}),
             )
         } else if prompt.contains("reminder ping") {
             chat_completion("pong")
@@ -104,13 +122,12 @@ fn operator_named_cron_and_time_tools_run_on_a_direct_provider_within_the_iterat
 
 async fn scenario() {
     let (managed, chat) = (MockServer::start().await, MockServer::start().await);
-    let fire_at = chrono::Utc::now() + chrono::Duration::seconds(6);
+    let script = Script::default();
+    let fire_at = Arc::clone(&script.fire_at);
     Mock::given(method("POST"))
         .and(path_regex(r"/v1/chat/completions$"))
         .and(header("authorization", "Bearer operator-chat-key"))
-        .respond_with(Script {
-            fire_at: fire_at.to_rfc3339(),
-        })
+        .respond_with(script)
         .mount(&chat)
         .await;
     // No managed credential exists, so any managed traffic is a failure.
@@ -175,6 +192,7 @@ async fn scenario() {
 
     // An agent job made through the tool binds to this thread and fires.
     handle.chat("t1", "schedule it").await.unwrap();
+    let fire_at = fire_at.lock().unwrap().expect("the model scheduled the job");
     common::wait_until(fire_at).await;
     assert_eq!(runtime.sweep_cron_at(chrono::Utc::now()).await.ran, 1);
     tokio::time::timeout(Duration::from_secs(30), async {
