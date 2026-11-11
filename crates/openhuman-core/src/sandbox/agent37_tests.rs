@@ -64,6 +64,7 @@ fn box_settings_come_from_the_agent37_runtime_config() {
             memory_bytes: 16_384 * 1024 * 1024,
             workdir: AGENT37_WORKDIR.into(),
             owner_scope: BoxBackend::Agent37.owner_scope(&config),
+            call: None,
         }
     );
     assert_eq!(BoxBackend::Agent37.workdir(), "/home/node");
