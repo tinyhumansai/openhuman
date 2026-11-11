@@ -224,7 +224,14 @@ impl ApprovalEngine for NativeEngine {
                     Choice::Once => ApprovalChoice2::Once,
                     Choice::Deny => ApprovalChoice2::Deny,
                 },
-                ACTOR.to_owned(),
+                // A SaaS host's own approval of a tenant's secret grant is
+                // audited under its own actor, never as a person's.
+                if label == crate::security::approval::gate::SAAS_HOST_AUTHORISED {
+                    crate::security::approval::gate::SAAS_HOST_AUTHORISED
+                } else {
+                    ACTOR
+                }
+                .to_owned(),
             ),
         );
         let decided = async {
