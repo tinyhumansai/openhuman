@@ -269,8 +269,18 @@ impl IsolatedEnvironment {
     }
 }
 
+/// The test runner stages the first-party modules (TinySecurity included) and
+/// points the core at them with these variables. They carry no credential or
+/// configuration, and stripping them makes the core fetch and unpack its
+/// modules from the release channel into the fixture home: network access in a
+/// test, and files the no-mutation assertions rightly report.
+const STAGED_MODULE_KEYS: [&str; 2] = ["OPENHUMAN_MODULE_PATH", "OPENHUMAN_TEST_MODULES_STAGED"];
+
 fn is_isolated_environment_key(key: &OsStr) -> bool {
     let key = key.to_string_lossy();
+    if STAGED_MODULE_KEYS.contains(&key.as_ref()) {
+        return false;
+    }
     key == "HOME"
         || key == "USERPROFILE"
         || key.starts_with("OPENHUMAN_")
@@ -432,7 +442,10 @@ impl Fixture {
             .env("OPENHUMAN_ACTION_DIR", self._home.path().join("action"))
             .env("OPENHUMAN_KEYRING_BACKEND", "file");
 
-        for name in ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"] {
+        for name in ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"]
+            .into_iter()
+            .chain(STAGED_MODULE_KEYS)
+        {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);
             }

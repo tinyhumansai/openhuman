@@ -109,6 +109,8 @@ fn a_resolved_bucket_does_not_unlock_plaintext_or_unknown_buckets() {
 /// fails closed by treating even loopback hosts as external.
 #[test]
 fn provider_locality_fails_closed_without_tinysecurity() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     for base in [
         "http://[::1]:7788",
         "http://[0:0:0:0:0:0:0:1]:7788",

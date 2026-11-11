@@ -197,6 +197,8 @@ export const EXACT_TOOL_SPECS: Record<string, ToolSpec> = {
   // ── Web ─────────────────────────────────────────────────────────────────
   web_search: webSearch('searchWeb'),
   web_search_tool: webSearch('searchWeb'),
+  // Role tool: image search over the same web-search module.
+  web_image_search_tool: webSearch('searchImages', ImageIcon),
   // Role tools: `web_answer_tool` returns a grounded answer with citations
   // (and runs deep research on `depth: "deep"`); `web_contents_tool` reads
   // the given URLs.

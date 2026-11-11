@@ -162,12 +162,24 @@ async fn action_directory_without_write_access_is_an_error() {
     let findings = run_check(config, "workspace/action-dir").await;
     std::fs::set_permissions(dir.path(), original_permissions).unwrap();
 
-    assert_eq!(
-        finding(&findings, FindingSeverity::Error)
-            .config_path
-            .as_deref(),
-        Some("action_dir")
-    );
+    // Root ignores mode bits, so a clear write bit does not make the directory
+    // unwritable there (the same effective-writability rule as
+    // `workspace_without_write_mode_bits_reports_effective_writability`).
+    if unsafe { libc::geteuid() } == 0 {
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.severity != FindingSeverity::Error),
+            "root can write the directory, so there is nothing to report: {findings:?}"
+        );
+    } else {
+        assert_eq!(
+            finding(&findings, FindingSeverity::Error)
+                .config_path
+                .as_deref(),
+            Some("action_dir")
+        );
+    }
     #[cfg(unix)]
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }

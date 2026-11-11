@@ -181,12 +181,16 @@ impl Blocking {
             ));
         }
         let (reply, result) = mpsc::sync_channel(1);
+        // Spawn rather than `block_on` on the owner thread: a request may
+        // await work on another runtime (a module's) that itself makes a
+        // bridge call from a thread outside this runtime. Serialising requests
+        // on the owner thread would queue that call behind the request waiting
+        // for it and deadlock. Workers carry the re-entrancy guard.
         self.tasks
             .send(Box::new(move |runtime| {
-                ON_STORAGE_RUNTIME.with(|active| active.set(true));
-                let outcome = runtime.block_on(future);
-                ON_STORAGE_RUNTIME.with(|active| active.set(false));
-                let _ = reply.send(outcome);
+                runtime.spawn(async move {
+                    let _ = reply.send(future.await);
+                });
             }))
             .map_err(|error| StorageError::backend(format!("storage bridge stopped: {error}")))?;
         result

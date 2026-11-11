@@ -18,11 +18,11 @@
 //!   allowlist and caps always apply: with no asset listed, an agent cannot
 //!   execute and the user completes the transfer in the wallet UI as before.
 //! - **Automation** — a trusted-automation turn (internal background job,
-//!   approval-free workflow; cron turns are read-only at the harness gate and
-//!   never reach the tool). Refused unless `automation_enabled`, then limited
+//!   approval-free workflow, or a cron job whose agent opted into
+//!   `scheduled_actions`). Refused unless `automation_enabled`, then limited
 //!   to the listed assets and their caps.
-//! - **Refused** — an external-channel turn or an unlabelled one. Never
-//!   executes.
+//! - **Refused** — an external-channel turn, an unlabelled one, or a plain
+//!   (read-only) cron turn. Never executes.
 //!
 //! Caps (`config::schema::WalletAssetCap`): per transaction, per rolling 24
 //! hours for the asset, and per rolling 7 days for one recipient. Only records
@@ -81,6 +81,12 @@ impl ExecutionOrigin {
             AgentTurnOrigin::TrustedAutomation { source, .. } if is_policy_automation(source) => {
                 Self::Automation { class }
             }
+            // A plain scheduled job is read-only: its prompt is data, and only
+            // the scheduled-actions opt-in (`CronActions`) may act.
+            AgentTurnOrigin::TrustedAutomation {
+                source: TrustedAutomationSource::Cron,
+                ..
+            } => Self::Refused { class },
             AgentTurnOrigin::WebChat { .. }
             | AgentTurnOrigin::DirectChat
             | AgentTurnOrigin::Cli
@@ -112,15 +118,16 @@ impl ExecutionOrigin {
 
 /// Whether a trusted-automation source executes under the spend policy instead
 /// of a per-call human approval. A workflow that requires approval is reviewed
-/// by a person at the gate, so it is not automation here.
+/// by a person at the gate, so it is not automation here. A plain `Cron` job is
+/// read-only and never automation; a cron job whose agent opted into scheduled
+/// actions (`CronActions`) is.
 #[must_use]
 pub fn is_policy_automation(source: &TrustedAutomationSource) -> bool {
-    !matches!(
-        source,
-        TrustedAutomationSource::Workflow {
-            require_approval: true
-        }
-    )
+    match source {
+        TrustedAutomationSource::Background | TrustedAutomationSource::CronActions => true,
+        TrustedAutomationSource::Workflow { require_approval } => !require_approval,
+        TrustedAutomationSource::Cron => false,
+    }
 }
 
 /// Whether the current turn's wallet execute is governed by the spend policy

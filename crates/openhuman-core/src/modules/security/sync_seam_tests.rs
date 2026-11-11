@@ -1,4 +1,4 @@
-use super::run_on;
+use super::{arm_current, run, run_on};
 use std::time::Duration;
 
 #[test]
@@ -49,4 +49,19 @@ fn timed_out_module_answer_is_an_error() {
         Ok("secret".to_owned())
     });
     assert!(result.unwrap_err().contains("timed out"));
+}
+
+#[test]
+fn a_host_on_a_current_thread_runtime_can_still_use_the_bridge() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = runtime.block_on(async {
+        assert!(arm_current());
+        run(Duration::from_secs(5), async {
+            Ok("module-redacted".to_owned())
+        })
+    });
+    assert_eq!(result.unwrap(), "module-redacted");
 }

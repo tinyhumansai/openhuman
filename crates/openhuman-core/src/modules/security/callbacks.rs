@@ -278,6 +278,12 @@ pub(crate) fn register_pairing_store(
     PAIRING_STORES.lock().insert(scope_id, binding);
 }
 
+/// Drop a retired scope's pairing persistence binding: the module can no
+/// longer persist or load pairing state for it.
+pub(crate) fn unregister_pairing_store(scope_id: &str) {
+    PAIRING_STORES.lock().remove(scope_id);
+}
+
 /// A capability registry for host-observed pairing events. Keep it separate
 /// from caller-controlled RPC parameters so a tunnel payload cannot mint
 /// controller or socket authority.

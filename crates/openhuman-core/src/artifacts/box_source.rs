@@ -1,46 +1,44 @@
 //! `create_artifact` and `update_artifact` for a sandbox that keeps boxes: a
 //! file `path` names a file in the calling tenant's box, not on the host.
 //!
-//! With a backend that keeps one box per tenant (`openshell`; see
+//! With a backend that keeps one box per tenant (`openshell`, `agent37`; see
 //! [`SandboxBackendKind::keeps_boxes`](crate::sandbox::types::SandboxBackendKind::keeps_boxes)),
 //! the files an agent makes live in its box, and the host has never seen
 //! them. [`BoxSourced`] wraps the artifact crate's `create_artifact`
 //! tool (and likewise `update_artifact`, whose artifact kind comes from its
 //! stored record): for an `image` or `file` artifact it reads the file out of the
-//! caller's box ([`crate::sandbox::openshell::read_file`]), stages the bytes in
-//! a folder artifacts may reference, hands the staged path to the crate's tool
-//! unchanged, and removes the staged copy. Everything after that is
-//! [`create_artifact`](tiny_artifacts::CreateArtifactTool) as ever: the same
-//! checks, the same versioned record, the same card.
+//! caller's box ([`crate::sandbox::boxes::read_file`]) and hands the bytes
+//! to the crate's tool in memory ([`Content::Bytes`]), with the box file's name
+//! for its extension. Nothing is written to the host on the way. Everything
+//! after that is [`create_artifact`](tiny_artifacts::CreateArtifactTool) as
+//! ever: the same argument checks, the same versioned record, the same card.
 //!
 //! Every other call (text artifacts, and every call under a backend that keeps
 //! no boxes) goes straight to the crate's tool and reads the host disk as it
 //! always did.
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tiny_artifacts::{ArtifactKind, Artifacts, FileStore};
+use tiny_artifacts::{ArtifactKind, Artifacts, Content, CreateArtifactTool, UpdateArtifactTool};
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
-use super::tiny_store::version_files_dir;
 use crate::core::runtime::{DispatchCtx, NoTenant, Tenant};
-use crate::sandbox::openshell::BoxError;
+use crate::sandbox::boxes::BoxError;
 use crate::sandbox::MAX_BOX_FILE_BYTES;
 
 /// Where a call's box files are read from, and whether they are.
 #[async_trait]
 pub(crate) trait BoxFiles: Send + Sync {
-    /// Whether this call's sandbox keeps a box per tenant, so a file `path`
-    /// names a file in it.
+    /// The work folder of this call's box when its sandbox keeps a box per
+    /// tenant, so a file `path` names a file in it; `None` when it keeps none.
     ///
     /// # Errors
     ///
     /// When the configuration cannot be read: the call's source is then
     /// unknown, and it must not fall back to reading the host's disk.
-    async fn keeps_boxes(&self) -> Result<bool, BoxError>;
+    async fn work_folder(&self) -> Result<Option<&'static str>, BoxError>;
 
     /// The file at `path` in `tenant`'s box.
     async fn read(
@@ -64,12 +62,12 @@ impl SandboxBoxFiles {
 
 #[async_trait]
 impl BoxFiles for SandboxBoxFiles {
-    async fn keeps_boxes(&self) -> Result<bool, BoxError> {
+    async fn work_folder(&self) -> Result<Option<&'static str>, BoxError> {
         let config =
             self.ctx.load_config().await.map_err(|error| {
                 BoxError::Driver(format!("cannot read the configuration: {error}"))
             })?;
-        Ok(crate::sandbox::ops::sandbox_keeps_boxes(&self.ctx, &config))
+        Ok(crate::sandbox::ops::sandbox_box_workdir(&self.ctx, &config))
     }
 
     async fn read(
@@ -78,7 +76,7 @@ impl BoxFiles for SandboxBoxFiles {
         path: &str,
         max_bytes: u64,
     ) -> Result<Vec<u8>, BoxError> {
-        let tenant = crate::sandbox::openshell::tenant_for_box(tenant)?;
+        let tenant = crate::sandbox::boxes::tenant_for_box(tenant)?;
         let config =
             self.ctx.load_config().await.map_err(|error| {
                 BoxError::Driver(format!("cannot read the configuration: {error}"))
@@ -87,16 +85,40 @@ impl BoxFiles for SandboxBoxFiles {
     }
 }
 
-/// Where a box file is staged on the host: a folder under the kept copies,
-/// which artifacts may always reference.
-pub(crate) fn staging_dir(workspace_dir: &Path) -> PathBuf {
-    version_files_dir(workspace_dir).join(".box-incoming")
+/// One of the crate's artifact tools, able to take a file's content from the
+/// host instead of reading it from a path.
+#[async_trait]
+pub(crate) trait BytesTool: Tool {
+    /// Run the tool with `content` as the artifact's file.
+    async fn execute_with_bytes(&self, args: Value, content: Content)
+        -> anyhow::Result<ToolResult>;
 }
 
-/// `path` as a name relative to the box's work folder: an agent in the box
+#[async_trait]
+impl BytesTool for CreateArtifactTool {
+    async fn execute_with_bytes(
+        &self,
+        args: Value,
+        content: Content,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute_with_content(args, content).await
+    }
+}
+
+#[async_trait]
+impl BytesTool for UpdateArtifactTool {
+    async fn execute_with_bytes(
+        &self,
+        args: Value,
+        content: Content,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute_with_content(args, content).await
+    }
+}
+
+/// `path` as a name relative to the box's `work_folder`: an agent in the box
 /// knows that folder by its absolute name, so one under it is accepted.
-fn box_path(path: &str) -> &str {
-    let work_folder = crate::sandbox::openshell::BOX_WORKDIR;
+fn box_path<'a>(path: &'a str, work_folder: &str) -> &'a str {
     path.strip_prefix(work_folder)
         .and_then(|rest| rest.strip_prefix('/'))
         .filter(|rest| !rest.is_empty())
@@ -135,29 +157,25 @@ pub(crate) enum KindSource {
 /// One of the crate's artifact tools (`create_artifact` or `update_artifact`),
 /// reading a file `path` from the caller's box when the sandbox keeps one.
 pub(crate) struct BoxSourced {
-    inner: Box<dyn Tool>,
+    inner: Box<dyn BytesTool>,
     kinds: KindSource,
     boxes: Arc<dyn BoxFiles>,
     tenant: Result<Tenant, NoTenant>,
-    staging: PathBuf,
 }
 
 impl BoxSourced {
-    /// `tenant` is the calling tenant (its box is read); `staging` is the
-    /// folder (see [`staging_dir`]) a box file is copied into for the crate.
+    /// `tenant` is the calling tenant (its box is read).
     pub(crate) fn new(
-        inner: impl Tool + 'static,
+        inner: impl BytesTool + 'static,
         kinds: KindSource,
         boxes: Arc<dyn BoxFiles>,
         tenant: Result<Tenant, NoTenant>,
-        staging: PathBuf,
     ) -> Self {
         Self {
             inner: Box::new(inner),
             kinds,
             boxes,
             tenant,
-            staging,
         }
     }
 
@@ -211,9 +229,9 @@ impl BoxSourced {
         };
         Ok(self
             .boxes
-            .keeps_boxes()
+            .work_folder()
             .await?
-            .then(|| box_path(path).to_owned()))
+            .map(|work_folder| box_path(path, work_folder).to_owned()))
     }
 }
 
@@ -239,7 +257,7 @@ impl Tool for BoxSourced {
         self.inner.is_concurrency_safe(args)
     }
 
-    async fn execute(&self, mut args: Value) -> anyhow::Result<ToolResult> {
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let path = match self.box_file(&args).await {
             Ok(Some(path)) => path,
             Ok(None) => return self.inner.execute(args).await,
@@ -253,83 +271,12 @@ impl Tool for BoxSourced {
             Ok(bytes) => bytes,
             Err(error) => return Ok(ToolResult::error(error.to_string())),
         };
-        let staged = match stage(&self.staging, &path, bytes).await {
-            Ok(staged) => staged,
-            Err(error) => {
-                tracing::warn!(%error, "[artifacts] could not stage a sandbox file");
-                return Ok(ToolResult::error(
-                    "the file could not be copied out of the sandbox",
-                ));
-            }
-        };
-        args["path"] = Value::String(staged.file.display().to_string());
-        // `staged` removes its folder when dropped, so a call cancelled while
-        // the crate's tool runs leaves nothing behind either.
-        self.inner.execute(args).await
+        // The box file's name only tells the crate its type; the crate keeps
+        // the bytes in the artifact store as it would a file from a path.
+        self.inner
+            .execute_with_bytes(args, Content::Bytes { name: path, bytes })
+            .await
     }
-}
-
-/// A box file copied onto the host for one call. Dropping it removes the copy,
-/// whether the call finished or was cancelled.
-struct Staged {
-    dir: PathBuf,
-    file: PathBuf,
-}
-
-impl Drop for Staged {
-    fn drop(&mut self) {
-        match std::fs::remove_dir_all(&self.dir) {
-            Ok(()) => {}
-            // Nothing was made yet (a failed or cancelled stage).
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                tracing::warn!(%error, "[artifacts] could not remove a staged sandbox file")
-            }
-        }
-    }
-}
-
-/// Copy `bytes` into a folder of its own under `staging`, as `file` plus the
-/// box file's extension (which decides the artifact's media type). The name is
-/// generated, so a box name the host's filesystem rejects (`?` on Windows)
-/// still stages.
-///
-/// The bytes go in through the artifact crate's [`FileStore`] port, like every
-/// other artifact file, not a raw filesystem write.
-///
-/// The write runs in a task of its own that finishes whether or not the caller
-/// is still waiting. The [`Staged`] guard lives in that task, so a call
-/// cancelled mid-write still has its folder removed, and only after the write
-/// has settled (a removal racing the storage layer's directory creation could
-/// otherwise leave the folder behind).
-async fn stage(staging: &Path, box_path: &str, bytes: Vec<u8>) -> std::io::Result<Staged> {
-    let staging = staging.to_path_buf();
-    let box_path = box_path.to_owned();
-    tokio::spawn(async move { stage_now(&staging, &box_path, &bytes).await })
-        .await
-        .map_err(std::io::Error::other)?
-}
-
-async fn stage_now(staging: &Path, box_path: &str, bytes: &[u8]) -> std::io::Result<Staged> {
-    let name = match Path::new(box_path)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .filter(|extension| {
-            extension.len() <= 16 && extension.chars().all(|c| c.is_ascii_alphanumeric())
-        }) {
-        Some(extension) => format!("file.{extension}"),
-        None => "file".to_owned(),
-    };
-    let dir = staging.join(uuid::Uuid::new_v4().simple().to_string());
-    let staged = Staged {
-        file: dir.join(&name),
-        dir,
-    };
-    tiny_artifacts::FsFileStore::new(&staged.dir)
-        .put(&name, bytes, None)
-        .await
-        .map_err(std::io::Error::other)?;
-    Ok(staged)
 }
 
 #[cfg(test)]

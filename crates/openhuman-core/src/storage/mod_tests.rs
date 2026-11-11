@@ -468,3 +468,29 @@ fn a_test_installed_slot_is_hidden_from_other_test_threads() {
         "another test's thread must not see the installer's backend"
     );
 }
+
+/// A bridge call may wait on a bridge call made from another thread that is
+/// not on the storage runtime — a module runtime's blocking pool opening the
+/// workspace backend while the host's synchronous store awaits that module.
+/// The bridge must run both instead of queueing the second behind the first.
+#[test]
+fn a_bridge_call_can_wait_on_a_bridge_call_from_another_thread() {
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome = block_on(async move {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(block_on(async { Ok::<_, StorageError>(7) }));
+            });
+            let inner = rx
+                .await
+                .map_err(|error| StorageError::backend(error.to_string()))??;
+            Ok::<_, StorageError>(inner + 1)
+        });
+        let _ = done_tx.send(outcome);
+    });
+    let outcome = done_rx
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("a bridge call waiting on another thread's bridge call deadlocked");
+    assert_eq!(outcome.unwrap(), 8);
+}

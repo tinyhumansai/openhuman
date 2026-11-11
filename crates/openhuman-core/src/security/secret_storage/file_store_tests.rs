@@ -294,3 +294,116 @@ fn quarantine_never_replaces_a_name_another_process_reserved() {
         assert_eq!(std::fs::read(t).unwrap(), b"theirs");
     }
 }
+
+#[cfg(all(unix, feature = "secret-file"))]
+#[test]
+fn an_owned_file_left_wider_than_private_is_tightened_by_the_rewrite_not_refused() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let path = dir.path().join("secrets.enc");
+    std::fs::write(&path, b"old").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    write_atomic(&path, b"new").expect("a loose owned file is repaired, not a reason to fail");
+    assert_eq!(std::fs::read(&path).unwrap(), b"new");
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    // A symlink is never followed to be tightened: whatever the write does with
+    // the link itself, its target stays exactly as it was.
+    let target = dir.path().join("target");
+    std::fs::write(&target, b"outside").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let link = dir.path().join("link.enc");
+    symlink(&target, &link).unwrap();
+    use std::os::unix::fs::MetadataExt;
+    match write_atomic(&link, b"new") {
+        // Refused: the link is still the link it was.
+        Err(_) => assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "a refused write must leave the link alone"
+        ),
+        // Or the link itself was replaced by a regular, private file.
+        Ok(()) => {
+            let replaced = std::fs::symlink_metadata(&link).unwrap();
+            assert!(!replaced.file_type().is_symlink());
+            assert!(replaced.file_type().is_file());
+            assert_eq!(replaced.mode() & 0o777, 0o600);
+            assert_eq!(std::fs::read(&link).unwrap(), b"new");
+        }
+    }
+    assert_eq!(
+        std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+        0o644,
+        "a symlink target must not be chmodded"
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), b"outside");
+}
+
+#[cfg(all(unix, feature = "secret-file"))]
+#[test]
+fn a_group_writable_secrets_directory_the_core_made_is_tightened_not_refused() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // What a `0002` umask leaves behind for a directory the core created.
+    let dir = tempfile::TempDir::new().unwrap();
+    // An ancestor is not the core's to repair, so the fixture's own root is private.
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let secrets_dir = dir.path().join("workspace");
+    std::fs::create_dir(&secrets_dir).unwrap();
+    std::fs::set_permissions(&secrets_dir, std::fs::Permissions::from_mode(0o775)).unwrap();
+    let path = secrets_dir.join("secrets.enc");
+
+    drop(lock_for_write(&path).expect("the lock admits a repaired directory"));
+    write_atomic(&path, b"sealed").expect("the write admits a repaired directory");
+
+    assert_eq!(std::fs::read(&path).unwrap(), b"sealed");
+    assert_eq!(
+        std::fs::metadata(&secrets_dir)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755,
+        "only group/other write is removed from the owned leaf directory"
+    );
+}
+
+/// A secrets file others could write may hold content the core never wrote, so
+/// it is never tightened into trust: it keeps its mode and the driver refuses
+/// it. Only a file others could merely read (a leaked read, not a forged
+/// write) is repaired.
+#[cfg(all(unix, feature = "secret-file"))]
+#[test]
+fn a_secrets_file_others_could_write_is_never_tightened_into_trust() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    for mode in [0o666, 0o662, 0o620] {
+        let path = dir.path().join(format!("writable-{mode:o}.enc"));
+        std::fs::write(&path, b"possibly forged").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        super::super::file_store_repair::tighten_owned_file(&path);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            mode,
+            "a file writable by others ({mode:o}) must not be repaired"
+        );
+    }
+    let readable = dir.path().join("readable.enc");
+    std::fs::write(&readable, b"ours").unwrap();
+    std::fs::set_permissions(&readable, std::fs::Permissions::from_mode(0o644)).unwrap();
+    super::super::file_store_repair::tighten_owned_file(&readable);
+    assert_eq!(
+        std::fs::metadata(&readable).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}
