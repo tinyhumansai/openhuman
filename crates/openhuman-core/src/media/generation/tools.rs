@@ -56,7 +56,8 @@ const VIDEO_DESCRIPTION: &str = "Generate a short video clip via OpenRouter (def
 /// `root_config`; `allowed_references` is the session's shared allowlist of
 /// artifact paths. The generators come from the host that owns the media
 /// service (the core has none of its own). TinySecurity's protected-path
-/// floor is fetched here, once, for the sync reference policy.
+/// floor is reached here, through `root_config`'s module, for the sync
+/// reference policy.
 pub async fn media_tools_for_config(
     generators: MediaGenerators,
     root_config: &Config,
@@ -216,24 +217,63 @@ fn video_tool(
         .with_wait_policy(wait)
 }
 
+/// A synchronous TinySecurity floor decision for one path: `Ok(true)` when
+/// `ProtectedPath2` reports it protected.
+pub(crate) type ProtectedPathCheck =
+    Arc<dyn Fn(&Path) -> Result<bool, String> + Send + Sync>;
+
 /// TinySecurity's protected-path floor for local reference files. The
-/// reference policy is a sync callback that cannot ask the module per path, so
-/// the floor vocabulary is fetched once, when the tool set is built, and
-/// matched lexically ([`floor_covers`]).
-#[derive(Debug, Clone)]
+/// reference policy is a sync callback, so it asks the module through the
+/// bounded sync bridge (`modules::security::text::protected_path_check`): the
+/// decision is TinySecurity's own `ProtectedPath2`, not a host copy of it.
+#[derive(Clone)]
 pub(crate) enum ReferenceFloor {
     /// Security is disabled, so no floor applies; the same switch as
     /// `SecurityPolicy::is_always_forbidden_async` for the other file tools.
     Disabled,
-    /// TinySecurity's floor vocabulary, lower-cased for matching.
-    Enforced(tinysecurity_bus::ProtectedFloor2),
-    /// The floor could not be fetched: every local reference is refused.
+    /// TinySecurity answers for each path. A failed answer refuses the path.
+    Enforced(ProtectedPathCheck),
+    /// The floor could not be reached: every local reference is refused.
     Unavailable(String),
 }
 
+impl std::fmt::Debug for ReferenceFloor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Disabled => f.write_str("Disabled"),
+            Self::Enforced(_) => f.write_str("Enforced(..)"),
+            Self::Unavailable(why) => f.debug_tuple("Unavailable").field(why).finish(),
+        }
+    }
+}
+
+/// Why a reference was refused, for the log: never the path itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refusal {
+    Traversal,
+    Unresolved,
+    FloorUnavailable,
+    Protected,
+    OutsideRoots,
+}
+
+impl Refusal {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Traversal => "parent_traversal",
+            Self::Unresolved => "unresolved",
+            Self::FloorUnavailable => "floor_unavailable",
+            Self::Protected => "protected_floor",
+            Self::OutsideRoots => "outside_roots",
+        }
+    }
+}
+
 impl ReferenceFloor {
-    /// Asks TinySecurity for its floor vocabulary unless security is disabled
-    /// for `config` (or the process). A failed query fails closed.
+    /// Asks TinySecurity, through `config`'s module, for its floor unless
+    /// security is disabled for `config` (or the process). With no `config`
+    /// the current dispatch's is used. A module that cannot answer fails
+    /// closed.
     pub(crate) async fn fetch(config: Option<&Config>) -> Self {
         if let Some(reason) = crate::security::switch::disabled_for(config) {
             log::debug!(
@@ -244,8 +284,8 @@ impl ReferenceFloor {
         }
         #[cfg(feature = "security-module")]
         {
-            match crate::modules::security::gap::protected_floor().await {
-                Ok(floor) => Self::enforced(floor),
+            match crate::modules::security::text::protected_path_check(config).await {
+                Ok(check) => Self::Enforced(check),
                 Err(error) => {
                     log::debug!(
                         "[media][reference] protected floor unavailable; local references refused: {error}"
@@ -260,145 +300,125 @@ impl ReferenceFloor {
         }
     }
 
-    /// The floor over `vocabulary`, lower-cased as TinySecurity matches it.
-    pub(crate) fn enforced(vocabulary: tinysecurity_bus::ProtectedFloor2) -> Self {
-        let lower = |names: Vec<String>| -> Vec<String> {
-            names.iter().map(|name| name.to_ascii_lowercase()).collect()
+    /// Why `paths` (the path as named and as resolved) may not be read as a
+    /// reference, when the floor covers any of them or cannot answer.
+    fn refusal(&self, named: &Path, paths: &[&Path]) -> Option<(Refusal, String)> {
+        let unavailable = || {
+            (
+                Refusal::FloorUnavailable,
+                format!(
+                    "reference path {} refused: TinySecurity's protected-path floor is unavailable, \
+                     so local reference files cannot be checked; use a URL instead",
+                    named.display()
+                ),
+            )
         };
-        Self::Enforced(tinysecurity_bus::ProtectedFloor2 {
-            components: lower(vocabulary.components),
-            files: lower(vocabulary.files),
-            pairs: vocabulary
-                .pairs
-                .iter()
-                .map(|[parent, child]| [parent.to_ascii_lowercase(), child.to_ascii_lowercase()])
-                .collect(),
-            prefixes: lower(vocabulary.prefixes),
-        })
-    }
-
-    /// Why `path` may not be read as a reference, when the floor covers it.
-    fn refusal(&self, path: &Path) -> Option<String> {
         match self {
             Self::Disabled => None,
-            Self::Unavailable(_) => Some(format!(
-                "reference path {} refused: TinySecurity's protected-path floor is unavailable, \
-                 so local reference files cannot be checked; use a URL instead",
-                path.display()
-            )),
-            Self::Enforced(floor) => floor_covers(floor, &path.to_string_lossy()).then(|| {
-                format!(
-                    "reference path {} is in a protected location (a credential store or \
-                     system directory); use a URL or a file inside the workspace",
-                    path.display()
-                )
-            }),
+            Self::Unavailable(_) => Some(unavailable()),
+            Self::Enforced(check) => {
+                for path in paths {
+                    match check(path) {
+                        Ok(false) => {}
+                        Ok(true) => {
+                            return Some((
+                                Refusal::Protected,
+                                format!(
+                                    "reference path {} is in a protected location (a credential \
+                                     store or system directory); use a URL or a file inside the \
+                                     workspace",
+                                    named.display()
+                                ),
+                            ))
+                        }
+                        Err(_) => return Some(unavailable()),
+                    }
+                }
+                None
+            }
         }
     }
 }
 
-/// Whether TinySecurity's floor covers `path`: a lexical mirror of
-/// `tinysecurity-policy`'s `path::floor` over the served vocabulary. Matching
-/// is ASCII case-insensitive and treats `\` as `/`; a segment is compared up
-/// to any `:` stream suffix and without trailing spaces or dots. Credential
-/// names match at any depth, pairs as consecutive segments, and system
-/// prefixes at the root, Windows ones under any drive letter.
-fn floor_covers(floor: &tinysecurity_bus::ProtectedFloor2, path: &str) -> bool {
-    let lowered = path.to_ascii_lowercase().replace('\\', "/");
-    let normalized = ["//?/", "//./", "/??/"]
-        .iter()
-        .find_map(|namespace| lowered.strip_prefix(namespace))
-        .unwrap_or(&lowered);
-    let segments: Vec<&str> = normalized.split('/').filter(|s| !s.is_empty()).collect();
-    let parent = |segment: &&str| {
-        segment.starts_with("..") && segment.trim_end_matches([' ', '.']).is_empty()
-    };
-    if path.contains('\0') || segments.iter().any(parent) {
-        return true;
+/// `path` with its `.` segments and symlinks resolved. A path that does not
+/// exist (yet) is only normalized lexically: nothing can be read from it, and
+/// `..` is refused before this runs.
+fn resolve(path: &Path) -> Result<PathBuf, std::io::Error> {
+    match path.canonicalize() {
+        Ok(resolved) => Ok(resolved),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path
+            .components()
+            .filter(|component| !matches!(component, Component::CurDir))
+            .collect()),
+        Err(error) => Err(error),
     }
-    let names: Vec<&str> = segments
-        .iter()
-        .map(|segment| {
-            segment
-                .split(':')
-                .next()
-                .unwrap_or(segment)
-                .trim_end_matches([' ', '.'])
-        })
-        .collect();
-    let credential_name = names.iter().any(|name| {
-        floor
-            .components
-            .iter()
-            .chain(&floor.files)
-            .any(|store| store == name)
-    });
-    let credential_pair = names.windows(2).any(|window| {
-        floor
-            .pairs
-            .iter()
-            .any(|[parent, child]| window[0] == parent && window[1] == child)
-    });
-    credential_name
-        || credential_pair
-        || floor
-            .prefixes
-            .iter()
-            .any(|prefix| under_prefix(normalized, prefix))
-}
-
-/// `path` is `prefix` or below it. A drive-qualified prefix (`c:/windows`)
-/// matches under every drive letter, as TinySecurity's Windows roots do.
-fn under_prefix(path: &str, prefix: &str) -> bool {
-    let within = |path: &str, prefix: &str| {
-        path.strip_prefix(prefix)
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-    };
-    let drive_relative = |path: &str| {
-        let bytes = path.as_bytes();
-        (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
-            .then(|| path[2..].to_owned())
-    };
-    within(path, prefix)
-        || matches!(
-            (drive_relative(path), drive_relative(prefix)),
-            (Some(path), Some(prefix)) if within(&path, &prefix)
-        )
 }
 
 /// Local reference files may be read and uploaded only from the action
 /// directory or the workspace directory, never through `..`, and never from
 /// a location TinySecurity's protected floor covers (credential stores,
-/// system roots) — session-filed artifacts included.
+/// system roots) — session-filed artifacts included. The path is resolved
+/// (`.` segments, symlinks) first; the floor is asked about the path as named
+/// and as resolved, the roots are matched against the resolved path, and the
+/// resolved path is what is returned for reading.
 pub(crate) fn reference_policy(
     action_dir: &Path,
     workspace_dir: &Path,
     allowed_artifacts: MediaReferenceAllowlist,
     floor: ReferenceFloor,
 ) -> tinyagents_harness::media::ReferencePathPolicy {
-    let roots: Vec<PathBuf> = vec![action_dir.to_path_buf(), workspace_dir.to_path_buf()];
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for root in [action_dir, workspace_dir] {
+        roots.push(root.to_path_buf());
+        if let Ok(resolved) = root.canonicalize() {
+            roots.push(resolved);
+        }
+    }
     Arc::new(move |path: &Path| {
+        let refuse = |refusal: Refusal, message: String| {
+            tracing::debug!(
+                category = refusal.as_str(),
+                "[media][reference] refused local reference"
+            );
+            Err(message)
+        };
         if path.components().any(|c| matches!(c, Component::ParentDir)) {
-            return Err(format!(
-                "reference path {} may not contain '..'",
-                path.display()
-            ));
+            return refuse(
+                Refusal::Traversal,
+                format!("reference path {} may not contain '..'", path.display()),
+            );
         }
-        if let Some(refusal) = floor.refusal(path) {
-            log::debug!("[media][reference] refused local reference: {refusal}");
-            return Err(refusal);
+        let resolved = match resolve(path) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                return refuse(
+                    Refusal::Unresolved,
+                    format!(
+                        "reference path {} could not be resolved: {error}",
+                        path.display()
+                    ),
+                )
+            }
+        };
+        if let Some((refusal, message)) = floor.refusal(path, &[path, &resolved]) {
+            return refuse(refusal, message);
         }
-        let is_filed_artifact = allowed_artifacts
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(path);
-        if !is_filed_artifact && !roots.iter().any(|root| path.starts_with(root)) {
-            return Err(format!(
-                "reference path {} is outside the workspace; use a URL or a file inside the workspace",
-                path.display()
-            ));
+        let is_filed_artifact = {
+            let allowed = allowed_artifacts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            allowed.contains(path) || allowed.contains(&resolved)
+        };
+        if !is_filed_artifact && !roots.iter().any(|root| resolved.starts_with(root)) {
+            return refuse(
+                Refusal::OutsideRoots,
+                format!(
+                    "reference path {} is outside the workspace; use a URL or a file inside the workspace",
+                    path.display()
+                ),
+            );
         }
-        Ok(path.to_path_buf())
+        Ok(resolved)
     })
 }
 
