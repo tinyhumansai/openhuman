@@ -85,6 +85,20 @@ pub struct AgentExt {
     /// connected MCP server (deferred, through `tool_search`).
     #[serde(default)]
     pub searches_connected_mcp: bool,
+    /// Whether a cron job that runs this agent may use acting tools (shell,
+    /// file writes, external effects) without a person's approval.
+    ///
+    /// Off by default: a scheduled turn is read-only. On, it takes effect only
+    /// when the definition also names its tools explicitly
+    /// (`[tools] named = [...]`, never the wildcard) and the job names this
+    /// agent in `agent_id`; the run then executes under
+    /// `TrustedAutomationSource::CronActions`. Sub-agents the run spawns stay
+    /// read-only, and the autonomy tier, TinySecurity's command analysis and
+    /// protected-path floor, the agent's sandbox, the browser's allowed
+    /// websites and its forced checkpoint before payment all still apply.
+    /// Ignored in SaaS mode. See `cron::origin::scheduled_actions_enabled`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scheduled_actions: bool,
     /// Function-driven system prompt, set with `PromptSource::Dynamic(())`.
     /// Runtime only: never serialised and not authorable in TOML.
     #[serde(skip)]
@@ -113,6 +127,7 @@ impl Default for AgentExt {
             refresh_prompt_on_resume: false,
             memory_block: None,
             searches_connected_mcp: false,
+            scheduled_actions: false,
             prompt_builder: None,
             tinyflows_prompt_owner: None,
         }

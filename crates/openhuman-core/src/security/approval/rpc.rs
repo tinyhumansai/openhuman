@@ -233,8 +233,9 @@ pub async fn approval_preauthorize_flow(
 }
 
 /// Apply a decision to a pending row. Errors when the request id is
-/// unknown / already decided / belongs to a different session. With
-/// `agent_id`, also errors when the request belongs to another agent.
+/// unknown / already decided / belongs to a different session, or when the
+/// calling dispatch's profile (or agent) did not park it. With `agent_id`,
+/// also errors when the request belongs to another agent.
 pub async fn approval_decide(
     ctx: &DispatchCtx,
     request_id: &str,
@@ -254,10 +255,16 @@ pub async fn approval_decide(
         );
         anyhow!("approval gate is not installed; supervised mode disabled")
     })?;
-    let decided = match agent_id {
-        Some(agent) => gate.decide_for_agent(agent, request_id, decision),
-        None => gate.decide(request_id, decision),
-    };
+    // The caller's tenant, not just a request id, decides: a dispatch may
+    // answer only requests its own profile (and agent) parked.
+    let tenant = ctx.tenant().map_err(|error| {
+        tracing::warn!(
+            request_id = request_id,
+            "[rpc:approval_decide] refused: the dispatch has no tenant"
+        );
+        anyhow!(error)
+    })?;
+    let decided = gate.decide_as(&tenant, agent_id, request_id, decision);
     let decided = match decided {
         Ok(row) => row,
         Err(err) => {

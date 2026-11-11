@@ -119,15 +119,15 @@ pub(super) fn tap_progress(
 /// Where a finished turn's late sub-agent events go: the web event stream,
 /// addressed like the turn.
 #[derive(Clone)]
-pub(super) struct LateSubagentSink {
-    pub(super) client_id: String,
-    pub(super) thread_id: String,
-    pub(super) request_id: String,
-    pub(super) config: crate::config::Config,
+pub(crate) struct LateSubagentSink {
+    pub(crate) client_id: String,
+    pub(crate) thread_id: String,
+    pub(crate) request_id: String,
+    pub(crate) config: crate::config::Config,
 }
 
 impl LateSubagentSink {
-    async fn publish(&self, ctx: &DispatchCtx, event: AgentProgress) {
+    pub(crate) async fn publish(&self, ctx: &DispatchCtx, event: AgentProgress) {
         // Only the events that settle a sub-agent card can matter after the
         // turn: a detached child usually finishes after its parent replied,
         // and one aborted by `subagent_cancel` still reports its failure.

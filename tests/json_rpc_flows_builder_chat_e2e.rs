@@ -61,6 +61,12 @@ chat_onboarding_completed = true
 [secrets]
 encrypt = false
 
+# The approval gate is inert while the autonomy policy is off (the default).
+# This suite answers the gate's cards as a user would, so opt back in.
+[autonomy]
+enabled = true
+level = "supervised"
+
 [context]
 compaction_enabled = false
 "#
@@ -429,6 +435,40 @@ async fn chat_spawns_workflow_builder_and_saves_its_proposal() {
     )
     .await;
 
+    // Under supervised autonomy a hand-off (`spawn_subagent`) asks first, like
+    // any external effect. This suite is about what follows the hand-off, so a
+    // background user approves those cards; `create_workflow` stays for step 4,
+    // which answers it itself.
+    let handoff_events = Arc::clone(&events);
+    let handoff_base = rpc_base.clone();
+    let handoff_task = tokio::spawn(async move {
+        let mut answered = std::collections::HashSet::new();
+        let mut id = 1_000;
+        loop {
+            for card in events_named(&handoff_events, "approval_request") {
+                if card["tool_name"] != "spawn_subagent" {
+                    continue;
+                }
+                let Some(request_id) = card["request_id"].as_str() else {
+                    continue;
+                };
+                if !answered.insert(request_id.to_string()) {
+                    continue;
+                }
+                id += 1;
+                let decided = post_json_rpc(
+                    &handoff_base,
+                    id,
+                    "openhuman.approval_decide",
+                    json!({ "request_id": request_id, "decision": "approve_once" }),
+                )
+                .await;
+                assert_no_jsonrpc_error(&decided, "approval_decide for spawn_subagent");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    });
+
     // ── 1. the orchestrator spawns workflow_builder once and its turn ends ──
     let graph = three_step_graph();
     push_forced_chat_completion_when(
@@ -752,6 +792,7 @@ async fn chat_spawns_workflow_builder_and_saves_its_proposal() {
     );
 
     clear_forced_chat_completions();
+    handoff_task.abort();
     sse_task.abort();
     mock_join.abort();
     rpc_join.abort();

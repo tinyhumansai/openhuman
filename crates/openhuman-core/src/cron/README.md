@@ -113,15 +113,18 @@ permanent-failure classification stay in the executor and are not pluggable.
 
 `shell` jobs run through `run_job_command_with_timeout`
 ([`scheduler/shell_job.rs`](./scheduler/shell_job.rs)). Before spawning anything,
-it checks `can_act`, `is_rate_limited`, the host security policy against command
-facts returned by TinyBox `AnalyzeCommand`, and `record_action` against the
-action budget. Missing module analysis fails closed; no local parser replaces
-it. Any refusal returns a string starting `blocked by security policy:`, which
-the retry loop treats as final. Execution uses TinyBox `StartExec` on a
-module-owned passthrough resource, preserving the action directory and the
-shell's default pipeline exit status. The command has a hard 120 second timeout
-(`SHELL_JOB_TIMEOUT_SECS`); timeout cancellation and output cleanup are
-acknowledged by TinyBox before the resource is closed. With the autonomy policy
+`authorize_shell_command` checks the command with TinySecurity
+(`check_command`, `CommandFlow::Scheduled`), which also reserves it against the
+action budget. A refusal the policy decided (protected path, read-only,
+allowlist, hidden execution, high risk, category, local-only, or a `Block`
+gate) returns a string starting `blocked by security policy:`
+(`POLICY_REFUSAL_PREFIX`), which the retry loop treats as final. An unavailable
+module (fail closed) or an exhausted action budget may recover, so those stay
+retryable. Execution runs on the host (`sandbox::shell_exec::run_host`), in the
+action directory and with the shell's default pipeline exit status, under a
+hard timeout of `[cron] shell_timeout_secs` (default 120 seconds, minimum 1;
+`CronConfig::shell_timeout`); a command that outlives it is killed and the run
+fails with `job timed out after <n>s`. With the autonomy policy
 disabled (the default), most policy checks are inert; see the project
 `CLAUDE.md`.
 
@@ -146,6 +149,59 @@ disabled (the default), most policy checks are inert; see the project
 6. The turn runs inside `core::runtime::turn_origin::with_origin` with the origin from
    `origin::turn_origin_for_job_run`. The morning briefing job also runs under a
    24 hour task-recency window so task-fetch tools only return recent tasks.
+
+### Scheduled actions (opt-in)
+
+A scheduled agent turn is read-only by default: the host security gate
+(`agent/tinyagents/host/security_gate/authorize.rs`) refuses `shell` and every
+acting or external-effect tool for a `TrustedAutomation { Cron }` turn, before
+any approval setting is consulted, and the approval engine refuses a cron
+external effect (`CallOrigin::Cron`).
+
+An agent definition can lift this for the cron jobs that run it:
+
+```toml
+# <workspace>/agents/builder/agent.toml (or AgentDefinitionSpec::scheduled_actions(true))
+id = "builder"
+when_to_use = "Writes code and runs tests on a schedule"
+scheduled_actions = true
+
+[tools]
+named = ["shell", "file_read", "file_write", "browser"]
+```
+
+`origin::scheduled_actions_enabled` grants it only when the job names the agent
+in `agent_id`, the definition sets `scheduled_actions = true`, its tools are
+`named` (a wildcard scope is refused with a warning) and the process is not in
+SaaS mode. The run then executes as `TrustedAutomation { CronActions }`, and
+`run_agent_job_for_run` marks the session it built
+(`OpenHumanSessionHost::enable_scheduled_actions`). The gate skips the
+read-only cron stage only when all three hold: the `CronActions` origin, the
+marked session, and a root run (`current_run_depth() == 0`). A sub-agent the
+run spawns inherits the origin but not the mark, so it stays read-only. The
+approval engine classifies `CronActions` as `CallOrigin::TrustedAutomation`, so
+the root's tools run without a person's approval.
+
+`CronActions` also counts as trusted automation for the wallet: its root run
+may call `wallet_balances` and `wallet_execute_prepared` (executes only when
+`[wallet_policy] automation_enabled` is set and the transfer fits the asset's
+caps), and x402 payments from `x402_request` / `http_request` are approved
+without a prompt within the per-request budget. A plain `Cron` turn is refused
+by both (it stays read-only, so `wallet_balances` still works).
+A job created from a channel conversation stays an `ExternalChannel` turn, so `wallet_execute_prepared` and x402 are refused for it too.
+
+Nothing else is lifted: the channel boundary, the autonomy tier
+(`[autonomy]`, including `workspace_only` when enabled), TinySecurity's command
+analysis and protected-path floor, the agent's `sandbox_mode`, the browser's
+allowed-websites list and its forced checkpoint before payment all still
+apply. A job created from a channel conversation keeps running as that
+channel's `ExternalChannel` turn, opted-in agent or not.
+
+The browser's `[browser] unattended_actions` list is reachable from every cron
+turn, with or without this opt-in: the `browser` tool declares no external
+effect (its consequential actions are gated inside `execute`), so the cron
+stage lets the call through to `browser_unattended::allow`, which treats both
+`Cron` and `CronActions` as unattended.
 
 A job whose `agent_id` is not live is first offered to the host through
 `HostAgentResolver::open` (an embedding host sets it with

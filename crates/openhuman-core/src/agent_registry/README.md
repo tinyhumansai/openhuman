@@ -127,6 +127,20 @@ see [`tinyagents/README.md`](../tinyagents/README.md) and
 [the Jev page](../../../../../docs/gitbooks/en/developing/jev.md) for how that
 ranking works.
 
+## Host definition fields
+
+`AgentExt` ([`host_definition.rs`](host_definition.rs)) holds the OpenHuman-only
+fields an agent TOML may author beside the portable TinyAgents ones:
+`omit_identity`, `omit_memory_context`, `omit_safety_preamble`,
+`tokenjuice_compression`, `refresh_prompt_on_resume`, `memory_block`,
+`searches_connected_mcp`, and `scheduled_actions`.
+
+`scheduled_actions = true` lets a cron job that names this agent in `agent_id`
+use acting tools without a person's approval. It is honoured only with an
+explicit `[tools] named = [...]` scope (never the wildcard), outside SaaS mode,
+and only for the job's own root run; sub-agents stay read-only. Default `false`.
+See [`cron/README.md`](../cron/README.md#scheduled-actions-opt-in).
+
 ## Called by
 
 - `core/all.rs`: registers the `agent_registry` controllers under

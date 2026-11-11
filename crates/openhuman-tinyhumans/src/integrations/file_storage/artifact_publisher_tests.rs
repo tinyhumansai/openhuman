@@ -159,6 +159,8 @@ async fn read_only_autonomy_blocks_sharing_before_any_network_call() {
 
 #[tokio::test]
 async fn file_upload_fails_closed_when_tinysecurity_cannot_check_the_path() {
+    // CI stages the real module, so make its path floor unanswerable here.
+    let _floor = openhuman_core::modules::security::install_unavailable_path_floor_port();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("private.png");
     std::fs::write(&file, b"private").unwrap();

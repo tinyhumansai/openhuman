@@ -130,6 +130,16 @@ impl AuthProfilesStore {
         };
 
         for (id, profile) in &data.profiles {
+            // A secret the keyring already holds unchanged isn't stored again:
+            // saving one profile must not ask the user to approve storing
+            // every other. The row itself is still rebuilt from `profile`.
+            let unchanged_in_keyring = self.use_keychain
+                && previous
+                    .profiles
+                    .get(id)
+                    .and_then(|held| held.secret_location)
+                    == Some(SecretLocation::Keyring)
+                && self.keychain_holds(profile);
             // The profile document itself is encrypted by TSD. Keep tokens in
             // the keyring when one is available; otherwise the outer encrypted
             // document protects the fields directly.
@@ -137,7 +147,13 @@ impl AuthProfilesStore {
             let (access_token, refresh_token, id_token, token, expires_at, token_type, scope) =
                 if self.use_keychain {
                     // Store secrets in the OS keychain — JSON gets no secret fields.
-                    if let Err(e) = self.keychain_store_secrets(profile).await {
+                    let stored = if unchanged_in_keyring {
+                        log::debug!("[auth] save: keyring secrets unchanged profile_id={id}");
+                        Ok(())
+                    } else {
+                        self.keychain_store_secrets(profile).await
+                    };
+                    if let Err(e) = stored {
                         if !super::keychain::should_fallback_to_encrypted_document(&e) {
                             // A per-operation refusal must not be bypassed by
                             // copying the same secret into another store.

@@ -2,7 +2,7 @@
 
 use crate::core::runtime::DispatchCtx;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use zeroize::Zeroize;
 
@@ -102,6 +102,21 @@ struct X402Service {
     handle: X402ServiceHandle,
 }
 
+/// The per-request budget of the active ledger, readable from the module's
+/// authorization callback without the service lock (which the confidential
+/// prepare call holds). Zero until a service is configured.
+static ACTIVE_PER_REQUEST_MAX: AtomicU64 = AtomicU64::new(0);
+
+/// The per-request x402 budget in atomic units: the active ledger's, else the
+/// configured default. Used by the host's automation approval as a second
+/// check after the module's own budget reservation.
+pub(crate) fn per_request_max_atomic() -> u64 {
+    match ACTIVE_PER_REQUEST_MAX.load(Ordering::Acquire) {
+        0 => budget_from(|name| std::env::var(name).ok()).0,
+        value => value,
+    }
+}
+
 static X402_SERVICE: OnceLock<tokio::sync::Mutex<Option<X402Service>>> = OnceLock::new();
 static X402_SHUTDOWN_HOOK_REGISTERED: AtomicBool = AtomicBool::new(false);
 
@@ -166,6 +181,7 @@ async fn ensure_service(
             },
         )
         .await?;
+        ACTIVE_PER_REQUEST_MAX.store(service_config.per_request_max_atomic, Ordering::Release);
         *active = Some(X402Service {
             workspace,
             accounts,
@@ -312,6 +328,7 @@ pub(crate) async fn update_budget(
     )
     .await?;
     current.config.per_request_max_atomic = result.per_request_max_atomic;
+    ACTIVE_PER_REQUEST_MAX.store(result.per_request_max_atomic, Ordering::Release);
     current.config.daily_max_atomic = result.daily_max_atomic;
     current.config.monthly_max_atomic = result.monthly_max_atomic;
     Ok(result)

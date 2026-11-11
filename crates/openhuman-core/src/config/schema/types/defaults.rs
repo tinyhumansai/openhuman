@@ -114,6 +114,7 @@ impl Default for Config {
             inbound_debounce: InboundDebounceConfig::default(),
             components: ComponentsConfig::default(),
             hosting: HostingConfig::default(),
+            wallet_policy: WalletPolicyConfig::default(),
             storage: StorageConfig::default(),
             voice_server: VoiceServerConfig::default(),
             voice_providers: Vec::new(),

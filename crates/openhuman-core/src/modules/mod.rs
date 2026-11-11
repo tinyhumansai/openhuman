@@ -56,6 +56,7 @@ mod browser_egress_host;
 pub mod browser_task;
 #[cfg(feature = "modules")]
 mod browser_task_report;
+pub(crate) mod callback_owner;
 #[cfg(feature = "channels")]
 pub(crate) mod channel_controller;
 pub(crate) mod channel_health;

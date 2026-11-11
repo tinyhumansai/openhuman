@@ -41,20 +41,30 @@ async fn resolve_user_master_inner(
     registration_id: &str,
     existing_key: Option<(&super::secret_backend::SecretBackend, &str)>,
 ) -> Result<String, SecurityError> {
-    let gate = crate::security::approval::ApprovalGate::try_global()
-        .ok_or_else(|| SecurityError::Unavailable("secret approval unavailable".into()))?;
-    let outcome = gate
-        .intercept_forced(
-            MASTER_GRANT_TOOL,
-            "Unlock configuration secrets",
-            serde_json::json!({"registration_id": registration_id}),
-        )
-        .await;
-    if !matches!(outcome, crate::security::approval::GateOutcome::Allow) {
+    #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
+    let answered = super::test_host::answer_master_grant(MASTER_GRANT_TOOL, registration_id).await;
+    #[cfg(not(any(test, feature = "e2e-test-support", feature = "test-keyring-consent")))]
+    let answered = None;
+    let outcome = match answered {
+        Some(outcome) => outcome,
+        None => {
+            let gate = crate::security::approval::ApprovalGate::try_global()
+                .ok_or_else(|| SecurityError::Unavailable("secret approval unavailable".into()))?;
+            gate.intercept_forced(
+                MASTER_GRANT_TOOL,
+                "Unlock configuration secrets",
+                serde_json::json!({"registration_id": registration_id}),
+            )
+            .await
+        }
+    };
+    if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
         crate::security::approval::native::forget_secret_grant(registration_id);
-        return Err(SecurityError::Unavailable(
-            "secret master approval denied".into(),
-        ));
+        tracing::warn!(
+            reason = %reason,
+            "[security::secret_cipher] secret master grant refused"
+        );
+        return Err(master_grant_refusal(&reason));
     }
     let (request, request_id) =
         crate::security::approval::native::take_secret_grant(registration_id).ok_or_else(|| {
@@ -88,6 +98,26 @@ async fn resolve_user_master_inner(
             "secret master resolution refused".into(),
         )),
     }
+}
+
+/// Why the secret master was not unlocked, from the gate's denial reason: a
+/// person's refusal, an unanswered prompt, or the gate's own reason (its
+/// agent-facing marker removed) when it never asked.
+fn master_grant_refusal(reason: &str) -> SecurityError {
+    const WHAT: &str = "the approval to unlock configuration secrets";
+    let message = if crate::security::approval::is_unanswered_approval_reason(reason) {
+        format!("{WHAT} was not answered in time")
+    } else if reason.contains("User denied") {
+        format!("{WHAT} was denied")
+    } else {
+        let reason = reason
+            .trim_start()
+            .strip_prefix(tinytools::status::POLICY_DENIED_MARKER)
+            .unwrap_or(reason)
+            .trim();
+        format!("{WHAT} was refused: {reason}")
+    };
+    SecurityError::ApprovalRefused(message)
 }
 
 /// Successful result of the native routine config cipher.
@@ -197,3 +227,7 @@ pub(crate) async fn run(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "secret_cipher_tests.rs"]
+mod tests;

@@ -3,8 +3,8 @@
 mod common;
 
 use common::{
-    chat_completion, offline_config, route, runtime, scripted_provider, stub_backend,
-    tool_call_completion,
+    chat_completion, chat_requests, offline_config, route, runtime, scripted_provider,
+    stub_backend, tool_call_completion, tool_results,
 };
 use openhuman_embed::seams::{ToolHookContext, ToolHookDecision};
 use openhuman_embed::{
@@ -15,6 +15,52 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+
+type Approval = (
+    ToolHookContext,
+    tokio::sync::oneshot::Sender<ToolHookDecision>,
+);
+
+/// The longest the host waits for any one step of a turn. Every wait in the
+/// scenario goes through here so a regression fails naming the step that never
+/// arrived instead of hanging until CI cancels the job.
+const STEP: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Fail the test naming `reason`. The core's panic hook reports only the
+/// location of a panic, so the message goes to stderr first.
+fn fail(reason: String) -> ! {
+    eprintln!("inline_permissions: {reason}");
+    panic!("{reason}");
+}
+
+async fn within<T>(step: &str, wait: impl std::future::Future<Output = T>) -> T {
+    match tokio::time::timeout(STEP, wait).await {
+        Ok(value) => value,
+        Err(_) => fail(format!("timed out after {STEP:?} waiting for {step}")),
+    }
+}
+
+async fn next_approval(
+    received: &mut tokio::sync::mpsc::UnboundedReceiver<Approval>,
+    step: &str,
+) -> Approval {
+    match within(step, received.recv()).await {
+        Some(approval) => approval,
+        None => fail(format!("approval channel closed while waiting for {step}")),
+    }
+}
+
+/// A refusal that ends the turn. TinyAgents answers a plain `Deny` to the model
+/// and lets the turn continue (so the model may ask for the tool again, and the
+/// host is asked again); only `continue_ = Some(false)` stops the run. These
+/// scenarios script exactly one model call per refused turn, so they refuse
+/// with a stop.
+fn refuse_and_stop(reason: &str) -> ToolHookDecision {
+    ToolHookDecision {
+        continue_: Some(false),
+        ..ToolHookDecision::deny(reason)
+    }
+}
 
 struct Probe(Arc<AtomicUsize>);
 #[async_trait::async_trait]
@@ -75,10 +121,7 @@ async fn scenario() {
                 Box::pin(async move { HostTurnTools::advertised(vec![Box::new(Probe(calls))]) })
             })
     };
-    let (requests, mut received) = tokio::sync::mpsc::unbounded_channel::<(
-        ToolHookContext,
-        tokio::sync::oneshot::Sender<ToolHookDecision>,
-    )>();
+    let (requests, mut received) = tokio::sync::mpsc::unbounded_channel::<Approval>();
     let agent = runtime
         .agent(
             spec("interactive", &provider, calls.clone()).can_use_tool(move |context| {
@@ -87,7 +130,7 @@ async fn scenario() {
                 Box::pin(async move {
                     decision
                         .await
-                        .unwrap_or_else(|_| ToolHookDecision::deny("UI closed"))
+                        .unwrap_or_else(|_| refuse_and_stop("UI closed"))
                 })
             }),
         )
@@ -99,11 +142,7 @@ async fn scenario() {
         )
         .unwrap();
     let first = tokio::spawn(agent.turn("needs approval").send());
-    let (context, answer) =
-        tokio::time::timeout(std::time::Duration::from_secs(5), received.recv())
-            .await
-            .unwrap()
-            .unwrap();
+    let (context, answer) = next_approval(&mut received, "the first approval request").await;
     assert_eq!(context.agent_id.as_deref(), Some("interactive"));
     assert_eq!(context.tool_name, "probe");
     assert_eq!(
@@ -111,33 +150,49 @@ async fn scenario() {
         0,
         "tool ran before the UI answered"
     );
-    other.run("independent worker").await.unwrap();
+    within(
+        "the independent agent to finish its turn",
+        other.run("independent worker"),
+    )
+    .await
+    .unwrap();
     assert_eq!(other_calls.load(Ordering::SeqCst), 1);
-    answer
-        .send(ToolHookDecision::deny("human refused"))
-        .unwrap();
+    answer.send(refuse_and_stop("human refused")).unwrap();
     assert!(
-        first.await.unwrap().is_err(),
+        within("the denied first turn to finish", first)
+            .await
+            .unwrap()
+            .is_err(),
         "denied call unexpectedly succeeded"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let second = tokio::spawn(
         agent
             .turn("turn-specific refusal")
-            .can_use_tool(|_| Box::pin(async { ToolHookDecision::deny("turn narrowed authority") }))
+            .can_use_tool(|_| Box::pin(async { refuse_and_stop("turn narrowed authority") }))
             .send(),
     );
-    let (_, answer) = received.recv().await.unwrap();
+    let (_, answer) = next_approval(
+        &mut received,
+        "the approval request of the turn-narrowed turn",
+    )
+    .await;
     answer.send(ToolHookDecision::default()).unwrap();
     assert!(
-        second.await.unwrap().is_err(),
+        within("the turn-narrowed turn to finish", second)
+            .await
+            .unwrap()
+            .is_err(),
         "turn denial unexpectedly succeeded"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0, "turn policy was skipped");
     let third = tokio::spawn(agent.turn("next turn").send());
-    let (_, answer) = received.recv().await.unwrap();
+    let (_, answer) = next_approval(&mut received, "the approval request of the next turn").await;
     answer.send(ToolHookDecision::default()).unwrap();
-    third.await.unwrap().unwrap();
+    within("the approved next turn to finish", third)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,
@@ -146,10 +201,13 @@ async fn scenario() {
     let mut pending = agent.turn("cancel while the UI waits");
     let cancellation = pending.cancellation_handle();
     let cancelled = tokio::spawn(pending.send());
-    let (_, answer) = received.recv().await.unwrap();
-    cancellation.cancel().await;
+    let (_, answer) =
+        next_approval(&mut received, "the approval request of the cancelled turn").await;
+    within("the cancellation to complete", cancellation.cancel()).await;
     assert!(matches!(
-        cancelled.await.unwrap(),
+        within("the cancelled turn to finish", cancelled)
+            .await
+            .unwrap(),
         Err(openhuman_embed::CoreError::TurnCancelled { .. })
     ));
     assert!(
@@ -158,15 +216,71 @@ async fn scenario() {
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     let closed_ui = tokio::spawn(agent.turn("closed UI refuses").send());
-    let (_, answer) = received.recv().await.unwrap();
+    let (_, answer) =
+        next_approval(&mut received, "the approval request of the closed-UI turn").await;
     drop(answer);
-    assert!(closed_ui.await.unwrap().is_err());
+    assert!(within("the closed-UI turn to finish", closed_ui)
+        .await
+        .unwrap()
+        .is_err());
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,
         "closing the UI granted permission"
     );
-    repeated_permissions(&runtime).await;
+    within(
+        "the repeated-permissions scenario",
+        repeated_permissions(&runtime),
+    )
+    .await;
+    within(
+        "the plain-denial scenario",
+        plain_denial_is_answered_to_the_model(&runtime),
+    )
+    .await;
+}
+
+/// A `Deny` without `continue_ = Some(false)` does not end the turn: the tool
+/// never runs, the model is told why, and it answers on its own.
+async fn plain_denial_is_answered_to_the_model(runtime: &Runtime) {
+    let provider = scripted_provider(vec![tool_call_completion("probe", "{}")], "answered").await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let tool_calls = calls.clone();
+    let agent = runtime
+        .agent(
+            AgentSpec::new("plain-denial")
+                .provider(route(&provider, "fixture"))
+                .definition(
+                    AgentDefinitionSpec::new()
+                        .bare_prompt("Use probe then answer")
+                        .tools(ToolScopeSpec::HostOnly),
+                )
+                .tools(move |_| {
+                    let tool_calls = tool_calls.clone();
+                    Box::pin(
+                        async move { HostTurnTools::advertised(vec![Box::new(Probe(tool_calls))]) },
+                    )
+                })
+                .can_use_tool(|_| Box::pin(async { ToolHookDecision::deny("plain refusal") })),
+        )
+        .unwrap();
+    within(
+        "the plain-denial turn to finish",
+        agent.run("perform probe"),
+    )
+    .await
+    .expect("a plain denial is answered to the model, not fatal to the turn");
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "a denied tool ran");
+    let requests = chat_requests(&provider).await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "the model was not asked again after the denial"
+    );
+    assert!(
+        tool_results(&requests[1]).contains("plain refusal"),
+        "the model was not told why the tool was refused"
+    );
 }
 
 async fn repeated_permissions(runtime: &Runtime) {
@@ -188,13 +302,16 @@ async fn repeated_permissions(runtime: &Runtime) {
                         async move { HostTurnTools::advertised(vec![Box::new(Probe(tool_calls))]) },
                     )
                 })
-                .can_use_tool(|_| {
-                    Box::pin(async { ToolHookDecision::deny("first policy refused") })
-                })
+                .can_use_tool(|_| Box::pin(async { refuse_and_stop("first policy refused") }))
                 .can_use_tool(|_| Box::pin(async { ToolHookDecision::default() })),
         )
         .unwrap();
-    assert!(agent.run("perform probe").await.is_err());
+    assert!(within(
+        "the repeated-permissions turn to finish",
+        agent.run("perform probe")
+    )
+    .await
+    .is_err());
     assert_eq!(
         calls.load(Ordering::SeqCst),
         0,

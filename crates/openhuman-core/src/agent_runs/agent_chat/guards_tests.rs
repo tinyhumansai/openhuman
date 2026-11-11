@@ -238,3 +238,33 @@ async fn agent_chat_origin_comes_from_the_turn_context_before_the_task_scope() {
     let bare = DispatchCtx::new(CoreContext::for_test(DomainSet::full(), None));
     assert_eq!(chat_thread(effective_agent_chat_origin(&bare)), "direct");
 }
+
+/// TS-E2E-030: the guard screens with the op's own config. Under a context
+/// without a boot-time embedder snapshot, like a host booted `Normal` (the
+/// CLI's `serve`), screening from that snapshot held every prompt as
+/// "screen.unavailable", even when the config turned the screen off. The scope
+/// keeps the premise independent of the process-default context other tests
+/// may boot.
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn the_prompt_guard_screens_with_the_ops_config_not_the_boot_snapshot() {
+    use crate::core::runtime::{CoreContext, DomainSet};
+    CoreContext::scope(CoreContext::for_test(DomainSet::full(), None), async {
+        assert!(
+            CoreContext::current_embedder_config().is_none(),
+            "this test needs a context without a boot-time config snapshot"
+        );
+        let config = Config {
+            prompt_screen: crate::config::schema::PromptScreenConfig::off(),
+            ..Config::default()
+        };
+
+        let screened = enforce_user_prompt_or_reject(&config, "hello there", "unit-test").await;
+
+        assert!(
+            screened.is_ok(),
+            "a config that turns the screen off must be honoured: {screened:?}"
+        );
+    })
+    .await;
+}

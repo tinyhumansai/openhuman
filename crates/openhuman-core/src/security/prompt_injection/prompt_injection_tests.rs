@@ -110,6 +110,8 @@ async fn security_off_for_the_process_allows_input_and_tool_definitions_without_
 #[cfg(feature = "security-module")]
 #[tokio::test]
 async fn an_enforcing_config_holds_input_when_the_module_is_not_loaded() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     let mut config = crate::config::Config::default();
     config.modules.enabled = false;
 
@@ -151,6 +153,8 @@ async fn turning_the_screen_off_also_admits_input_over_the_scan_limit() {
 #[cfg(feature = "security-module")]
 #[tokio::test]
 async fn input_without_a_resolved_config_is_held_even_though_another_could_turn_it_off() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     let decision =
         super::enforce_prompt_input_with_config("summarise my inbox", context(), None).await;
 

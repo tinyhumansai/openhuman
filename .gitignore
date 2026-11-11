@@ -155,7 +155,6 @@ diff-coverage.md
 
 # Local/self-hosted CI run output (never commit)
 ci-out/
-ci-out-ex63/
 
 # Proptest failures are promoted to named unit tests.
 proptest-regressions/

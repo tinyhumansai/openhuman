@@ -71,3 +71,16 @@ fn the_openshell_kind_is_named_openshell_on_the_wire() {
     let back: SandboxBackendKind = serde_json::from_value(serde_json::json!("openshell")).unwrap();
     assert_eq!(back, SandboxBackendKind::OpenShell);
 }
+
+#[test]
+fn the_openshell_and_agent37_backends_keep_a_box_between_commands() {
+    assert!(SandboxBackendKind::OpenShell.keeps_boxes());
+    assert!(SandboxBackendKind::Agent37.keeps_boxes());
+    for backend in [
+        SandboxBackendKind::None,
+        SandboxBackendKind::Local,
+        SandboxBackendKind::Docker,
+    ] {
+        assert!(!backend.keeps_boxes(), "{backend:?}");
+    }
+}

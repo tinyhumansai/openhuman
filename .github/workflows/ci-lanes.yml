@@ -1,18 +1,10 @@
 ---
-# CI lanes — the shared body behind ci-fast.yml (org members, EX63 microVMs)
-# and ci-fast-hosted.yml (everyone else, GitHub-hosted runners).
+# CI lanes — the body of ci-fast-hosted.yml.
 #
-# Both profiles run the same lane plan (scripts/ci/self-hosted/lanes-plan.mjs):
-# the complete area suites, with sequential private lanes and parallel hosted jobs,
-# with changed-line coverage enforced at >= 80% by the same diff-cover gate.
-#
-#   ex63    one job on one throwaway Firecracker microVM (runner group
-#           `openhuman-ex63`, host code in tinyhumansai/gh-hosted-runner). Lanes
-#           run sequentially and reuse compatible target dirs under target/.
-#           Builds compile from scratch each run (no remote compile cache);
-#           package caches stay on /cache.
-#   hosted  the same lanes split over a few GitHub-hosted jobs sized to fit
-#           those runners, with GitHub's Actions cache.
+# Runs the lane plan (scripts/ci/self-hosted/lanes-plan.mjs): the complete area
+# suites, split over a few GitHub-hosted jobs sized to fit those runners, with
+# GitHub's Actions cache and changed-line coverage enforced at >= 80% by the
+# diff-cover gate.
 #
 # Area flags pick whole suites. Nothing here narrows a suite to changed files.
 # Timing probes touch this workflow to select every CI area. Compare actual
@@ -22,20 +14,10 @@ name: CI Lanes
 on:
   workflow_call:
     inputs:
-      profile:
-        description: "ex63 or hosted"
-        type: string
-        required: true
       pr-number:
         type: number
         required: false
         default: 0
-      # A trusted branch ref to check out instead of the PR merge commit: the
-      # manual `workflow_dispatch` test path of ci-fast.yml. Empty for PRs.
-      ref:
-        type: string
-        required: false
-        default: ""
       base-ref:
         type: string
         required: true
@@ -50,123 +32,9 @@ env:
   PR_TITLE: ${{ github.event.pull_request.title }}
 
 jobs:
-  # ── ex63: the whole CI in one job on one microVM ────────────────────────────
-  ex63:
-    name: CI Fast (EX63)
-    if: inputs.profile == 'ex63'
-    runs-on:
-      group: openhuman-ex63
-      labels: [self-hosted, openhuman-ex63]
-    # Sequential diagnostic validation plus cache save already took 118 min
-    # before seven coverage suites could execute; reserve a complete-run budget.
-    timeout-minutes: 180
-    steps:
-      - name: Checkout PR merge commit
-        uses: tinyhumansai/.github/actions/checkout@35fa65b76c80d48779592b111837e55d9d0860d4
-        with:
-          ref: ${{ inputs.ref != '' && inputs.ref || format('refs/pull/{0}/merge', inputs.pr-number) }}
-          fetch-depth: 0
-          submodules: recursive
-          # Pin ancestry checks also inspect compile-only vendor repositories.
-          submodule-depth: 0
-          exclude-submodules: wiki
-          # Trusted-base membership routing authorizes team fork merge refs.
-          allow-unsafe-pr-checkout: true
-          persist-credentials: false
-
-      - name: Verify private runner contract
-        run: bash scripts/ci/self-hosted/verify-runner.sh
-
-      - name: Detect changed areas
-        id: filter
-        uses: dorny/paths-filter@v4
-        with:
-          filters: .github/ci-paths-filter.yml
-          base: ${{ inputs.base-ref }}
-
-      # The guest contract supplies Python with a TOML parser and jq. Lanes continue
-      # independently after failures, in order within this single private job.
-      - name: Start lanes
-        id: lanes
-        env:
-          CI_AREA_FRONTEND: ${{ steps.filter.outputs.frontend }}
-          CI_AREA_I18N: ${{ steps.filter.outputs.i18n }}
-          CI_AREA_DOCS: ${{ steps.filter.outputs.docs }}
-          CI_AREA_RUST_CORE: ${{ steps.filter.outputs['rust-core'] }}
-          CI_AREA_RUST_TAURI: ${{ steps.filter.outputs['rust-tauri'] }}
-          CI_AREA_SCRIPTS: ${{ steps.filter.outputs.scripts }}
-          CI_AREA_INVENTORY: ${{ steps.filter.outputs.inventory }}
-          CI_AREA_TOOLCHAIN_IMAGE: ${{ steps.filter.outputs['toolchain-image'] }}
-          CI_AREA_INSTALL_PS1: ${{ steps.filter.outputs.install_ps1 }}
-          CI_AREA_STORAGE: ${{ steps.filter.outputs.storage }}
-        run: node scripts/ci/self-hosted/lanes.mjs --profile ex63 --detach
-
-      - name: "Lane: static checks"
-        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'static') }}
-        run: node scripts/ci/self-hosted/lanes.mjs --wait static
-
-      - name: "Lane: frontend checks"
-        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'frontend') }}
-        run: node scripts/ci/self-hosted/lanes.mjs --wait frontend
-
-      - name: "Lane: frontend tests (vitest + coverage)"
-        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'frontend-tests') }}
-        run: node scripts/ci/self-hosted/lanes.mjs --wait frontend-tests
-
-      - name: "Lane: Rust core coverage"
-        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'rust-cov') }}
-        run: node scripts/ci/self-hosted/lanes.mjs --wait rust-cov
-
-      - name: "Lane: Rust lint + crate tests"
-        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'rust-lint') }}
-        run: node scripts/ci/self-hosted/lanes.mjs --wait rust-lint
-
-      - name: "Lane: Rust gates-off smoke"
-        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'rust-gates-off') }}
-        run: node scripts/ci/self-hosted/lanes.mjs --wait rust-gates-off
-
-      - name: "Lane: Tauri clippy + coverage"
-        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'tauri') }}
-        run: node scripts/ci/self-hosted/lanes.mjs --wait tauri
-
-      - name: "Lane: install.ps1 (Pester)"
-        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'pester') }}
-        run: node scripts/ci/self-hosted/lanes.mjs --wait pester
-
-      - name: Lane summary
-        id: summary
-        if: ${{ !cancelled() && steps.lanes.outcome == 'success' }}
-        run: node scripts/ci/self-hosted/lanes.mjs --wait-all
-
-      - name: Enforce >= 80% coverage on changed lines
-        # Only over complete coverage: a failed lane already fails this job.
-        if: >-
-          steps.summary.outcome == 'success' &&
-          (steps.filter.outputs.frontend == 'true' ||
-           steps.filter.outputs['rust-core'] == 'true' ||
-           steps.filter.outputs['rust-tauri'] == 'true')
-        run: bash scripts/ci/self-hosted/diff-cover.sh ci-out/lcov "origin/${{ inputs.base-ref }}" ci-out/diff-cover
-
-      - name: Verify mold in actual lane executables
-        if: >-
-          !cancelled() && steps.summary.outcome == 'success' &&
-          (steps.filter.outputs['rust-core'] == 'true' ||
-           steps.filter.outputs['rust-tauri'] == 'true')
-        run: node scripts/ci/self-hosted/verify-linkage.mjs
-
-      - name: Upload lane logs, timings and coverage
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: ci-out-ex63
-          path: ci-out/
-          retention-days: 14
-          if-no-files-found: warn
-
-  # ── hosted: plan, then one GitHub-hosted job per lane group ─────────────────
+  # Plan, then one GitHub-hosted job per lane group.
   plan:
     name: Plan lanes
-    if: inputs.profile == 'hosted'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -221,21 +89,31 @@ jobs:
   lanes:
     name: Lanes (${{ matrix.group }})
     needs: plan
-    if: inputs.profile == 'hosted' && fromJSON(needs.plan.outputs.matrix).include[0] != null
+    if: fromJSON(needs.plan.outputs.matrix).include[0] != null
     runs-on: ubuntu-22.04
-    timeout-minutes: 100
+    # The rust-cov shards each build the core cold on 4 cores (~20 min per
+    # build, CARGO_BUILD_JOBS=1) and run for 30-75 min; the one job that ran
+    # them all never fit in 100. Every other group keeps 100.
+    timeout-minutes: ${{ startsWith(matrix.group, 'rust-cov-') && 120 || 100 }}
     container:
       # Empty for the pester group: pwsh ships on the bare runner image.
       image: ${{ matrix.container }}
       # The runner's PID 1 (`tail -f /dev/null`) never reaps orphans, so a
       # killed grandchild stays a zombie that `kill(pid, 0)` still finds and the
       # process-group timeout tests fail. `--init` puts a reaping init at PID 1.
-      options: --init
+      # The rust-cov shards run sandbox and shell tests against TinyBox's real
+      # jail, which needs unprivileged user namespaces and an unmasked /proc:
+      # Docker's default seccomp/AppArmor profiles and masked paths refuse both.
+      # No --privileged and no added capabilities.
+      options: ${{ startsWith(matrix.group, 'rust-cov-') && '--init --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined' || '--init' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       NPM_CONFIG_STORE_DIR: .pnpm-store
+      # Which part of the rust-cov lane this job runs (empty for other groups);
+      # read by scripts/ci/rust-coverage.sh.
+      OH_COV_SHARD: ${{ matrix.shard }}
       CI_AREA_FRONTEND: ${{ needs.plan.outputs.frontend }}
       CI_AREA_I18N: ${{ needs.plan.outputs.i18n }}
       CI_AREA_DOCS: ${{ needs.plan.outputs.docs }}
@@ -261,37 +139,68 @@ jobs:
           ref: refs/pull/${{ inputs.pr-number }}/merge
           # Only the checks group compares against the base branch.
           fetch-depth: ${{ matrix.group == 'checks' && '0' || '1' }}
-          # Submodules come from the step below (see the ex63 job).
+          # Submodules come from the step below.
           submodules: false
           persist-credentials: false
+
+      - name: Give the job a private home
+        # The runner mounts /github/home owned by its own uid (1001), but the
+        # container runs as root, so to the secrets driver every file under the
+        # default home sits in a namespace another user can mutate, and it
+        # refuses them ("secret namespace permits foreign mutation"). Use a
+        # fresh root-owned 0700 /home/ci instead, the shape and place a real
+        # user's home has. Not /root: that is an always-forbidden system root,
+        # so anything defaulting under ~ (e.g. ~/OpenHuman) would be refused.
+        # This runs first so later steps (git config, caches) use it too.
+        # The runner also creates the workspace (/__w/<repo>/<repo>) and its
+        # parents as uid 1001, and tests keep scratch state under the
+        # checkout's target/, so root-own those ancestors for the same reason.
+        if: matrix.container != ''
+        run: |
+          install -d -o root -g root -m 0700 /home/ci
+          echo "HOME=/home/ci" >> "$GITHUB_ENV"
+          dir="$GITHUB_WORKSPACE"
+          while [ "$dir" != / ]; do
+            chown root:root "$dir"
+            chmod go-w "$dir"
+            dir="$(dirname "$dir")"
+          done
 
       - name: Trust the workspace for git
         # The checkout is owned by the runner uid; the container runs as root.
         if: matrix.container != ''
         run: git config --global --add safe.directory '*'
 
-      - name: Install jq for release-script tests
+      - name: Install jq and unzip for release-script tests
+        # stage-modules.mjs unpacks module archives with unzip, which the
+        # image does not carry.
         if: matrix.container != '' && needs.plan.outputs.scripts == 'true'
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends jq python3-tomli
+          apt-get install -y --no-install-recommends jq python3-tomli unzip
+
+      - name: Install bubblewrap for the sandbox jail
+        # The image's bubblewrap 0.6.1 lacks --disable-userns, so TinyBox finds
+        # no jail and every sandboxed test is refused as Unsupported.
+        if: startsWith(matrix.group, 'rust-cov-') && matrix.container != ''
+        run: bash scripts/ci/install-bubblewrap.sh
 
       - name: Check out submodules
         run: bash scripts/ci/checkout-submodules.sh
 
       - name: Cache Rust build artifacts
-        if: matrix.group == 'rust-lint' || matrix.group == 'rust-cov' || matrix.group == 'tauri' || matrix.group == 'storage'
+        if: matrix.group == 'rust-lint' || startsWith(matrix.group, 'rust-cov-') || matrix.group == 'tauri' || matrix.group == 'storage'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             . -> target
             crates/openhuman-app -> target
-          cache-on-failure: ${{ matrix.group != 'rust-cov' }}
+          cache-on-failure: ${{ !startsWith(matrix.group, 'rust-cov-') }}
           shared-key: ci-fast-${{ matrix.group }}
 
       - name: Prune stale coverage test executables
         # Instrumented test binaries in a restored cache can exhaust the disk.
-        if: matrix.group == 'rust-cov'
+        if: startsWith(matrix.group, 'rust-cov-')
         run: find target/llvm-cov-target -type f -path '*/debug/deps/*' -perm -111 -delete 2>/dev/null || true
 
       - name: Cache pnpm store
@@ -303,9 +212,12 @@ jobs:
           restore-keys: |
             pnpm-store-${{ runner.os }}-
 
-      - name: Install cargo-llvm-cov
-        if: matrix.group == 'rust-cov' || matrix.group == 'tauri'
+      - name: Install cargo-llvm-cov and cargo-nextest
+        if: startsWith(matrix.group, 'rust-cov-') || matrix.group == 'tauri'
         uses: taiki-e/install-action@cargo-llvm-cov
+        with:
+          # rust-cov runs the core's tests one process per test (nextest).
+          tool: cargo-llvm-cov,cargo-nextest
 
       # One step per lane: `Start lanes` launches every lane in the background
       # (they still run in parallel); each `Lane:` step streams its own lane's
@@ -313,7 +225,7 @@ jobs:
       # for the whole run and carries the overall result. `!cancelled()` keeps
       # a red lane from hiding the lanes after it.
       # The embed-consumer bootstrap uses stdlib tomllib (Python >= 3.11).
-      # Both runner profiles must use the same interpreter before spawning lanes.
+      # Pin the interpreter before spawning lanes.
       # It is handed to the lanes explicitly (OPENHUMAN_CI_PYTHON) rather than
       # exported: an exported toolcache PATH/LD_LIBRARY_PATH leaks into the
       # Rust tests, whose agent shell keeps PATH but not LD_LIBRARY_PATH, so a
@@ -371,7 +283,7 @@ jobs:
         run: node scripts/ci/self-hosted/lanes.mjs --wait-all
 
       - name: Prune coverage test executables before cache save
-        if: always() && matrix.group == 'rust-cov'
+        if: always() && startsWith(matrix.group, 'rust-cov-')
         run: find target/llvm-cov-target -type f -path '*/debug/deps/*' -perm -111 -delete 2>/dev/null || true
 
       - name: Upload lane logs, timings and coverage
@@ -386,7 +298,7 @@ jobs:
   gate:
     name: CI Fast (hosted) Gate
     needs: [plan, lanes]
-    if: always() && inputs.profile == 'hosted'
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -427,6 +339,18 @@ jobs:
         with:
           path: ci-artifacts
           pattern: ci-out-*
+
+      - name: Require every Rust coverage shard, and the whole tree across them
+        # A shard missing from the matrix, or one that never uploaded an lcov,
+        # fails here rather than reading as "nothing to cover". The presence
+        # check is the one every shard defers (scripts/ci/rust-coverage.sh).
+        if: needs.plan.outputs.coverage == 'true' && (needs.plan.outputs['rust-core'] == 'true' || needs.plan.outputs.storage == 'true')
+        env:
+          PLAN_MATRIX: ${{ needs.plan.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/self-hosted/merge-coverage-shards.mjs ci-artifacts merged-rust-core.info
+          bash scripts/ci/assert-coverage-presence.sh merged-rust-core.info --all
 
       - name: Enforce >= 80% coverage on changed lines
         if: needs.plan.outputs.coverage == 'true'

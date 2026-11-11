@@ -193,6 +193,8 @@ mod cancel_scoping_tests;
 mod error_code_classification_tests;
 #[path = "web_tests_error_copy_fixture_tests.rs"]
 mod error_copy_fixture_tests;
+#[path = "web_tests_prompt_screen_classification_tests.rs"]
+mod prompt_screen_classification_tests;
 #[path = "web_tests_queue_acceptance_tests.rs"]
 mod queue_acceptance_tests;
 #[path = "web_tests_rate_limit_classification_tests.rs"]

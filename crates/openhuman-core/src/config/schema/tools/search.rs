@@ -146,8 +146,14 @@ pub(crate) const SEARCH_SCHEMA_PROVIDERS: u32 = 2;
 pub const SEARCH_ROLE_SEARCH: &str = "search";
 pub const SEARCH_ROLE_ANSWER: &str = "answer";
 pub const SEARCH_ROLE_CONTENTS: &str = "contents";
-/// Capability roles, in display order.
-pub const SEARCH_ROLES: &[&str] = &[SEARCH_ROLE_SEARCH, SEARCH_ROLE_ANSWER, SEARCH_ROLE_CONTENTS];
+pub const SEARCH_ROLE_IMAGES: &str = "images";
+/// Capability roles, in display order: every `tinysearch_bus::Role`, by its key.
+pub const SEARCH_ROLES: &[&str] = &[
+    SEARCH_ROLE_SEARCH,
+    SEARCH_ROLE_ANSWER,
+    SEARCH_ROLE_CONTENTS,
+    SEARCH_ROLE_IMAGES,
+];
 
 /// Providers the host can configure — the TinySearch catalog.
 pub const SEARCH_PROVIDERS: &[&str] = tinysearch_bus::PROVIDERS;
@@ -287,6 +293,18 @@ pub struct SearchConfig {
     #[serde(default = "default_search_timeout_secs")]
     pub timeout_secs: u64,
 
+    /// Render results compactly for the model: citations that repeat a listed
+    /// result are left out and a page's text is kept to 1,500 characters
+    /// instead of 500. Defaults to `false`. Env: `OPENHUMAN_SEARCH_COMPACT_RESULTS`.
+    #[serde(default)]
+    pub compact_results: bool,
+
+    /// Cap, in characters, on each page an Exa contents call returns. Unset
+    /// asks for whole pages; the module lowers anything above 1,500 to 1,500.
+    /// Env: `OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS` (`0` clears it).
+    #[serde(default)]
+    pub contents_max_chars: Option<u64>,
+
     /// Brave Search key (direct route).
     #[serde(default)]
     pub brave: SearchEngineCredentials,
@@ -345,6 +363,8 @@ impl Default for SearchConfig {
             presentation_provider: None,
             max_results: default_search_max_results(),
             timeout_secs: default_search_timeout_secs(),
+            compact_results: false,
+            contents_max_chars: None,
             brave: SearchEngineCredentials::default(),
             querit: SearchEngineCredentials::default(),
             exa: SearchEngineCredentials::default(),

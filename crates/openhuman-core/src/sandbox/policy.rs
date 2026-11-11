@@ -15,7 +15,7 @@ use tinyagents_definition::SandboxMode;
 
 /// The executor `sandbox` and `runtime` name, if any. `remote` marks a channel, cron or
 /// remote session, which has always asked for a container.
-fn named_backend(
+pub(crate) fn named_backend(
     sandbox: &SandboxConfig,
     runtime: &RuntimeConfig,
     remote: bool,

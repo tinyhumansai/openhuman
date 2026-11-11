@@ -402,6 +402,54 @@ impl Config {
                 }
             }
         }
+        if let Some(raw) = env.get("OPENHUMAN_SEARCH_COMPACT_RESULTS") {
+            match super::classify_shell_hide_window(&raw) {
+                super::ShellHideWindowParse::Set(value) => {
+                    self.search.compact_results = value;
+                    self.record_env_override(
+                        env,
+                        "search.compact_results",
+                        &["OPENHUMAN_SEARCH_COMPACT_RESULTS"],
+                    );
+                }
+                super::ShellHideWindowParse::Unset => {}
+                super::ShellHideWindowParse::Unrecognized => {
+                    tracing::warn!(
+                        "[config] ignoring a non-boolean OPENHUMAN_SEARCH_COMPACT_RESULTS"
+                    );
+                }
+            }
+        }
+        // `0` or an empty value removes a cap set in `config.toml`.
+        if let Some(raw) = env.get("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS") {
+            let cap = match raw.trim() {
+                "" => Some(None),
+                value => match value.parse::<u64>() {
+                    // Every spelling of zero (`0`, `00`) clears the cap.
+                    Ok(0) => Some(None),
+                    Ok(chars) => Some(Some(chars)),
+                    Err(_) => {
+                        tracing::warn!(
+                            "[config] ignoring unparseable OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS"
+                        );
+                        None
+                    }
+                },
+            };
+            if let Some(cap) = cap {
+                if cap.is_none() {
+                    tracing::debug!(
+                        "[config] OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS clears the search contents cap"
+                    );
+                }
+                self.search.contents_max_chars = cap;
+                self.record_env_override(
+                    env,
+                    "search.contents_max_chars",
+                    &["OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS"],
+                );
+            }
+        }
         if let Some(t) = env.get_any(&["OPENHUMAN_SEARCH_TIMEOUT_SECS", "SEARCH_TIMEOUT_SECS"]) {
             if let Ok(n) = t.parse::<u64>() {
                 if n > 0 {

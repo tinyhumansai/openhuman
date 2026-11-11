@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::sync::Arc;
 use tinyagents_harness_tools::static_schema;
-use tinytools::{Tool, ToolResult};
+use tinytools::{PermissionLevel, Tool, ToolResult};
 
 pub struct ProxyConfigTool {
     config: Arc<Config>,
@@ -319,6 +319,30 @@ impl Tool for ProxyConfigTool {
         static_schema!(include_str!("parameters/proxy_config.json"))
     }
 
+    fn permission_level(&self) -> PermissionLevel {
+        // Minimum across the actions: `get` and `list_services` only read.
+        // The mutating ones are classified by `permission_level_with_args`.
+        PermissionLevel::ReadOnly
+    }
+
+    /// The host authorization stage (`OpenHumanSecurityGate`) is what keeps a
+    /// read-only session from changing the proxy; the tool no longer checks
+    /// its own policy. It can only do that if the call is declared as a
+    /// write. The trait default is `ReadOnly`, which would classify `set`,
+    /// `disable`, `apply_env` and `clear_env` as reads and let them through
+    /// every tier. An unknown action is a write too (fail closed).
+    fn permission_level_with_args(&self, args: &Value) -> PermissionLevel {
+        match args
+            .get("action")
+            .and_then(Value::as_str)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            None | Some("get") | Some("list_services") => PermissionLevel::ReadOnly,
+            Some(_) => PermissionLevel::Write,
+        }
+    }
+
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let action = args
             .get("action")
@@ -330,7 +354,6 @@ impl Tool for ProxyConfigTool {
             "get" => self.handle_get(),
             "list_services" => self.handle_list_services(),
             "set" | "disable" | "apply_env" | "clear_env" => {
-
                 match action.as_str() {
                     "set" => self.handle_set(&args).await,
                     "disable" => self.handle_disable(&args).await,

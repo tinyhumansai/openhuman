@@ -1,11 +1,28 @@
 use anyhow::Result;
+use tinyagents_harness::observability::turn_observer::SetupPhase;
 use tinyagents_runtime::{ResumeMode, SessionTurnRequest, TurnOptions};
 use tinyinference_llm::message::Message;
 
 use crate::agent::{
-    message_convert::user_message_from_text, session_host::types::OpenHumanSessionHost,
+    message_convert::user_message_from_text,
+    session_host::{
+        setup_report::{reported, result_outcome},
+        types::OpenHumanSessionHost,
+    },
     tinyagents::host::OpenHumanRunContext,
 };
+
+/// Whether a turn creates its thread, so it chooses the thread's pinned options
+/// from the config. A thread with durable rows (imported history) is not new
+/// even before its prefix is frozen: it predates the pin. A session that was
+/// resumed from a store but holds no rows yet is new, though `new_session`
+/// (which also asks that nothing was loaded) says otherwise.
+pub(super) fn starts_thread(
+    new_session: bool,
+    stored_rows: &[tinyagents_session::transcript::TranscriptMessage],
+) -> bool {
+    new_session || stored_rows.is_empty()
+}
 
 pub(super) fn prepare_prefix_for_turn(new_session: bool, prefix_is_frozen: bool) -> bool {
     new_session || !prefix_is_frozen
@@ -100,6 +117,7 @@ impl OpenHumanSessionHost {
         let mut context = OpenHumanRunContext::new().with_host_env(&host_env);
         context.hosted_base = self.hosted_base.clone();
         context.headless_descendant_settlement = headless;
+        context.scheduled_actions = self.scheduled_actions;
         let headless_owner = headless.then(|| {
             crate::agent::tinyagents::tool_registration::subagent_owner_key(
                 &self.workspace_dir,
@@ -179,10 +197,13 @@ impl OpenHumanSessionHost {
                 .runtime_session
                 .as_mut()
                 .expect("runtime session initialized");
-            let resumed = runtime
-                .resume(&options)
-                .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            let resumed = reported(
+                SetupPhase::TranscriptResume,
+                runtime.resume(&options),
+                result_outcome,
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             if resumed.loaded {
                 let recorded_tools = runtime.recorded_tools().cloned();
                 if let Some(prelude) = self

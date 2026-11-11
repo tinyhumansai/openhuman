@@ -159,8 +159,8 @@ test("selection discovery works in the CI image without ripgrep", () => {
   assert.deepEqual(
     selections.map((result) => [result.selection, result.files.length]),
     [
-      ["all", 110],
-      ["required", 109],
+      ["all", 111],
+      ["required", 110],
       ["diagnostic", 1],
     ],
   );

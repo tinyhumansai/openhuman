@@ -48,7 +48,12 @@ pub async fn init_stores(cfg: &crate::config::Config, domains: crate::core::runt
         domains,
     );
     if plan.memory {
-        let binding = crate::memory::engine::resolve(cfg).await;
+        // Logged only: every memory call binds again, once the keyring can
+        // ask. Asking it here, before the listener is up, would wait for an
+        // answer no one can give.
+        let binding =
+            crate::credentials::profiles::without_keyring(crate::memory::engine::resolve(cfg))
+                .await;
         match &binding {
             crate::memory::engine::Binding::On(bound) => {
                 log::info!("[boot] memory engine bound: id={}", bound.id)
@@ -91,18 +96,13 @@ pub async fn init_stores(cfg: &crate::config::Config, domains: crate::core::runt
     // (Composio sync tick, cron, etc.) fires its first event.
     // Reading from the store here means subsequent events carry
     // `user.id` even when no `app_state_snapshot` RPC has run yet.
-    match crate::credentials::session_state::build_session_state(cfg).await {
-        Ok(state) => {
-            if let Some(uid) = state.user_id.as_deref() {
-                crate::core::observability::sentry_scope::bind(uid);
-            }
-            // The host-supplied user payload survives restarts in the profile
-            // store; seed the identity slot from it so prompt composition sees
-            // the signed-in user before any host RPC runs.
-            crate::credentials::identity::set_current_user(state.user);
-        }
-        Err(e) => {
-            log::debug!("[boot] sentry scope user bind skipped — build_session_state failed: {e}")
-        }
+    // Nothing can answer a keyring prompt yet: the listener is not up. A
+    // profile the keyring keeps is bound after the secret preflight.
+    if let Err(e) = crate::credentials::profiles::without_keyring(
+        crate::credentials::session_state::bind_session_user(cfg),
+    )
+    .await
+    {
+        log::debug!("[boot] session user bind deferred to the secret preflight: {e}");
     }
 }

@@ -136,6 +136,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'エージェントと自律性',
   'settings.devGroups.automationIntegrations': '自動化と接続',
   'settings.tokenUsage.title': 'トークン節約',
+  'settings.secretGrant.title': 'OpenHuman に保存済みのシークレットのロック解除を許可しますか？',
+  'settings.secretGrant.subtitle':
+    'この設定を保存するには、暗号化のために一度だけ承認が必要です。保存を取り消すには拒否してください。',
   'settings.tokenUsage.menuDesc': '圧縮設定と、それによって節約されたトークン数およびコスト',
   'settings.tokenUsage.saving': '保存中…',
   'settings.tokenUsage.saved': '保存済み',
@@ -4179,6 +4182,8 @@ const messages: TranslationMap = {
     'このターンは時間予算を超過して完了しなかったため、ハングアップを防ぐために停止されました。これは通常、ツール呼び出しまたは委任されたサブエージェントが停止したことを意味します。このスレッドで質問を再試行してください。',
   'chat_error.disk_full':
     'ディスクがいっぱいのため、この会話を保存できませんでした。ディスクの空き容量を確保してから、このスレッドでメッセージをもう一度送信してください。',
+  'chat_error.prompt_screened':
+    'OpenHumanのセキュリティチェックがこのメッセージを保留したため、モデルには送信されませんでした。アシスタント向けの指示（ウェブページやメールからの引用など）が含まれている場合は、それを削除して再試行してください。通常のメッセージも保留される場合は、セキュリティモジュールが利用できない可能性があります。OpenHumanを再起動して再試行してください。',
   'chat_error.empty_response':
     'モデルが空の応答を返しました。再試行してください。問題が解決しない場合は、別のモデルを試すか、[接続] → [APIキー] → [LLM]で設定を確認してください。',
   'chat_error.chat_template_rejected':

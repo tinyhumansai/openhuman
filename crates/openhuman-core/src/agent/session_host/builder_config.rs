@@ -16,6 +16,9 @@ pub struct SessionHostBuilder {
     pub(super) turn_model_source: Option<TurnModelSource>,
     /// Explicit host config for injected-model attachment staging and services.
     pub(super) runtime_config: Option<Arc<crate::config::Config>>,
+    /// The session's own policy for the hosted base, when the caller already
+    /// built it; otherwise `build` derives one from `runtime_config`.
+    pub(super) security_policy: Option<Arc<crate::security::SecurityPolicy>>,
     pub(super) tools: Option<Vec<Box<dyn Tool>>>,
     /// Host-owned handle shared with the durable `use_skill` tool.
     pub(super) pack_registry_handle: Option<tinyagents_harness_tools::skills::PackRegistryHandle>,

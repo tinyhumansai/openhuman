@@ -550,7 +550,14 @@ async fn resolve_subagent_source_hint_with_config_routes_via_factory() {
     // The provider hook resolves the role through the generic factory; a
     // different configured chat model must not replace the role's selection.
     use crate::config::Config;
-    let mut config = Config::default();
+    // The credential store lives beside `config_path`; the default would write
+    // the fixture key into the real `$HOME/.openhuman`.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut config = Config {
+        workspace_dir: dir.path().join("workspace"),
+        config_path: dir.path().join("config.toml"),
+        ..Config::default()
+    };
     // Route `agentic` to the OpenHuman backend explicitly, and set a
     // distinct `default_model` so the assertion proves the role — not the
     // global default — drives the resolved tier.

@@ -65,22 +65,26 @@ async fn rejects_when_user_confirmed_false() {
     assert!(result.output().contains("user consent"));
 }
 
+/// The tool no longer checks its own tier: refusing a read-only session is the
+/// host authorization stage's job. `update_apply` replaces the running binary,
+/// so it has to declare itself as `Dangerous` for that stage to refuse it.
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
-async fn rejects_in_read_only_mode_even_with_consent() {
+async fn the_host_stage_rejects_it_in_read_only_mode_even_with_consent() {
+    use crate::agent::tinyagents::host::security_gate_test_support::{authorize_one, is_denied};
     let tool = UpdateApplyTool::new(read_only());
-    let result = tool
-        .execute(json!({ "user_confirmed": true }))
-        .await
-        .unwrap();
-    assert!(result.is_error);
-    // The autonomy gate now delegates to `SecurityPolicy::enforce_tool_operation`,
-    // whose canonical read-only message is `"Security policy: read-only
-    // mode, cannot perform '<op_name>'"` — assert against that phrasing
-    // and the operation name rather than the old hand-rolled string.
-    let body = result.output();
+    assert_eq!(tool.permission_level(), PermissionLevel::Dangerous);
+    let decision = authorize_one(
+        read_only(),
+        Box::new(tool),
+        json!({ "user_confirmed": true }),
+    )
+    .await;
     assert!(
-        body.contains("read-only mode") && body.contains("update_apply"),
-        "expected shared enforcer's read-only message, got: {body}"
+        is_denied(&decision),
+        "a read-only session must not apply an update; got {decision:?}"
     );
 }
 

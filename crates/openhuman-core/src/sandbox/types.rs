@@ -15,12 +15,24 @@ pub enum SandboxBackendKind {
     Local,
     /// Docker container isolation.
     Docker,
-    /// The tenant's long-lived OpenShell box (`sandbox::openshell`).
+    /// The tenant's long-lived OpenShell box (`sandbox::boxes`).
     #[serde(rename = "openshell")]
     OpenShell,
-    /// A box per command on the hosted agent37 service (`sandbox::agent37`).
+    /// The tenant's retained box on the hosted agent37 service
+    /// (`sandbox::agent37`, over `sandbox::boxes`).
     #[serde(rename = "agent37")]
     Agent37,
+}
+
+impl SandboxBackendKind {
+    /// Whether the backend keeps a box per tenant between commands, so a file
+    /// an agent makes stays in that tenant's box and is not on the host.
+    /// [`Self::OpenShell`] and [`Self::Agent37`] do; a backend that joins
+    /// them answers `true` here and gets the box-side behavior of every
+    /// caller that asks.
+    pub fn keeps_boxes(self) -> bool {
+        matches!(self, Self::OpenShell | Self::Agent37)
+    }
 }
 
 /// Per-session sandbox policy resolved from agent definition, session

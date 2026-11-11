@@ -211,3 +211,37 @@ async fn released_runtime_scopes_callbacks_and_replays_one_final_send() {
         "adapter removed only after acknowledged stop"
     );
 }
+
+struct ProbeHost;
+
+#[tinybus::interface(name = "ai.tinyhumans.tinychannels.ChannelsHost")]
+impl ProbeHost {
+    async fn probe(&self) -> tinybus::Result<String> {
+        Ok("answered".to_owned())
+    }
+}
+
+/// TS-E2E-012: a runtime's channel host answers only the TinyChannels module.
+/// The caller here is the module runtime's own connection; any other peer on
+/// it reaches the callback the same way.
+#[tokio::test]
+async fn the_channel_host_answers_only_the_tinychannels_module() {
+    let client = crate::channels::module_fixture::client().await;
+    let lease = ChannelRuntimeLease::open(client, ProbeHost)
+        .await
+        .expect("the staged TinyChannels module opens a runtime");
+    let path = lease.0.cleanup.callback.clone();
+    let connection = lease.0.cleanup.connection.clone();
+    let reply: tinybus::Result<String> = connection
+        .proxy(HOST_BUS_NAME, path.as_str(), HOST_BUS_NAME)
+        .expect("a valid proxy address")
+        .call("Probe", ())
+        .await;
+    assert!(
+        reply.as_ref().is_err_and(
+            |error| format!("{error:?}").contains(crate::modules::callback_owner::REFUSAL)
+        ),
+        "the channel host did not refuse a peer that is not TinyChannels: {reply:?}"
+    );
+    let _ = lease.close().await;
+}

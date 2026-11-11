@@ -71,8 +71,16 @@ pub async fn thread_create_new(
     request: CreateConversationThreadRequest,
 ) -> Result<Outcome<ApiEnvelope<ConversationThreadSummary>>, String> {
     let dir = workspace_dir().await?;
-    let working_dir =
-        super::working_dir::validate_working_dir(request.action_dir.as_deref()).await?;
+    let config = ctx
+        .load_config()
+        .await
+        .map_err(|e| format!("load config: {e}"))?;
+    let working_dir = super::working_dir::validate_working_dir_for_store(
+        request.action_dir.as_deref(),
+        &config,
+        &dir,
+    )
+    .await?;
     let id = format!("thread-{}", uuid::Uuid::new_v4());
     let now = chrono::Local::now();
     let title = format!("Chat {} {}", now.format("%b %-d"), now.format("%-I:%M %p"));

@@ -262,3 +262,56 @@ async fn an_unbound_single_user_caller_keeps_workspace_local_persistence() {
         "unbound single-user storage reopens from the workspace-local backend"
     );
 }
+
+/// A context with an agent but no profile: the embedded shape, whose storage
+/// scope is the agent's own but whose completion tables are the workspace's.
+fn embed_agent(name: &str, workspace: &std::path::Path) -> Arc<CoreContext> {
+    let config = crate::config::Config {
+        workspace_dir: workspace.to_path_buf(),
+        ..crate::config::Config::default()
+    };
+    CoreContext::for_test(DomainSet::full(), None).derive_with(
+        ContextOverlay::new(config, DomainSet::kernel(), ToolGroups::none()).session_agent(name),
+    )
+}
+
+/// An embed agent's completion lands in the store the profile-less router
+/// reopens, so delivery and boot recovery (which run under the host's default
+/// context, with no agent) still find it after a restart (#7687).
+#[tokio::test]
+async fn an_embed_agents_completion_survives_a_restart_for_the_host() {
+    let _guard = crate::config::TEST_ENV_LOCK.lock().await;
+    let ws = TestWorkspace::new();
+    let agent = DispatchCtx::new(embed_agent("embed-a", ws.path()));
+    let host = DispatchCtx::new(CoreContext::for_test(DomainSet::full(), None));
+
+    record_completion(
+        &agent,
+        ws.path(),
+        "embed-session",
+        "embed-task",
+        "researcher",
+        "done",
+        Some("embed-thread".into()),
+    )
+    .await;
+    assert_eq!(
+        router_scope_for(&agent, ws.path()),
+        router_scope_for(&host, ws.path()),
+        "agents of one profile share a router"
+    );
+
+    router_pool()
+        .remove(&router_scope_for(&host, ws.path()))
+        .expect("drop the router to model a restart");
+    assert_eq!(
+        recover_pending_threads(&host, ws.path()),
+        ["embed-thread"],
+        "the host reopens the store the agent wrote to"
+    );
+    let pending: Vec<_> = pending_for_ctx(&host, ws.path(), "embed-thread")
+        .into_iter()
+        .map(|record| record.task_id)
+        .collect();
+    assert_eq!(pending, ["embed-task"]);
+}
