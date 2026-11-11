@@ -539,7 +539,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
     /// retried as a disposable box.
     async fn resource_for(
         &self,
-        (scope, tenant): &Owner,
+        owner: &Owner,
         slot: &Slot,
         settings: &BoxSettings,
     ) -> Result<String, BoxError> {
@@ -550,6 +550,10 @@ impl<D: BoxDriver> BoxRegistry<D> {
         if let Some(resource) = slot.current()? {
             return Ok(resource);
         }
+        // A box let go of for this owner may still be closing; a new one made
+        // now could adopt the same instance, so wait for it first.
+        self.cleanups.settle(owner).await;
+        let (scope, tenant) = owner;
         let retention: Option<Retention> = self
             .limits
             .retain
