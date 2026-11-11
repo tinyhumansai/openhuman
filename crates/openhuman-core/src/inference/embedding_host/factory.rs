@@ -74,14 +74,16 @@ pub(super) fn managed_factory(
 /// freezes a read-only credential and carries no TinySecurity egress guard (the
 /// doctor never loads the module), exactly like the doctor's chat probe. Like
 /// that probe, the host-side local-only check runs here first, so a local-only
-/// privacy mode still keeps the probe on this machine.
+/// privacy mode still keeps the probe on this machine. Inspection installs no
+/// live policy, so the selected config's own mode is checked as well.
 fn inspection_managed_factory(config: &Config) -> ManagedModelFactory {
     let config = config.clone();
     Arc::new(move |model, dimensions| {
         let model = model.to_owned();
         let config = config.clone();
         Box::pin(async move {
-            crate::inference::provider::factory::access_gates::enforce_local_only_inference(
+            crate::inference::provider::factory::access_gates::enforce_local_only_inference_for(
+                &config,
                 "embeddings",
                 PROVIDER_OPENHUMAN,
             )
