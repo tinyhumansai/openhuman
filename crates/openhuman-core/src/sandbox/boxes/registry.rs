@@ -119,16 +119,22 @@ impl Cleanups {
 
     /// Wait until no cleanup of `owner`'s box is pending.
     async fn settle(&self, owner: &Owner) {
+        self.settle_matching(|pending| pending == owner).await;
+    }
+
+    /// Wait until no cleanup of an owner `matches` is pending.
+    async fn settle_matching(&self, matches: impl Fn(&Owner) -> bool) {
         loop {
             // Registered before the check, so a cleanup finishing between the
             // check and the wait is not missed.
             let finished = self.finished.notified();
-            let pending = self
+            let busy = self
                 .pending
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .contains_key(owner);
-            if !pending {
+                .keys()
+                .any(&matches);
+            if !busy {
                 return;
             }
             finished.await;
@@ -226,12 +232,22 @@ impl Slot {
         true
     }
 
-    /// Drop `resource` if it is still the slot's box.
-    fn forget(&self, resource: &str) {
+    /// Give up `resource` as the slot's box, returning its cleanup (already
+    /// pending). `None` when the slot no longer owns it: it was retired, so
+    /// the retirement took the box and its cleanup, or it was given up
+    /// already. A stale command must not then close a replacement's box.
+    fn surrender(
+        &self,
+        resource: &str,
+        cleanups: &Arc<Cleanups>,
+        owner: &Owner,
+    ) -> Option<Detached> {
         let mut state = self.state();
-        if state.resource.as_deref() == Some(resource) {
-            state.resource = None;
+        if state.resource.as_deref() != Some(resource) {
+            return None;
         }
+        state.resource = None;
+        Some(cleanups.detach(owner.clone(), resource.to_owned()))
     }
 
     /// Retire the slot and hand back its box to close.
@@ -289,10 +305,10 @@ impl<D: BoxDriver> Drop for Running<D> {
             retained = self.retained,
             "[sandbox:box] command cancelled; letting go of its box"
         );
-        // Detach before forgetting, so a command for the same owner that
-        // runs in between already sees the pending cleanup.
-        let detached = self.cleanups.detach(self.owner.clone(), resource.clone());
-        self.slot.forget(&resource);
+        let Some(detached) = self.slot.surrender(&resource, &self.cleanups, &self.owner) else {
+            tracing::debug!("[sandbox:box] the box was already let go of; nothing to clean up");
+            return;
+        };
         // The box is let go of on a task of its own; the handle is not needed.
         drop(spawn_detached(
             &self.driver,
@@ -379,18 +395,20 @@ impl<D: BoxDriver> BoxRegistry<D> {
                         timeout_secs = whole_seconds(request.timeout),
                         "[sandbox:box] box did not answer by the deadline; letting it go"
                     );
-                    let detached = self.cleanups.detach(lease.owner.clone(), resource.clone());
-                    slot.forget(&resource);
-                    self.let_go_all(vec![detached]).await;
+                    if let Some(detached) = slot.surrender(&resource, &self.cleanups, &lease.owner)
+                    {
+                        self.let_go_all(vec![detached]).await;
+                    }
                     return Ok(backstop_timed_out(request.timeout));
                 }
                 Err(BoxError::UnknownResource) => {
                     // "Gone" is inferred after a failed exec, so the box may
                     // still exist on the gateway: let go of it rather than
                     // leak it (a retained box is only forgotten).
-                    let detached = self.cleanups.detach(lease.owner.clone(), resource.clone());
-                    slot.forget(&resource);
-                    self.let_go_all(vec![detached]).await;
+                    if let Some(detached) = slot.surrender(&resource, &self.cleanups, &lease.owner)
+                    {
+                        self.let_go_all(vec![detached]).await;
+                    }
                     if replaced {
                         return Err(BoxError::UnknownResource);
                     }
@@ -438,6 +456,11 @@ impl<D: BoxDriver> BoxRegistry<D> {
             false
         });
         self.let_go_all(detached).await;
+        // Cleanups begun earlier for this tenant (a command that gave up) are
+        // waited for too, so none outlives the release.
+        self.cleanups
+            .settle_matching(|(_, owner)| owner == tenant)
+            .await;
     }
 
     /// Let go of every box: closed, or forgotten when retained.
@@ -453,6 +476,9 @@ impl<D: BoxDriver> BoxRegistry<D> {
             })
             .collect();
         self.let_go_all(detached).await;
+        // Cleanups already pending (a command that gave up) finish before
+        // shutdown returns, so no box is left open once the runtime ends.
+        self.cleanups.settle_matching(|_| true).await;
     }
 
     /// Start the background reaper, once; it stops when the registry drops.

@@ -15,7 +15,7 @@
 //! process's registry. A box's close or forget reaches the module with the
 //! configuration it was created under, so a later call cannot redirect the
 //! cleanup of an earlier box; work outside any call (the idle reaper) uses the
-//! most recent call's.
+//! most recent module-enabled call's.
 //!
 //! A reservation is closed if the create it was for is cancelled before the
 //! module answers ([`AbandonGuard`]), so a cancelled first command never
@@ -67,7 +67,8 @@ tokio::task_local! {
 /// A [`BoxDriver`] over the TinyBox module, for one backend, reaching the
 /// module with the configuration of the call it serves.
 pub struct BusBoxDriver {
-    /// The most recent call's configuration, for work outside any call.
+    /// The configuration of the most recent call that has modules enabled,
+    /// for work outside any call; the initial configuration until such a call.
     latest: RwLock<Arc<Config>>,
     /// The configuration each box was created under, by resource id. Its
     /// cleanup reaches the module with that configuration, not with whichever
@@ -87,13 +88,13 @@ impl BusBoxDriver {
         }
     }
 
-    /// Record that `resource` was created under the configuration of the
-    /// current step.
-    fn remember(&self, resource: &str) {
+    /// Record that `resource` was created under `config`, the configuration
+    /// its create was made with.
+    fn remember(&self, resource: &str, config: &Arc<Config>) {
         self.created_with
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(resource.to_owned(), self.config());
+            .insert(resource.to_owned(), Arc::clone(config));
     }
 
     /// The configuration a step on `resource` reaches the module with: the
@@ -217,7 +218,7 @@ impl BoxDriver for BusBoxDriver {
         let request = create_request(resource, self.backend, settings, retention);
         let created = tinybox::create(&config, request).await;
         let resource = settle_create(reservation, created)?;
-        self.remember(&resource);
+        self.remember(&resource, &config);
         Ok(resource)
     }
 
