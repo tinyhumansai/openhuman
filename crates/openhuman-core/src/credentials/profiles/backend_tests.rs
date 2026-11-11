@@ -50,7 +50,7 @@ fn a_tenant_store_outside_its_own_scope_is_refused_in_saas() {
             Path::new("/elsewhere/users/alice"),
             Some(&users())
         ),
-        Home::Refused.clone().ne(&Home::Refused).then_some(Home::Refused).unwrap_or(Home::Local)
+        Home::Local
     );
 }
 
