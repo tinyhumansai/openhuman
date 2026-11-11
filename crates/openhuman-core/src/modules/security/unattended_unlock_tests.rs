@@ -61,12 +61,34 @@ fn a_default_config_is_interactive() {
     assert_eq!(mode_for(&config), UnlockMode::Unattended);
 }
 
+fn parked(tool: &str, tool_call_id: Option<&str>) -> crate::security::approval::PendingApproval {
+    crate::security::approval::PendingApproval {
+        request_id: "req-1".into(),
+        tool_name: tool.into(),
+        action_summary: "Unlock configuration secrets".into(),
+        args_redacted: serde_json::json!({}),
+        created_at: chrono::Utc::now(),
+        expires_at: None,
+        source_context: None,
+        tool_call_id: tool_call_id.map(str::to_owned),
+        ..Default::default()
+    }
+}
+
 #[test]
-fn only_a_grant_for_this_registration_is_answered() {
-    let ours = serde_json::json!({ "registration_id": "reg-ours" });
-    let theirs = serde_json::json!({ "registration_id": "reg-theirs" });
-    let redacted = serde_json::json!({});
-    assert!(names_registration(&ours, "reg-ours"));
-    assert!(!names_registration(&theirs, "reg-ours"));
-    assert!(names_registration(&redacted, "reg-ours"));
+fn only_the_park_this_call_raised_is_answered() {
+    let tool = "native_secret_grant";
+    assert!(is_our_park(&parked(tool, Some("corr-ours")), tool, "corr-ours"));
+    assert!(
+        !is_our_park(&parked(tool, Some("corr-theirs")), tool, "corr-ours"),
+        "another caller's grant"
+    );
+    assert!(
+        !is_our_park(&parked(tool, None), tool, "corr-ours"),
+        "an uncorrelated grant (a person's desktop prompt)"
+    );
+    assert!(
+        !is_our_park(&parked("shell", Some("corr-ours")), tool, "corr-ours"),
+        "another tool"
+    );
 }

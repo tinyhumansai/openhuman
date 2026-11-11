@@ -27,9 +27,6 @@ use crate::config::Config;
 use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::core::runtime::DispatchCtx;
 use crate::security::approval::{ApprovalDecision, ApprovalGate, GateOutcome};
-use crate::security::secret_storage::encrypted_file_backend::{
-    MASTER_KEY_ENV, MASTER_KEY_FILE_ENV,
-};
 use crate::security::secret_storage::store::BackendKind;
 
 const LOG: &str = "[security::unattended_unlock]";
@@ -75,12 +72,11 @@ pub(crate) fn mode_for(config: &Config) -> UnlockMode {
     if ASSUME_OPERATOR_KEY.load(Ordering::SeqCst) > 0 {
         return UnlockMode::Unattended;
     }
-    let set = |name: &str| {
-        std::env::var_os(name).is_some_and(|value| !value.to_string_lossy().trim().is_empty())
-    };
+    // A key variable that is set but unusable (missing file, malformed key)
+    // is not an operator key: the file backend never validates it at startup.
     unlock_mode(
         true,
-        set(MASTER_KEY_ENV) || set(MASTER_KEY_FILE_ENV),
+        crate::security::secret_storage::encrypted_file_backend::key_source::operator_master_key_supplied(),
         crate::security::secret_storage::store::effective_backend_kind(),
     )
 }
@@ -112,8 +108,12 @@ pub(crate) fn assume_operator_key() -> AssumeOperatorKeyGuard {
 /// The request is raised outside whatever turn triggered the config load (a
 /// channel or scheduled turn would otherwise be refused before the grant is
 /// even created), so it parks exactly like a Settings save with no chat route,
-/// and this host decides that park with an ordinary one-time approval. The
+/// and this host decides that park with an ordinary one-time approval. Only
+/// the park this call raised is answered: the gate stamps it with a fresh
+/// correlation id, and any other pending grant is left for its own owner. The
 /// outcome is the gate's: a failed engine or an expired park still denies.
+/// Dropping the returned future (a config-load timeout, a cancelled caller)
+/// aborts the request, so the gate's cancel guard withdraws its park.
 pub(crate) async fn answer_master_grant(
     gate: &Arc<ApprovalGate>,
     tool: &'static str,
@@ -128,8 +128,13 @@ pub(crate) async fn answer_master_grant(
     let dispatch = DispatchCtx::ambient().with_turn_origin(AgentTurnOrigin::Unknown);
     let asking = Arc::clone(gate);
     let args = serde_json::json!({ "registration_id": registration_id });
-    let mut asked =
-        dispatch.spawn(async move { asking.intercept_forced(tool, summary, args).await });
+    let correlation = format!("unattended-unlock-{}", uuid::Uuid::new_v4().simple());
+    let asked_as = correlation.clone();
+    let mut asked = tokio_util::task::AbortOnDropHandle::new(dispatch.spawn(async move {
+        asking
+            .intercept_forced_correlated(tool, summary, args, &asked_as)
+            .await
+    }));
     let mut decided = HashSet::new();
     loop {
         tokio::select! {
@@ -166,8 +171,7 @@ pub(crate) async fn answer_master_grant(
             }
             () = tokio::time::sleep(POLL) => {
                 for pending in gate.list_pending().unwrap_or_default() {
-                    if pending.tool_name != tool
-                        || !names_registration(&pending.args_redacted, registration_id)
+                    if !is_our_park(&pending, tool, &correlation)
                         || !decided.insert(pending.request_id.clone())
                     {
                         continue;
@@ -207,19 +211,16 @@ pub(crate) async fn answer_master_grant(
     }
 }
 
-/// Whether a parked grant can be this registration's. A row whose arguments
-/// still carry a registration id must carry ours, so a grant another profile's
-/// configuration raised is never answered here; a row whose arguments were
-/// redacted away cannot be told apart and is taken as ours (one secret scope
-/// is live per process).
-fn names_registration(args: &serde_json::Value, registration_id: &str) -> bool {
-    match args
-        .get("registration_id")
-        .and_then(serde_json::Value::as_str)
-    {
-        Some(named) => named == registration_id,
-        None => true,
-    }
+/// Whether `pending` is the park this call raised: the grant's tool, stamped
+/// with this call's correlation id. Nothing else is answered, so a grant
+/// another configuration raised (which may not allow unattended unlock) always
+/// waits for its own person.
+fn is_our_park(
+    pending: &crate::security::approval::PendingApproval,
+    tool: &str,
+    correlation: &str,
+) -> bool {
+    pending.tool_name == tool && pending.tool_call_id.as_deref() == Some(correlation)
 }
 
 #[cfg(test)]
