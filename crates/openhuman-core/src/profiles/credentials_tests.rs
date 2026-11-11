@@ -35,7 +35,10 @@ fn the_profile_fixture_has_the_directories_its_enabled_policy_names() {
     let config = profile(&tmp, "fixture");
     assert!(config.autonomy.enabled);
     assert!(config.workspace_dir.is_dir());
-    assert!(config.action_dir.is_dir(), "TinySecurity requires action_dir");
+    assert!(
+        config.action_dir.is_dir(),
+        "TinySecurity requires action_dir"
+    );
 }
 
 #[tokio::test]

@@ -193,7 +193,10 @@ fn secret_authority_boots_without_any_tenants_secret_scope() {
 fn secret_authority_admits_concurrent_work_across_tenants() {
     let module =
         module_config_for_secret_authority(&Config::default(), Some(":1.42".into()), None).unwrap();
-    let limits = module.secret.expect("the secret authority is enabled").limits;
+    let limits = module
+        .secret
+        .expect("the secret authority is enabled")
+        .limits;
     assert_eq!(limits.max_in_flight, 32, "the contract's maximum");
     assert!(limits.max_in_flight > tinysecurity_bus::SecretLimits2::default().max_in_flight);
 }
@@ -231,7 +234,9 @@ async fn concurrent_tenants_each_unlock_their_config_secrets() {
         })
     });
     for store in futures::future::join_all(stores).await {
-        store.expect("store task").expect("tenant unlocks its secrets");
+        store
+            .expect("store task")
+            .expect("tenant unlocks its secrets");
     }
 }
 
