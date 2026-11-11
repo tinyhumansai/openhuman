@@ -72,6 +72,7 @@ pub struct BoxRegistry<D: BoxDriver> {
     driver: Arc<D>,
     limits: RegistryLimits,
     entries: Mutex<HashMap<Owner, Entry>>,
+    cleanups: Arc<Cleanups>,
     reaper: Once,
 }
 
@@ -85,7 +86,96 @@ struct Entry {
 struct Slot {
     /// Held while the box is created, so concurrent first commands make one.
     create_gate: tokio::sync::Mutex<()>,
+    /// Held while a command runs in the box, so commands on one box run one
+    /// at a time. A caller waiting here has armed nothing, so giving up while
+    /// it waits never closes the box under the command that holds the gate.
+    exec_gate: tokio::sync::Mutex<()>,
     state: Mutex<SlotState>,
+}
+
+/// Cleanups (closes or forgets) still running, per owner. A new box for an
+/// owner waits until none is pending, so it never adopts an instance a
+/// cleanup is still tearing down.
+#[derive(Default)]
+struct Cleanups {
+    pending: Mutex<HashMap<Owner, usize>>,
+    finished: tokio::sync::Notify,
+}
+
+impl Cleanups {
+    /// Count a cleanup of `owner`'s box as pending until the ticket drops.
+    fn begin(self: &Arc<Self>, owner: &Owner) -> CleanupTicket {
+        *self
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(owner.clone())
+            .or_insert(0) += 1;
+        CleanupTicket {
+            cleanups: Arc::clone(self),
+            owner: owner.clone(),
+        }
+    }
+
+    /// Wait until no cleanup of `owner`'s box is pending.
+    async fn settle(&self, owner: &Owner) {
+        loop {
+            // Registered before the check, so a cleanup finishing between the
+            // check and the wait is not missed.
+            let finished = self.finished.notified();
+            let pending = self
+                .pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains_key(owner);
+            if !pending {
+                return;
+            }
+            finished.await;
+        }
+    }
+}
+
+/// A pending cleanup; dropping it (the cleanup finished, or its task ended)
+/// lifts the hold on its owner.
+struct CleanupTicket {
+    cleanups: Arc<Cleanups>,
+    owner: Owner,
+}
+
+impl Drop for CleanupTicket {
+    fn drop(&mut self) {
+        let mut pending = self
+            .cleanups
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(count) = pending.get_mut(&self.owner) {
+            *count -= 1;
+            if *count == 0 {
+                pending.remove(&self.owner);
+            }
+        }
+        drop(pending);
+        self.cleanups.finished.notify_waiters();
+    }
+}
+
+/// Let go of `resource` on a spawned task, counted as pending for `owner`
+/// until it finishes. Spawned so that it completes even if the caller that
+/// asked for it is dropped. The returned handle may be awaited or dropped.
+fn spawn_let_go<D: BoxDriver>(
+    driver: Arc<D>,
+    retained: bool,
+    cleanups: &Arc<Cleanups>,
+    owner: &Owner,
+    resource: String,
+) -> tokio::task::JoinHandle<()> {
+    let ticket = cleanups.begin(owner);
+    tokio::spawn(async move {
+        let _ticket = ticket;
+        let_go_with(driver.as_ref(), retained, &resource).await;
+    })
 }
 
 #[derive(Default)]
