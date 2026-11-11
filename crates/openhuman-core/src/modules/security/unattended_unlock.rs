@@ -19,6 +19,7 @@
 //! key the app minted itself) never takes this path, whatever the config says.
 
 use std::collections::HashSet;
+#[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -69,6 +70,7 @@ pub(crate) fn mode_for(config: &Config) -> UnlockMode {
     if !config.secrets.unattended_unlock {
         return UnlockMode::Interactive;
     }
+    #[cfg(test)]
     if ASSUME_OPERATOR_KEY.load(Ordering::SeqCst) > 0 {
         return UnlockMode::Unattended;
     }
@@ -84,6 +86,7 @@ pub(crate) fn mode_for(config: &Config) -> UnlockMode {
 /// Test seam: treat the keyring key as operator-supplied while held, so a test
 /// need not change the process-wide keyring backend. It matters only to a
 /// config that also sets `unattended_unlock`.
+#[cfg(test)]
 static ASSUME_OPERATOR_KEY: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(test)]
