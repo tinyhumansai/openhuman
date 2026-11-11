@@ -38,7 +38,11 @@ impl AuthProfilesStore {
         security_config: Option<crate::config::Config>,
     ) -> Self {
         let user_id = super::user_id_from_state_dir(state_dir);
-        let use_keychain = security_config.is_some() && cfg!(feature = "security-module");
+        let use_keychain = security_config.is_some()
+            && cfg!(feature = "security-module")
+            && keyring_selected_for_profiles(
+                std::env::var("OPENHUMAN_KEYRING_BACKEND").ok().as_deref(),
+            );
         log::debug!(
             "[auth] AuthProfilesStore::new state_dir={} user_id={user_id} use_keychain={use_keychain}",
             state_dir.display()
