@@ -141,6 +141,58 @@ impl PromptSurface for HostGrantSurface {
     }
 }
 
+/// Cancels the request a host grant's engine made durable when the grant's
+/// future is dropped before it resolves (a turn backstop or a dropped gateway
+/// call), mirroring the ordinary park's [`CancelGuard`]. It is installed
+/// before `check` (the request can be delivered while the check is still in
+/// flight) and disarmed on every normal exit, each of which already settles
+/// the request itself.
+struct HostGrantCancelGuard {
+    engine: SharedEngine,
+    surface: Arc<HostGrantSurface>,
+    armed: bool,
+}
+
+impl HostGrantCancelGuard {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for HostGrantCancelGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Some(request_id) = self.surface.delivered.lock().clone() else {
+            return;
+        };
+        let engine = Arc::clone(&self.engine);
+        let cancelled = request_id.clone();
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    if let Err(error) = engine.cancel(&cancelled).await {
+                        tracing::debug!(
+                            request_id = %cancelled,
+                            error = %error,
+                            "[security][saas-grant] the engine did not cancel the dropped grant"
+                        );
+                    }
+                });
+            }
+            Err(_) => tracing::debug!(
+                request_id = %request_id,
+                "[security][saas-grant] no runtime to cancel the dropped grant; it expires on its own"
+            ),
+        }
+        tracing::warn!(
+            request_id = %request_id,
+            "[security][saas-grant] host grant dropped before it resolved; cancelling its request"
+        );
+    }
+}
+
 impl ApprovalGate {
     /// The gate's answer for a SaaS secret master grant nobody can be asked
     /// about, `None` for every other call (including one a person will
@@ -214,6 +266,11 @@ impl ApprovalGate {
             )
         };
         let surface = Arc::new(HostGrantSurface::default());
+        let mut guard = HostGrantCancelGuard {
+            engine: Arc::clone(&self.engine),
+            surface: Arc::clone(&surface),
+            armed: true,
+        };
         let input = CheckInput {
             tenant: super::gate::current_route_tenant(),
             variant: Variant::Forced,
@@ -232,7 +289,10 @@ impl ApprovalGate {
             ttl: self.effective_ttl(),
             prompt: Arc::clone(&surface) as Arc<dyn PromptSurface>,
         };
-        let request_id = match self.engine.check(input).await {
+        let checked = self.engine.check(input).await;
+        // Every arm below settles the request itself.
+        guard.disarm();
+        let request_id = match checked {
             Ok(Checked::Pending { request_id, .. })
                 if surface.delivered.lock().as_deref() == Some(request_id.as_str()) =>
             {
@@ -244,11 +304,15 @@ impl ApprovalGate {
             }
             Err(error) => return deny(&error.to_string()),
         };
-        match self
+        // Re-armed for `decide`: a drop while it is in flight cancels the
+        // still-pending request.
+        guard.armed = true;
+        let decided = self
             .engine
             .decide(&request_id, Choice::Once, SAAS_HOST_AUTHORISED)
-            .await
-        {
+            .await;
+        guard.disarm();
+        match decided {
             Ok(super::engine::Decided::Approved) => {
                 // As for a person's approval of this grant: TinySecurity's
                 // ExecuteSecret2 consumes the HumanOnce grant itself.
