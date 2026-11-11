@@ -11,8 +11,9 @@
 use std::sync::Arc;
 
 use openhuman_embed::__host::egress::{emit_external_transfer, EgressDescriptor};
-use openhuman_embed::__host::inference_registry::{EmbeddingRequest, ProviderContext};
-use openhuman_embed::__host::security::approval::ApprovalChatContext;
+use openhuman_embed::__host::inference_registry::{
+    EmbeddingCallContext, EmbeddingRequest, ProviderContext,
+};
 use tinyinference_embeddings::{BearerResolver, CloudEmbeddingModel, EmbeddingEgressGuard};
 
 use super::managed_session::resolve_session_bearer;
@@ -28,16 +29,14 @@ pub(super) fn from_request(request: EmbeddingRequest<ProviderContext>) -> CloudE
         .embedding
         .as_ref()
         .expect("embedding host context");
-    build_cloud_model(
+    guarded_cloud_model(
         context
             .config
             .as_ref()
             .and_then(|config| config.api_url.clone()),
-        context.state_dir.clone(),
-        context.secrets_encrypt,
+        context,
         &request.model,
         request.dimensions,
-        context.chat.clone(),
     )
 }
 
@@ -101,16 +100,35 @@ fn managed_base_url(api_url: &Option<String>) -> String {
     )
 }
 
-fn build_cloud_model(
+/// The managed endpoint's embedding model with OpenHuman's live credential
+/// resolver for `context`, and the TinySecurity egress guard on every batch.
+fn guarded_cloud_model(
     api_url: Option<String>,
-    state_dir: std::path::PathBuf,
-    secrets_encrypt: bool,
+    context: &EmbeddingCallContext,
     model: &str,
     dimensions: usize,
-    chat: Option<ApprovalChatContext>,
 ) -> CloudEmbeddingModel {
-    let key_endpoint = managed_base_url(&api_url);
-    let bearer: BearerResolver = Arc::new(move || {
+    let bearer = bearer_resolver(managed_base_url(&api_url), context);
+
+    let guarded_model = model.to_owned();
+    let guarded_chat = context.chat.clone();
+    let egress_guard: EmbeddingEgressGuard = Arc::new(move |_, _| {
+        let egress = EgressDescriptor::embedding("cloud", &guarded_model);
+        openhuman_embed::__host::egress::enforce_egress_blocking(&egress)
+            .map_err(|error| tinyinference_embeddings::Error::Embedding(error.to_string()))?;
+        emit_external_transfer(guarded_chat.as_ref(), egress);
+        Ok(())
+    });
+
+    cloud_model(api_url, model, dimensions, bearer).with_egress_guard(egress_guard)
+}
+
+/// Resolves the bearer for each embedding batch from `context`'s credential
+/// scope: a stored TinyHumans API key first, else the app session.
+fn bearer_resolver(key_endpoint: String, context: &EmbeddingCallContext) -> BearerResolver {
+    let state_dir = context.state_dir.clone();
+    let secrets_encrypt = context.secrets_encrypt;
+    Arc::new(move || {
         let state_dir = state_dir.clone();
         let key_endpoint = key_endpoint.clone();
         Box::pin(async move {
@@ -143,19 +161,7 @@ fn build_cloud_model(
             .await
             .map_err(|error| tinyinference_embeddings::Error::Embedding(error.to_string()))
         })
-    });
-
-    let guarded_model = model.to_owned();
-    let guarded_chat = chat;
-    let egress_guard: EmbeddingEgressGuard = Arc::new(move |_, _| {
-        let egress = EgressDescriptor::embedding("cloud", &guarded_model);
-        openhuman_embed::__host::egress::enforce_egress_blocking(&egress)
-            .map_err(|error| tinyinference_embeddings::Error::Embedding(error.to_string()))?;
-        emit_external_transfer(guarded_chat.as_ref(), egress);
-        Ok(())
-    });
-
-    cloud_model(api_url, model, dimensions, bearer).with_egress_guard(egress_guard)
+    })
 }
 
 #[cfg(test)]

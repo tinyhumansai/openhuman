@@ -23,6 +23,25 @@ fn state_dir_of(config: &Config) -> std::path::PathBuf {
         .unwrap_or_default()
 }
 
+/// The guarded managed embedder for an explicit credential directory with no
+/// owning config, as a directory-only caller builds it.
+fn build_cloud_model(
+    api_url: Option<String>,
+    state_dir: std::path::PathBuf,
+    secrets_encrypt: bool,
+    model: &str,
+    dimensions: usize,
+    chat: Option<openhuman_embed::__host::security::approval::ApprovalChatContext>,
+) -> CloudEmbeddingModel {
+    let context = openhuman_embed::__host::inference_registry::EmbeddingCallContext {
+        config: None,
+        chat,
+        state_dir,
+        secrets_encrypt,
+    };
+    guarded_cloud_model(api_url, &context, model, dimensions)
+}
+
 /// Builds the embedder the way the core's managed factory does: through the
 /// registered embedding provider, with the config's credential scope.
 fn build_through_registry(config: &Config, model: &str, dimensions: usize) -> CloudEmbeddingModel {
