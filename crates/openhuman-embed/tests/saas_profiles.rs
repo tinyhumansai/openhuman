@@ -42,7 +42,7 @@ async fn scenario() {
     assert!(root.path().join("service.token").exists(), "token written");
 
     // ── provisioning ────────────────────────────────────────────────────
-    let alice = profiles.provision("alice").await.map_err(|e| { eprintln!("DBGERR {e:?} {e}"); e }).expect("alice");
+    let alice = profiles.provision("alice").await.expect("alice");
     assert!(alice.created);
     assert!(!profiles.provision("alice").await.unwrap().created);
     let bob = profiles.provision("bob").await.expect("bob");
