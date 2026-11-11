@@ -12,7 +12,6 @@ mod observability;
 mod proxy;
 mod runtime;
 mod search;
-mod secrets;
 mod update;
 mod wallet_policy;
 
@@ -415,7 +414,6 @@ impl Config {
         self.apply_observability_env(env);
         self.apply_embedding_env(env);
         self.apply_update_env(env);
-        self.apply_secrets_env(env);
         self.apply_modules_env(env);
         self.apply_components_env(env);
         self.apply_context_env(env);

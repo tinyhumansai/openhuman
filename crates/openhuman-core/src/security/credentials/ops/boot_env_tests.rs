@@ -9,10 +9,7 @@ fn config_in(tmp: &TempDir) -> Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
-        secrets: crate::config::schema::SecretsConfig {
-            encrypt: false,
-            unattended_unlock: false,
-        },
+        secrets: crate::config::schema::SecretsConfig { encrypt: false },
         ..Config::default()
     }
 }

@@ -220,39 +220,3 @@ fn denied_host_source_does_not_fall_back_to_workspace_key() {
     assert!(!dir.path().join("keyring/master.key").exists());
     clear_master_key_source();
 }
-
-#[test]
-fn only_a_usable_operator_key_counts_as_supplied() {
-    let hex = "ab".repeat(32);
-    let no_file = |_: &Path| -> Result<String, String> { Err("missing".into()) };
-    assert!(operator_master_key_valid(Some(&hex), None, no_file));
-    assert!(operator_master_key_valid(
-        None,
-        Some("/key"),
-        |_: &Path| Ok(format!("{hex}\n"))
-    ));
-    assert!(
-        !operator_master_key_valid(None, None, no_file),
-        "nothing set"
-    );
-    assert!(
-        !operator_master_key_valid(None, Some("/missing"), no_file),
-        "unreadable file"
-    );
-    assert!(
-        !operator_master_key_valid(None, Some("/key"), |_: &Path| Ok("not-hex".into())),
-        "malformed file"
-    );
-    assert!(
-        !operator_master_key_valid(Some("abc"), None, no_file),
-        "short inline key"
-    );
-    assert!(
-        !operator_master_key_valid(Some(&hex), Some("/key"), |_: &Path| Ok(hex.clone())),
-        "both set"
-    );
-    assert!(
-        !operator_master_key_valid(Some("   "), None, no_file),
-        "blank"
-    );
-}

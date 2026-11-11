@@ -244,33 +244,6 @@ impl ApprovalGate {
         .0
     }
 
-    /// [`Self::intercept_forced`] whose park carries `correlation` as its
-    /// `tool_call_id`, so the caller can tell its own pending request from any
-    /// other one with the same tool. A host answering a grant for the operator
-    /// (`modules::security::unattended_unlock`) decides only the park it
-    /// raised.
-    pub(crate) async fn intercept_forced_correlated(
-        &self,
-        tool_name: &str,
-        action_summary: &str,
-        args_redacted: serde_json::Value,
-        correlation: &str,
-    ) -> GateOutcome {
-        let mut _park_bound_elapsed = false;
-        self.intercept_audited_inner(
-            &ApprovalTurnContext::default(),
-            tool_name,
-            action_summary,
-            args_redacted,
-            None,
-            &mut _park_bound_elapsed,
-            Some(correlation),
-            Mode::forced(true).untracked(),
-        )
-        .await
-        .0
-    }
-
     /// [`Self::intercept_forced`] that also hands back the request id of an
     /// allowed call, so the caller can [`record_execution`](Self::record_execution)
     /// how the approved action ended.

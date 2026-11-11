@@ -95,37 +95,6 @@ pub(super) fn load_or_mint_master_key(
     Ok(key)
 }
 
-/// Whether the operator supplied a usable master key through the environment
-/// ([`MASTER_KEY_ENV`] or [`MASTER_KEY_FILE_ENV`]): exactly one set, readable,
-/// and a well-formed key. Unlike startup this holds for every keyring backend,
-/// so a policy that trusts an operator key never trusts a variable that is set
-/// but unusable. The key is decoded only to be checked, then wiped.
-pub(crate) fn operator_master_key_supplied() -> bool {
-    let (Ok(inline), Ok(file)) = (
-        env_value(MASTER_KEY_ENV, std::env::var(MASTER_KEY_ENV)),
-        env_value(MASTER_KEY_FILE_ENV, std::env::var(MASTER_KEY_FILE_ENV)),
-    ) else {
-        return false;
-    };
-    operator_master_key_valid(inline.as_deref(), file.as_deref(), read_master_key_file)
-}
-
-/// The decision behind [`operator_master_key_supplied`], with the key file
-/// reader injected.
-pub(crate) fn operator_master_key_valid(
-    inline: Option<&str>,
-    file: Option<&str>,
-    read_file: impl FnOnce(&Path) -> Result<String, String>,
-) -> bool {
-    match master_key_from_env(inline, file, read_file) {
-        Ok(Some((mut key, _source))) => {
-            zeroize::Zeroize::zeroize(&mut key);
-            true
-        }
-        Ok(None) | Err(_) => false,
-    }
-}
-
 /// Reads the file named by [`MASTER_KEY_FILE_ENV`].
 ///
 /// On Unix a key file must not be writable by other users. Read-only group or

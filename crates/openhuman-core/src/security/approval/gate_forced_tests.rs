@@ -346,32 +346,3 @@ async fn forced_secret_grant_from_automation_or_a_channel_still_denies_without_a
     }
     assert!(gate.list_pending().unwrap().is_empty());
 }
-
-/// A correlated forced grant parks exactly like the plain one and carries the
-/// caller's correlation id, which is how a host answering it for the operator
-/// recognises its own request among other pending grants.
-#[tokio::test]
-async fn correlated_forced_secret_grant_parks_with_its_correlation_id() {
-    let (gate, _dir) = test_gate();
-    let gate = Arc::new(gate);
-    let worker = Arc::clone(&gate);
-    let handle = tokio::spawn(async move {
-        worker
-            .intercept_forced_correlated(
-                "native_secret_grant",
-                "Unlock configuration secrets",
-                serde_json::json!({"registration_id": "opaque-registration"}),
-                "corr-1",
-            )
-            .await
-    });
-    let pending = wait_parked(&gate).await;
-    assert_eq!(pending.tool_name, "native_secret_grant");
-    assert_eq!(pending.tool_call_id.as_deref(), Some("corr-1"));
-    assert_eq!(
-        stub_of(&gate).seen().last().unwrap().variant,
-        Variant::Forced
-    );
-    decide_parked(&gate, &pending.request_id, ApprovalDecision::ApproveOnce);
-    assert!(matches!(handle.await.unwrap(), GateOutcome::Allow));
-}

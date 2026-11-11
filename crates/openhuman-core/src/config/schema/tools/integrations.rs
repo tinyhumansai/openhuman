@@ -222,25 +222,12 @@ impl Default for ComposioConfig {
 pub struct SecretsConfig {
     #[serde(default = "defaults::default_true")]
     pub encrypt: bool,
-    /// Let a headless host unlock its config secrets without a person
-    /// answering the one-time "Unlock configuration secrets" approval.
-    ///
-    /// Off by default. It takes effect only when the operator supplied the
-    /// keyring master key (`OPENHUMAN_KEYRING_MASTER_KEY` or
-    /// `OPENHUMAN_KEYRING_MASTER_KEY_FILE`) to a `file` or `encrypted_file`
-    /// keyring backend: whoever can read that key can already decrypt the
-    /// keyring, so the host answers the grant on the operator's behalf.
-    /// Anywhere else the setting is ignored and the approval still parks for a
-    /// person. Env override: `OPENHUMAN_SECRETS_UNATTENDED_UNLOCK`.
-    #[serde(default)]
-    pub unattended_unlock: bool,
 }
 
 impl Default for SecretsConfig {
     fn default() -> Self {
         Self {
             encrypt: defaults::default_true(),
-            unattended_unlock: false,
         }
     }
 }

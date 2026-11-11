@@ -50,10 +50,7 @@ pub async fn store_api_key(config: &Config, key: &str) -> Result<AuthProfile> {
 pub async fn store_api_key_in(state_dir: &Path, encrypt: bool, key: &str) -> Result<AuthProfile> {
     let config = Config {
         config_path: state_dir.join("config.toml"),
-        secrets: crate::config::schema::SecretsConfig {
-            encrypt,
-            unattended_unlock: false,
-        },
+        secrets: crate::config::schema::SecretsConfig { encrypt },
         ..Config::default()
     };
     let service = AuthService::from_config(&config);
@@ -108,10 +105,7 @@ pub async fn get_api_key_read_only(
 pub async fn get_api_key_in(state_dir: &Path, encrypt: bool) -> Result<Option<String>> {
     let config = Config {
         config_path: state_dir.join("config.toml"),
-        secrets: crate::config::schema::SecretsConfig {
-            encrypt,
-            unattended_unlock: false,
-        },
+        secrets: crate::config::schema::SecretsConfig { encrypt },
         ..Config::default()
     };
     get_api_key_with_service(&AuthService::from_config(&config)).await

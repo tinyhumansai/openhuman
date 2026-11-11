@@ -187,7 +187,6 @@ impl SecretStore {
             let cache_key = normalize_cache_path(&self.key_path);
             let master_handle = if let Some(existing_key) = existing_key {
                 crate::modules::security::resolve_user_master_with_existing_key(
-                    config,
                     &client,
                     &scope,
                     &registration_id,
@@ -201,7 +200,6 @@ impl SecretStore {
                 handle
             } else {
                 let handle = crate::modules::security::resolve_user_master(
-                    config,
                     &client,
                     &scope,
                     &registration_id,
