@@ -60,7 +60,7 @@ pub use bus_driver::BusBoxDriver;
 pub use files::{read_file_in, write_file_in, MAX_FILE_BYTES};
 pub use registry::{owner_key, BoxRegistry};
 pub use types::{
-    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, OwnerScope, RegistryLimits,
+    BoxCall, BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, OwnerScope, RegistryLimits,
     RetainPolicy, Retention, AGENT37_WORKDIR, MAX_IDLE_SLEEP_SECS, MIN_IDLE_SLEEP_SECS,
     OPENSHELL_WORKDIR,
 };
@@ -279,14 +279,9 @@ pub(crate) async fn execute(
             "[sandbox:box] running a command"
         );
         let tenant = tenant_for_box(ctx.tenant())?;
-        let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        registry
-            .driver()
-            .serve(
-                config,
-                run_command(registry, Ok(tenant), &settings, command, extra_env, timeout),
-            )
+        let settings = registry.driver().serve(config, backend.settings(config)?);
+        run_command(registry, Ok(tenant), &settings, command, extra_env, timeout)
             .await
             .map_err(anyhow::Error::from)
     }
@@ -329,15 +324,9 @@ pub async fn write_file(
     let backend = file_backend(config)?;
     #[cfg(feature = "modules")]
     {
-        let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        registry
-            .driver()
-            .serve(
-                config,
-                write_file_in(registry, tenant, &settings, path, bytes),
-            )
-            .await
+        let settings = registry.driver().serve(config, backend.settings(config)?);
+        write_file_in(registry, tenant, &settings, path, bytes).await
     }
     #[cfg(not(feature = "modules"))]
     {
@@ -365,15 +354,9 @@ pub async fn read_file(
     let backend = file_backend(config)?;
     #[cfg(feature = "modules")]
     {
-        let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        registry
-            .driver()
-            .serve(
-                config,
-                read_file_in(registry, tenant, &settings, path, max_bytes),
-            )
-            .await
+        let settings = registry.driver().serve(config, backend.settings(config)?);
+        read_file_in(registry, tenant, &settings, path, max_bytes).await
     }
     #[cfg(not(feature = "modules"))]
     {

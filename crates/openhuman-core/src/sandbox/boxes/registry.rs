@@ -536,6 +536,7 @@ impl<D: BoxDriver> BoxRegistry<D> {
             cwd: settings.workdir.clone(),
             env: request.env.clone(),
             deadline,
+            call: settings.call.clone(),
         };
         match tokio::time::timeout(deadline, self.driver.exec(resource, &exec)).await {
             Ok(output) => output.map(Run::Finished),
