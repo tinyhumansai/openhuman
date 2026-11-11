@@ -71,6 +71,8 @@ async fn cancellation_during_required_output_repair_finalizes_native_run() {
     use tinyagents_harness::HarnessStatusStore;
 
     let _ = TRACEDIAG_START.set(std::time::Instant::now());
+    let _ = env_logger::builder().is_test(true).parse_filters("debug").try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter("debug").with_test_writer().try_init();
     let _scan = crate::security::prompt_injection::install_allowing_prompt_scan();
     let scratch = tempfile::tempdir().expect("isolated workspace");
     let workspace = scratch.path().join("workspace");
