@@ -141,7 +141,7 @@ person still approves each unlock. A key variable that is set but unusable
 (missing file, malformed value) also does not count. The check is on where the
 key came from, not on the kind of host: any host whose operator supplies the key
 and sets the option unlocks unattended. A SaaS core ignores the setting: its users approve
-the unlock in chat.
+the unlock in chat, and an unlock with no chat route behind it is refused.
 
 The host still goes through the same one-time approval; it approves the request
 itself instead of waiting. Each unattended unlock is logged under
