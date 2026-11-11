@@ -235,7 +235,7 @@ fn diagstorm_min() {
         &d,
         "1",
         None,
-        "max_profiles_open = 1\nidle_evict_secs = 0\n",
+        if variant.contains("two") { "max_profiles_open = 2\nidle_evict_secs = 0\n" } else { "max_profiles_open = 1\nidle_evict_secs = 0\n" },
         Some(llm.port),
         "debug,hyper=info,hyper_util=info,reqwest=info,h2=info,rustls=info",
     );
@@ -249,6 +249,8 @@ fn diagstorm_min() {
         assert!(body.get("result").is_some(), "{body}");
     }
     let (bob, carol) = (USERS[1], USERS[2]);
+    let users: Vec<&str> = if variant.contains("two") { vec![USERS[0], bob] } else { vec![bob] };
+    for bob in users {
     let (status, _, body) = call(&node, bob, "openhuman.threads_upsert",
         json!({ "id": "t", "title": "x", "created_at": "2026-10-10T00:00:00Z" }));
     assert_eq!(status, 200, "{body}");
@@ -260,6 +262,7 @@ fn diagstorm_min() {
             std::thread::sleep(Duration::from_millis(50));
         }
         wait_until("bob's turn", &node, Duration::from_secs(30), || !active(&node, bob, "t"));
+    }
     }
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
