@@ -58,11 +58,16 @@ struct FixedStorageKey;
 impl crate::security::secret_storage::MasterKeySource for FixedStorageKey {
     fn load(
         &self,
-    ) -> Result<Option<zeroize::Zeroizing<[u8; 32]>>, crate::security::secret_storage::SecretStorageError>
-    {
+    ) -> Result<
+        Option<zeroize::Zeroizing<[u8; 32]>>,
+        crate::security::secret_storage::SecretStorageError,
+    > {
         Ok(Some(zeroize::Zeroizing::new([0x42; 32])))
     }
-    fn store(&self, _: &[u8; 32]) -> Result<(), crate::security::secret_storage::SecretStorageError> {
+    fn store(
+        &self,
+        _: &[u8; 32],
+    ) -> Result<(), crate::security::secret_storage::SecretStorageError> {
         Ok(())
     }
 }
