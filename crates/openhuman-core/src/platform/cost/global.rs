@@ -21,7 +21,7 @@ use parking_lot::RwLock;
 
 use crate::config::CostConfig;
 use crate::core::runtime::DispatchCtx;
-use crate::inference::provider::types::BilledUsage;
+use tinyinference_llm::usage::BilledUsage;
 
 use super::tracker::CostTracker;
 use super::types::{CostSource, TokenUsage, UsageScope};

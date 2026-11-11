@@ -226,14 +226,19 @@ export function handleIntegrations(ctx) {
       ? parsedBody.input
       : [parsedBody?.input ?? ""];
     // Honor the OpenAI `dimensions` parameter when present (the embeddings
-    // client sends it for `text-embedding-3-*` models). The save-time
-    // verification probe validates `vector.len() == configured dims`, so the
-    // returned vector must match the requested size; default to 4 for callers
-    // that don't request a specific size.
+    // client sends it for `text-embedding-3-*` models). Managed embeddings
+    // don't send that parameter, so tests can set `embeddingDimensions` to the
+    // managed model's fixed width. Keep the historical 4-wide default for
+    // callers without either value.
+    const configuredDims = Number(mockBehavior.embeddingDimensions);
+    const fallbackDims =
+      Number.isInteger(configuredDims) && configuredDims > 0
+        ? configuredDims
+        : 4;
     const requestedDims =
       Number.isInteger(parsedBody?.dimensions) && parsedBody.dimensions > 0
         ? parsedBody.dimensions
-        : 4;
+        : fallbackDims;
     const data = inputs.map((input, index) => {
       const text = String(input ?? "");
       // Keep the vector deterministic so callers that cache / compare
@@ -437,65 +442,28 @@ export function handleIntegrations(ctx) {
     method === "GET" &&
     /^\/agent-integrations\/composio\/tools\/?(\?.*)?$/.test(url)
   ) {
-    // Parse toolkits and tags from the query string.
+    // Parse toolkits from the query string.
     const qs = url.includes("?")
       ? new URLSearchParams(url.split("?")[1])
       : new URLSearchParams();
     const toolkitsParam = qs.get("toolkits") ?? "";
-    const tagsParam = qs.get("tags") ?? "";
     const requestedToolkits = toolkitsParam
       ? toolkitsParam
           .split(",")
           .map((t) => t.trim().toLowerCase())
           .filter(Boolean)
       : [];
-    const requestedTags = tagsParam
-      ? tagsParam
-          .split(",")
-          .map((t) => t.trim().toLowerCase())
-          .filter(Boolean)
-      : [];
-
-    // Allow tests to inject per-tag tool lists via
-    //   composioToolsByTag_<tag>  (e.g. "composioToolsByTag_stars")
-    // or a catch-all composioTools knob (array of tool objects).
-    // Falls back to [] when no knob is set.
-    let tools = [];
-
-    // Mirror the Rust gate: tags are only honoured when no toolkit filter is
-    // active or the toolkit list includes GitHub.
-    const hasGithubToolkit =
-      requestedToolkits.length === 0 || requestedToolkits.includes("github");
-    const effectiveTags = hasGithubToolkit ? requestedTags : [];
-
-    if (effectiveTags.length > 0) {
-      // OR semantics: union across all requested tags.
-      const seen = new Set();
-      for (const tag of effectiveTags) {
-        const knobKey = `composioToolsByTag_${tag}`;
-        const tagTools = parseBehaviorJson(knobKey, null);
-        if (Array.isArray(tagTools)) {
-          for (const t of tagTools) {
-            const name = t?.function?.name ?? t?.name ?? JSON.stringify(t);
-            if (!seen.has(name)) {
-              seen.add(name);
-              tools.push(t);
-            }
-          }
-        }
-      }
-    } else {
-      tools = parseBehaviorJson("composioTools", []);
-      // Filter by toolkits when requested and the knob returns a list with a
-      // "function.name" slug we can match (e.g. "GITHUB_*").
-      if (requestedToolkits.length > 0 && tools.length > 0) {
-        tools = tools.filter((t) => {
-          const name = (t?.function?.name ?? t?.name ?? "").toUpperCase();
-          return requestedToolkits.some((tk) =>
-            name.startsWith(tk.toUpperCase() + "_"),
-          );
-        });
-      }
+    // Allow tests to inject the tool list through the composioTools knob.
+    // Filter by toolkits when requested and the knob returns names such as
+    // "GITHUB_*".
+    let tools = parseBehaviorJson("composioTools", []);
+    if (requestedToolkits.length > 0 && tools.length > 0) {
+      tools = tools.filter((t) => {
+        const name = (t?.function?.name ?? t?.name ?? "").toUpperCase();
+        return requestedToolkits.some((tk) =>
+          name.startsWith(tk.toUpperCase() + "_"),
+        );
+      });
     }
 
     json(res, 200, { success: true, data: { tools } });

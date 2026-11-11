@@ -6,7 +6,6 @@ use std::path::PathBuf;
 
 use super::config::default_temperature_unsupported_models;
 use super::config::DEFAULT_TEMPERATURE;
-use super::model_ids::DEFAULT_MODEL;
 use crate::config::schema::*;
 
 impl Default for Config {
@@ -41,19 +40,26 @@ impl Default for Config {
             inference_url: None,
             ephemeral_route: None,
             resolved_endpoints: Default::default(),
-            default_model: Some(DEFAULT_MODEL.to_string()),
+            default_model: crate::inference::registry::provider_default_model(
+                crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+            ),
             default_temperature: DEFAULT_TEMPERATURE,
             output_language: None,
+            channels_locale: None,
             user_timezone: None,
             temperature_unsupported_models: default_temperature_unsupported_models(),
             observability: ObservabilityConfig::default(),
             dashboard: DashboardConfig::default(),
             autonomy: AutonomyConfig::default(),
+            audit: AuditConfig::default(),
             tool_rules: tinytools::ToolRules::default(),
             desktop: DesktopConfig::default(),
             computer: ComputerConfig::default(),
             hooks: HooksConfig::default(),
             privacy: PrivacyConfig::default(),
+            prompt_screen: PromptScreenConfig::default(),
+            security_judge: None,
+            security: SecurityModeConfig::default(),
             sandbox: SandboxConfig::default(),
             runtime: RuntimeConfig::default(),
             shell: ShellConfig::default(),
@@ -64,7 +70,7 @@ impl Default for Config {
             agent: AgentConfig::default(),
             orchestrator: OrchestratorModelConfig::default(),
             teams: HashMap::new(),
-            context: ContextConfig::default(),
+            context: ContextSettings::default(),
             model_routes: Vec::new(),
             embedding_routes: Vec::new(),
             cron: CronConfig::default(),
@@ -90,7 +96,6 @@ impl Default for Config {
             cost: CostConfig::default(),
             legacy_memory_sources: Vec::new(),
             agent_registry: crate::agent_registry::types::AgentRegistryConfig::default(),
-            agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),
             claude_agent_sdk: ClaudeAgentSdkConfig::default(),
             cloud_providers: Vec::new(),
@@ -105,11 +110,11 @@ impl Default for Config {
             embeddings_provider: None,
             custom_embeddings: None,
             tokenjuice: TokenjuiceConfig::default(),
-            memes: MemesConfig::default(),
             inbound: InboundConfig::default(),
             inbound_debounce: InboundDebounceConfig::default(),
             components: ComponentsConfig::default(),
             hosting: HostingConfig::default(),
+            wallet_policy: WalletPolicyConfig::default(),
             storage: StorageConfig::default(),
             voice_server: VoiceServerConfig::default(),
             voice_providers: Vec::new(),
@@ -118,6 +123,7 @@ impl Default for Config {
             tts_provider: None,
             integrations: IntegrationsConfig::default(),
             update: UpdateConfig::default(),
+            channel_voice: ChannelVoiceConfig::default(),
             onboarding_completed: false,
             chat_onboarding_completed: false,
             model_registry: Vec::new(),

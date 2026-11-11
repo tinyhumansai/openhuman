@@ -5,10 +5,10 @@ use crate::artifacts::store::{
 };
 use crate::artifacts::types::{ArtifactKind, ArtifactStatus};
 use crate::artifacts::FileRoots;
-use crate::storage::{MemoryStorage, Scope, StorageBackend};
+use crate::storage::{test_support::memory_backend, Scope, StorageBackend};
 use chrono::{TimeZone, Utc};
 
-fn docs_in(storage: &MemoryStorage, scope: &str) -> Docs {
+fn docs_in(storage: &dyn StorageBackend, scope: &str) -> Docs {
     Docs::over(&storage.for_scope(&Scope::new(scope).unwrap()).unwrap())
 }
 
@@ -31,7 +31,8 @@ fn meta(id: &str, month: u32, thread: Option<&str>) -> ArtifactMeta {
 
 #[test]
 fn records_round_trip_newest_first() {
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let storage = memory_backend();
+    let docs = docs_in(storage.as_ref(), "local");
     docs.put_meta(&meta("a", 1, None)).unwrap();
     docs.put_meta(&meta("c", 3, None)).unwrap();
     docs.put_meta(&meta("b", 2, None)).unwrap();
@@ -48,7 +49,8 @@ fn records_round_trip_newest_first() {
 
 #[test]
 fn args_and_delete() {
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let storage = memory_backend();
+    let docs = docs_in(storage.as_ref(), "local");
     docs.put_meta(&meta("a", 1, None)).unwrap();
     docs.put_args("a", &serde_json::json!({ "k": 1 })).unwrap();
     assert_eq!(docs.get_args("a").unwrap().unwrap()["k"], 1);
@@ -60,12 +62,21 @@ fn args_and_delete() {
 
 #[test]
 fn scopes_do_not_see_each_others_artifacts() {
-    let storage = MemoryStorage::new();
-    docs_in(&storage, "alice")
+    let storage = memory_backend();
+    docs_in(storage.as_ref(), "alice")
         .put_meta(&meta("a", 1, None))
         .unwrap();
-    assert!(docs_in(&storage, "bob").list_meta().unwrap().is_empty());
-    assert_eq!(docs_in(&storage, "alice").list_meta().unwrap().len(), 1);
+    assert!(docs_in(storage.as_ref(), "bob")
+        .list_meta()
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        docs_in(storage.as_ref(), "alice")
+            .list_meta()
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -101,7 +112,8 @@ fn the_legacy_files_are_imported_without_overwriting() {
     .unwrap();
     std::fs::write(copy.join("args.json"), r#"{"x":5}"#).unwrap();
 
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let storage = memory_backend();
+    let docs = docs_in(storage.as_ref(), "local");
     // A record and arguments written before the import are not overwritten.
     let mut existing = meta("a", 1, Some("t"));
     existing.title = "kept".into();
@@ -126,7 +138,8 @@ fn a_legacy_folder_that_cannot_be_read_fails_the_import() {
     let dir = tempfile::tempdir().unwrap();
     let not_a_dir = dir.path().join("artifacts");
     std::fs::write(&not_a_dir, "a file").unwrap();
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let storage = memory_backend();
+    let docs = docs_in(storage.as_ref(), "local");
     assert!(docs.import_legacy(&not_a_dir).is_err());
 
     // An unreadable sidecar (here a directory named args.json) fails it too.
@@ -142,7 +155,8 @@ fn a_legacy_folder_that_cannot_be_read_fails_the_import() {
 
 #[test]
 fn delete_removes_the_record_before_its_arguments() {
-    let docs = docs_in(&MemoryStorage::new(), "local");
+    let storage = memory_backend();
+    let docs = docs_in(storage.as_ref(), "local");
     docs.put_args("orphan", &serde_json::json!({})).unwrap();
     // No record: reported absent, and the orphaned arguments are swept.
     assert!(!docs.delete("orphan").unwrap());
@@ -151,8 +165,8 @@ fn delete_removes_the_record_before_its_arguments() {
 
 #[tokio::test]
 async fn the_store_dispatches_to_documents_when_a_backend_is_pinned() {
-    let storage = MemoryStorage::new();
-    let docs = docs_in(&storage, "local");
+    let storage = memory_backend();
+    let docs = docs_in(storage.as_ref(), "local");
     let workspace = tempfile::tempdir().unwrap();
     let ws = workspace.path();
     super::TEST_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(docs.clone()));

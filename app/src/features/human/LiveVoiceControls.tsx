@@ -64,6 +64,12 @@ function errorText(t: (key: string) => string, error: LiveVoiceError): string {
     case 'connection_failed':
     case 'core_unreachable':
       return t('voice.live.error.connection');
+    // The backend refused the hosted session on billing grounds; its raw
+    // message is a backend failure line, not user-facing copy.
+    case 'insufficient_credits':
+      return t('voice.live.error.insufficientCredits');
+    case 'paid_plan_required':
+      return t('voice.live.error.paidPlanRequired');
     default:
       return error.message || t('voice.live.error.connection');
   }

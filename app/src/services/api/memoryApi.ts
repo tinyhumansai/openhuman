@@ -547,6 +547,13 @@ export interface JobsList {
   history: JobRun[];
 }
 
+/**
+ * A plan refusal's code in the head TinyMemory gives a hosted failure,
+ * `[MEMORY_PLAN_REQUIRED] memory API …` (#8081). Delimited, so a message that
+ * merely mentions the code does not match.
+ */
+const PLAN_REFUSAL = /\[[A-Z0-9_]*_PLAN_REQUIRED\] memory API /;
+
 /** The structured error codes a memory RPC can fail with. */
 export type MemoryErrorCode =
   | 'MEMORY_OFF'
@@ -554,6 +561,7 @@ export type MemoryErrorCode =
   | 'INVALID_REQUEST'
   | 'UNAUTHORIZED'
   | 'INSUFFICIENT_CREDITS'
+  | 'PLAN_REQUIRED'
   | 'UNAVAILABLE'
   | 'ENGINE';
 
@@ -563,6 +571,7 @@ const MEMORY_ERROR_CODES: readonly MemoryErrorCode[] = [
   'INVALID_REQUEST',
   'UNAUTHORIZED',
   'INSUFFICIENT_CREDITS',
+  'PLAN_REQUIRED',
   'UNAVAILABLE',
   'ENGINE',
 ];
@@ -610,6 +619,10 @@ async function call<T>(method: string, params: object = {}): Promise<T> {
  */
 export function memoryErrorCode(err: unknown): MemoryErrorCode | null {
   if (!err || typeof err !== 'object') return null;
+  const message = (err as { message?: unknown }).message;
+  // Before the structured code: an older core files a plan refusal under
+  // `UNAUTHORIZED`, with the backend's code still on the message.
+  if (typeof message === 'string' && PLAN_REFUSAL.test(message)) return 'PLAN_REQUIRED';
   const data = (err as { data?: unknown }).data;
   if (data && typeof data === 'object') {
     const d = data as Record<string, unknown>;
@@ -620,10 +633,9 @@ export function memoryErrorCode(err: unknown): MemoryErrorCode | null {
       }
     }
   }
-  const message = (err as { message?: unknown }).message;
   if (typeof message === 'string') {
     const match =
-      /^\s*(MEMORY_OFF|UNSUPPORTED|INVALID_REQUEST|UNAUTHORIZED|INSUFFICIENT_CREDITS|UNAVAILABLE|ENGINE)\b/.exec(
+      /^\s*(MEMORY_OFF|UNSUPPORTED|INVALID_REQUEST|UNAUTHORIZED|INSUFFICIENT_CREDITS|PLAN_REQUIRED|UNAVAILABLE|ENGINE)\b/.exec(
         message
       );
     if (match) return match[1] as MemoryErrorCode;
@@ -634,11 +646,12 @@ export function memoryErrorCode(err: unknown): MemoryErrorCode | null {
 /**
  * The account-wide refusals whose raw message is engine detail, each told
  * apart from an engine fault and from an empty memory: out of credits means
- * "top up", unreachable means "try again". `UNAUTHORIZED` keeps its own
+ * "top up", not in the plan means "upgrade", unreachable means "try again". `UNAUTHORIZED` keeps its own
  * message, which names the rejected key or session.
  */
 const REFUSAL_KEYS: Partial<Record<MemoryErrorCode, string>> = {
   INSUFFICIENT_CREDITS: 'memory.error.insufficientCredits',
+  PLAN_REQUIRED: 'memory.error.planRequired',
   UNAVAILABLE: 'memory.error.unavailable',
 };
 
@@ -673,6 +686,33 @@ export function isOutOfCreditsMessage(
   t: (key: string, fallback?: string) => string
 ): boolean {
   const key = REFUSAL_KEYS.INSUFFICIENT_CREDITS;
+  return message !== null && key !== undefined && message === t(key);
+}
+
+/**
+ * A stored status error (a job, sync source, import, migration or backfill that
+ * stopped) for display. A plan refusal arrives as the engine's raw
+ * `[MEMORY_PLAN_REQUIRED] memory API …` text; it reads as its translated
+ * explanation instead (#8081). Anything else is shown as stored.
+ */
+export function memoryStatusError(
+  raw: string,
+  t: (key: string, fallback?: string) => string
+): string {
+  const key = REFUSAL_KEYS.PLAN_REQUIRED;
+  return key && PLAN_REFUSAL.test(raw) ? t(key) : raw;
+}
+
+/**
+ * True when `message` is the "memory is not in your plan" explanation
+ * `memoryErrorMessage` produced (with `t`) for `PLAN_REQUIRED` (#8081). Same
+ * contract and language edge as {@link isOutOfCreditsMessage}.
+ */
+export function isPlanRequiredMessage(
+  message: string | null,
+  t: (key: string, fallback?: string) => string
+): boolean {
+  const key = REFUSAL_KEYS.PLAN_REQUIRED;
   return message !== null && key !== undefined && message === t(key);
 }
 

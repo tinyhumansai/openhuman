@@ -4,14 +4,14 @@ use once_cell::sync::Lazy;
 use tokio::sync::broadcast;
 
 use crate::core::runtime::DispatchCtx;
-use crate::web_chat::WebChannelEvent;
+use crate::web_chat::{ScopedWebEvent, WebChannelEvent};
 
-static EVENT_BUS: Lazy<broadcast::Sender<WebChannelEvent>> = Lazy::new(|| {
+static EVENT_BUS: Lazy<broadcast::Sender<ScopedWebEvent>> = Lazy::new(|| {
     let (tx, _rx) = broadcast::channel(512);
     tx
 });
 
-pub fn subscribe_web_channel_events() -> broadcast::Receiver<WebChannelEvent> {
+pub fn subscribe_web_channel_events() -> broadcast::Receiver<ScopedWebEvent> {
     EVENT_BUS.subscribe()
 }
 
@@ -26,9 +26,10 @@ pub fn publish_web_channel_event(event: WebChannelEvent) {
 /// [`publish_web_channel_event`] with the tenant stamped from `ctx`: the one
 /// the calling turn runs under, rather than the calling task's own scope.
 pub fn publish_web_channel_event_in(ctx: &DispatchCtx, mut event: WebChannelEvent) {
-    if event.ts.is_none() {
-        event.ts = Some(crate::web_chat::progress_bridge::unix_epoch_ms());
+    if event.context().ts.is_none() {
+        event.context_mut().ts = Some(crate::web_chat::progress::unix_epoch_ms());
     }
-    event.stamp_tenant(ctx.tenant().ok());
-    let _ = EVENT_BUS.send(event);
+    let mut scoped = ScopedWebEvent::new(event);
+    scoped.stamp_tenant(ctx.tenant().ok());
+    let _ = EVENT_BUS.send(scoped);
 }

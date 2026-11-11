@@ -207,7 +207,7 @@ pub(crate) fn record_unobserved_turn_usage(
         ?estimated_usd,
         "[tinyagents] recording unobserved-turn usage into the global cost tracker"
     );
-    let usage = crate::inference::provider::BilledUsage::from_counts(input_tokens, output_tokens)
+    let usage = tinyinference_llm::usage::BilledUsage::from_counts(input_tokens, output_tokens)
         .with_cached_input_tokens(cached_input_tokens);
     // No per-call charge reached this path; record the catalog estimate when
     // the model has one, else the record stays unpriced.

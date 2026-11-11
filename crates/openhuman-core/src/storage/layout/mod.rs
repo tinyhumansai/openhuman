@@ -39,20 +39,27 @@
 
 pub mod archive;
 pub mod credentials;
+#[cfg(feature = "legacy-import")]
 pub mod db;
+#[cfg(feature = "legacy-import")]
 pub mod legacy;
 pub mod plan;
+#[cfg(feature = "legacy-import")]
 mod run;
+#[cfg(feature = "legacy-import")]
 pub mod schemas;
 pub mod state;
+#[cfg(feature = "legacy-import")]
 mod status;
 
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+#[cfg(feature = "legacy-import")]
 pub use run::{auto_migrate, migrate, restore, Options};
 pub use state::{LayoutError, Step};
+#[cfg(feature = "legacy-import")]
 pub use status::{status, Status};
 
 use crate::config::schema::profile_layout::{
@@ -199,9 +206,9 @@ pub enum Outcome {
     Migrated(Box<Report>),
 }
 
-#[cfg(test)]
-mod test_fixtures;
+#[cfg(all(test, feature = "legacy-import"))]
+pub(crate) mod test_fixtures;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-import"))]
 #[path = "mod_tests.rs"]
 mod tests;

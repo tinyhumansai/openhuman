@@ -17,8 +17,11 @@ use super::visibility::StorageSetVisibilityTool;
 /// Build the file-storage tool surface. Returns empty when no integration
 /// client is configured (no backend URL / not signed in), mirroring
 /// `build_media_tools`.
-pub fn build_file_storage_tools(root_config: &Config, action_dir: &Path) -> Vec<Box<dyn Tool>> {
-    let Some(client) = crate::integrations::build_client(root_config) else {
+pub async fn build_file_storage_tools(
+    root_config: &Config,
+    action_dir: &Path,
+) -> Vec<Box<dyn Tool>> {
+    let Some(client) = crate::integrations::build_client(root_config).await else {
         tracing::debug!("[file_storage] no integration client — file-storage tools skipped");
         return Vec::new();
     };

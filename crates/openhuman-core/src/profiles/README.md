@@ -27,7 +27,7 @@ Two hosts drive it:
 <root>/users/<profile-id>/          the desktop's users/<id> shape (config::schema::ProfileLayout)
   profile.toml                      ProfileMeta (only without a storage backend)
   config.toml                       the profile's config_path (never read in SaaS)
-  auth-profiles.json                its credential (unless secrets live in the backend)
+  auth-profiles/secrets.enc         its encrypted profile-local credential store
   workspace/                        threads, sessions, memory, cron, cost and run ledgers
   sandbox/                          action_dir: the only place its tools may act
 <root>/users/<sha256(id)>/.lease    the file-lock lease and its record (only without a storage backend)
@@ -42,7 +42,7 @@ With a storage backend (`storage_url` / `OPENHUMAN_STORAGE_URL`):
 | --- | --- |
 | scope `cluster`, collection `profiles` | the profile registry (replaces `profile.toml`) |
 | scope `cluster`, collection `tsd.leases` (owner `profiles`) | the profile leases (replace the file locks) |
-| scope `profile:<id>` (`storage::scope_for_profile`) | that profile's records on the storage ports: secrets and auth profiles, approvals, cron, flows, ... |
+| scope `profile:<id>` (`storage::scope_for_profile`) | that profile's records on the storage ports: approvals, cron, flows, ...; auth profiles remain in that profile's encrypted local file |
 | session key `<id>~<agent or default>` (`tenant::session_key`) | its session store: transcripts, turn states |
 
 A profile's files stay under `<root>/users/<id>/` either way, so the nodes of a

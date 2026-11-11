@@ -59,6 +59,9 @@ pub struct EditMessageRequest {
     pub thread_id: String,
     pub message_id: String,
     pub content: String,
+    /// Typed attachments sent with the replacement content.
+    #[serde(default)]
+    pub attachments: Vec<tinychannels_bus::ContentPart>,
     #[serde(default)]
     pub client_id: Option<String>,
 }
@@ -87,56 +90,152 @@ pub async fn edit_message(
 ) -> Result<Outcome<Value>, ThreadsError> {
     let client_id = request.client_id.unwrap_or_else(|| "system".to_string());
     let thread_id = request.thread_id;
-    let dir = workspace_dir().await.map_err(ThreadsError::Message)?;
+    if request
+        .attachments
+        .iter()
+        .any(|part| matches!(part, tinychannels_bus::ContentPart::VoiceNote { .. }))
+    {
+        return Err(ThreadsError::Message(
+            "voice notes must be sent through channel.web_chat".into(),
+        ));
+    }
+    // Stage and validate uploads before cancellation or truncation. The staged
+    // opaque refs are reused when the replacement row is persisted below.
+    if request.attachments.is_empty() && request.content.trim().is_empty() {
+        return Err(ThreadsError::Message(
+            "edited message requires text or attachments".into(),
+        ));
+    }
+    let dir = ctx
+        .load_config()
+        .await
+        .map_err(|error| ThreadsError::Message(format!("load config: {error}")))?
+        .workspace_dir;
     // The request's own tenant picks the store key, so a SaaS profile edits
     // the transcript its turns were written to.
     let store = transcript_store(ctx, &thread_id)
         .await
         .map_err(ThreadsError::Message)?;
-
-    crate::web_chat::cancel_chat_scoped(ctx, &client_id, &thread_id, None)
+    let has_existing_refs = request
+        .attachments
+        .iter()
+        .any(crate::threads::attachments::has_opaque_ref);
+    let staged_parts = if request.attachments.is_empty() {
+        Vec::new()
+    } else if has_existing_refs {
+        // Opaque refs are accepted only when they match the exact source user
+        // row being edited. Re-staging copies validated bytes into fresh
+        // records before cancellation/truncation; callers cannot nominate
+        // paths or reuse another row's refs.
+        crate::threads::attachments::restage_persisted_parts(
+            ctx,
+            &thread_id,
+            &request.message_id,
+            &request.attachments,
+        )
         .await
-        .map_err(ThreadsError::Message)?;
+        .map_err(ThreadsError::Message)?
+    } else {
+        // This is the only staging pass. The marker-form intermediate stays
+        // inside the staging helper and is never persisted or sent to a turn.
+        crate::threads::attachments::stage_queued_parts(ctx, &thread_id, &request.attachments)
+            .await
+            .map_err(ThreadsError::Message)?
+    };
 
-    // Correlate through the next assistant reply, if any — see the module
-    // doc's mapping section. `None` means the edited message has no reply
-    // yet, so there is nothing to cut on the model side.
-    let cut_request_id = next_reply_request_id_after(ctx, &dir, &thread_id, &request.message_id)
-        .await
-        .map_err(ThreadsError::Message)?;
+    let edit_result = async {
+        crate::web_chat::cancel_chat_scoped(ctx, &client_id, &thread_id, None)
+            .await
+            .map_err(ThreadsError::Message)?;
 
-    if let Some(cut_request_id) = &cut_request_id {
-        let store_owned = store.clone();
-        let thread_id_owned = thread_id.clone();
-        let cut_request_id_owned = cut_request_id.clone();
-        ctx.spawn_blocking(move || {
-            truncate_transcript_before_turn(&store_owned, &thread_id_owned, &cut_request_id_owned)
-        })
-        .await
-        .map_err(|e| ThreadsError::Message(format!("truncate transcript task: {e}")))?
-        .map_err(ThreadsError::Message)?;
-        clear_dropped_turn_states(&dir, &thread_id, cut_request_id).await;
+        // Correlate through the next assistant reply, if any — see the module
+        // doc's mapping section. `None` means the edited message has no reply
+        // yet, so there is nothing to cut on the model side.
+        let cut_request_id =
+            next_reply_request_id_after(ctx, &dir, &thread_id, &request.message_id)
+                .await
+                .map_err(ThreadsError::Message)?;
+
+        if let Some(cut_request_id) = &cut_request_id {
+            let store_owned = store.clone();
+            let thread_id_owned = thread_id.clone();
+            let cut_request_id_owned = cut_request_id.clone();
+            ctx.spawn_blocking(move || {
+                truncate_transcript_before_turn(
+                    &store_owned,
+                    &thread_id_owned,
+                    &cut_request_id_owned,
+                )
+            })
+            .await
+            .map_err(|e| ThreadsError::Message(format!("truncate transcript task: {e}")))?
+            .map_err(ThreadsError::Message)?;
+            clear_dropped_turn_states(&dir, &thread_id, cut_request_id).await;
+        }
+
+        // Truncate the message log at the edited message itself (inclusive) —
+        // it and everything after it is replaced by the fresh turn below.
+        super::delete_after(ctx, &thread_id, &request.message_id).await?;
+
+        crate::web_chat::invalidate_thread_sessions(ctx, &thread_id).await;
+
+        if staged_parts.is_empty() {
+            crate::web_chat::start_chat(
+                ctx,
+                &client_id,
+                &thread_id,
+                &request.content,
+                None,
+                None,
+                None,
+                None,
+                crate::web_chat::ChatRequestMetadata::default(),
+            )
+            .await
+            .map_err(|e| ThreadsError::Message(e.to_string()))
+        } else {
+            let row = super::persist_queued_user_message(
+                ctx,
+                &thread_id,
+                &request.message_id,
+                &request.content,
+                &staged_parts,
+            )
+            .await
+            .map_err(ThreadsError::Message)?;
+            let started = crate::web_chat::channel_web_chat_with_stored_attachments(
+                ctx,
+                &client_id,
+                &thread_id,
+                &request.content,
+                None,
+                None,
+                None,
+                None,
+                None,
+                crate::web_chat::ChatRequestMetadata::default(),
+                None,
+                Some(crate::agent::queued_turn::StoredAttachmentInput {
+                    persisted_message_id: row.id,
+                    parts: row.attachments,
+                }),
+            )
+            .await
+            .map_err(ThreadsError::Message)?;
+            started
+                .value
+                .get("request_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| ThreadsError::Message("edited chat returned no request ID".into()))
+        }
     }
-
-    // Truncate the message log at the edited message itself (inclusive) —
-    // it and everything after it is replaced by the fresh turn below.
-    super::delete_after(ctx, &thread_id, &request.message_id).await?;
-
-    crate::web_chat::invalidate_thread_sessions(ctx, &thread_id).await;
-
-    let new_request_id = crate::web_chat::start_chat(
-        ctx,
-        &client_id,
-        &thread_id,
-        &request.content,
-        None,
-        None,
-        None,
-        None,
-        crate::web_chat::ChatRequestMetadata::default(),
-    )
-    .await
-    .map_err(|e| ThreadsError::Message(e.to_string()))?;
+    .await;
+    if edit_result.is_err() && !staged_parts.is_empty() {
+        let _ =
+            crate::threads::attachments::discard_staged_parts(ctx, &thread_id, &staged_parts).await;
+    }
+    let new_request_id = edit_result?;
 
     Ok(Outcome::single_log(
         json!(EditOrRegenerateResponse {
@@ -433,6 +532,10 @@ async fn clear_dropped_turn_states(
 #[cfg(test)]
 #[path = "edit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "edit_attachment_tests.rs"]
+mod attachment_tests;
 
 #[cfg(test)]
 #[path = "edit_turn_state_tests.rs"]

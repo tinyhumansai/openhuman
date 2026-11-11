@@ -10,8 +10,8 @@
 //!
 //! [`CoreContext`]: crate::core::runtime::CoreContext
 
+use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 use crate::core::runtime::DispatchCtx;
-use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 
 use super::types::UsageScope;
 
@@ -76,7 +76,7 @@ pub(crate) fn describe_origin(
         ),
         Some(AgentTurnOrigin::TrustedAutomation { source, .. }) => {
             let label = match source {
-                TrustedAutomationSource::Cron => "cron",
+                TrustedAutomationSource::Cron | TrustedAutomationSource::CronActions => "cron",
                 TrustedAutomationSource::Background => "background",
                 TrustedAutomationSource::Workflow { .. } => "workflow",
             };

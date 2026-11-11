@@ -8,13 +8,15 @@
 //!   expires, and the taker sees `previous_unclean`;
 //! - a renew (or release) after the record moved on is always `Lost`.
 
+#![cfg(feature = "storage-sqlite")]
+
 use super::*;
 
 use std::time::Duration;
 
 use proptest::prelude::*;
 
-use crate::storage::MemoryStorage;
+use crate::storage::test_support::SqliteBackend;
 
 const KEY: &str = "profile-1";
 const TTL_MS: u64 = 1_000;
@@ -160,7 +162,7 @@ impl Model {
 }
 
 struct System {
-    storage: MemoryStorage,
+    storage: SqliteBackend,
     leases: Vec<DocumentLeases>,
     grants: Vec<Option<LeaseGrant>>,
 }
@@ -171,7 +173,7 @@ fn name(n: usize) -> String {
 
 impl System {
     fn new(nodes: usize) -> Self {
-        let storage = MemoryStorage::new();
+        let storage = crate::storage::test_support::sqlite_backend().unwrap();
         let leases = (0..nodes).map(|n| Self::boot(&storage, n)).collect();
         Self {
             storage,
@@ -180,8 +182,14 @@ impl System {
         }
     }
 
-    fn boot(storage: &MemoryStorage, n: usize) -> DocumentLeases {
-        DocumentLeases::cluster(storage, name(n), None, Duration::from_millis(TTL_MS)).unwrap()
+    fn boot(storage: &SqliteBackend, n: usize) -> DocumentLeases {
+        DocumentLeases::cluster(
+            storage.backend.as_ref(),
+            name(n),
+            None,
+            Duration::from_millis(TTL_MS),
+        )
+        .unwrap()
     }
 
     fn crash(&mut self, n: usize) {

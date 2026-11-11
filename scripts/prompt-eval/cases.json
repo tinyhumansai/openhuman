@@ -20,7 +20,7 @@
         "web_search_tool"
       ],
       "forbid_calls": [
-        "spawn_async_subagent"
+        "spawn_subagent"
       ],
       "max_consecutive": {
         "web_search_tool": 3
@@ -59,7 +59,7 @@
       "message": "What is 17 times 23?",
       "expect_calls": [],
       "forbid_calls": [
-        "spawn_async_subagent",
+        "spawn_subagent",
         "use_skill",
         "cron"
       ],
@@ -82,7 +82,7 @@
       "forbid_calls": [
         "request_plan_review",
         "todo",
-        "spawn_async_subagent"
+        "spawn_subagent"
       ],
       "max_consecutive": {
         "web_search_tool": 4

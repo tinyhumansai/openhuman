@@ -5,15 +5,38 @@ use super::*;
 use crate::agent::tinyagents::TurnModelSource;
 use crate::inference::turn_models::TurnModels;
 use async_trait::async_trait;
+use tinyagents_harness::tool::ToolSnapshot;
 use tinyagents_harness::turn_policy::{
     DEFAULT_MODEL_CALL_TIMEOUT_SECS, LOCAL_MODEL_CALL_TIMEOUT_SECS,
 };
 use tinyagents_runtime::turn_driver::{SharedToolSet, TurnControls, TurnDriver};
-use tinyagents_runtime::{DriverRequest, ToolSnapshot};
+use tinyagents_runtime::DriverRequest;
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 use tinytools::{Tool, ToolResult};
 
-const GOAL_TOOLS: [&str; 3] = ["goal_get", "goal_set", "goal_complete"];
+const GOAL_TOOLS: [&str; 4] = ["goal_get", "goal_set", "goal_complete", "goal_resume"];
+
+#[test]
+fn turn_plan_preserves_the_host_retry_policy_in_the_run_policy() {
+    let (policy, _) = turn_run_policy(
+        "assembly-test-model",
+        10,
+        false,
+        false,
+        tinyagents_harness::config::ToolDispatcher::default(),
+        None,
+        None,
+        None,
+    );
+    let host_policy =
+        crate::agent::tinyagents::turn_policy::run_policy_for_provider(10, false, false, None);
+
+    assert_eq!(policy.retry, host_policy.retry);
+    assert_eq!(
+        policy.limits.max_retries_per_call,
+        host_policy.limits.max_retries_per_call
+    );
+}
 
 struct PlainTool;
 
@@ -67,6 +90,7 @@ async fn prepare_with(
 ) -> tinyagents_runtime::turn_driver::PreparedTurn<(), OpenHumanRunContext> {
     let models = TurnModelSource::from_model(model)
         .build("assembly-test-model", 0.0, None, None)
+        .await
         .expect("scripted turn models build");
     let (policy, _) = turn_run_policy(
         "assembly-test-model",

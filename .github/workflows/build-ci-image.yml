@@ -1,6 +1,6 @@
 ---
-# Builds ghcr.io/tinyhumansai/openhuman_ci, the container ci-lite and the
-# hosted CI Fast lanes run in (and the base of the EX63 microVM guest image).
+# Builds ghcr.io/tinyhumansai/openhuman_ci, the container the hosted CI Fast
+# lanes run in.
 #
 # Rebuilds on every push to main that changes an input of the image, so the
 # published image can no longer lag its Dockerfile: `latest` shipped Rust

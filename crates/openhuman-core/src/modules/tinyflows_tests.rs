@@ -3,12 +3,14 @@ use super::*;
 #[cfg(feature = "modules")]
 struct RegistrationProbe {
     dropped: std::sync::Arc<tokio::sync::Notify>,
-    context: std::sync::Arc<()>,
+    context: Option<std::sync::Arc<()>>,
 }
 
 #[cfg(feature = "modules")]
 impl Drop for RegistrationProbe {
     fn drop(&mut self) {
+        // Wake the waiter only after the callback releases its context.
+        drop(self.context.take());
         self.dropped.notify_one();
     }
 }
@@ -169,7 +171,7 @@ async fn cancelling_partial_callback_registration_unserves_and_releases_its_cont
             task_path,
             RegistrationProbe {
                 dropped: task_dropped,
-                context: task_context,
+                context: Some(task_context),
             },
             SecondRegistrationProbe,
             async move {
@@ -224,7 +226,7 @@ async fn single_callback_registration_unserves_when_its_guard_drops() {
         path.clone(),
         RegistrationProbe {
             dropped: Arc::clone(&dropped),
-            context: Arc::clone(&context),
+            context: Some(Arc::clone(&context)),
         },
     )
     .await

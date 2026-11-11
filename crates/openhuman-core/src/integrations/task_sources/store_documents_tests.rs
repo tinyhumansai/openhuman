@@ -1,12 +1,13 @@
 use super::*;
-use crate::storage::{MemoryStorage, Scope, StorageBackend};
+use crate::storage::{test_support::memory_backend, Scope, StorageBackend};
 
-fn docs_in(storage: &MemoryStorage, scope: &str) -> Docs {
+fn docs_in(storage: &dyn StorageBackend, scope: &str) -> Docs {
     Docs::over(&storage.for_scope(&Scope::new(scope).unwrap()).unwrap())
 }
 
 fn docs() -> Docs {
-    docs_in(&MemoryStorage::new(), "local")
+    let storage = memory_backend();
+    docs_in(storage.as_ref(), "local")
 }
 
 fn github_filter() -> FilterSpec {
@@ -229,11 +230,11 @@ fn a_corrupt_source_is_an_error_not_a_panic() {
 
 #[test]
 fn scopes_keep_sources_apart() {
-    let storage = MemoryStorage::new();
-    let alice = docs_in(&storage, "alice");
+    let storage = memory_backend();
+    let alice = docs_in(storage.as_ref(), "alice");
     alice.add_source(&source("s")).unwrap();
     alice.mark_ingested("s", &task("1", "one")).unwrap();
-    let bob = docs_in(&storage, "bob");
+    let bob = docs_in(storage.as_ref(), "bob");
     assert!(bob.list_sources().unwrap().is_empty());
     assert!(!bob.was_ingested("s", "1").unwrap());
     assert_ne!(ingested_id("a/b", "c"), ingested_id("a", "b/c"));

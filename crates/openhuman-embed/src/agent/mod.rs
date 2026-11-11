@@ -18,6 +18,8 @@ mod approval_handler;
 mod approvals;
 pub use approval_handler::{ApprovalHandler, ApprovalSubscription};
 mod attachments;
+mod compact;
+pub use compact::{CompactOptions, CompactOutcome, MemoryBlockPrewarm};
 pub(crate) mod lifecycle;
 pub(crate) mod mcp_cleanup;
 pub use approvals::{ApprovalDecision, Approvals, ApprovalsError, PendingApproval};
@@ -27,7 +29,9 @@ mod definition;
 mod layout;
 pub(crate) mod spec;
 
-pub use definition::{AgentDefinitionSpec, DefinitionBase, SandboxModeSpec, ToolScopeSpec};
+pub use definition::{
+    AgentDefinitionSpec, DefinitionBase, MemoryBlockSpec, SandboxModeSpec, ToolScopeSpec,
+};
 pub use layout::AgentLayout;
 pub use spec::{AgentSpec, MemoryBinding};
 
@@ -222,6 +226,11 @@ pub struct Agent {
 impl Agent {
     pub(crate) fn from_inner(inner: Arc<AgentInner>) -> Self {
         Self { inner }
+    }
+
+    /// This agent as a core driver builds it (see [`AgentInner::host_agent`]).
+    pub(crate) fn host_agent(&self) -> Option<openhuman_core::agent::host_agents::HostAgent> {
+        self.inner.host_agent()
     }
 
     /// The id this agent was created with.

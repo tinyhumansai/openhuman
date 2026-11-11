@@ -1,4 +1,14 @@
 use super::*;
+use crate::core::all::assert_schema_controller_parity;
+
+#[test]
+fn connectivity_schema_catalog_matches_registered_controllers() {
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "diag",
+    );
+}
 use crate::core::runtime::DispatchCtx;
 
 #[test]
@@ -7,14 +17,6 @@ fn lists_single_diag_controller() {
     assert_eq!(schemas.len(), 1);
     assert_eq!(schemas[0].namespace, "connectivity");
     assert_eq!(schemas[0].function, "diag");
-}
-
-#[test]
-fn registered_count_matches_schema_count() {
-    assert_eq!(
-        all_controller_schemas().len(),
-        all_registered_controllers().len()
-    );
 }
 
 #[test]

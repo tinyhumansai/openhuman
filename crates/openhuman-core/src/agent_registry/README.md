@@ -86,17 +86,15 @@ Workspace-level overrides (`<workspace_dir>/agents/*.toml`, with a
 `AgentDefinitionRegistry::load` re-runs the owner validation after that
 merge.
 
-The 12 archetypes in this directory:
+The shipped archetypes in this directory:
 
 | Archetype | Role |
 | --- | --- |
-| `critic` | Workflow-run worker: adversarial, read-only cross-check of claims, diffs and code. Not a chat delegate |
 | `image_agent` | Image generation/edit specialist |
 | `morning_briefing` | Proactive scheduled daily summary (tasks, calendar, email, skills) on a named, read-only tool belt |
 | `orchestrator` | Default user-facing `chat`-tier agent; direct-first, delegates only when it materially helps |
-| `planner` | Workflow-run worker (`reasoning` tier): decomposes a question into research angles, or researches one angle. Read-only; not a chat delegate |
 | `presentation_agent` (feature `documents`) | Builds decks from evidence; owns grounding/citations/image verification |
-| `summarizer` | Runtime-dispatched only: compresses oversized tool results for the orchestrator, and synthesizes workflow-run reports |
+| `summarizer` | Runtime-dispatched only: compresses oversized tool results for the orchestrator |
 | `task_manager_agent` | Task-source/workflow/artifact specialist: proactive feeds, workflow bundles, artifacts |
 | `trigger_reactor` | One or two tool calls in direct reaction to an external trigger, no planning |
 | `trigger_triage` | Classifies an external trigger into drop/acknowledge/react/escalate; never acts |
@@ -106,11 +104,8 @@ The 12 archetypes in this directory:
 The orchestrator's chat delegates (its `[subagents]` allowlist) are
 `task_manager_agent`, `vision_agent`,
 `image_agent`, `video_agent`, `presentation_agent`, `skill_setup`,
-`workflow_builder` and `flow_discovery`. `planner` and `critic` stay
-registered only for the `parallel_research_cross_check` workflow-run template
-([`agent/orchestration/workflow_runs/ops.rs`](../orchestration/workflow_runs/ops.rs): decompose = `planner`, research
-= `planner` x2, cross_check = `critic`, synthesize = `summarizer`); the
-orchestrator does not list them. Everything else is runtime-only.
+`workflow_builder` and `flow_discovery`. The retired workflow-run planner and
+critic archetypes are no longer built-ins. Everything else is runtime-only.
 
 The single-belt specialists that used to sit here (`code_executor`,
 `crypto_agent`, `settings_agent`, `scheduler_agent`, `mcp_agent`,
@@ -132,6 +127,20 @@ see [`tinyagents/README.md`](../tinyagents/README.md) and
 [the Jev page](../../../../../docs/gitbooks/en/developing/jev.md) for how that
 ranking works.
 
+## Host definition fields
+
+`AgentExt` ([`host_definition.rs`](host_definition.rs)) holds the OpenHuman-only
+fields an agent TOML may author beside the portable TinyAgents ones:
+`omit_identity`, `omit_memory_context`, `omit_safety_preamble`,
+`tokenjuice_compression`, `refresh_prompt_on_resume`, `memory_block`,
+`searches_connected_mcp`, and `scheduled_actions`.
+
+`scheduled_actions = true` lets a cron job that names this agent in `agent_id`
+use acting tools without a person's approval. It is honoured only with an
+explicit `[tools] named = [...]` scope (never the wildcard), outside SaaS mode,
+and only for the job's own root run; sub-agents stay read-only. Default `false`.
+See [`cron/README.md`](../cron/README.md#scheduled-actions-opt-in).
+
 ## Called by
 
 - `core/all.rs`: registers the `agent_registry` controllers under
@@ -144,7 +153,7 @@ ranking works.
 - [`agent/session_host/builder/factory.rs`](../agent/session_host/builder/factory.rs):
   `Agent::from_config_for_agent` falls back to `find_custom_in_config` +
   `definition_from_registry_entry` when an id is not in the harness registry.
-- [`agent_runs/schemas.rs`](../agent_runs/schemas.rs): `agent.graph_topologies` and `agent.registry_snapshot`
+- [`agent_runs/schemas.rs`](../agent_runs/schemas.rs): `agent.registry_snapshot`
   enumerate `load_builtins()`.
 - `flows/` (`ops/inference_readiness.rs`, `ops/builder_gates.rs`,
   `builder_tools/kind_reads.rs`, `tinyflows/caps/agent.rs`): resolve a flow

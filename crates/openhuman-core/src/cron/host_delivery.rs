@@ -7,8 +7,9 @@
 //! embedded agent's job hands its output to the host instead of writing into a
 //! local thread or channel: the host is told whose job it was (the profile, the
 //! agent, or both), which conversation the job was created in, and the job's
-//! recorded origin. A run with nothing to say (blank or `NO_REPLY`) never
-//! reaches it. A run with neither a profile nor an agent (the desktop's own
+//! recorded origin. A run with nothing to say (blank, or `NO_REPLY` from a job
+//! whose prompt allows it) never reaches it, and the `NO_REPLY` token itself
+//! is never handed over. A run with neither a profile nor an agent (the desktop's own
 //! orchestrator) keeps the core's delivery.
 
 use std::sync::{Arc, RwLock};

@@ -289,12 +289,8 @@ jobs:
         shard:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
-          - { name: providers, suites: "providers,notifications" }
-          - { name: provider-web, suites: "provider-web" }
-          - { name: webhooks, suites: "webhooks" }
-          - { name: connectors, suites: "connectors" }
-          - { name: payments, suites: "payments" }
-          - { name: settings, suites: "settings" }
+          - { name: connections, suites: "providers,provider-web,connectors" }
+          - { name: settings, suites: "settings,notifications" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -799,12 +795,8 @@ jobs:
         shard:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
-          - { name: providers, suites: "providers,notifications" }
-          - { name: provider-web, suites: "provider-web" }
-          - { name: webhooks, suites: "webhooks" }
-          - { name: connectors, suites: "connectors" }
-          - { name: payments, suites: "payments" }
-          - { name: settings, suites: "settings" }
+          - { name: connections, suites: "providers,provider-web,connectors" }
+          - { name: settings, suites: "settings,notifications" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -1002,12 +994,8 @@ jobs:
         shard:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
-          - { name: providers, suites: "providers,notifications" }
-          - { name: provider-web, suites: "provider-web" }
-          - { name: webhooks, suites: "webhooks" }
-          - { name: connectors, suites: "connectors" }
-          - { name: payments, suites: "payments" }
-          - { name: settings, suites: "settings" }
+          - { name: connections, suites: "providers,provider-web,connectors" }
+          - { name: settings, suites: "settings,notifications" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

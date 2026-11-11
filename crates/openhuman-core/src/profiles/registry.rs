@@ -16,9 +16,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tinystoragedrivers::{
-    CollectionSpec, DocumentStoreExt, ErrorKind, Precondition, Query, Scope, ScopedStorage,
-    Versioned, WriteOptions,
+    CollectionSpec, ErrorKind, Precondition, Query, Scope, Versioned, WriteOptions,
 };
+use tinystoragedrivers_api::DocumentStore;
 
 use super::layout::{self, ProfileLayout};
 use super::storage_schema::migrate_cluster;
@@ -26,7 +26,7 @@ pub use super::storage_schema::REGISTRY_COLLECTION;
 use super::types::{ProfileId, ProfileMeta};
 use crate::storage::lease::CLUSTER_SCOPE;
 use crate::storage::schema_support::key_of;
-use crate::storage::{DocumentStore, StorageBackend};
+use crate::storage::{DocumentStoreExt, Storage, StorageBackend};
 
 /// The profile a registry document holds: the body's fields, and the creation
 /// time (Unix seconds) from the record's metadata.
@@ -50,7 +50,7 @@ pub enum ProfileRegistry {
     /// One document per profile in the shared backend.
     Documents {
         docs: Arc<dyn DocumentStore>,
-        scoped: ScopedStorage,
+        scoped: Storage,
         declared: tokio::sync::OnceCell<()>,
     },
     /// `profile.toml` under each profile's directory below `root`.
@@ -139,6 +139,44 @@ impl ProfileRegistry {
             unreachable!("a registry is documents or files");
         };
         read_meta(&ProfileLayout::new(root, id))
+    }
+
+    /// Reads a profile record without declaring collections or running the
+    /// lazy legacy migration used by normal lifecycle operations.
+    ///
+    /// A legacy registry collection is reported as requiring explicit
+    /// migration rather than being changed by a diagnostic read.
+    pub(crate) async fn get_readonly(&self, id: &ProfileId) -> Result<Option<ProfileMeta>, String> {
+        let Self::Documents { docs, .. } = self else {
+            let Self::Files { root } = self else {
+                unreachable!("a registry is documents or files");
+            };
+            return read_meta(&ProfileLayout::new(root, id));
+        };
+
+        if collection_is_declared(
+            docs.as_ref(),
+            super::storage_schema::LEGACY_REGISTRY_COLLECTION,
+        )
+        .await?
+        {
+            return Err("profile registry requires explicit storage migration".into());
+        }
+        if !collection_is_declared(docs.as_ref(), REGISTRY_COLLECTION).await? {
+            return Ok(None);
+        }
+
+        let key = key_of(id.as_str()).map_err(|_| "profile registry key is invalid".to_string())?;
+        let Some(stored) = docs
+            .get(REGISTRY_COLLECTION, &key)
+            .await
+            .map_err(|_| "profile registry could not be read".to_string())?
+        else {
+            return Ok(None);
+        };
+        meta_of(&stored)
+            .map(Some)
+            .map_err(|_| "profile registry record is invalid".to_string())
     }
 
     /// Records `meta` unless its profile is already recorded. Returns whether
@@ -248,6 +286,20 @@ impl ProfileRegistry {
         }
         found.sort_by(|a, b| a.profile_id.cmp(&b.profile_id));
         Ok(found)
+    }
+}
+
+async fn collection_is_declared(
+    docs: &dyn DocumentStore,
+    collection: &str,
+) -> Result<bool, String> {
+    match docs
+        .validate_collection_spec(&CollectionSpec::new(collection))
+        .await
+    {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(_) => Err("profile registry schema could not be inspected".into()),
     }
 }
 

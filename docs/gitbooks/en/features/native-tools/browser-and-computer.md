@@ -36,6 +36,8 @@ Sessions are bounded. The module allows up to 8 at once. OpenHuman keeps at most
 
 Desktop control reads the operating system's accessibility tree, the same interface a screen reader uses. It covers running apps, windows, displays, Notification Center entries, the clipboard and screenshots.
 
+Desktop control works on macOS only for now. Windows desktop control isn't supported yet; use the browser on Windows. Linux isn't supported (see the table below).
+
 Actions go through the accessibility API and not through synthesized input. By default they don't steal focus, move your cursor or touch the clipboard, so a run can continue while you use the machine. A headed mode and real mouse and key events exist for apps that need them, but they are the exception.
 
 For dense apps, a skeleton snapshot stops at three levels and returns structure without leaf detail. That is the difference between tens of thousands of tokens and a few hundred.
@@ -79,7 +81,7 @@ Irreversible steps go through OpenHuman's [approval gate](../approval-gate.md), 
 | Platform | Desktop | Browser |
 | --- | --- | --- |
 | macOS | Yes. Needs Accessibility permission, plus Screen Recording for screenshots and Automation for the Notification Center opener. | Yes |
-| Windows | Yes | Yes |
+| Windows | Not yet | Yes |
 | Linux | No | No |
 
 A permission check runs before the first read. An accessibility API called by an unauthorized process usually returns an empty tree, not an error, and that looks the same as an app with no buttons. A missing permission produces a named refusal that says which setting to change.

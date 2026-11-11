@@ -8,12 +8,12 @@
 //! importers are. Each is idempotent and drops its v1 collection once moved,
 //! so a finished move costs one collection listing.
 
-use tinystoragedrivers::{ScopedStorage, StorageError};
+use tinystoragedrivers::{Storage, StorageError};
 
 /// Runs every host importer over `scoped`. Returns `(importer, error)` for each
 /// one that failed; the others still ran, and a failed one is retried at the
 /// next boot.
-pub(super) async fn run(scoped: &ScopedStorage) -> Vec<(&'static str, StorageError)> {
+pub(super) async fn run(scoped: &Storage) -> Vec<(&'static str, StorageError)> {
     let mut failed = Vec::new();
     if let Err(error) = crate::integrations::composio::migrate_legacy_state(scoped).await {
         failed.push(("composio_state_to_kv", error));

@@ -29,10 +29,11 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde_json::Value;
-use tinystoragedrivers::queue::QueueManifest;
 use tinystoragedrivers::CollectionSpec;
 
-pub(crate) use tinystoragedrivers_client::Object;
+use super::storage_queue_manifest::QueueManifest;
+
+pub(crate) use tinystoragedrivers_busproxy::Object;
 
 /// Whether the contract defines `selector` for `object`.
 pub(crate) fn is_selector(object: Object, selector: &str) -> bool {
@@ -43,6 +44,7 @@ pub(crate) fn is_selector(object: Object, selector: &str) -> bool {
         Object::Blobs => wire::is_blobs_selector(selector),
         Object::Secrets => wire::is_secrets_selector(selector),
         Object::Queues => wire::is_queues_selector(selector),
+        Object::Kv => wire::is_kv_selector(selector),
     }
 }
 
@@ -59,6 +61,10 @@ pub(crate) enum Denied {
     Schema,
     /// The selector is not part of the contract, or carries no usable target.
     Malformed,
+    /// A queue is absent from the host-owned manifest.
+    QueueNotGranted,
+    /// A queue declaration differs from the host-owned manifest.
+    QueueSpec,
 }
 
 impl Denied {
@@ -70,6 +76,8 @@ impl Denied {
             Self::ReadOnly => "read-only-grant",
             Self::Schema => "schema-is-host-only",
             Self::Malformed => "malformed-request",
+            Self::QueueNotGranted => "queue-not-granted",
+            Self::QueueSpec => "queue-spec-is-host-only",
         }
     }
 }
@@ -180,6 +188,7 @@ impl StorageGrant {
             Object::Blobs => !self.blob_prefixes.is_empty(),
             Object::Secrets => !self.secret_prefixes.is_empty(),
             Object::Queues => self.queues.is_some(),
+            Object::Kv => false,
         }
     }
 
@@ -254,7 +263,10 @@ pub(crate) fn authorize(
                 "ttl": false,
                 "max_key_len": 0,
             }))),
-            Object::Streams | Object::Secrets | Object::Queues => Err(Denied::Object),
+            Object::Streams => Ok(Plan::Answer(serde_json::json!({ "capabilities": [] }))),
+            Object::Secrets => Ok(Plan::Answer(serde_json::json!({ "enumerable": false }))),
+            Object::Queues => Err(Denied::Object),
+            Object::Kv => Ok(Plan::Answer(serde_json::json!({ "capabilities": [] }))),
         };
     }
     // `BusStorage::connect` asks every module's host for queue features, so a
@@ -265,6 +277,11 @@ pub(crate) fn authorize(
             serde_json::to_value(tinystoragedrivers_bus::QueueFeaturesReply::default())
                 .map_err(|_| Denied::Malformed)?,
         ));
+    }
+    // The client probes each port during connection setup. KV has no module
+    // policy yet, so report an empty capability set and deny data selectors.
+    if object == Object::Kv && selector == "Capabilities" {
+        return Ok(Plan::Answer(serde_json::json!({ "capabilities": [] })));
     }
     if !grant.has_object(object) {
         return Err(Denied::Object);
@@ -278,7 +295,8 @@ pub(crate) fn authorize(
         Object::Streams => streams(grant, selector, request),
         Object::Blobs => blobs(grant, selector, request),
         Object::Secrets => secrets(grant, selector, request),
-        Object::Queues => queues(selector, request),
+        Object::Queues => queues(grant, selector, request),
+        Object::Kv => Err(Denied::Object),
     }?;
     Ok(match plan {
         Plan::Forward { target, filter, .. } => Plan::Forward {
@@ -299,9 +317,14 @@ fn is_write(object: Object, selector: &str) -> bool {
             "Put" | "Delete" | "DeleteWhere" | "Claim" | "AtomicBatch" | "AtomicBatchChecked"
         ) | (
             Object::Streams,
-            "Append" | "AppendBatch" | "AppendBatchIfOffset" | "TruncateBefore" | "DeleteStream"
+            "Append"
+                | "AppendBatch"
+                | "AppendBatchIfOffset"
+                | "TruncateBefore"
+                | "DeleteStream"
+                | "Seal"
         ) | (Object::Blobs, "Put" | "PutStream" | "Delete" | "PresignPut")
-            | (Object::Secrets, "Set" | "Delete")
+            | (Object::Secrets, "Set" | "SetIf" | "Delete")
             | (
                 Object::Queues,
                 "EnsureQueue"
@@ -398,12 +421,17 @@ fn batch(grant: &StorageGrant, request: &Value) -> Result<Plan, Denied> {
 
 fn streams(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan, Denied> {
     match selector {
-        "ReadWindow" | "Len" => {
+        "ReadWindow" | "Len" | "Info" => {
             let name = text(request, "stream")?;
             StorageGrant::prefixed(&grant.stream_prefixes, name)?;
             Ok(forward(name))
         }
-        "Append" | "AppendBatch" | "AppendBatchIfOffset" | "TruncateBefore" | "DeleteStream" => {
+        "Append"
+        | "AppendBatch"
+        | "AppendBatchIfOffset"
+        | "TruncateBefore"
+        | "DeleteStream"
+        | "Seal" => {
             let name = text(request, "stream")?;
             StorageGrant::prefixed(&grant.stream_prefixes, name)?;
             Ok(forward(name))
@@ -413,6 +441,8 @@ fn streams(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan
             let granted = StorageGrant::prefixed(&grant.stream_prefixes, prefix)?;
             Ok(forward(granted))
         }
+        // The client probes each port it was granted when it connects.
+        "Capabilities" => Ok(forward("")),
         _ => Err(Denied::Malformed),
     }
 }
@@ -432,7 +462,7 @@ fn blobs(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan, 
             let granted = StorageGrant::prefixed(&grant.blob_prefixes, key)?;
             Ok(forward(granted))
         }
-        "List" => {
+        "List" | "ListPage" => {
             let prefix = text(request, "prefix")?;
             let granted = StorageGrant::prefixed(&grant.blob_prefixes, prefix)?;
             Ok(forward(granted))
@@ -444,11 +474,11 @@ fn blobs(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan, 
 
 fn secrets(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan, Denied> {
     match selector {
-        "Get" => {
+        "Get" | "GetVersioned" => {
             let granted = StorageGrant::prefixed(&grant.secret_prefixes, text(request, "name")?)?;
             Ok(forward(granted))
         }
-        "Set" | "Delete" => {
+        "Set" | "SetIf" | "Delete" => {
             let granted = StorageGrant::prefixed(&grant.secret_prefixes, text(request, "name")?)?;
             Ok(forward(granted))
         }
@@ -456,6 +486,8 @@ fn secrets(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan
             let granted = StorageGrant::prefixed(&grant.secret_prefixes, text(request, "prefix")?)?;
             Ok(forward(granted))
         }
+        // The client probes each port it was granted when it connects.
+        "Capabilities" => Ok(forward("")),
         _ => Err(Denied::Malformed),
     }
 }
@@ -475,10 +507,35 @@ pub(crate) fn filter_reply(grant: &StorageGrant, filter: ReplyFilter, reply: Val
 
 /// `Queues` selectors. The target is the request's queue; the bound server
 /// (holding the grant's manifest) refuses a queue the manifest does not name.
-fn queues(selector: &str, request: &Value) -> Result<Plan, Denied> {
+fn queues(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan, Denied> {
     match selector {
         "Features" => Ok(forward("")),
-        _ => Ok(forward(text(request, "queue")?)),
+        "EnsureQueue" | "Enqueue" | "Receive" | "Ack" | "Nack" | "Extend" | "Stats"
+        | "DeadLetters" | "Redrive" | "Purge" => {
+            let name = text(request, "queue")?;
+            let declaration = grant
+                .queues
+                .as_ref()
+                .and_then(|manifest| manifest.get(name))
+                .ok_or(Denied::QueueNotGranted)?;
+            if selector == "EnsureQueue" {
+                let spec = request
+                    .get("spec")
+                    .cloned()
+                    .and_then(|value| {
+                        serde_json::from_value::<tinystoragedrivers::QueueSpec>(value).ok()
+                    })
+                    .ok_or(Denied::Malformed)?;
+                let declared = declaration.spec();
+                if spec.max_attempts != declared.max_attempts
+                    || spec.dedupe_window_ms != declared.dedupe_window_ms
+                {
+                    return Err(Denied::QueueSpec);
+                }
+            }
+            Ok(forward(name))
+        }
+        _ => Err(Denied::Malformed),
     }
 }
 

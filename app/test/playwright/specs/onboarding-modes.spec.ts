@@ -12,16 +12,11 @@ async function resetMock(): Promise<void> {
   });
 }
 
-async function clickTestId(page: Page, testId: string, timeout = 10_000): Promise<boolean> {
+async function clickTestId(page: Page, testId: string): Promise<void> {
   const locator = page.getByTestId(testId);
-  try {
-    await locator.waitFor({ state: 'visible', timeout });
-    await expect(locator).toBeEnabled({ timeout: 5_000 });
-    await locator.click({ force: true, timeout: 5_000 });
-    return true;
-  } catch {
-    return false;
-  }
+  await expect(locator).toBeVisible();
+  await expect(locator).toBeEnabled();
+  await locator.click();
 }
 
 async function bootLocalOnboarding(page: Page, userId: string): Promise<void> {
@@ -42,41 +37,6 @@ async function bootLocalOnboarding(page: Page, userId: string): Promise<void> {
   await expect
     .poll(async () => page.evaluate(() => window.location.hash), { timeout: 20_000 })
     .toMatch(/^#\/onboarding\/custom\/inference/);
-}
-
-async function expectOnboardingCompleted(): Promise<void> {
-  const readValue = async (): Promise<boolean> => {
-    const completed = await callCoreRpc<boolean | { result?: boolean }>(
-      'openhuman.config_get_onboarding_completed',
-      {}
-    );
-    return typeof completed === 'boolean'
-      ? completed
-      : Boolean((completed as { result?: boolean }).result);
-  };
-
-  let value = await readValue();
-  if (!value) {
-    await callCoreRpc('openhuman.config_set_onboarding_completed', { value: true });
-    value = await readValue();
-  }
-  expect(value).toBe(true);
-}
-
-async function ensureHomeOrForceComplete(page: Page): Promise<void> {
-  const reachedHome = await expect
-    .poll(async () => page.evaluate(() => window.location.hash), { timeout: 20_000 })
-    .toMatch(/^#\/(home|chat)/)
-    .then(
-      () => true,
-      () => false
-    );
-
-  if (reachedHome) return;
-
-  await callCoreRpc('openhuman.config_set_onboarding_completed', { value: true });
-  await page.goto('/#/home');
-  await waitForAppReady(page);
 }
 
 test.describe('Onboarding modes', () => {
@@ -111,10 +71,10 @@ test.describe('Onboarding modes', () => {
     await bootLocalOnboarding(page, 'pw-onboarding-custom');
 
     await expect(page.getByTestId('onboarding-custom-inference-step')).toBeVisible();
-    expect(await clickTestId(page, 'onboarding-next-button')).toBe(true);
+    await clickTestId(page, 'onboarding-next-button');
 
     await expect(page.getByTestId('onboarding-custom-search-step')).toBeVisible();
-    expect(await clickTestId(page, 'onboarding-search-skip')).toBe(true);
+    await clickTestId(page, 'onboarding-search-skip');
     await expect
       .poll(() => page.evaluate(() => window.location.hash), { timeout: 10_000 })
       .toContain('/onboarding/custom/vault');
@@ -124,9 +84,19 @@ test.describe('Onboarding modes', () => {
     for (const retired of ['voice', 'oauth', 'embeddings']) {
       await expect(page.getByTestId(`onboarding-custom-${retired}-step`)).toHaveCount(0);
     }
-    expect(await clickTestId(page, 'onboarding-next-button')).toBe(true);
+    await clickTestId(page, 'onboarding-next-button');
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash), { timeout: 20_000 })
+      .toMatch(/^#\/(home|chat)/);
 
-    await ensureHomeOrForceComplete(page);
-    await expectOnboardingCompleted();
+    await expect
+      .poll(async () => {
+        const completed = await callCoreRpc<boolean | { result?: boolean }>(
+          'openhuman.config_get_onboarding_completed',
+          {}
+        );
+        return typeof completed === 'boolean' ? completed : Boolean(completed?.result);
+      })
+      .toBe(true);
   });
 });

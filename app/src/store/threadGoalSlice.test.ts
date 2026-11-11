@@ -5,12 +5,16 @@ import reducer, { clearThreadGoal, setThreadGoal, type ThreadGoalState } from '.
 const initial: ThreadGoalState = { byThread: {} };
 
 const goal = {
-  goal_id: 'g1',
+  threadId: 't1',
+  goalId: 'g1',
   objective: 'Ship the feature',
   status: 'active' as const,
-  tokens_used: 100,
-  time_used_seconds: 30,
-  token_budget: 1000,
+  tokensUsed: 100,
+  timeUsedSeconds: 30,
+  tokenBudget: 1000,
+  createdAtMs: 1,
+  updatedAtMs: 1,
+  timeUsedSubsecNanos: 0,
 };
 
 describe('threadGoalSlice', () => {
@@ -35,9 +39,9 @@ describe('threadGoalSlice', () => {
     const withT1 = reducer(initial, setThreadGoal({ threadId: 't1', goal }));
     const withT2 = reducer(
       withT1,
-      setThreadGoal({ threadId: 't2', goal: { ...goal, goal_id: 'g2' } })
+      setThreadGoal({ threadId: 't2', goal: { ...goal, threadId: 't2', goalId: 'g2' } })
     );
-    expect(withT2.byThread.t1?.goal_id).toBe('g1');
-    expect(withT2.byThread.t2?.goal_id).toBe('g2');
+    expect(withT2.byThread.t1?.goalId).toBe('g1');
+    expect(withT2.byThread.t2?.goalId).toBe('g2');
   });
 });

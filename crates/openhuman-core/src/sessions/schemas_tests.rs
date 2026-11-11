@@ -76,14 +76,6 @@ fn new_correlation_id_is_eight_hex_chars() {
     assert!(cid.chars().all(|c| c.is_ascii_hexdigit()));
 }
 
-#[test]
-fn an_unknown_function_gets_the_error_schema() {
-    let s = schema_for("no_such_function");
-    assert_eq!(s.namespace, "run_ledger");
-    assert_eq!(s.function, "unknown");
-    assert_eq!(s.outputs[0].name, "error");
-}
-
 /// Runs `handler` with the configured workspace pointed at a scratch
 /// directory, so the ledger it reads is empty and nothing touches the
 /// operator's home.

@@ -171,17 +171,24 @@ fn save(config: &Config, value: bool) -> Result<(), String> {
 
 pub async fn set_enabled(config: &Config, value: bool) -> Result<DesktopStatus, String> {
     if value && !supported() {
-        return Err(
-            "desktop control requires macOS or Windows and a loopback core listener".to_owned(),
-        );
+        return Err(UNSUPPORTED_REASON.to_owned());
     }
     save(config, value)?;
     tracing::info!(enabled = value, "[desktop] local enablement changed");
     Ok(status(config).await)
 }
 
+const UNSUPPORTED_REASON: &str = "desktop control requires macOS and a loopback core listener";
+
+/// macOS only. The Windows and Linux backends in the pinned TinyComputer
+/// engine implement no desktop surfaces yet, so every call there would fail
+/// with `PLATFORM_NOT_SUPPORTED` (#7164).
+pub(super) const fn platform_supported() -> bool {
+    cfg!(target_os = "macos")
+}
+
 fn supported() -> bool {
-    cfg!(any(target_os = "macos", target_os = "windows")) && listener_is_loopback()
+    platform_supported() && listener_is_loopback()
 }
 
 fn permission(data: &serde_json::Value, field: &str) -> String {
@@ -235,13 +242,11 @@ where
         module_state,
         accessibility: "unknown".to_owned(),
         screen_recording: "unknown".to_owned(),
-        jev_ready: crate::modules::desktop::jev_ready(config),
+        jev_ready: crate::modules::desktop::jev_ready(config).await,
         reason: None,
     };
     if !result.supported {
-        reason = Some(
-            "desktop control requires macOS or Windows and a loopback core listener".to_owned(),
-        );
+        reason = Some(UNSUPPORTED_REASON.to_owned());
     } else if local_enabled {
         match permissions().await {
             Ok(response) if response.ok => {

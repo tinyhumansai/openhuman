@@ -1,0 +1,17 @@
+api_url = "__MOCK_BACKEND_URL__"
+default_model = "gpt-4o-mini"
+default_temperature = 0.2
+chat_provider = "openai:gpt-4o-mini"
+
+[secrets]
+encrypt = false
+
+[[cloud_providers]]
+id = "p_doctor_openai"
+slug = "openai"
+label = "OpenAI"
+endpoint = "https://example.invalid/v1"
+auth_style = "bearer"
+
+[storage]
+url = "memory"

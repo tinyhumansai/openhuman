@@ -16,18 +16,12 @@ impl OpenHumanAgentRunner {
     /// a custom flow agent's model pin (e.g. `hint:reasoning`) silently
     /// dropped to the default chat model once routed through the harness.
     ///
-    /// **Synchronous only (B40 / Gap 4).** A flow `agent` node runs here with
-    /// no explicit chat thread on its run context. If the
-    /// agent it runs is a delegating agent (e.g. the orchestrator) and
-    /// calls `spawn_async_subagent` directly, the tool now refuses (see the
-    /// `parent_thread_id.is_none()` guard in
-    /// `agent_orchestration::tools::spawn_async_subagent`) rather than
-    /// silently discarding the background result once it finishes —
-    /// `background_delivery` has nowhere to deliver it without a thread id.
-    /// This module does not bridge async subagent delivery into flow runs.
-    /// For work that needs to happen in parallel, model it as parallel flow
-    /// nodes (the tinyflows engine already fans those out) instead of
-    /// reaching for a background sub-agent from inside a single node.
+    /// **Headless settlement.** A flow `agent` node has no chat thread, so it
+    /// opts its fresh session into bounded descendant settlement. Native
+    /// `spawn_subagent` calls remain asynchronous; the session waits for the
+    /// root-owned descendant tree and folds completed child output into the
+    /// node result before returning. The harness turn and descendant wait use
+    /// one absolute deadline derived from the node's effective timeout.
     pub(super) async fn run_via_harness(
         &self,
         dispatch: &crate::core::runtime::DispatchCtx,
@@ -86,9 +80,10 @@ impl OpenHumanAgentRunner {
         };
 
         let built = match &host {
-            Some(host) => host.session_host(effective.as_ref(), None),
+            Some(host) => host.session_host(effective.as_ref(), None).await,
             None => {
                 OpenHumanSessionHost::from_config_for_agent(dispatch, effective.as_ref(), agent_ref)
+                    .await
             }
         };
         let mut agent = built.map_err(|e| {
@@ -98,6 +93,7 @@ impl OpenHumanAgentRunner {
         })?;
         agent.set_agent_definition_name(agent_ref.to_string());
         agent.set_on_progress(self.progress.clone());
+        agent.enable_headless_descendant_settlement();
 
         // Issue #4868 — the session builder now stamps `agent_ref`'s own
         // `effective_max_iterations()` onto the agent (instead of the global
@@ -123,6 +119,17 @@ impl OpenHumanAgentRunner {
         let prompt = prepared.prompt;
         let base_timeout_secs = prepared.base_timeout_secs;
         let timeout_secs = prepared.timeout_secs;
+        let deadline = tinyagents_harness::turn_deadline::TurnDeadline::starting_now(
+            std::time::Duration::from_secs(timeout_secs),
+        );
+        let absolute_deadline =
+            tokio::time::Instant::from_std(deadline.started() + deadline.backstop());
+        let mut host_env = agent.host_env().clone();
+        // Harness turns can outlive the flow node's task-local scope when
+        // they spawn sub-agents. Carry the flow caller's owner explicitly.
+        host_env.core = host_core_context(&self.ctx, host.as_ref().map(|host| &host.context));
+        host_env.turn_deadline = Some(deadline);
+        agent.set_host_env(host_env);
 
         tracing::debug!(
             target: "flows",
@@ -154,7 +161,7 @@ impl OpenHumanAgentRunner {
         //
         // Cancellation: the run_registry token aborts the engine future, and the
         // inner turn drops with it (task-local scope unwinds cleanly).
-        use crate::security::turn_origin;
+        use crate::core::runtime::turn_origin;
         let escalated_origin = escalated_origin_for_nested_harness(self.ctx.turn_origin());
         if let Some(ref escalated) = escalated_origin {
             tracing::debug!(
@@ -186,34 +193,46 @@ impl OpenHumanAgentRunner {
             Some(context) => Box::pin(crate::core::runtime::CoreContext::scope(context, run)),
             None => run,
         };
-        let final_text =
-            match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), run).await {
-                Ok(Ok(text)) => text,
-                Ok(Err(e)) => {
-                    tracing::warn!(
-                        target: "flows",
-                        agent_ref,
-                        error = %e,
-                        "[flows] agent_runner: harness turn failed"
-                    );
-                    return Err(EngineError::Capability(format!(
-                        "agent node '{agent_ref}' turn failed: {e:#}"
-                    )));
-                }
-                Err(_) => {
-                    tracing::warn!(
-                        target: "flows",
-                        agent_ref,
-                        timeout_secs,
-                        "[flows] agent_runner: harness turn timed out"
-                    );
-                    return Err(EngineError::Capability(format!(
-                        "agent node '{agent_ref}' timed out after {timeout_secs}s"
-                    )));
-                }
-            };
+        let final_text = match tokio::time::timeout_at(absolute_deadline, run).await {
+            Ok(Ok(text)) => text,
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    target: "flows",
+                    agent_ref,
+                    error = %e,
+                    "[flows] agent_runner: harness turn failed"
+                );
+                return Err(EngineError::Capability(format!(
+                    "agent node '{agent_ref}' turn failed: {e:#}"
+                )));
+            }
+            Err(_) => {
+                tracing::warn!(
+                    target: "flows",
+                    agent_ref,
+                    timeout_secs,
+                    "[flows] agent_runner: harness turn timed out"
+                );
+                return Err(EngineError::Capability(format!(
+                    "agent node '{agent_ref}' timed out after {timeout_secs}s"
+                )));
+            }
+        };
 
         self.format_agent_result(agent_ref, request, final_text)
             .await
     }
 }
+
+fn host_core_context(
+    dispatch: &crate::core::runtime::DispatchCtx,
+    host_context: Option<&std::sync::Arc<crate::core::runtime::CoreContext>>,
+) -> Option<std::sync::Weak<crate::core::runtime::CoreContext>> {
+    host_context
+        .map(std::sync::Arc::downgrade)
+        .or_else(|| dispatch.downgrade())
+}
+
+#[cfg(test)]
+#[path = "agent_harness_tests.rs"]
+mod tests;

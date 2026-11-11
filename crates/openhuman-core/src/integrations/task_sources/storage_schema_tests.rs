@@ -68,5 +68,7 @@ fn a_ledger_entry_is_rekeyed_by_source_and_external_id() {
 
 #[test]
 fn the_schema_composes_under_its_owner() {
-    tinystoragedrivers::schema::Registry::compose([storage_schema()]).unwrap();
+    for spec in collection_specs() {
+        spec.validate().unwrap();
+    }
 }

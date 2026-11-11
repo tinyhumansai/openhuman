@@ -112,6 +112,16 @@ test("memoryForceStatus=402 fails every call with USER_INSUFFICIENT_CREDITS", as
   assert.equal(r.json.errorCode, "USER_INSUFFICIENT_CREDITS");
 });
 
+test("memoryForceCode overrides the forced status's errorCode", async () => {
+  setMockBehavior("memoryForceStatus", "403");
+  setMockBehavior("memoryForceCode", "MEMORY_PLAN_REQUIRED");
+  const r = await call("GET", "/memory/scopes");
+  assert.equal(r.status, 403);
+  assert.equal(r.json.success, false);
+  assert.equal(r.json.errorCode, "MEMORY_PLAN_REQUIRED");
+  assert.match(r.json.error, /not included in this account's plan/);
+});
+
 test("forget refuses an empty selector without confirm_all", async () => {
   const r = await call("POST", "/memory/forget", { scope: "s", selector: {} });
   assert.equal(r.status, 422);

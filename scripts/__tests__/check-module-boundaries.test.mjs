@@ -16,6 +16,14 @@ function metadata(edges, names = {}) {
 }
 
 test('checked-in inventory has explicit owners and reasoned exceptions', () => validatePolicy(policy));
+test('TinyJuice host adapter is allowed while implementation dependencies remain audited', () => {
+  assert.equal(isImplementation('tinyjuice-host', policy), false);
+  assert.equal(isImplementation('tinyjuice-core', policy), true);
+  const m = metadata({ host: [['tinyjuice-host']], 'tinyjuice-host': [['tinyjuice']] });
+  assert.deepEqual(auditGraph(m, ['host'], policy).violations.map(v => v.path), [
+    ['host', 'tinyjuice-host', 'tinyjuice'],
+  ]);
+});
 test('host traversal rejects direct, wrapper and build dependencies', () => {
   const m = metadata({ host: [['wrapper'], ['tinyvoice', 'build']], wrapper: [['tinyjuice']] });
   const result = auditGraph(m, ['host'], strict);
@@ -48,6 +56,18 @@ test('contracts permit only the serialization/schema/error closure', () => {
   const m = metadata({ 'tinyjuice-bus': [['serde'], ['thiserror']], serde: [['serde_derive']], serde_derive: [['syn']], thiserror: [['thiserror-impl']] });
   assert.deepEqual(auditGraph(m, ['tinyjuice-bus'], strict, 'tinyjuice-bus').violations, []);
 });
+test('contracts allow pinned canonical TSD vocabulary and reject other git sources', () => {
+  const m = metadata({ 'tinyjuice-bus': [['tinystoragedrivers-types']] });
+  const types = m.packages.find(pkg => pkg.name === 'tinystoragedrivers-types');
+  const revision = 'a'.repeat(40);
+  types.source = `git+https://github.com/tinyhumansai/tinystoragedrivers?rev=${revision}#${revision.slice(0, 8)}`;
+  assert.deepEqual(auditGraph(m, ['tinyjuice-bus'], strict, 'tinyjuice-bus').violations, []);
+
+  types.source = `git+https://github.com/senamakel/tinystoragedrivers?rev=${revision}#${revision}`;
+  assert.equal(auditGraph(m, ['tinyjuice-bus'], strict, 'tinyjuice-bus').violations[0].package, 'tinystoragedrivers-types');
+  types.source = 'git+https://github.com/tinyhumansai/tinystoragedrivers#main';
+  assert.equal(auditGraph(m, ['tinyjuice-bus'], strict, 'tinyjuice-bus').violations[0].package, 'tinystoragedrivers-types');
+});
 test('contracts reject transport, runtime, HTTP, database and native libraries', () => {
   for (const dependency of ['tinybus', 'tokio', 'reqwest', 'rusqlite', 'cpal', 'tinyjuice']) {
     const m = metadata({ 'tinyjuice-bus': [[dependency]] });
@@ -67,6 +87,30 @@ test('exceptions retain findings and do not hide new host descendants', () => {
   const result = auditGraph(m, ['host'], fixtureException);
   assert.equal(result.exceptions.length, 1);
   assert.equal(result.violations[0].package, 'tinyjuice-new-engine');
+});
+test('parent-scoped host exceptions do not allow direct implementation dependencies', () => {
+  const m = metadata({ openhuman: [['tinyflows']], cli: [['tinyflows'], ['openhuman']] });
+  const direct = auditGraph(m, ['cli'], policy);
+  assert.deepEqual(direct.violations.map(item => item.path), [['cli', 'tinyflows']]);
+  const core = auditGraph(m, ['openhuman'], policy);
+  assert.deepEqual(core.exceptions.map(item => item.path), [['openhuman', 'tinyflows']]);
+});
+test('parent-scoped exceptions are evaluated for every incoming edge', () => {
+  const edgePolicy = {
+    ...strict,
+    implementationPackages: ['tinyflows'],
+    implementationPrefixes: [],
+    exceptions: [{ scope: 'hosts', package: 'tinyflows', parent: 'tinyflows-import', reason: 'import bridge' }],
+  };
+  const m = metadata({
+    openhuman: [['tinyflows'], ['tinyflows-import']],
+    'tinyflows-import': [['tinyflows']],
+  });
+  const result = auditGraph(m, ['openhuman'], edgePolicy);
+  assert.deepEqual(result.violations.map(item => item.path), [['openhuman', 'tinyflows']]);
+  assert.deepEqual(result.exceptions.map(item => item.path), [
+    ['openhuman', 'tinyflows-import', 'tinyflows'],
+  ]);
 });
 test('cycles terminate and versions preserve distinct package identities', () => {
   const m = metadata({ host: [['juice-old'], ['juice-new']], 'juice-old': [['host']] }, { 'juice-old': 'tinyjuice', 'juice-new': 'tinyjuice' });
@@ -288,16 +332,17 @@ test('a package-scoped normal tree still rejects an activated implementation wri
 
 test('host boundary audit ignores writer features unified only by unrelated workspace dev fixtures', () => {
   const root = resolve(new URL('../..', import.meta.url).pathname);
+  mkdirSync(join(root, 'target'), { recursive: true });
   const harnessRoot = mkdtempSync(join(root, 'target', 'module-boundaries-host-isolation-'));
   try {
     mkdirSync(join(harnessRoot, 'scripts', 'ci'), { recursive: true });
     writeFileSync(join(harnessRoot, 'scripts', 'ci', 'module-boundaries.json'), JSON.stringify(policy));
 
     // Workspace-wide metadata sees an opt-in test writer on tinyflows-import
-    // as part of openhuman's unified normal feature graph, despite the core's
-    // own scoped normal tree containing only the read-only importer.
+    // as part of openhuman's unified normal feature graph. The scoped core tree
+    // also carries its explicitly tracked TinyFlows compatibility dependency.
     const unified = metadata({
-      openhuman: [['tinyflows-import']],
+      openhuman: [['tinyflows-import'], ['tinyflows']],
       'openhuman-cli': [['openhuman-rpc']],
       'openhuman-tui': [['openhuman-rpc']],
       'openhuman-rpc': [['openhuman-tinyhumans']],
@@ -311,7 +356,7 @@ test('host boundary audit ignores writer features unified only by unrelated work
       ],
     });
     const scoped = metadata({
-      openhuman: [['tinyflows-import']],
+      openhuman: [['tinyflows-import'], ['tinyflows']],
       'tinyflows-import': [['tinyflows-bus']],
     });
     const app = metadata({
@@ -319,7 +364,7 @@ test('host boundary audit ignores writer features unified only by unrelated work
       'openhuman-rpc': [['openhuman-tinyhumans']],
       'openhuman-tinyhumans': [['openhuman-embed']],
       'openhuman-embed': [['openhuman']],
-      openhuman: [['tinyflows-import']],
+      openhuman: [['tinyflows-import'], ['tinyflows']],
       'tinyflows-import': [
         ['tinyflows'],
         ['tinyflows-catalog'],
@@ -333,7 +378,8 @@ test('host boundary audit ignores writer features unified only by unrelated work
       openhuman: [],
     });
     assert.equal(auditGraph(unified, ['openhuman'], strict).violations.length, 4);
-    assert.deepEqual(auditGraph(scoped, ['openhuman'], strict).violations, []);
+    assert.deepEqual(auditGraph(scoped, ['openhuman'], policy).violations, []);
+    assert.deepEqual(auditGraph(scoped, ['openhuman'], policy).exceptions.map(item => item.package), ['tinyflows']);
     const manifestToContract = new Map(policy.contracts.map(item => [
       resolve(harnessRoot, item.manifest), item.name,
     ]));
@@ -365,6 +411,7 @@ test('host boundary audit ignores writer features unified only by unrelated work
           ] : packageName === 'openhuman-cli' && defaultWriterEnabled && cargoArgs.includes('--features') ? [
             '1tinyflows v0.8.28',
           ] : packageName === 'openhuman' ? [
+            '1tinyflows v0.8.28',
             '1tinyflows-import v0.1.0',
             `2tinyflows-bus v0.1.0 (${tinyflowsBus})`,
           ] : []),

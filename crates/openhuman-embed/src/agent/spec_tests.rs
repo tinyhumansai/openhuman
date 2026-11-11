@@ -58,3 +58,63 @@ fn composio_credential_is_carried_to_the_build_step_and_kept_out_of_debug() {
     assert_eq!(credential.api_key(), "ck_secret_alpha");
     assert_eq!(credential.entity(), "tenant-a");
 }
+
+#[test]
+fn a_memory_binding_recalls_each_turn_only_when_asked() {
+    let binding = MemoryBinding::new("writer").root("team:acme");
+    assert_eq!(binding.recall_each_turn_timeout(), None);
+    let binding = binding.recall_each_turn(std::time::Duration::from_millis(1_500));
+    assert_eq!(
+        binding.recall_each_turn_timeout(),
+        Some(std::time::Duration::from_millis(1_500))
+    );
+    assert_eq!(binding.root_namespace(), Some("team:acme"));
+}
+
+#[test]
+fn a_memory_binding_bounds_the_memory_block_only_when_asked() {
+    let binding = MemoryBinding::new("writer");
+    assert_eq!(binding.memory_block_deadline_timeout(), None);
+    let binding = binding.memory_block_deadline(std::time::Duration::from_millis(300));
+    assert_eq!(
+        binding.memory_block_deadline_timeout(),
+        Some(std::time::Duration::from_millis(300))
+    );
+}
+
+#[test]
+fn an_agent_spec_carries_tool_discovery_options_only_when_set() {
+    assert_eq!(AgentSpec::new("alpha").into_parts().tool_discovery, None);
+    let wanted = crate::ToolDiscoveryOptions {
+        promote_found_tools: false,
+        collapse_search_results: true,
+        ..crate::ToolDiscoveryOptions::TODAY
+    };
+    let parts = AgentSpec::new("alpha").tool_discovery(wanted).into_parts();
+    assert_eq!(parts.tool_discovery, Some(wanted));
+}
+
+#[test]
+fn an_agent_spec_carries_context_overrides_only_when_set() {
+    assert_eq!(
+        AgentSpec::new("alpha").into_parts().context,
+        crate::ContextOverrides::default()
+    );
+    let parts = AgentSpec::new("alpha")
+        .keep_recent_tokens(12_000)
+        .tool_result_max_age_turns(6)
+        .tool_result_exempt_tools(["tool_search"])
+        .replay_reasoning(crate::ReasoningReplay::CurrentTurn)
+        .prune_retired_tools(true)
+        .into_parts();
+    assert_eq!(
+        parts.context,
+        crate::ContextOverrides {
+            keep_recent_tokens: Some(12_000),
+            tool_result_max_age_turns: Some(6),
+            tool_result_exempt_tools: Some(vec!["tool_search".into()]),
+            replay_reasoning: Some(crate::ReasoningReplay::CurrentTurn),
+            prune_retired_tools: Some(true),
+        }
+    );
+}

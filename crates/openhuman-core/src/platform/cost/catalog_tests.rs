@@ -18,9 +18,6 @@ fn tinyagents_snapshot_contains_all_known_rows() {
     assert_eq!(snapshot.schema_version, 1);
     assert_eq!(snapshot.currency, "USD");
     assert_eq!(snapshot.unit, "token");
-    // Unified snapshot is a superset (crate seed + OpenHuman overlay), so it
-    // is at least as large as the OpenHuman table and carries every
-    // OpenHuman row with its authoritative pricing/window.
     assert!(snapshot.models.len() >= KNOWN_MODEL_PRICING.len());
     for price in KNOWN_MODEL_PRICING {
         let entry = snapshot
@@ -37,7 +34,6 @@ fn tinyagents_snapshot_contains_all_known_rows() {
             Some(price.input_per_mtok_usd / 1_000_000.0)
         );
     }
-    // OpenHuman provenance is recorded alongside any crate-seed sources.
     assert!(snapshot
         .sources
         .iter()

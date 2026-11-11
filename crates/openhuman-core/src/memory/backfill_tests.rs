@@ -20,6 +20,16 @@ fn message(id: &str, sender: &str, content: &str, at: &str) -> ConversationMessa
 }
 
 async fn seed_thread(workspace: &Path, thread_id: &str, messages: &[(&str, &str)]) {
+    let backend = crate::storage::local::backend_for(workspace).expect("open test storage");
+    let scope = crate::storage::Scope::local();
+    let storage = backend.for_scope(&scope).expect("open test storage scope");
+    assert!(
+        storage
+            .streams()
+            .capabilities()
+            .contains(tinystoragedrivers_types::Capability::ConditionalStreamAppend),
+        "backfill thread fixture needs conditional stream append"
+    );
     threads::ensure_thread(
         crate::core::runtime::DispatchCtx::ambient(),
         workspace.to_path_buf(),
@@ -312,6 +322,7 @@ async fn a_peer_driver_blocks_backfill_without_claiming_its_slot_or_state() {
     for (index, peer) in [Peer::Import, Peer::Migration].into_iter().enumerate() {
         let tmp = tempfile::tempdir().unwrap();
         let config = config_in(&tmp);
+        crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
         bind_reference(&config);
         seed_thread(
             &config.workspace_dir,

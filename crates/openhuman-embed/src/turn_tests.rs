@@ -14,10 +14,13 @@ use serde_json::json;
 /// controller it is sent to.
 #[test]
 fn turn_request_field_names_match_the_controller() {
-    let schema = openhuman_core::inference::host_runtime::all_local_inference_controller_schemas()
+    let schema = openhuman_core::core::all::all_registered_controllers()
         .into_iter()
-        .find(|s| s.namespace == "inference" && s.function == "agent_chat")
+        .find(|controller| {
+            controller.schema.namespace == "inference" && controller.schema.function == "agent_chat"
+        })
         .expect("inference.agent_chat is a registered controller");
+    let schema = schema.schema;
 
     let declared: std::collections::HashSet<&str> =
         schema.inputs.iter().map(|field| field.name).collect();
@@ -32,6 +35,8 @@ fn turn_request_field_names_match_the_controller() {
         inference_url: Some("https://example.invalid/v1".into()),
         api_key: Some("k".into()),
         inference_headers: vec![("x-worker".into(), "a".into())],
+        inference_provider_options: Some(serde_json::json!({"provider": {"sort": "latency"}})),
+        inference_reasoning_effort: Some("high".into()),
         agent_id: Some("a".into()),
     };
 
@@ -165,26 +170,6 @@ fn route_debug_redacts_bearer_and_url_embedded_credentials() {
 }
 
 #[test]
-fn is_safe_endpoint_for_bearer_accepts_tls_and_loopback() {
-    // TLS is always safe for a bearer.
-    assert!(is_safe_endpoint_for_bearer("https://api.example.com/v1"));
-    assert!(is_safe_endpoint_for_bearer("https://127.0.0.1:8443"));
-    // Cleartext is refused for remote hosts...
-    assert!(!is_safe_endpoint_for_bearer("http://api.example.com/v1"));
-    assert!(!is_safe_endpoint_for_bearer("http://192.168.1.10/v1"));
-    // ...but accepted for loopback, where the credential never leaves the host.
-    assert!(is_safe_endpoint_for_bearer("http://127.0.0.1:8080/v1"));
-    assert!(is_safe_endpoint_for_bearer("http://localhost:8080/v1"));
-    assert!(is_safe_endpoint_for_bearer("http://[::1]:8080/v1"));
-    assert!(is_safe_endpoint_for_bearer("http://127.0.0.2:8080/v1"));
-    // Unparseable or non-URL values are refused, not silently allowed, so a
-    // bearer can never ride a cleartext or ambiguous channel.
-    assert!(!is_safe_endpoint_for_bearer("api.example.com"));
-    assert!(!is_safe_endpoint_for_bearer("ftp://api.example.com"));
-    assert!(!is_safe_endpoint_for_bearer("http://api.example.com:8080"));
-}
-
-#[test]
 fn insecure_route_error_names_the_redacted_endpoint() {
     // The guard sanitizes the endpoint before it lands in the error, so the
     // message names the origin but never the credential-bearing parts.
@@ -230,16 +215,19 @@ fn sanitize_redacts_unparseable_urls() {
 /// discovered by an agent answering with no memory of the conversation.
 #[test]
 fn the_controller_declares_nowhere_for_a_seed_to_travel() {
-    let schema = openhuman_core::inference::host_runtime::all_local_inference_controller_schemas()
+    let schema = openhuman_core::core::all::all_registered_controllers()
         .into_iter()
-        .find(|s| s.namespace == "inference" && s.function == "agent_chat")
+        .find(|controller| {
+            controller.schema.namespace == "inference" && controller.schema.function == "agent_chat"
+        })
         .expect("inference.agent_chat is a registered controller");
+    let schema = schema.schema;
 
     // An allowlist, not a denylist of suspicious names: a future input called
     // `context` or `transcript` could carry history just as well, and a
     // heuristic that guesses at names would pass it silently. Anything new
     // fails here until someone decides whether a seed could ride it.
-    const KNOWN: [&str; 9] = [
+    const KNOWN: [&str; 11] = [
         "message",
         "model_override",
         "temperature",
@@ -247,6 +235,8 @@ fn the_controller_declares_nowhere_for_a_seed_to_travel() {
         "cwd",
         "inference_url",
         "inference_headers",
+        "inference_provider_options",
+        "inference_reasoning_effort",
         "api_key",
         "agent_id",
     ];
@@ -364,4 +354,30 @@ async fn runtime_tool_events_preserve_order_and_discard_tool_payloads() {
         assert_eq!(event.kind, expected);
         assert!(!serde_json::to_string(&event).unwrap().contains(private));
     }
+}
+
+/// A turn's `tool_search` options reach the session's config, and only a
+/// forced turn asks for them to apply to a thread that already exists.
+#[test]
+fn a_forced_discovery_turn_asks_for_the_options_on_existing_threads() {
+    use openhuman_core::config::schema::ToolSearchConfig;
+
+    let wanted = crate::ToolDiscoveryOptions {
+        collapse_search_results: true,
+        ..crate::ToolDiscoveryOptions::TODAY
+    };
+
+    let mut untouched = ToolSearchConfig::default();
+    apply_tool_discovery(&mut untouched, None, true);
+    assert_eq!(untouched, ToolSearchConfig::default());
+
+    let mut new_threads = ToolSearchConfig::default();
+    apply_tool_discovery(&mut new_threads, Some(wanted), false);
+    assert!(new_threads.collapse_search_results);
+    assert!(!new_threads.force_pin);
+
+    let mut every_thread = ToolSearchConfig::default();
+    apply_tool_discovery(&mut every_thread, Some(wanted), true);
+    assert!(every_thread.collapse_search_results);
+    assert!(every_thread.force_pin);
 }

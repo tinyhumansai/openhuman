@@ -20,7 +20,8 @@ Self-update domain for the `openhuman-core` binary. Checks GitHub Releases (`tin
 | `crates/openhuman-core/src/platform/update/scheduler.rs` | `run(UpdateConfig)` periodic checker loop + `tick()`; publishes startup/health events. Floor `MIN_INTERVAL_MINUTES = 10`. |
 | `crates/openhuman-core/src/platform/update/schemas.rs` | Controller registry: `all_controller_schemas`, `all_registered_controllers`, `schemas(fn)`, and `handle_*` thunks delegating to `ops`. |
 | `crates/openhuman-core/src/platform/update/types.rs` | Serde types: `UpdateInfo`, `VersionInfo`, `UpdateRunResult`, `UpdateApplyResult`, `GitHubRelease`, `GitHubAsset`. |
-| `crates/openhuman-core/src/platform/update/*_tests.rs` | Sibling test suites (`core_tests`, `ops_tests`, `ops_tests_2_tests`, `scheduler_tests`, `schemas_tests`), included via `#[path]`. |
+| `crates/openhuman-core/src/platform/update/tools.rs` | Agent tools for checking and applying updates, registered by `tools/ops.rs`. |
+| `crates/openhuman-core/src/platform/update/*_tests.rs` | Sibling test suites (`core_tests`, `ops_tests`, `ops_tests_2_tests`, `scheduler_tests`, `schemas_tests`, `tools_tests`), included via `#[path]`. |
 
 ## Public surface
 - Types ([`types.rs`](./types.rs)): `UpdateInfo`, `VersionInfo`, `UpdateRunResult`, `UpdateApplyResult`, `GitHubRelease`, `GitHubAsset`.
@@ -41,7 +42,7 @@ All under namespace `update` (i.e. `openhuman.update_*`):
 `apply` and `run` are gated by `enforce_update_mutation_policy` (fail-closed if config can't load) and re-validate the URL (must be HTTPS GitHub host) and asset name (must start `openhuman-core-`, no path separators / `..`).
 
 ## Agent tools
-Not owned here: the domain has no `tools.rs`. Two cross-cutting system tools wrap it: `crates/openhuman-core/src/tools/impl/system/update_check.rs` (read-only, calls `update::rpc::update_check`) and `crates/openhuman-core/src/tools/impl/system/update_apply.rs` (calls `update::rpc::update_run`).
+The domain owns two agent tools in [`tools.rs`](./tools.rs): `update_check` (read-only, calls `update::rpc::update_check`) and `update_apply` (calls `update::rpc::update_run`). Their model-facing names and behavior remain stable.
 
 ## Events
 No `bus.rs`. The scheduler *publishes* (via `crate::core::bus::BUS.publish`):
@@ -67,7 +68,7 @@ None. No `store.rs`: staged binaries are written to the filesystem (current-exe 
 ## Used by
 - `crates/openhuman-core/src/core/all.rs`: registers `all_update_registered_controllers()` / `all_update_controller_schemas()` into the controller registry.
 - `crates/openhuman-core/src/core/runtime/services.rs`: spawns `update::scheduler::run(config.update)` as a background service at core start when `ServiceSet::update_scheduler` is set (the desktop shell turns it off in `host::desktop_builder` because it updates through the Tauri updater; `ServiceSet::desktop()` itself leaves it on).
-- `crates/openhuman-core/src/tools/impl/system/update_check.rs` and `update_apply.rs`: agent tools wrapping the RPC layer.
+- `crates/openhuman-core/src/platform/update/tools.rs`: agent tools wrapping the RPC layer.
 
 ## Notes / gotchas
 - **`staging_dir` is intentionally ignored** by `update_apply`: it always uses the safe default (current-exe parent dir) regardless of caller input, for security.

@@ -4,10 +4,11 @@ use async_trait::async_trait;
 use openhuman_embed::providers::{ChatModel, ModelRequest, ModelResponse};
 use openhuman_embed::seams::{LearningSink, TurnSummary};
 use openhuman_embed::{
-    Access, AgentDefinitionSpec, AgentSpec, InMemorySessionStores, ModelDefaults, Provider,
-    Runtime, RuntimeEventKind, SessionStoreProvider, StreamEvent,
+    Access, AgentDefinitionSpec, AgentSpec, ModelDefaults, Provider, Runtime, RuntimeEventKind,
+    SessionStoreProvider, StreamEvent,
 };
 use std::sync::Arc;
+use tinyagents_session::port::InMemorySessionStores;
 
 struct Model {
     label: &'static str,

@@ -265,6 +265,7 @@ async fn started_agent_scheduler_releases_its_context_after_stop_is_confirmed() 
     .expect("the finite StopScheduler owner releases its context after confirmation");
 }
 
+#[cfg(feature = "legacy-import")]
 /// Upgrade regression: a job whose retry budget and single-flight setting lived
 /// in the old `cron_job_policies` side table keeps firing after the upgrade,
 /// with that policy now on the job itself.

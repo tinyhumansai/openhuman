@@ -74,3 +74,34 @@ async fn physical_dispatch_refusal_keeps_its_typed_reason_ahead_of_stale_provide
     );
     assert!(slot.lock().unwrap().is_none());
 }
+
+#[tokio::test]
+async fn any_other_run_failure_re_surfaces_the_typed_provider_error_from_the_slot() {
+    // A run that failed for any other reason re-surfaces the provider error
+    // the model adapter recorded, typed, so callers keep their downcasts and
+    // the user sees the real cause; the slot is consumed.
+    let slot: ModelErrorSlot = std::sync::Arc::new(std::sync::Mutex::new(Some(
+        tinyinference_llm::Error::Model("OpenHuman returned HTTP 402: insufficient credits".into()),
+    )));
+    let other = || tinyagents_harness::TinyAgentsError::MissingNode("agent".into());
+
+    let mapped = map_turn_run_error(other(), "m", 10, &slot, None).await;
+    assert!(
+        matches!(
+            mapped.downcast_ref::<tinyinference_llm::Error>(),
+            Some(tinyinference_llm::Error::Model(message)) if message.contains("402")
+        ),
+        "expected the typed provider error, got: {mapped}"
+    );
+    assert!(slot.lock().unwrap().is_none(), "the slot must be consumed");
+
+    // With nothing recorded, the harness's own error is reported.
+    let mapped = map_turn_run_error(other(), "m", 10, &slot, None).await;
+    assert!(mapped.downcast_ref::<tinyinference_llm::Error>().is_none());
+    assert!(
+        mapped
+            .to_string()
+            .starts_with("tinyagents harness run failed:"),
+        "{mapped}"
+    );
+}

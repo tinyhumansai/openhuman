@@ -34,8 +34,11 @@
 //! shutdown path because there is nothing a shutdown could reclaim.
 
 use std::sync::OnceLock;
+use std::time::Duration;
 
-use tinybus::module::{ModuleRuntime, RuntimeNames};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use tinybus::module::{ModuleRuntime, RuntimeNames, RuntimeOptions, SearchPathConfig};
 
 /// The module bus, built once on first use.
 static RUNTIME: OnceLock<Result<ModuleRuntime, String>> = OnceLock::new();
@@ -77,13 +80,38 @@ where
     Ok(runtime_now()?.spawn(future))
 }
 
+/// Run `future` on the module bus's own executor, starting the bus if needed
+/// but without awaiting its host callbacks. The task outlives whichever caller
+/// spawned it; work that needs the callbacks awaits [`runtime`] inside it.
+pub(crate) fn spawn_on_bus<F>(future: F) -> tinybus::Result<tokio::task::JoinHandle<F::Output>>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    Ok(runtime_now()?.spawn(future))
+}
+
 fn runtime_now() -> tinybus::Result<&'static ModuleRuntime> {
     let started = RUNTIME.get_or_init(|| {
         let names = RuntimeNames {
             thread: "openhuman-module-bus".to_string(),
             worker: "openhuman-module-worker".to_string(),
         };
-        ModuleRuntime::start(&names, None).map_err(|error| error.to_string())
+        let runtime = ModuleRuntime::start_with_options(
+            &names,
+            None,
+            RuntimeOptions {
+                thread_stack_size: Some(crate::core::runtime::AGENT_WORKER_STACK_BYTES),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        runtime
+            .host()
+            .set_search_path_config(Some(SearchPathConfig::new(
+                "OPENHUMAN_MODULE_PATH",
+                "openhuman/modules",
+            )));
+        Ok(runtime)
     });
     let runtime = started
         .as_ref()
@@ -95,6 +123,11 @@ fn runtime_now() -> tinybus::Result<&'static ModuleRuntime> {
 async fn install_callbacks(runtime: &'static ModuleRuntime) -> tinybus::Result<()> {
     let connection = runtime.connection();
 
+    #[cfg(feature = "security-module")]
+    super::security::callbacks::install(connection).await?;
+    #[cfg(all(feature = "security-module", feature = "modules"))]
+    super::browser_egress_host::install(connection).await?;
+
     // The summary callback exists for the module alone; with the component off
     // the module never loads, so nothing would call it.
     let host = crate::core::runtime::DispatchCtx::host_default();
@@ -105,14 +138,6 @@ async fn install_callbacks(runtime: &'static ModuleRuntime) -> tinybus::Result<(
     }
     super::site_memory_host::install(connection).await?;
     super::storage_host::install(connection, runtime.host()).await?;
-    #[cfg(feature = "tinymemes")]
-    {
-        if host.components().memes {
-            crate::tinymemes::service::install(connection).await?;
-        } else {
-            tracing::debug!("[modules] memes component off; Host callbacks not served");
-        }
-    }
     #[cfg(feature = "web3")]
     super::wallet_host::install(connection).await?;
     // Deliver / ClassifySalience for the inbound event queues; with the
@@ -135,6 +160,56 @@ async fn install_callbacks(runtime: &'static ModuleRuntime) -> tinybus::Result<(
 #[must_use]
 pub fn is_started() -> bool {
     RUNTIME.get().is_some_and(Result::is_ok)
+}
+
+/// Returns the current runtime only when it was already started and its host
+/// callbacks are serving. Unlike [`runtime`], this accessor never starts a
+/// runtime or installs callbacks.
+pub(crate) fn existing_runtime() -> Option<&'static ModuleRuntime> {
+    let runtime = RUNTIME.get()?.as_ref().ok()?;
+    CALLBACKS.get()?.as_ref().ok()?;
+    Some(runtime)
+}
+
+/// A safe, sanitized result for a call through the already-serving module bus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExistingModuleCallError {
+    Unavailable,
+    Failed,
+}
+
+/// Call a read-only capability on a module that is already ready. This never
+/// starts the module runtime, loads a module, or retries through a ModuleClient.
+pub(crate) async fn call_if_ready<Request, Reply>(
+    id: &str,
+    member: &str,
+    request: Request,
+    timeout: Duration,
+) -> Result<Option<Reply>, ExistingModuleCallError>
+where
+    Request: Serialize + Send,
+    Reply: DeserializeOwned,
+{
+    if super::ops::state_of(id) != super::types::ModuleState::Ready {
+        return Ok(None);
+    }
+    let Some(runtime) = existing_runtime() else {
+        return Ok(None);
+    };
+    let record = super::registry::find(id).ok_or(ExistingModuleCallError::Unavailable)?;
+    let proxy = runtime
+        .proxy(record.bus_name, record.object_path)
+        .map_err(|_| ExistingModuleCallError::Unavailable)?
+        .with_timeout(timeout);
+    match tokio::time::timeout(
+        timeout,
+        proxy.call_confidential::<Reply>(member, (request,)),
+    )
+    .await
+    {
+        Ok(Ok(reply)) => Ok(Some(reply)),
+        Ok(Err(_)) | Err(_) => Err(ExistingModuleCallError::Failed),
+    }
 }
 
 /// Whether `id` is admitted and currently serving on an already-started

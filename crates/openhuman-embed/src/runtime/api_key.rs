@@ -4,7 +4,7 @@
 //! own credential store (beside its `config.toml`, never in it) before the
 //! core boots, and from then on every managed-backend call authenticates
 //! with it: managed inference as `Authorization: Bearer <key>`, SDK REST
-//! routes as `x-api-key`. See `openhuman_core::security::credentials::api_key`
+//! routes as `x-api-key`. See `openhuman_core::credentials::api_key`
 //! for the core side.
 
 /// A TinyHumans API key.

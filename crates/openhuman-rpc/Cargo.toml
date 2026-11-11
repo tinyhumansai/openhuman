@@ -53,9 +53,9 @@ http-server = ["openhuman-tinyhumans/http-server"]
 inference = ["openhuman-tinyhumans/inference"]
 documents = ["openhuman-tinyhumans/documents"]
 hosting = ["openhuman-tinyhumans/hosting"]
-tinymemes = ["openhuman-tinyhumans/tinymemes"]
 inbound-queues = ["openhuman-tinyhumans/inbound-queues"]
 modules = ["openhuman-tinyhumans/modules"]
+security-module = ["openhuman-tinyhumans/security-module"]
 voice = ["openhuman-tinyhumans/voice"]
 web3 = ["openhuman-tinyhumans/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain and
@@ -64,6 +64,9 @@ storage-sqlite = ["openhuman-tinyhumans/storage-sqlite"]
 storage-mongodb = ["openhuman-tinyhumans/storage-mongodb"]
 storage-s3 = ["openhuman-tinyhumans/storage-s3"]
 storage-file = ["openhuman-tinyhumans/storage-file"]
+storage-rabbitmq = ["openhuman-tinyhumans/storage-rabbitmq"]
+secret-file = ["openhuman-tinyhumans/secret-file"]
+legacy-import = ["openhuman-tinyhumans/legacy-import"]
 media = ["openhuman-tinyhumans/media"]
 flows = ["openhuman-tinyhumans/flows"]
 skills = ["openhuman-tinyhumans/skills"]
@@ -80,7 +83,7 @@ e2e-test-support = ["openhuman-tinyhumans/e2e-test-support"]
 
 [dependencies]
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"], optional = true }
-tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v1.0.0", default-features = false, features = ["secrets", "keyring"], optional = true }
+tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", default-features = false, features = ["keyring"], optional = true }
 zeroize = { version = "1", optional = true }
 hex = { version = "0.4", optional = true }
 # The only openhuman crate this layer depends on. Core internals the server
@@ -94,7 +97,7 @@ serde_json = "1"
 url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "macros"], optional = true }
-socketioxide = { version = "0.15", features = ["extensions"], optional = true }
+socketioxide = { version = "0.18.9", features = ["extensions"], optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
 tokio-stream = { version = "0.1.18", default-features = false, features = ["sync"], optional = true }
 tokio-util = { version = "0.7", features = ["rt", "io"], optional = true }
@@ -127,3 +130,5 @@ tower = { version = "0.5", default-features = false }
 # Same spelling as embed's, tinyhumans' and cli's dev-dependency, so the dev
 # graphs unify and `cargo test -p openhuman-rpc` reuses their core build.
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+engineioxide = "0.17.9"
+socketioxide = { version = "0.18.9", features = ["extensions", "__test_harness"] }

@@ -16,7 +16,6 @@ fn compaction_exempt_tools_contains_every_proposal_tool() {
 }
 
 #[tokio::test]
-#[ignore = "requires a built TinyJuice module"]
 async fn tool_output_tabulates_a_large_graph_for_a_non_exempt_tool() {
     // Sanity baseline proving this test's payload actually exercises real
     // tinyjuice tabulation (and isn't just below-threshold): a tool name
@@ -197,6 +196,38 @@ async fn get_tool_output_sample_is_compaction_exempt() {
         payload,
         "get_tool_output_sample's response must not be tokenjuice-tabulated"
     );
+}
+
+/// `tool_search` answers are the model's only way to learn a deferred tool's
+/// schema, and the harness's collapse step rewrites a *used* result to those
+/// schemas afterwards. Tabulating, summarising or cutting one beforehand
+/// leaves collapse nothing it recognises, so the result is skipped.
+#[tokio::test]
+async fn tool_search_result_is_not_reshaped_by_tool_output_middleware() {
+    // The byte budget sits far below the payload, so a result that was not
+    // exempt from the cap would be cut as well as compacted.
+    let mw = ToolOutputMiddleware {
+        budget_bytes: 2_000,
+        ..compaction_enabled_mw()
+    };
+    let payload = large_sample_response_json(40);
+    assert!(payload.len() > 2 * mw.budget_bytes);
+    let mut result = tool_result(tinytools::TOOL_SEARCH_NAME, &payload);
+    mw.after_tool(
+        &mut ctx(),
+        &(),
+        &invocation("search", tinytools::TOOL_SEARCH_NAME),
+        &mut result,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result_text(&result),
+        payload,
+        "a tool_search result must reach the transcript as the tool wrote it"
+    );
+    assert!(is_compaction_exempt(tinytools::TOOL_SEARCH_NAME));
+    assert!(is_truncation_exempt(tinytools::TOOL_SEARCH_NAME));
 }
 
 #[tokio::test]

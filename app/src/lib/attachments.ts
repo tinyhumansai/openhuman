@@ -1,12 +1,15 @@
 /**
  * Utilities for multimodal chat attachments.
  *
- * Images are embedded as `[IMAGE:<data-uri>]` markers. Other files
- * are embedded as `[FILE:<data-uri>]` markers. The Rust agent harness
- * (`agent/multimodal.rs`) parses, validates, and expands both shapes before
- * the provider call.
+ * Originals travel as typed `ContentPart`s ({@link attachmentsToParts}) next to
+ * the message text; the core stages them and returns durable opaque typed
+ * references. {@link parseAttachmentReferences} remains for legacy marker
+ * records. The `[IMAGE:]`/`[FILE:]` marker grammar is an internal staging
+ * format of the core and is no longer built here.
  */
 import debugFactory from 'debug';
+
+import type { ContentPart } from '../services/chatWire';
 
 const debug = debugFactory('chat:attachments');
 
@@ -112,7 +115,12 @@ async function gzipBlob(file: File): Promise<Blob | null> {
   try {
     const compressionStream = new CompressionStream('gzip');
     const compressed = file.stream().pipeThrough(compressionStream);
-    return await new Response(compressed).blob();
+    // Rebuild the Blob from bytes instead of returning Response.blob()'s
+    // platform Blob directly. Embedded WebViews and test DOMs can provide a
+    // different Blob implementation than Response, and wrapping a foreign
+    // Blob would serialize it as `[object Blob]` instead of preserving bytes.
+    const bytes = await new Response(compressed).arrayBuffer();
+    return new Blob([bytes]);
   } catch (error) {
     debug('[chat:attachments] gzip_failed name=%s error=%o', file.name, error);
     return null;
@@ -306,18 +314,48 @@ export async function validateAndReadFile(
 }
 
 /**
- * Compose the final message string by appending `[IMAGE:<data-uri>]` markers
- * for image attachments and `[FILE:<data-uri>]` markers for other supported
- * files after the user's text. The Rust agent harness parses and strips these
- * markers before forwarding clean text and attachment payloads to the provider.
+ * The typed wire form of composer attachments (`ContentPart[]`): an `image`,
+ * `video` or `file` part whose media carries the original as a `data:` URI
+ * plus its name, type and size. Sent next to the message text through the
+ * `attachments` param of `channel.web_chat`, `threads.message_append` and
+ * `threads.edit_message`; the core stages the originals. The text is never
+ * touched, so no `[IMAGE:]`/`[FILE:]` marker is built here.
  */
-export function buildMessageWithAttachments(text: string, attachments: Attachment[]): string {
-  if (attachments.length === 0) return text;
-  const markers = attachments
-    .map(a => `[${a.kind === 'image' ? 'IMAGE' : 'FILE'}:${a.dataUri}]`)
-    .filter(marker => marker.length > 0)
-    .join(' ');
-  return text.trim() ? `${text.trim()} ${markers}` : markers;
+export function attachmentsToParts(attachments: Attachment[]): ContentPart[] {
+  return attachments.map((a): ContentPart => {
+    const media = {
+      url: a.dataUri,
+      contentType: a.mimeType,
+      fileName: a.file.name,
+      sizeBytes: a.originalSizeBytes,
+      codec: null,
+      durationMs: null,
+      height: null,
+      localCachePath: null,
+      path: null,
+      platformMessageId: null,
+      transcribed: false,
+      width: null,
+    };
+    if (a.kind === 'image') {
+      return { kind: 'image', altText: null, caption: null, media: { ...media, kind: 'image' } };
+    }
+    if (a.kind === 'video') {
+      return {
+        kind: 'video',
+        caption: null,
+        durationMs: null,
+        thumbnail: null,
+        media: { ...media, kind: 'video' },
+      };
+    }
+    return {
+      kind: 'file',
+      fileName: a.file.name,
+      caption: null,
+      media: { ...media, kind: 'document' },
+    };
+  });
 }
 
 /** Workspace references returned by the core after it has saved originals. */
@@ -328,46 +366,65 @@ export interface AttachmentReference {
   size_bytes: number;
 }
 
+/** Strip accepted markers, preserving text except one redundant separator. */
+function stripMarkers(
+  content: string,
+  pattern: RegExp,
+  consume: (payload: string) => boolean
+): string {
+  let text = '';
+  let cursor = 0;
+  for (const match of content.matchAll(pattern)) {
+    text += content.slice(cursor, match.index);
+    cursor = match.index + match[0].length;
+    if (!consume(match[1])) {
+      text += match[0];
+    } else if (!text.endsWith(' ')) {
+      // Use the surviving text, not the original character before this marker:
+      // that character may belong to an adjacent marker we already removed.
+      text += match[2];
+    }
+  }
+  return text + content.slice(cursor);
+}
+
 /** Decode durable references without exposing raw JSON in message bubbles. */
 export function parseAttachmentReferences(content: string): {
   text: string;
   attachments: AttachmentReference[];
 } {
   const attachments: AttachmentReference[] = [];
-  const text = content
-    .replace(/\[ATTACHMENT:([^\]]+)\]/g, (marker, encoded: string) => {
-      try {
-        const decoded = new URLSearchParams(`value=${encoded}`).get('value');
-        const value: unknown = JSON.parse(decoded ?? '');
-        if (!value || typeof value !== 'object') return marker;
-        const file = value as Partial<AttachmentReference>;
-        if (
-          typeof file.path !== 'string' ||
-          typeof file.name !== 'string' ||
-          typeof file.mime !== 'string' ||
-          typeof file.size_bytes !== 'number' ||
-          !Number.isSafeInteger(file.size_bytes) ||
-          file.size_bytes < 0
-        )
-          return marker;
-        // These are workspace references, never URLs or absolute browser targets.
-        const components = file.path.split('/');
-        if (
-          !file.path ||
-          file.path.includes('\\') ||
-          file.path.includes(':') ||
-          file.path.includes('\0') ||
-          components.some(part => part === '' || part === '.' || part === '..')
-        )
-          return marker;
-        attachments.push(file as AttachmentReference);
-        return '';
-      } catch {
-        return marker;
-      }
-    })
-    .replace(/ {2,}/g, ' ')
-    .trim();
+  const text = stripMarkers(content, /\[ATTACHMENT:([^\]]+)\]( ?)/g, encoded => {
+    try {
+      const decoded = new URLSearchParams(`value=${encoded}`).get('value');
+      const value: unknown = JSON.parse(decoded ?? '');
+      if (!value || typeof value !== 'object') return false;
+      const file = value as Partial<AttachmentReference>;
+      if (
+        typeof file.path !== 'string' ||
+        typeof file.name !== 'string' ||
+        typeof file.mime !== 'string' ||
+        typeof file.size_bytes !== 'number' ||
+        !Number.isSafeInteger(file.size_bytes) ||
+        file.size_bytes < 0
+      )
+        return false;
+      // These are workspace references, never URLs or absolute browser targets.
+      const components = file.path.split('/');
+      if (
+        !file.path ||
+        file.path.includes('\\') ||
+        file.path.includes(':') ||
+        file.path.includes('\0') ||
+        components.some(part => part === '' || part === '.' || part === '..')
+      )
+        return false;
+      attachments.push(file as AttachmentReference);
+      return true;
+    } catch {
+      return false;
+    }
+  }).trim();
   return { text, attachments };
 }
 
@@ -390,17 +447,15 @@ export function attachmentMetadata(attachments: Attachment[]): Record<string, un
  */
 export function parseMessageImages(content: string): { text: string; dataUris: string[] } {
   const dataUris: string[] = [];
-  const text = parseAttachmentReferences(content)
-    .text.replace(/\[IMAGE:([^\]]+)\]/g, (_match, uri: string) => {
+  const withoutImages = stripMarkers(
+    parseAttachmentReferences(content).text,
+    /\[IMAGE:([^\]]+)\]( ?)/g,
+    uri => {
       dataUris.push(uri);
-      return '';
-    })
-    .replace(/\[FILE:([^\]]+)\]/g, '') // Strip file markers
-    // Collapse only runs of plain spaces (not \s) left behind by marker
-    // removal — using \s here would also eat intentional newlines/paragraph
-    // breaks in the user's own text.
-    .replace(/ {2,}/g, ' ')
-    .trim();
+      return true;
+    }
+  );
+  const text = stripMarkers(withoutImages, /\[FILE:([^\]]+)\]( ?)/g, () => true).trim();
   return { text, dataUris };
 }
 

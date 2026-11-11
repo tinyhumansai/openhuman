@@ -51,6 +51,27 @@ fn context_registrations_are_isolated_until_an_extensions_set_is_bound() {
 }
 
 #[test]
+fn explicit_process_lookup_never_falls_through_to_ambient_context() {
+    use crate::core::runtime::{CoreContext, DomainSet};
+
+    let slot: HookSlot<u32> = HookSlot::new("slots_tests::explicit_lookup");
+    slot.clear();
+    slot.register("process", 1);
+    let context = CoreContext::for_test(DomainSet::full(), None);
+    slot.register_in(context.extensions(), "ambient", 2);
+
+    let actual = CoreContext::sync_scope(context.clone(), || {
+        (
+            slot.get_for(None, "process"),
+            slot.get_for(None, "ambient"),
+            slot.get_for(Some(context.extensions()), "ambient"),
+        )
+    });
+    assert_eq!(actual, (Some(1), None, Some(2)));
+    slot.clear();
+}
+
+#[test]
 fn merging_extensions_shares_tables_without_overwriting_existing_ones() {
     let first = Extensions::new();
     let second = Extensions::new();

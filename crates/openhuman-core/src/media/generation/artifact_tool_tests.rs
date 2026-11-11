@@ -3,10 +3,13 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
 use tinyagents_harness::media::MediaOutput;
-use tinystoragedrivers::BlobStore;
+use tinyagents_harness_tools::media::MediaJobProgress;
+use tinystoragedrivers_api::BlobStore;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolContent, ToolResult};
 
-use super::{copy_blob_to_file, has_reusable_files_reference, MediaArtifactTool};
+use super::{
+    copy_blob_to_file, has_reusable_files_reference, MediaArtifactTool, OpenHumanArtifactFiling,
+};
 use crate::artifacts::{ArtifactKind, ArtifactStatus, FileRoots};
 
 #[test]
@@ -66,24 +69,6 @@ async fn artifact_history_refresh_failure_fails_closed_for_cached_files() {
         .execute(json!({ "references": [replacement.to_string_lossy()] }))
         .await
         .is_err());
-}
-
-struct PartialThenFail(bool);
-
-impl tokio::io::AsyncRead for PartialThenFail {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        let this = self.get_mut();
-        if this.0 {
-            return std::task::Poll::Ready(Err(std::io::Error::other("reader failed")));
-        }
-        this.0 = true;
-        buf.put_slice(b"partial media");
-        std::task::Poll::Ready(Ok(()))
-    }
 }
 
 /// A minimal stand-in for `GenerateImageTool` / `GenerateVideoTool`: writes
@@ -190,7 +175,10 @@ async fn files_a_blob_backed_generated_artifact() {
     let root = tempfile::tempdir().unwrap();
     let workspace = root.path().join("workspace");
     let files_dir = root.path().join("Files");
-    let blobs = MediaOutput::new(root.path()).blobs.clone();
+    let backend = crate::storage::test_support::memory_backend();
+    let scoped = backend.for_scope(&crate::storage::Scope::local()).unwrap();
+    let blobs: Arc<dyn BlobStore> = Arc::clone(scoped.blobs());
+    let _output = MediaOutput::new(root.path(), Arc::clone(&blobs));
     let wrapped = MediaArtifactTool::new(
         BlobBackedMediaTool {
             blobs: Arc::clone(&blobs),
@@ -304,13 +292,16 @@ async fn removes_partial_destination_when_blob_read_fails() {
     let dest = root.path().join("partial.png");
     std::fs::write(&dest, b"reserved placeholder").unwrap();
 
-    let error = copy_blob_to_file(
-        &mut PartialThenFail(false),
-        &dest,
-        "generated-media/fail.png",
-    )
-    .await
-    .unwrap_err();
+    let mut reader: tinyagents_storage_kit::blob::BlobReader =
+        Box::pin(futures_util::stream::iter([
+            Ok(bytes::Bytes::from_static(b"partial media")),
+            Err(tinystoragedrivers_types::StorageError::backend(
+                "reader failed",
+            )),
+        ]));
+    let error = copy_blob_to_file(&mut reader, &dest, "generated-media/fail.png")
+        .await
+        .unwrap_err();
 
     assert!(error.contains("failed to copy generated media blob"));
     assert!(!dest.exists());
@@ -320,7 +311,9 @@ async fn removes_partial_destination_when_blob_read_fails() {
 async fn keeps_source_blob_when_artifact_finalization_fails() {
     let root = tempfile::tempdir().unwrap();
     let workspace = root.path().join("workspace");
-    let blobs = MediaOutput::new(root.path()).blobs.clone();
+    let backend = crate::storage::test_support::memory_backend();
+    let scoped = backend.for_scope(&crate::storage::Scope::local()).unwrap();
+    let blobs: Arc<dyn BlobStore> = Arc::clone(scoped.blobs());
     let key = "generated-media/finalize-failure.png";
     blobs
         .put(key, b"media bytes".to_vec(), Some("image/png"))
@@ -351,7 +344,8 @@ async fn keeps_source_blob_when_artifact_finalization_fails() {
     .await
     .unwrap();
     let _ = std::fs::remove_file(production.path());
-    let error = tool
+    let filing = OpenHumanArtifactFiling(Arc::clone(&tool.policy));
+    let error = filing
         .complete_and_discard_blob(&production, Path::new(key))
         .await
         .unwrap_err();
@@ -548,9 +542,23 @@ async fn per_call_observer_reports_each_calls_own_job_state() {
         root.path().join("workspace"),
         root.path().join("Files"),
     )
-    .with_per_call_inner(move |observer, _chat| PollingTool {
-        observer,
-        state: states.lock().unwrap().pop().unwrap(),
+    .with_per_call_inner(move |progress, _context| {
+        let observer = std::sync::Arc::new(
+            move |status: &tinyagents_harness::tinyinference_video::VideoJobStatus| {
+                progress(&MediaJobProgress {
+                    id: status.id.clone(),
+                    state: status.state.to_string(),
+                    outputs: status.outputs,
+                    output_indices: status.output_indices.clone(),
+                    cost_usd: status.cost_usd,
+                    error: status.error.clone(),
+                });
+            },
+        );
+        PollingTool {
+            observer,
+            state: states.lock().unwrap().pop().unwrap(),
+        }
     });
     let (a, b) = (Recorder::default(), Recorder::default());
     let (ra, rb) = tokio::join!(
@@ -562,4 +570,29 @@ async fn per_call_observer_reports_each_calls_own_job_state() {
     let (ma, mb) = (a.0.lock().unwrap().clone(), b.0.lock().unwrap().clone());
     assert_eq!(ma, vec!["Generating video — 15s elapsed (job pending)"]);
     assert_eq!(mb, vec!["Generating video — 15s elapsed (job in_progress)"]);
+}
+
+/// With security disabled the media reference floor checks nothing: a
+/// reference inside a credential store is admitted.
+async fn assert_references_are_unchecked() {
+    let dir = tempfile::tempdir().unwrap();
+    let key = dir.path().join("home/.ssh/id_rsa");
+    let args = json!({
+        "references": [key.to_string_lossy()],
+        "first_frame": key.to_string_lossy(),
+    });
+    assert_eq!(super::check_media_reference_floor(&args).await, Ok(()));
+}
+
+#[cfg(not(feature = "security-module"))]
+#[tokio::test]
+async fn a_build_without_the_module_admits_any_media_reference() {
+    assert_references_are_unchecked().await;
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn security_configured_off_admits_any_media_reference() {
+    let _off = crate::security::switch::off_for_this_thread();
+    assert_references_are_unchecked().await;
 }

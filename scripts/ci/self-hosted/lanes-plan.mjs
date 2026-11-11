@@ -55,11 +55,13 @@ export const HOSTED_GROUPS = [
   },
   { group: "rust-cov", lanes: ["rust-cov"], maxParallel: 1, container: true },
   { group: "tauri", lanes: ["tauri"], maxParallel: 1, container: true },
+
   // pwsh ships on the bare ubuntu-latest image, not in the CI container.
   { group: "pester", lanes: ["pester"], maxParallel: 1, container: false },
 ];
 
 const CORE_PRODUCT = '"$(bash scripts/ci/product-features.sh --core)"';
+
 
 /**
  * Build the lane plan.
@@ -272,10 +274,15 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
       checks: [
         {
           name: "pnpm-install",
-          // ex63: also for a core change, so rust-core-coverage's mock backend
-          // (scripts/mock-api-server.mjs imports `ws`) can start when no
-          // frontend file changed. One install per VM: lanes share a checkout.
-          when: areas.frontend || areas.i18n || areas.scripts || (ex63 && core),
+          // ex63: also whenever rust-core-coverage runs (a core or storage
+          // change), so its mock backend (scripts/mock-api-server.mjs imports
+          // `ws`) can start when no frontend file changed. One install per VM:
+          // lanes share a checkout.
+          when:
+            areas.frontend ||
+            areas.i18n ||
+            areas.scripts ||
+            (ex63 && (core || areas.storage)),
           run: "pnpm install --frozen-lockfile",
         },
         {
@@ -307,6 +314,18 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: ex63
             ? `mkdir -p ${nodeCache}/eslint && pnpm --filter openhuman-app lint --cache-strategy content --cache-location ${nodeCache}/eslint/`
             : "pnpm --filter openhuman-app lint",
+        },
+        {
+          name: "browser-test-skip-guard",
+          when: areas.frontend,
+          needs: ["pnpm-install"],
+          run: "node scripts/ci/check-browser-test-skips.mjs",
+        },
+        {
+          name: "e2e-runner-ownership",
+          when: areas.frontend,
+          needs: ["pnpm-install"],
+          run: "pnpm e2e:ownership:check",
         },
         {
           name: "i18n",
@@ -344,7 +363,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           name: "scripts-self-tests",
           when: areas.scripts,
           needs: ["pnpm-install"],
-          run: "pnpm test:scripts",
+          run: "pnpm test:scripts && pnpm e2e:ownership:check && node scripts/ci/check-browser-test-skips.mjs",
         },
       ],
     },
@@ -383,7 +402,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
         // deps the mock backend needs itself (ex63 reuses frontend's install).
         {
           name: "pnpm-install",
-          when: !ex63 && core,
+          when: !ex63 && (core || areas.storage),
           run: "pnpm install --frozen-lockfile",
         },
         {
@@ -449,6 +468,13 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           when: core,
           run: "cargo check -p openhuman-embed --no-default-features",
         },
+        // Hosts such as Chottu run modules with neither legacy storage import
+        // nor the encrypted secrets file; both are gated separately.
+        {
+          name: "embed-check-no-default-modules",
+          when: core,
+          run: "bash scripts/ci-cancel-aware.sh cargo check -p openhuman-embed --no-default-features --features modules",
+        },
         // Consumers such as TinySweeper enable tracing without native modules.
         {
           name: "embed-check-no-default-langfuse",
@@ -467,12 +493,19 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: "bash scripts/ci-cancel-aware.sh cargo doc -p openhuman-embed --no-deps",
         },
         {
+          name: "install-test-modules",
+          when: core,
+          run: `bash scripts/ci/self-hosted/install-test-modules.sh "${modulesDir}" ${modulesEnvFile}`,
+        },
+        {
           name: "embed-offline-examples",
           when: core,
+          needs: ["install-test-modules"],
+          env: { RUST_MIN_STACK: "67108864" },
           // Dev profile: the release-declared linux_fleet measurement then
           // shares the plain dev build instead of a thin-LTO one nothing else
           // can reuse (and that would need cleaning afterwards).
-          run: "node scripts/run-embed-examples.mjs --profile dev",
+          run: withModules("node scripts/run-embed-examples.mjs --profile dev"),
         },
         {
           name: "tinyhumans-clippy",
@@ -493,16 +526,21 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           name: "gate-contract-tests",
           when: gateSmoke,
           run:
-            "cargo test --manifest-path Cargo.toml -p openhuman --no-default-features --lib --" +
+            "cargo test --manifest-path Cargo.toml -p openhuman --no-default-features" +
+            " --features storage-sqlite --lib --" +
             " core::all:: core::cli:: core::invoke:: core::session_expiry:: core::legacy_aliases:: core::runtime::" +
             " agent_registry::agents::loader:: commands::ops::tests:: memory::people::contacts_gate_tests::" +
             " memory::layout_migration::" +
+            " doctor::checks::" +
+            " core::schema_test_support::" +
             " openhuman::config:: openhuman::platform::socket::event_handlers:: tools::schemas:: tools::ops::tests::",
         },
         {
           // Share one build for these disjoint test surfaces. Enable the
           // module host while keeping web3 disabled, so its wallet callback
           // gate is exercised rather than silently selecting zero tests.
+          // storage-sqlite supplies the test-only persistence fixtures needed
+          // to compile the core test crate when the product defaults are off.
           // MCP resources do not touch test_support; introspection stays
           // scoped to avoid tests that require the complete product. The
           // wallet grant's ungated tests sit beside a web3-gated one, so they
@@ -511,9 +549,10 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           when: gateSmoke,
           run:
             "cargo test --manifest-path Cargo.toml -p openhuman --no-default-features" +
-            " --features modules,mcp,e2e-test-support --lib --" +
+            " --features modules,mcp,e2e-test-support,storage-sqlite --lib --" +
             " modules::runtime:: modules::registry:: modules::storage_grant_tinywallet::" +
             " modules::storage_grant_tinyconnectors:: modules::tinyflows::" +
+            " doctor::checks::" +
             " cron::bus_host::tests:: cron::documents_port::tests::" +
             " mcp::server::resources:: test_support::introspect:: --test-threads=1",
         },
@@ -558,6 +597,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
       ],
     },
     {
+
       name: "pester",
       checks: [
         {

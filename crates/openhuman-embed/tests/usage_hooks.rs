@@ -100,7 +100,7 @@ async fn scenario() {
                     .bare_prompt("Use probe then answer")
                     .tools(ToolScopeSpec::HostOnly),
             )
-            .tools(|_| HostTurnTools::advertised(vec![Box::new(Probe)]))
+            .tools(|_| Box::pin(async { HostTurnTools::advertised(vec![Box::new(Probe)]) }))
     };
     let a = runtime
         .agent(spec("budget-a", &a_provider).stop_hook(Arc::new(Policy {

@@ -17,7 +17,7 @@ use tinychannels_bus as traits;
 /// [`ApprovalChatContext`]: crate::security::approval::ApprovalChatContext
 /// [`ApprovalGate`]: crate::security::approval::ApprovalGate
 pub(crate) fn channel_has_approval_surface(channel: &str) -> bool {
-    tinychannels_bus::capabilities_for(channel).chat_approvals
+    crate::channels::capabilities::capabilities_for(channel).chat_approvals
 }
 
 /// If the inbound message is a yes/no reply for a parked approval on

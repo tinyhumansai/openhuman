@@ -148,8 +148,11 @@ pub(super) fn rebind_after_credential_change(
         ));
     }
     crate::cron::seed::prune_retired_jobs(config).map_err(|error| error.to_string())?;
-    crate::core::runtime::context::CoreContext::rebind_default_workspace(&config.workspace_dir)
-        .map_err(|error| error.to_string())?;
+    crate::core::runtime::context::CoreContext::rebind_default_workspace_with_config(
+        &config.workspace_dir,
+        Some(&config.config_path),
+    )
+    .map_err(|error| error.to_string())?;
     if let Err(error) = crate::cron::system_jobs::ensure_memory_jobs(config) {
         logs.push(format!("memory cron jobs not seeded: {error}"));
     }

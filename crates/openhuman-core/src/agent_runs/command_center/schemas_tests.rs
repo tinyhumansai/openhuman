@@ -18,13 +18,6 @@ fn unknown_agent_has_no_display_name() {
 }
 
 #[test]
-fn an_unknown_function_gets_the_unknown_schema() {
-    let s = schema_for("no_such_function");
-    assert_eq!(s.namespace, "agent_work");
-    assert_eq!(s.function, "unknown");
-}
-
-#[test]
 fn require_and_optional_strings_ignore_blank_values() {
     let mut params = Map::new();
     params.insert("present".into(), Value::String("x".into()));

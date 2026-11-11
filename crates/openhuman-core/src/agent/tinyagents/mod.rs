@@ -20,12 +20,13 @@
 //! tinyagents harness.
 
 pub mod config;
-mod context_wiring;
+pub(crate) mod context_wiring;
 mod deadline_wind_down;
 pub mod discovery;
 pub mod host;
 pub(crate) mod hosted_error;
 pub(crate) mod journal;
+pub mod replay_pin;
 // The tool harness behind a live voice session (`voice::live`).
 #[cfg(feature = "voice")]
 pub(crate) mod live_harness;
@@ -47,9 +48,10 @@ pub mod budget;
 pub mod payload_summarizer;
 mod policy_denial;
 pub(crate) mod reaper;
-mod routes;
+pub(crate) mod state_block;
 mod steering_forwarder;
 mod supplemental_trace;
+pub(crate) mod thread_reasoning;
 pub(crate) mod tool_registration;
 mod turn_exec;
 mod turn_exec_native;
@@ -65,17 +67,17 @@ pub(crate) use crate::agent::message_convert::chat_message_to_message;
 #[cfg(feature = "flows")]
 pub(crate) use crate::agent::message_convert::ta_call_to_oh_call;
 
-pub(crate) use crate::inference::reasoning::{apply_requested_effort, parse_reasoning_effort};
 pub use crate::inference::turn_models::TurnModelSource;
 pub(crate) use observability::SubagentScope;
 pub(crate) use supplemental_trace::SupplementalTrace;
+pub(crate) use thread_reasoning::apply_requested_effort;
 pub(crate) use turn_exec::TurnSpec;
 pub(crate) use turn_exec_native::NativeSubagentRunContext;
 #[cfg(test)]
 pub(crate) use turn_outcome::DeferredTurnTerminal;
 pub(crate) use turn_outcome::TinyagentsTurnOutcome;
 #[cfg(test)]
-pub(crate) use turn_policy::is_subagent_spawn_or_delegate_tool;
+pub(crate) use turn_policy::is_subagent_spawn_tool;
 pub(crate) use turn_policy::{
     agent_turn_wall_clock_ms_for, chat_provider_is_local, local_web_turn_backstop_secs,
     ToolPolicyEnforcement,
@@ -98,6 +100,3 @@ mod prompt_cache_golden_tests;
 #[cfg(test)]
 #[path = "tinyagents_tests.rs"]
 mod tests;
-#[cfg(test)]
-#[path = "topology_collision_tests.rs"]
-mod topology_collision_tests;

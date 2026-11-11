@@ -4,9 +4,9 @@
 
 use anyhow::Result;
 use reqwest::Method;
-use serde_json::{json, Value};
+use serde_json::Value;
 
-use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
 use super::backend_client::BackendClient;
 
@@ -43,6 +43,7 @@ impl BackendClient {
         &self,
         channel: &str,
         credential: impl Into<BackendCredential>,
+        body: Value,
     ) -> Result<Value> {
         let channel = channel.trim().trim_matches('/');
         anyhow::ensure!(!channel.is_empty(), "channel is required");
@@ -51,7 +52,7 @@ impl BackendClient {
             credential,
             Method::POST,
             &format!("channels/{encoded}/typing"),
-            Some(json!({})),
+            Some(body),
         )
         .await
     }
@@ -103,6 +104,7 @@ impl BackendClient {
         channel: &str,
         message_id: &str,
         credential: impl Into<BackendCredential>,
+        body: Option<Value>,
     ) -> Result<Value> {
         let channel = channel.trim().trim_matches('/');
         anyhow::ensure!(!channel.is_empty(), "channel is required");
@@ -113,7 +115,7 @@ impl BackendClient {
             credential,
             Method::DELETE,
             &format!("channels/{encoded_channel}/messages/{encoded_id}"),
-            None,
+            body,
         )
         .await
     }

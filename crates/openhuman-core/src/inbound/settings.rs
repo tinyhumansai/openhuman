@@ -1,10 +1,11 @@
 //! What `[inbound]` resolves to: the queue manifest and pipeline configuration
 //! the module runs, where its queues live, and whether routing is on.
 //!
-//! The host hands the module its configuration (`queues`, `pipeline`) in the
-//! module's private blob when it loads it ([`module_config`]), and declares
-//! the same manifest on the module's storage scope when the storage host
-//! binds it ([`queue_grant`]). Both read the last resolution, so the queues
+//! The host hands the module its queue and pipeline configuration in the
+//! module's private blob when it loads it ([`module_config`]), and declares the
+//! same manifest on the module's storage scope when the storage host binds it
+//! ([`queue_grant`]). TinyBus injects the unique storage callback destination
+//! during verified module loading. Both read the last resolution, so the queues
 //! the module asks for are exactly the queues the host serves.
 
 use std::path::Path;
@@ -13,11 +14,12 @@ use std::sync::{Arc, RwLock};
 use serde_json::{json, Value};
 use tinyeventqueues_bus::storage::{SHIPPED_PIPELINE_JSON, SHIPPED_QUEUES_JSON};
 use tinyeventqueues_bus::{Lane, PipelineConfig};
-use tinystoragedrivers::queue::QueueManifest;
 use tinystoragedrivers::QueueConfig;
 
+use crate::config::schema::InboundConfig;
 use crate::config::Config;
 use crate::modules::storage_grant_schemas::QueueGrant;
+use crate::modules::storage_queue_manifest::QueueManifest;
 
 /// The `[components]` switch that owns the inbound event queues.
 pub const COMPONENT: &str = "eventqueues";
@@ -81,8 +83,52 @@ pub fn resolve(config: &Config) -> Result<Resolved, String> {
         config.inbound.pipeline_path.as_deref(),
         SHIPPED_PIPELINE_JSON,
     )?;
+    let pipeline: Value =
+        serde_json::from_str(&pipeline).map_err(|error| format!("pipeline.json: {error}"))?;
+    let pipeline = with_sources(pipeline, &config.inbound).to_string();
     resolve_texts(&queues, &pipeline, config.inbound.queue_url.as_deref())
 }
+
+/// `pipeline` with one source policy per usable `[inbound.sources.*]` entry
+/// ahead of its own (the first match wins): acknowledged at ingest, weighted
+/// into the interactive lane, released at once rather than on a lane's
+/// cadence, and debounced with the source's own windows and batch cap.
+#[must_use]
+pub fn with_sources(mut pipeline: Value, inbound: &InboundConfig) -> Value {
+    let policies: Vec<Value> = inbound
+        .usable_sources()
+        .map(|(name, source)| {
+            json!({
+                "match": name,
+                "ack": "after_ingest",
+                "weight": SOURCE_WEIGHT,
+                "cadence": "instant",
+                "coalesce": {
+                    "debounce_ms": source.debounce_ms,
+                    "max_wait_ms": source.max_wait_ms,
+                    "max_events": source.max_batch,
+                },
+            })
+        })
+        .collect();
+    if policies.is_empty() {
+        return pipeline;
+    }
+    let Some(object) = pipeline.as_object_mut() else {
+        return pipeline;
+    };
+    let mut sources = policies;
+    if let Some(Value::Array(own)) = object.remove("sources") {
+        sources.extend(own);
+    }
+    object.insert("sources".to_owned(), Value::Array(sources));
+    pipeline
+}
+
+/// Salience points an external source's events get: the base 25 plus this
+/// reaches the interactive lane (70), so a batch is never scheduled on the
+/// background lane's cadence or folded into the digest as noise.
+const SOURCE_WEIGHT: i32 = 50;
 
 fn read_or(path: Option<&Path>, shipped: &str) -> Result<String, String> {
     match path {
@@ -167,11 +213,13 @@ pub fn module_config(config: &Config) -> Value {
         }
     };
     tracing::debug!(
-        queues = resolved.manifest.queues.len(),
+        queues = resolved.manifest.queues().len(),
         backend = %resolved.backend,
         "[inbound] configuring the tinyeventqueues module"
     );
     let resolved = remember(resolved);
+    // Storage authority is attached by the module loader after it prepares
+    // the authenticated callback binding, independently of queue settings.
     json!({
         "queues": resolved.queues_json,
         "pipeline": resolved.pipeline_json,

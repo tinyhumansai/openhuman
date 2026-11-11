@@ -81,7 +81,7 @@ Capability {
         name: "Desktop Control",
         domain: "desktop",
         category: CapabilityCategory::Settings,
-        description: "Let agents inspect and control native desktop apps through a local, permission-aware connection. Desktop actions are discovered on demand. Switched off by [components] computer = false, which unregisters the desktop tools and answers the desktop.* RPCs with COMPONENT_DISABLED:computer while keeping this machine's own consent setting untouched.",
+        description: "Let agents inspect and control native desktop apps through a local, permission-aware connection. macOS only for now; Windows and Linux are not supported yet. Desktop actions are discovered on demand. Switched off by [components] computer = false, which unregisters the desktop tools and answers the desktop.* RPCs with COMPONENT_DISABLED:computer while keeping this machine's own consent setting untouched.",
         how_to: "Connections → Computer → Desktop; enable access and grant operating system permissions when requested",
         status: CapabilityStatus::Beta,
         privacy: DESKTOP_TO_JEV,
@@ -209,7 +209,7 @@ Capability {
         name: "Log Out and Clear App Data",
         domain: "settings",
         category: CapabilityCategory::Settings,
-        description: "Sign out and permanently clear local app data, including workflow data.",
+        description: "Sign out and permanently clear the signed-in account's local app data, including workflow data. Other accounts on the device are kept. Not available on the legacy single-folder data layout.",
         how_to: "Settings > Log Out & Clear App Data",
         status: CapabilityStatus::Stable,
         privacy: None,
@@ -320,10 +320,12 @@ Capability {
         name: "Always Allow a Tool",
         domain: "security",
         category: CapabilityCategory::Settings,
-        description: "On an approval prompt, choose \"Always allow\" to stop being asked for that \
-                      tool. The choice is saved to your allow-list and persists across restarts; \
-                      remove it any time under Settings → Agent OS access to be prompted again. \
-                      Policy still blocks forbidden paths and high-risk commands regardless.",
+        description: "On an approval prompt, choose \"Always allow\" to save a human-approved \
+                      grant for that tool. Later calls can skip this prompt, but still pass the \
+                      active policy checks and hard blocks. Remove the tool under Settings → Agent \
+                      OS access to be prompted again. Optional Jev scoring is disabled in OpenHuman's \
+                      TinySecurity configuration; when enabled by a host, it can approve only the \
+                      exact pending request once and cannot create a lasting grant.",
         how_to: "Click \"Always allow\" on an approval prompt; manage the list in Settings → Agent OS access.",
         status: CapabilityStatus::Stable,
         privacy: None,
@@ -369,8 +371,8 @@ Capability {
         category: CapabilityCategory::Settings,
         description: "Dedicated action directory for agent tools (shell, file, git), separate \
                       from internal application state. Agent tools default their working directory \
-                      and path resolution to the action sandbox, preventing accidental modification \
-                      of memory databases, session transcripts, tokens, and other internal state.",
+                      and path resolution to the action sandbox, preventing accidental changes to \
+                      local internal files or records in the configured storage backend.",
         how_to: "Settings → Agent OS access",
         status: CapabilityStatus::Stable,
         privacy: None,

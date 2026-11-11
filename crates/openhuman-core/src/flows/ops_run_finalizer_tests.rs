@@ -18,12 +18,19 @@ async fn streamed_flow_finalizer_settles_the_bridge_workspace_turn_state() {
         &config_b.workspace_dir,
     )
     .expect("agent registry init");
-    let mut agent = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+    let mut agent = match crate::agent::OpenHumanSessionHost::from_config_for_agent(
         &ctx,
         &config_b,
         "workflow_builder",
     )
-    .expect("build workflow_builder agent");
+    .await
+    {
+        Ok(agent) => agent,
+        Err(error) => {
+            eprintln!("build workflow_builder agent: {error:#}");
+            panic!("build workflow_builder agent failed");
+        }
+    };
     let target = FlowStreamTarget {
         thread_id: "flow-stream-workspace-binding".to_string(),
         request_id: "flow-stream-request-binding".to_string(),

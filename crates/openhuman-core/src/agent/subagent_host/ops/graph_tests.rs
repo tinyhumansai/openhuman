@@ -26,6 +26,7 @@ fn read_stem(
         updated: String::new(),
         turn_count: 0,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,
@@ -49,7 +50,7 @@ fn a_subagent_writes_to_its_turn_trees_store_else_its_contexts() {
     let tree = crate::storage::sessions::transcripts_or_files("tree-key", workspace.path());
     let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
     run_context.transcripts = Some(tree.clone());
-    let chosen = super::transcript::subagent_transcripts(&run_context, workspace.path());
+    let chosen = super::transcript::subagent_transcripts(&run_context, workspace.path()).unwrap();
     assert!(
         Arc::ptr_eq(&chosen, &tree),
         "the root session's store is used as is"
@@ -59,6 +60,7 @@ fn a_subagent_writes_to_its_turn_trees_store_else_its_contexts() {
     // (here unbound, desktop) tenant.
     let unbound = crate::agent::tinyagents::host::OpenHumanRunContext::new();
     let fallback = super::transcript::subagent_transcripts(&unbound, workspace.path())
+        .unwrap()
         .destination_key()
         .expect("a workspace store names its destination");
     assert!(
@@ -90,7 +92,8 @@ fn a_detached_subagent_uses_the_store_its_carried_context_selects() {
     run_context.core = Some(Arc::downgrade(&core));
     // No ambient context is in scope here, as on a bare `tokio::spawn`.
     assert!(CoreContext::current().is_none());
-    let chosen = super::transcript::subagent_transcripts_in(&run_context, workspace.path(), false);
+    let chosen =
+        super::transcript::subagent_transcripts_in(&run_context, workspace.path(), false).unwrap();
     let expected = provider
         .for_agent(crate::storage::sessions::DEFAULT_AGENT)
         .transcripts
@@ -102,7 +105,8 @@ fn a_detached_subagent_uses_the_store_its_carried_context_selects() {
 fn a_saas_subagent_without_a_context_or_tree_store_is_kept_in_memory() {
     let workspace = tempfile::tempdir().unwrap();
     let unbound = crate::agent::tinyagents::host::OpenHumanRunContext::new();
-    let chosen = super::transcript::subagent_transcripts_in(&unbound, workspace.path(), true);
+    let chosen =
+        super::transcript::subagent_transcripts_in(&unbound, workspace.path(), true).unwrap();
     let operator = crate::storage::sessions::transcripts_or_files(
         crate::storage::sessions::DEFAULT_AGENT,
         workspace.path(),

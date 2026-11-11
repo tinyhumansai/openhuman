@@ -132,6 +132,16 @@ pub(crate) type AppRuntime = tauri::Wry;
 static EARLY_TEARDOWN_RAN: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Set once `RunEvent::ExitRequested` has been seen. Every exit the app starts
+/// itself (window close, tray / menu quit, `app_quit`, `app.exit`) goes through
+/// `ExitRequested` first and then leaves tao's message loop normally. A
+/// `RunEvent::Exit` that arrives without it was started by the OS: on Windows,
+/// tao turns `WM_ENDSESSION` (logoff / shutdown / restart-for-update) into
+/// `LoopDestroyed` while the message loop keeps running. See
+/// [`must_terminate_after_exit_event`].
+static EXIT_REQUESTED_SEEN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 #[cfg(target_os = "macos")]
 const APP_QUIT_MENU_ID: &str = "app_quit";
 
@@ -1338,6 +1348,93 @@ fn perform_early_teardown_sync(app_handle: &AppHandle<AppRuntime>) {
     }
 
     log::info!("[app] perform_early_teardown_sync — early teardown complete");
+}
+
+/// Whether the process has to end inside the `RunEvent::Exit` handler.
+///
+/// tao's Windows runner panics with `cannot move state from Destroyed` when it
+/// dispatches any event after `LoopDestroyed` (`runner.rs`, `move_state_to`).
+/// On a normal exit that can't happen: tao fires `LoopDestroyed` after the
+/// message loop has ended, resets the runner and calls `process::exit`. On
+/// `WM_ENDSESSION`, though, tao fires `LoopDestroyed` from inside the window
+/// procedure and goes back to `GetMessageW`. The next user event (a core
+/// event forwarded to the webview, a window hide from Tauri's cleanup) or
+/// redraw panics before Windows gets around to ending the process (#8505).
+/// When `Exit` arrives without an `ExitRequested` on Windows, nothing can
+/// safely run on the event loop again, so the handler must finish the
+/// teardown itself and exit.
+fn must_terminate_after_exit_event(exit_requested_seen: bool, is_windows: bool) -> bool {
+    is_windows && !exit_requested_seen
+}
+
+/// How long OS session-end teardown waits for provisioned-gateway cleanup.
+///
+/// Windows gives an app only a few seconds after `WM_ENDSESSION` before it
+/// force-kills the process, so the slow, network-bound gateway close must not
+/// hold up the exit. The core is stopped before this budget starts.
+const SESSION_END_GATEWAY_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Session-end teardown order: stop the core first (itself bounded, see
+/// `CoreProcessHandle::send_terminate_signal`), then give gateway cleanup at
+/// most `gateway_budget`. Returns whether the cleanup finished in time.
+///
+/// Generic over the two steps so the ordering and the bound are unit-testable
+/// without a running app.
+async fn session_end_teardown<C, G>(
+    stop_core: C,
+    gateway_cleanup: G,
+    gateway_budget: std::time::Duration,
+) -> bool
+where
+    C: std::future::Future<Output = ()>,
+    G: std::future::Future<Output = ()>,
+{
+    stop_core.await;
+    tokio::time::timeout(gateway_budget, gateway_cleanup)
+        .await
+        .is_ok()
+}
+
+/// Run-once teardown for an OS-initiated exit (`RunEvent::Exit` without
+/// `ExitRequested`, #8505). Unlike [`perform_early_teardown_sync`], the core
+/// stops first and gateway cleanup is bounded by
+/// [`SESSION_END_GATEWAY_BUDGET`], so a slow container or remote close cannot
+/// delay the core stop or the exit past Windows' session-end window.
+fn perform_session_end_teardown_once(app_handle: &AppHandle<AppRuntime>) {
+    if EARLY_TEARDOWN_RAN.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        log::info!("[app] session-end teardown — already ran, skipping");
+        return;
+    }
+    log::info!(
+        "[app] session-end teardown — core first, gateway cleanup bounded to {SESSION_END_GATEWAY_BUDGET:?}"
+    );
+    shutdown_imessage_scanner(app_handle);
+
+    let core = app_handle
+        .try_state::<core_process::CoreProcessHandle>()
+        .map(|core| core.inner().clone());
+    let stop_core = async move {
+        if let Some(core) = core {
+            core.send_terminate_signal().await;
+        }
+    };
+    #[cfg(feature = "gateways")]
+    let gateway_cleanup = gateway::registry::shutdown();
+    #[cfg(not(feature = "gateways"))]
+    let gateway_cleanup = async {};
+
+    let finished = tauri::async_runtime::block_on(session_end_teardown(
+        stop_core,
+        gateway_cleanup,
+        SESSION_END_GATEWAY_BUDGET,
+    ));
+    if finished {
+        log::info!("[app] session-end teardown complete");
+    } else {
+        log::warn!(
+            "[app] session-end teardown: gateway cleanup exceeded {SESSION_END_GATEWAY_BUDGET:?}; exiting without waiting for it"
+        );
+    }
 }
 
 fn perform_early_teardown_sync_once(app_handle: &AppHandle<AppRuntime>, reason: &str) {
@@ -2891,6 +2988,7 @@ pub fn run() {
                 }
             }
             RunEvent::ExitRequested { .. } => {
+                EXIT_REQUESTED_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
                 // Persist the main window's geometry on every clean quit
                 // (Cmd+Q, tray "Quit", dock quit, or the frontend
                 // `app_quit` command) so the next launch restores the
@@ -2909,7 +3007,38 @@ pub fn run() {
                 perform_early_teardown_sync_once(app_handle, "exit_requested");
             }
             RunEvent::Exit => {
-                log::info!("[app] RunEvent::Exit — cef::shutdown follows");
+                let exit_requested_seen =
+                    EXIT_REQUESTED_SEEN.load(std::sync::atomic::Ordering::SeqCst);
+                if exit_requested_seen {
+                    log::info!("[app] RunEvent::Exit — event loop finished");
+                } else {
+                    // OS-initiated exit (Windows WM_ENDSESSION): no
+                    // ExitRequested ran, so neither did the teardown or the
+                    // geometry save.
+                    log::warn!(
+                        "[app] RunEvent::Exit without ExitRequested — OS session end; running teardown"
+                    );
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        window_state::save_main(&window);
+                    }
+                    perform_session_end_teardown_once(app_handle);
+                }
+                if must_terminate_after_exit_event(exit_requested_seen, cfg!(target_os = "windows")) {
+                    // tao's runner is now `Destroyed` but its message loop
+                    // keeps running. The next dispatched event would panic
+                    // with `cannot move state from Destroyed` (#8505). Do
+                    // what Tauri and tao would do after this callback
+                    // (tray cleanup, then exit), and exit here. Not
+                    // `cleanup_before_exit`: on Windows it hides every window,
+                    // and a hide can deliver WM_KILLFOCUS into the destroyed
+                    // runner. Resource tables go with the process.
+                    log::warn!(
+                        "[app] event loop destroyed by session end — exiting now (#8505)"
+                    );
+                    app_handle.remove_tray_by_id("openhuman-tray");
+                    process_kill::sweep_orphan_children();
+                    std::process::exit(0);
+                }
             }
             _ => {}
         });

@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use openhuman_core::config::Config;
-use openhuman_core::core::runtime::CoreBuilder;
+use openhuman_core::core::runtime::{CoreBootMode, CoreBuilder, ServiceSet, TokenSource};
 use openhuman_core::core::types::HostKind;
 use tinyagents_session::port::SessionStoreProvider;
 
@@ -41,7 +41,7 @@ struct SlotClaim {
 impl Drop for SlotClaim {
     fn drop(&mut self) {
         if self.armed {
-            RUNTIME_LIVE.store(false, std::sync::atomic::Ordering::Release);
+            super::release_process_slot();
             log::debug!("[embed][runtime] build did not complete; process slot released");
         }
     }
@@ -79,18 +79,48 @@ impl RuntimeBuilder {
     /// Refuse combinations the chosen [`ConfigSource`] cannot honour.
     pub(super) fn validate(&self) -> Result<(), RuntimeError> {
         self.validate_modules()?;
-        if self.agent_defaults.skills.root.is_some() && !cfg!(feature = "skills") {
+        let inspection = self.boot_mode == CoreBootMode::Inspection;
+        if inspection {
+            if self.config_source != ConfigSource::Resolved
+                || self.config.is_none()
+                || !matches!(self.workspace, Workspace::Inherit)
+                || !matches!(&self.token, TokenSource::Fixed(_))
+            {
+                return Err(RuntimeError::Invalid(
+                    "inspection boot requires an inherited workspace, caller-supplied resolved config, and fixed bearer".into(),
+                ));
+            }
+            if self.workspace_dir.is_some()
+                || self.action_dir.is_some()
+                || self.api_key.is_some()
+                || self.session.is_some()
+                || self.session_store.is_some()
+                || self.seams.storage.is_some()
+            {
+                return Err(RuntimeError::Invalid(
+                    "inspection boot does not accept path overrides, credentials, sessions, or storage providers".into(),
+                ));
+            }
+            if openhuman_core::storage::installed().is_some() {
+                return Err(RuntimeError::Invalid(
+                    "inspection boot requires no installed storage backend".into(),
+                ));
+            }
+        }
+        if !inspection && self.agent_defaults.skills.root.is_some() && !cfg!(feature = "skills") {
             return Err(RuntimeError::Invalid(
                 "copying runtime skill bundles requires Cargo feature `openhuman-embed/skills`"
                     .into(),
             ));
         }
 
-        validate_storage_feature(self.seams.storage.as_ref())?;
-        if self.seams.storage.is_none() {
-            if let Some(config) = &self.config {
-                if let Some(url) = openhuman_core::storage::explicit_url(config) {
-                    validate_storage_feature(Some(&super::StorageSource::Url(url)))?;
+        if !inspection {
+            validate_storage_feature(self.seams.storage.as_ref())?;
+            if self.seams.storage.is_none() {
+                if let Some(config) = &self.config {
+                    if let Some(url) = openhuman_core::storage::explicit_url(config) {
+                        validate_storage_feature(Some(&super::StorageSource::Url(url)))?;
+                    }
                 }
             }
         }
@@ -101,7 +131,8 @@ impl RuntimeBuilder {
         if self.api_key.as_ref().is_some_and(ApiKey::is_blank) {
             return Err(RuntimeError::BlankApiKey);
         }
-        if matches!(self.workspace, Workspace::Stateless)
+        if !inspection
+            && matches!(self.workspace, Workspace::Stateless)
             && self.session_store.is_none()
             && self.seams.storage.is_none()
             && self
@@ -140,10 +171,21 @@ impl RuntimeBuilder {
 
     async fn build_inner(mut self) -> Result<Runtime, RuntimeError> {
         self.validate()?;
+        let inspection = self.boot_mode == CoreBootMode::Inspection;
         let discovered = self.config_source == ConfigSource::Discovered;
         let inherit = self.workspace.is_operator_owned();
         let resolved = ResolvedWorkspace::resolve(&self.workspace, self.action_dir.as_deref())
             .map_err(map_ws)?;
+        // A scratch directory's secrets go with it, so this runtime may take
+        // over the TinySecurity module a released runtime left admitted (it is
+        // loaded once per process and keeps its first secret scope). A durable
+        // directory may not: its secrets would be kept under another scope's
+        // master key.
+        if resolved._temp.is_some() {
+            if let Some(config_dir) = resolved.config_path.parent() {
+                openhuman_core::security::declare_transient_secret_scope(config_dir);
+            }
+        }
 
         // Discovered: the core loads its own config during boot; nothing to
         // assemble here. Resolved: `Inherit` starts from the operator's own
@@ -162,37 +204,52 @@ impl RuntimeBuilder {
         let mut storage_info = super::StorageInfo::describe(
             self.seams.storage.as_ref(),
             config.as_ref().unwrap_or(&Config::default()),
+            self.seams.storage_driver.as_deref(),
         );
         let mut host_seams = std::mem::take(&mut self.seams);
-        if host_seams.storage.is_none() {
-            if let Some(config) = &config {
-                if let Some(url) = openhuman_core::storage::explicit_url(config) {
-                    host_seams.storage = Some(super::StorageSource::Url(url));
+        if !inspection {
+            if host_seams.storage.is_none() {
+                if let Some(config) = &config {
+                    if let Some(url) = openhuman_core::storage::explicit_url(config) {
+                        host_seams.storage = Some(super::StorageSource::Url(url));
+                    }
                 }
             }
+            // A stateless workspace keeps nothing durable on disk: with no host
+            // backend, the documents the core keeps beside the session store (run
+            // status, cron, flows) go to memory instead of the workspace-default
+            // SQLite under `<workspace>/storage`. Installed process-wide like any
+            // storage seam, and removed with the runtime.
+            if host_seams.storage.is_none() && matches!(self.workspace, Workspace::Stateless) {
+                host_seams.storage = Some(super::StorageSource::Url("memory".into()));
+            }
+            validate_storage_feature(host_seams.storage.as_ref())?;
+            host_seams
+                .open_storage()
+                .await
+                .map_err(RuntimeError::Invalid)?;
         }
-        // A stateless workspace keeps nothing durable on disk: with no host
-        // backend, the documents the core keeps beside the session store (run
-        // status, cron, flows) go to memory instead of the workspace-default
-        // SQLite under `<workspace>/storage`. Installed process-wide like any
-        // storage seam, and removed with the runtime.
-        if host_seams.storage.is_none() && matches!(self.workspace, Workspace::Stateless) {
+        if !inspection
+            && host_seams.storage.is_none()
+            && matches!(self.workspace, Workspace::Stateless)
+        {
             host_seams.storage = Some(super::StorageSource::Url("memory".into()));
+            storage_info = super::StorageInfo::url("backend", "memory");
         }
-        validate_storage_feature(host_seams.storage.as_ref())?;
-        host_seams
-            .open_storage()
-            .await
-            .map_err(RuntimeError::Invalid)?;
-        let storage_backend = match &host_seams.storage {
-            Some(super::StorageSource::Backend(backend)) => Some(backend.clone()),
-            _ => None,
+        let storage_backend = if inspection {
+            None
+        } else {
+            match &host_seams.storage {
+                Some(super::StorageSource::Backend(backend)) => Some(backend.clone()),
+                _ => None,
+            }
         };
-        if self.session_store.is_none() {
+        let core_extensions = host_seams.core_extensions.clone();
+        if !inspection && self.session_store.is_none() {
             if let Some(backend) = &storage_backend {
                 let stores = openhuman_core::storage::sessions::TenantSessionStores::new(
                     backend.clone(),
-                    !openhuman_core::storage::driver_is_shared(backend.driver()),
+                    storage_info.recover_sessions_on_open(),
                 )
                 .map_err(|e| RuntimeError::Build(e.into()))?;
                 self.session_store = Some(Arc::new(stores));
@@ -204,7 +261,7 @@ impl RuntimeBuilder {
         // store exactly once, at boot, to decide whether it is signed in.
         let has_api_key = match (self.api_key.as_ref(), config.as_ref()) {
             (Some(key), Some(config)) => {
-                store_api_key(config, key)?;
+                store_api_key(config, key).await?;
                 true
             }
             _ => false,
@@ -223,19 +280,31 @@ impl RuntimeBuilder {
 
         let domains = self.domains.unwrap_or_else(default_domains);
         let tool_groups = self.tool_groups.clone().unwrap_or_default();
-        let services = self.services.unwrap_or_else(default_services);
+        let services = if inspection {
+            ServiceSet::none()
+        } else {
+            self.services.unwrap_or_else(default_services)
+        };
 
-        if let Some(engine) = self.memory_engine.clone() {
-            openhuman_core::memory::engine::install_host_engine(engine);
+        if !inspection {
+            if let Some(engine) = self.memory_engine.clone() {
+                openhuman_core::memory::engine::install_host_engine(engine);
+            }
         }
-        if let Some(delivery) = self.cron_delivery.clone() {
-            log::debug!("[embed][runtime] host cron delivery installed");
-            openhuman_core::cron::host_delivery::install(delivery);
+        if !inspection {
+            if let Some(delivery) = self.cron_delivery.clone() {
+                log::debug!("[embed][runtime] host cron delivery installed");
+                openhuman_core::cron::host_delivery::install(delivery);
+            }
         }
 
         // Install only after all fallible workspace/config resolution has
         // completed; core boot performs recovery against this provider.
-        let installed_session_store = self.session_store.clone();
+        let installed_session_store = if inspection {
+            None
+        } else {
+            self.session_store.clone()
+        };
         let previous_session_store = installed_session_store
             .clone()
             .and_then(openhuman_core::storage::sessions::install);
@@ -256,9 +325,11 @@ impl RuntimeBuilder {
         );
 
         let mut builder = CoreBuilder::new(host_kind)
+            .boot_mode(self.boot_mode)
             .domains(domains)
             .tool_groups(tool_groups.clone())
             .services(services)
+            .extensions(core_extensions)
             .token(std::mem::replace(
                 &mut self.token,
                 openhuman_core::core::runtime::TokenSource::EnvOrFile,
@@ -277,15 +348,14 @@ impl RuntimeBuilder {
             RuntimeError::Build(error)
         })?;
         let core = Core::from_runtime(Arc::new(runtime));
-        let storage_backend = storage_backend.or_else(openhuman_core::storage::installed);
-        if !storage_info.configured {
-            if let Some(backend) = &storage_backend {
-                storage_info = super::StorageInfo {
-                    source: "backend".into(),
-                    driver: Some(backend.driver().into()),
-                    configured: true,
-                };
-            }
+        let storage_backend = if inspection {
+            None
+        } else {
+            storage_backend.or_else(openhuman_core::storage::installed)
+        };
+        if !storage_info.configured && storage_backend.is_some() {
+            let installed_url = openhuman_core::storage::installed_url();
+            storage_info = super::StorageInfo::backend(installed_url.as_deref());
         }
 
         // Discovered: agents start from the config the core just loaded.
@@ -304,6 +374,12 @@ impl RuntimeBuilder {
             }
             self.access.apply(&mut base_config);
             apply_provider(&mut base_config, &self.provider);
+            // The core booted with the configuration it discovered; a
+            // `[security]` mode the host set on the builder governs the
+            // process-wide checks too, not only the agents' config.
+            if self.config_knobs.security.is_some() && !inspection {
+                openhuman_core::security::switch::apply_boot_config(&base_config);
+            }
         }
 
         if seams.has_pending_live_policy() {
@@ -341,6 +417,7 @@ impl RuntimeBuilder {
             domains,
             tool_groups,
             self.max_agents,
+            self.agent_opener.take(),
             defaults,
             host_kind,
             self.selection,
@@ -491,19 +568,11 @@ pub(crate) fn routed_provider_effective(provider: &Provider, config: Option<&Con
             .is_some_and(|model| !model.trim().is_empty()))
 }
 
-fn store_api_key(config: &Config, key: &ApiKey) -> Result<(), RuntimeError> {
-    let state_dir = config
-        .config_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| config.config_path.clone());
-    openhuman_core::security::credentials::api_key::store_api_key_in(
-        &state_dir,
-        config.secrets.encrypt,
-        key.expose(),
-    )
-    .map(|_| ())
-    .map_err(RuntimeError::Build)
+async fn store_api_key(config: &Config, key: &ApiKey) -> Result<(), RuntimeError> {
+    openhuman_core::credentials::api_key::store_api_key(config, key.expose())
+        .await
+        .map(|_| ())
+        .map_err(RuntimeError::Build)
 }
 
 fn create_dir(dir: &Path, what: &'static str) -> Result<(), RuntimeError> {

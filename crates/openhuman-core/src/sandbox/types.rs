@@ -15,6 +15,22 @@ pub enum SandboxBackendKind {
     Local,
     /// Docker container isolation.
     Docker,
+    /// The tenant's long-lived OpenShell box (`sandbox::openshell`).
+    #[serde(rename = "openshell")]
+    OpenShell,
+    /// A box per command on the hosted agent37 service (`sandbox::agent37`).
+    #[serde(rename = "agent37")]
+    Agent37,
+}
+
+impl SandboxBackendKind {
+    /// Whether the backend keeps a box per tenant between commands, so a file
+    /// an agent makes stays in that tenant's box and is not on the host.
+    /// Today only [`Self::OpenShell`] does; a backend that joins them answers
+    /// `true` here and gets the box-side behavior of every caller that asks.
+    pub fn keeps_boxes(self) -> bool {
+        matches!(self, Self::OpenShell)
+    }
 }
 
 /// Per-session sandbox policy resolved from agent definition, session
@@ -37,10 +53,17 @@ pub struct SandboxPolicy {
     pub read_write_mounts: Vec<PathBuf>,
     /// Whether outbound network is allowed inside the sandbox.
     pub allow_network: bool,
+    /// Whether the configured executor mounts the workspace into its namespace.
+    #[serde(default = "default_mount_workspace")]
+    pub mount_workspace: bool,
     /// Environment variables to passthrough into the sandbox.
     pub env_passthrough: Vec<String>,
     /// Docker-specific overrides (image, resource limits).
     pub docker_overrides: Option<DockerOverrides>,
+}
+
+fn default_mount_workspace() -> bool {
+    true
 }
 
 /// Docker-specific sandbox overrides layered on top of the global
@@ -122,27 +145,6 @@ pub enum SandboxStatus {
     /// Backend encountered an error and needs restart/cleanup.
     Error,
 }
-
-/// Operations that explicitly require host-level access and cannot run
-/// inside a sandbox. The elevated path is audited and requires the
-/// caller to declare the reason.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ElevatedOp {
-    /// The tool or operation name requesting elevation.
-    pub tool_name: String,
-    /// Human-readable reason this operation needs host access.
-    pub reason: String,
-    /// The command or action to execute on the host.
-    pub command: String,
-}
-
-/// Well-known tool names that always require host access.
-pub const ELEVATED_TOOLS: &[&str] = &[
-    "git_operations",
-    "install_tool",
-    "docker_management",
-    "process_management",
-];
 
 #[cfg(test)]
 #[path = "types_tests.rs"]

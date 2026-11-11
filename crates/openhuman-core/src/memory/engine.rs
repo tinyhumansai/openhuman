@@ -39,8 +39,8 @@ use std::sync::RwLock;
 use std::sync::{Arc, LazyLock};
 
 use sha2::{Digest, Sha256};
-pub use tinymemory_api::Error as MemoryError;
-use tinymemory_api::MemoryEngine;
+pub use tinymemory_api::EngineHealth;
+use tinymemory_api::{Error, MemoryEngine, Result};
 pub use tinymemory_integrations::cortex::CallbackBearerSource;
 pub use tinymemory_integrations::{
     BearerSource, Binding, BoundEngine, EngineBinder, EngineCredential, EngineSettings,
@@ -48,9 +48,11 @@ pub use tinymemory_integrations::{
 
 use crate::config::schema::MEMORY_CORTEXDB_KEY_NAME;
 use crate::config::Config;
-use crate::security::credentials::{AuthService, DEFAULT_AUTH_PROFILE_NAME};
+use crate::credentials::{AuthService, DEFAULT_AUTH_PROFILE_NAME};
 
-use tinymemory_api::{Error, Result};
+use super::engine_registry::ReadOnlyEngineError;
+pub use super::error::MemoryError;
+use super::error::MemoryResult;
 
 /// Engine id of CortexDB behind the TinyHumans backend.
 pub use tinymemory_integrations::cortex::TINYHUMANS_ENGINE_ID as TINYHUMANS_ENGINE;
@@ -70,6 +72,18 @@ static ENGINE_BINDER: LazyLock<EngineBinder> = LazyLock::new(EngineBinder::defau
 #[cfg(test)]
 static TEST_ENGINES: LazyLock<RwLock<HashMap<std::path::PathBuf, Arc<dyn MemoryEngine>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Test-only fixture lookup for native doctor probes; unlike [`resolve`],
+/// this never falls through to ambient profile state or configured builders.
+#[cfg(test)]
+pub(crate) async fn doctor_test_health(config: &Config) -> Option<tinymemory_api::EngineHealth> {
+    let engine = TEST_ENGINES
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&config.workspace_dir)
+        .cloned()?;
+    Some(engine.health().await)
+}
 
 /// Binds `engine` for every config whose workspace is `workspace` (tests only).
 #[cfg(test)]
@@ -125,18 +139,29 @@ pub use tinymemory_integrations::HOST_ENGINE_ENDPOINT;
 pub fn install_host_engine(engine: Arc<dyn MemoryEngine>) {
     let id = engine.descriptor().id.to_string();
     tracing::info!(engine = %id, "[memory:engine] host engine installed");
-    ENGINE_BINDER.install_host_engine(engine, crate::security::scrub::host_policy());
+    ENGINE_BINDER.install_host_engine(engine, crate::memory::host_policy::host_policy());
+    // What was read from the engine before is not what this one holds.
+    super::lifecycle::prefetch::invalidate_all();
+}
+
+/// Whether the process-wide host engine is serving every workspace: one is
+/// installed and this process admits it (never in SaaS).
+pub(crate) fn host_engine_is_shared() -> bool {
+    ENGINE_BINDER.host_engine().is_some()
+        && admits_host_engine_with(crate::core::runtime::is_saas())
 }
 
 /// Removes a host-installed engine; the configured engine applies again.
 /// Returns whether one was installed.
 pub fn clear_host_engine() -> bool {
-    ENGINE_BINDER.clear_host_engine()
+    let cleared = ENGINE_BINDER.clear_host_engine();
+    super::lifecycle::prefetch::invalidate_all();
+    cleared
 }
 
 /// Resolves the configured engine.
 #[must_use]
-pub fn resolve(config: &Config) -> Binding {
+pub async fn resolve(config: &Config) -> Binding {
     if !config.components.memory {
         tracing::debug!("[memory:engine] components.memory is off; engine not bound");
         return off(None, None, COMPONENT_OFF_REASON);
@@ -163,7 +188,7 @@ pub fn resolve(config: &Config) -> Binding {
             return Binding::On(ENGINE_BINDER.bind_external(
                 Arc::clone(engine),
                 HOST_ENGINE_ENDPOINT,
-                crate::security::scrub::host_policy(),
+                crate::memory::host_policy::host_policy(),
             ));
         }
     }
@@ -178,7 +203,7 @@ pub fn resolve(config: &Config) -> Binding {
             return Binding::On(ENGINE_BINDER.bind_external(
                 engine,
                 "test://engine",
-                crate::security::scrub::host_policy(),
+                crate::memory::host_policy::host_policy(),
             ));
         }
     }
@@ -198,7 +223,80 @@ pub fn resolve(config: &Config) -> Binding {
     } else {
         None
     };
-    resolve_configured(config, root.as_deref())
+    resolve_configured(config, root.as_deref()).await
+}
+
+/// Builds an uncached engine for an explicitly requested live doctor check.
+/// Credential/profile reads use the read-only inspection seams; this never
+/// enters the active hosted context, normal engine cache, or mutable resolver.
+pub async fn resolve_read_only_for_inspection(
+    config: &Config,
+) -> std::result::Result<Arc<dyn MemoryEngine>, ReadOnlyEngineError> {
+    if !config.components.memory {
+        return Err(ReadOnlyEngineError::ComponentDisabled);
+    }
+    let engine_id = config.memory.engine.trim();
+    if engine_id.is_empty() || engine_id.eq_ignore_ascii_case(DISABLED_ENGINE) {
+        return Err(ReadOnlyEngineError::EngineDisabled);
+    }
+
+    if let Some(factory) = super::engine_registry::read_only_engine_factory(engine_id) {
+        return factory(config.clone()).await.map(guard_read_only_engine);
+    }
+
+    if engine_id != CORTEXDB_ENGINE {
+        return Err(ReadOnlyEngineError::UnsupportedEngine);
+    }
+
+    let key =
+        AuthService::get_provider_bearer_token_read_only(config, MEMORY_CORTEXDB_KEY_NAME, None)
+            .await
+            .map_err(|_| ReadOnlyEngineError::CredentialsUnavailable)?
+            .ok_or(ReadOnlyEngineError::CredentialsUnavailable)?;
+    let endpoint = cortexdb_endpoint(config);
+    let root = inspection_layout_root(config)?;
+    let settings = EngineSettings {
+        endpoint: Some(endpoint),
+        observed_actor: config.memory.observed_actor,
+        ..EngineSettings::default()
+    };
+    let (settings, _) = rooted(
+        settings,
+        root.as_deref(),
+        false,
+        config.memory.legacy_user_segment_read,
+    );
+    let engine = tinymemory_integrations::build_engine(
+        CORTEXDB_ENGINE,
+        &settings,
+        EngineCredential::Static(key),
+    )
+    .map_err(|_| ReadOnlyEngineError::InvalidConfiguration)?;
+    Ok(guard_read_only_engine(engine))
+}
+
+/// Apply the same native scrub and timing decorators used for configured
+/// engines without inserting this one-off inspection engine into the cache.
+fn guard_read_only_engine(engine: Arc<dyn MemoryEngine>) -> Arc<dyn MemoryEngine> {
+    ENGINE_BINDER
+        .bind_external(
+            engine,
+            "doctor://inspection",
+            crate::memory::host_policy::host_policy(),
+        )
+        .engine
+}
+
+fn inspection_layout_root(
+    config: &Config,
+) -> std::result::Result<Option<String>, ReadOnlyEngineError> {
+    if config.memory.layout == crate::config::MemoryLayoutMode::V3 {
+        super::scope::user_root(config)
+            .map(Some)
+            .ok_or(ReadOnlyEngineError::CredentialsUnavailable)
+    } else {
+        Ok(None)
+    }
 }
 
 /// The engine the layout migration needs, for an explicit layout whatever
@@ -212,7 +310,7 @@ pub fn resolve(config: &Config) -> Binding {
 /// Memory is off for `config`, or an embedding host's (or a test's)
 /// installed engine is bound, which has one layout of its own and cannot be
 /// bound below a scope root.
-pub fn bind_with_root(config: &Config, root: Option<&str>) -> Result<BoundEngine> {
+pub async fn bind_with_root(config: &Config, root: Option<&str>) -> MemoryResult<BoundEngine> {
     if !config.components.memory {
         return Err(MemoryError::Off(COMPONENT_OFF_REASON.to_string()));
     }
@@ -227,7 +325,7 @@ pub fn bind_with_root(config: &Config, root: Option<&str>) -> Result<BoundEngine
             return Ok(ENGINE_BINDER.bind_external(
                 engine,
                 "test://engine",
-                crate::security::scrub::host_policy(),
+                crate::memory::host_policy::host_policy(),
             ));
         }
         let one_engine = TEST_ENGINES
@@ -236,8 +334,8 @@ pub fn bind_with_root(config: &Config, root: Option<&str>) -> Result<BoundEngine
             .contains_key(&config.workspace_dir);
         if one_engine {
             return match root {
-                None => resolve(config).engine(),
-                Some(_) => Err(Error::Engine(
+                None => resolve(config).await.engine().map_err(MemoryError::from),
+                Some(_) => Err(MemoryError::Engine(
                     "the installed test engine cannot be bound below a scope root".to_string(),
                 )),
             };
@@ -252,7 +350,10 @@ pub fn bind_with_root(config: &Config, root: Option<&str>) -> Result<BoundEngine
     )? {
         return Ok(bound);
     }
-    resolve_configured(config, root).engine()
+    resolve_configured(config, root)
+        .await
+        .engine()
+        .map_err(MemoryError::from)
 }
 
 /// Whether the process-wide host engine may be used: never in SaaS, where one
@@ -283,13 +384,13 @@ pub(crate) fn host_binding_with<T>(
 }
 
 /// The configured engine with its scope root (`None` legacy).
-fn resolve_configured(config: &Config, root: Option<&str>) -> Binding {
+async fn resolve_configured(config: &Config, root: Option<&str>) -> Binding {
     let engine_id = config.memory.engine.trim().to_string();
     // A registered engine (`engine_registry`) wins over the built-in match, and
     // is resolved per config, so SaaS admits it for every tenant.
     if let Some(entry) = super::engine_registry::lookup(&engine_id) {
         tracing::debug!(engine = %engine_id, "[memory:engine] binding a registered engine");
-        return (entry.build)(&super::engine_registry::EngineRequest { config, root });
+        return (entry.build)(&super::engine_registry::EngineRequest { config, root }).await;
     }
     match engine_id.as_str() {
         // The hosted engine is registered by the host layer that owns it
@@ -299,7 +400,7 @@ fn resolve_configured(config: &Config, root: Option<&str>) -> Binding {
             None,
             "no TinyHumans backend is available",
         ),
-        CORTEXDB_ENGINE => resolve_cortexdb(config, root),
+        CORTEXDB_ENGINE => resolve_cortexdb(config, root).await,
         DISABLED_ENGINE => off(None, None, "memory is disabled"),
         "" => {
             let reason = if config.memory.legacy_backend_unsupported
@@ -335,8 +436,8 @@ pub fn switched_off(config: &Config) -> bool {
 
 /// Whether memory is on for `config`.
 #[must_use]
-pub fn is_on(config: &Config) -> bool {
-    resolve(config).is_on()
+pub async fn is_on(config: &Config) -> bool {
+    resolve(config).await.is_on()
 }
 
 fn off(engine: Option<&str>, endpoint: Option<String>, reason: &str) -> Binding {
@@ -347,12 +448,9 @@ fn off(engine: Option<&str>, endpoint: Option<String>, reason: &str) -> Binding 
     }
 }
 
-fn resolve_cortexdb(config: &Config, root: Option<&str>) -> Binding {
-    let configured = config.memory.endpoint_for(CORTEXDB_ENGINE);
-    let endpoint = configured
-        .clone()
-        .unwrap_or_else(|| tinymemory_integrations::cortex::CORTEX_API_ENDPOINT.to_string());
-    let key = match read_cortexdb_key(config) {
+async fn resolve_cortexdb(config: &Config, root: Option<&str>) -> Binding {
+    let endpoint = cortexdb_endpoint(config);
+    let key = match read_cortexdb_key(config).await {
         Ok(Some(key)) => key,
         Ok(None) => {
             return off(
@@ -394,6 +492,13 @@ fn resolve_cortexdb(config: &Config, root: Option<&str>) -> Binding {
     )
 }
 
+fn cortexdb_endpoint(config: &Config) -> String {
+    config
+        .memory
+        .endpoint_for(CORTEXDB_ENGINE)
+        .unwrap_or_else(|| tinymemory_integrations::cortex::CORTEX_API_ENDPOINT.to_string())
+}
+
 pub fn build_cached(
     id: &str,
     settings: EngineSettings,
@@ -405,7 +510,7 @@ pub fn build_cached(
         settings,
         &fingerprint,
         credential,
-        crate::security::scrub::host_policy(),
+        crate::memory::host_policy::host_policy(),
     );
     match &binding {
         Binding::On(_) => tracing::info!(engine = %id, "[memory:engine] engine bound"),
@@ -430,7 +535,7 @@ pub fn rooted(
 /// Wraps a host-supplied engine with OpenHuman's scrubber and TinyMemory's
 /// operation timing decorator.
 pub fn bind_external(engine: Arc<dyn MemoryEngine>, endpoint: impl Into<String>) -> BoundEngine {
-    ENGINE_BINDER.bind_external(engine, endpoint, crate::security::scrub::host_policy())
+    ENGINE_BINDER.bind_external(engine, endpoint, crate::memory::host_policy::host_policy())
 }
 
 /// A short, non-reversible identity of a key for the cache fingerprint.
@@ -449,6 +554,28 @@ fn key_digest(key: &str) -> String {
 #[cfg(test)]
 pub(crate) static CACHE_STABLE: RwLock<()> = RwLock::new(());
 
+/// Drops what memory read before its engine, key or account changed: the
+/// waiting blocks and the renders in flight. Under test it holds the same
+/// read guard as [`invalidate`], so a test that pinned the cache with
+/// [`CACHE_STABLE`] is not disturbed by an unrelated one.
+pub(crate) fn drop_memory_reads() {
+    #[cfg(test)]
+    let _stable = CACHE_STABLE
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    super::lifecycle::prefetch::invalidate_all();
+}
+
+/// [`drop_memory_reads`] when `provider` names the memory engine's API key
+/// credential: bare or `provider:`-qualified, in any case.
+pub(crate) fn drop_memory_reads_for_provider(provider: &str) {
+    let name = provider.trim().to_ascii_lowercase();
+    let name = name.strip_prefix("provider:").unwrap_or(&name).trim();
+    if name.eq_ignore_ascii_case(MEMORY_CORTEXDB_KEY_NAME) {
+        drop_memory_reads();
+    }
+}
+
 /// Drops every cached engine, so the next [`resolve`] rebuilds.
 pub fn invalidate() {
     #[cfg(test)]
@@ -460,12 +587,14 @@ pub fn invalidate() {
 }
 
 /// The stored CortexDB API key, if any.
-pub fn read_cortexdb_key(config: &Config) -> anyhow::Result<Option<String>> {
-    AuthService::from_config(config).get_provider_bearer_token(MEMORY_CORTEXDB_KEY_NAME, None)
+pub async fn read_cortexdb_key(config: &Config) -> anyhow::Result<Option<String>> {
+    AuthService::from_config(config)
+        .get_provider_bearer_token(MEMORY_CORTEXDB_KEY_NAME, None)
+        .await
 }
 
 /// Stores the CortexDB API key in the credential store (never in config).
-pub fn store_cortexdb_key(config: &Config, key: &str) -> Result<()> {
+pub async fn store_cortexdb_key(config: &Config, key: &str) -> Result<()> {
     let key = key.trim();
     if key.is_empty() {
         return Err(Error::InvalidRequest("the API key is blank".into()));
@@ -478,26 +607,32 @@ pub fn store_cortexdb_key(config: &Config, key: &str) -> Result<()> {
             HashMap::new(),
             true,
         )
+        .await
         .map_err(|error| Error::Engine(format!("storing the API key failed: {error}")))?;
     tracing::debug!("[memory:engine] cortexdb key stored");
+    // Memory read under the old key is not the new key's account's.
+    drop_memory_reads();
     Ok(())
 }
 
 /// Removes the stored CortexDB API key.
-pub fn clear_cortexdb_key(config: &Config) -> Result<bool> {
-    AuthService::from_config(config)
+pub async fn clear_cortexdb_key(config: &Config) -> Result<bool> {
+    let removed = AuthService::from_config(config)
         .remove_profile(MEMORY_CORTEXDB_KEY_NAME, DEFAULT_AUTH_PROFILE_NAME)
-        .map_err(|error| Error::Engine(format!("removing the API key failed: {error}")))
+        .await
+        .map_err(|error| Error::Engine(format!("removing the API key failed: {error}")))?;
+    drop_memory_reads();
+    Ok(removed)
 }
 
 /// Whether the engine `id` has a credential available.
 #[must_use]
-pub fn has_key(config: &Config, id: &str) -> bool {
+pub async fn has_key(config: &Config, id: &str) -> bool {
     match id {
         TINYHUMANS_ENGINE => {
-            matches!(resolve(config), Binding::On(bound) if bound.id == id)
+            matches!(resolve(config).await, Binding::On(bound) if bound.id == id)
         }
-        CORTEXDB_ENGINE => matches!(read_cortexdb_key(config), Ok(Some(_))),
+        CORTEXDB_ENGINE => matches!(read_cortexdb_key(config).await, Ok(Some(_))),
         _ => false,
     }
 }

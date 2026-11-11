@@ -5,10 +5,11 @@ use async_trait::async_trait;
 use openhuman_core::cron::{CronJobPatch, JobPolicy};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
-use tinystoragedrivers_core::{
-    Capabilities, CollectionSpec, DocumentStore, Filter, Page, Precondition, Query, ReadCheck,
-    ScopedStorage, Sort, StorageBackend, StorageError, Version, Versioned, WriteOp, WriteResult,
+use tinystoragedrivers::{
+    Capabilities, CollectionSpec, Filter, Page, Precondition, Query, ReadCheck, Scope as TsdScope,
+    Sort, StorageError, Version, Versioned, WriteOp, WriteResult,
 };
+use tinystoragedrivers_api::{DocumentStore, Storage, StorageBackend};
 use tinytools::Tool;
 
 type StoreResult<T> = Result<T, StorageError>;
@@ -59,24 +60,22 @@ struct Backend {
 }
 
 impl StorageBackend for Backend {
-    fn driver(&self) -> &'static str {
-        self.inner.driver()
-    }
     fn capabilities(&self) -> Capabilities {
         self.inner.capabilities()
     }
-    fn for_scope(&self, scope: &Scope) -> StoreResult<ScopedStorage> {
+    fn for_scope(&self, scope: &TsdScope) -> StoreResult<Storage> {
         let inner = self.inner.for_scope(scope)?;
-        Ok(ScopedStorage::new(
-            scope.clone(),
-            inner.driver(),
+        Ok(Storage::new(
             Arc::new(Documents {
                 inner: Arc::clone(inner.documents()),
-                scope: scope.to_string(),
+                scope: scope.as_str().to_string(),
                 faults: Arc::clone(&self.faults),
             }),
             Arc::clone(inner.streams()),
+            Arc::clone(inner.kv()),
             Arc::clone(inner.blobs()),
+            Arc::clone(inner.queues()),
+            Arc::clone(inner.secrets()),
         ))
     }
 }
@@ -227,7 +226,7 @@ fn next_run_of(config: &Config, job_id: &str) -> chrono::DateTime<chrono::Utc> {
 
 /// Writes `policy` as the raw `policy` field of `job_id`'s document, bypassing
 /// the store's own validation.
-async fn put_raw_policy(docs: &ScopedStorage, job_id: &str, policy: serde_json::Value) {
+async fn put_raw_policy(docs: &Storage, job_id: &str, policy: serde_json::Value) {
     let mut stored = docs.documents().get(JOBS, job_id).await.unwrap().unwrap();
     stored.doc["policy"] = policy;
     docs.documents()

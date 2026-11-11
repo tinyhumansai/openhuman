@@ -9,7 +9,7 @@ use zeroize::Zeroizing;
 
 use crate::security::secret_storage::backend::MockBackend;
 use crate::security::secret_storage::SecretBackend;
-use crate::storage::{MemoryStorage, Scope, StorageBackend};
+use crate::storage::{test_support::memory_backend, Scope, StorageBackend};
 
 #[test]
 fn encrypted_file_is_unavailable_without_an_initialized_master_key() {
@@ -33,11 +33,13 @@ fn encrypted_file_is_unavailable_without_an_initialized_master_key() {
 }
 
 fn storage_secrets_in(
-    storage: &MemoryStorage,
+    storage: &dyn StorageBackend,
     scope: &str,
 ) -> tinystoragedrivers::secrets::DocumentSecrets {
+    let owner_scope = Scope::new(scope).unwrap();
     crate::storage::secrets::over(
-        &storage.for_scope(&Scope::new(scope).unwrap()).unwrap(),
+        &storage.for_scope(&owner_scope).unwrap(),
+        owner_scope,
         Arc::new(DerivedKeys::new(Zeroizing::new([5; 32]))),
     )
 }
@@ -46,8 +48,8 @@ fn storage_secrets_in(
 fn an_os_keyring_secret_is_adopted_into_storage_on_first_read() {
     let os = MockBackend::new();
     os.set("alice:token", "from-the-os-keychain").unwrap();
-    let storage = MemoryStorage::new();
-    let secrets = storage_secrets_in(&storage, "local");
+    let storage = memory_backend();
+    let secrets = storage_secrets_in(storage.as_ref(), "local");
 
     let read = |secrets| {
         get_adopting(secrets, "alice:token", "token", || {
@@ -73,8 +75,8 @@ fn an_os_keyring_secret_is_adopted_into_storage_on_first_read() {
 #[test]
 fn a_secret_absent_everywhere_stays_absent_and_storage_wins_over_the_os() {
     let os = MockBackend::new();
-    let storage = MemoryStorage::new();
-    let secrets = storage_secrets_in(&storage, "local");
+    let storage = memory_backend();
+    let secrets = storage_secrets_in(storage.as_ref(), "local");
     assert_eq!(
         get_adopting(secrets.clone(), "bob:k", "k", || os
             .get("bob:k")
@@ -99,12 +101,15 @@ fn a_secret_absent_everywhere_stays_absent_and_storage_wins_over_the_os() {
 fn adopted_secrets_do_not_cross_scopes() {
     let os = MockBackend::new();
     os.set("u:k", "v").unwrap();
-    let storage = MemoryStorage::new();
-    get_adopting(storage_secrets_in(&storage, "alice"), "u:k", "k", || {
-        os.get("u:k").ok().flatten()
-    })
+    let storage = memory_backend();
+    get_adopting(
+        storage_secrets_in(storage.as_ref(), "alice"),
+        "u:k",
+        "k",
+        || os.get("u:k").ok().flatten(),
+    )
     .unwrap();
-    let other = storage_secrets_in(&storage, "bob");
+    let other = storage_secrets_in(storage.as_ref(), "bob");
     assert_eq!(
         crate::storage::block_on(async move { other.get("u:k").await }).unwrap(),
         None
@@ -119,8 +124,8 @@ fn a_failing_legacy_backend_reads_as_nothing_to_adopt() {
     );
     assert_eq!(legacy_or_warn(Ok(Some("v".into()))).as_deref(), Some("v"));
     // With nothing legacy to adopt, the storage read is still answered.
-    let storage = MemoryStorage::new();
-    let secrets = storage_secrets_in(&storage, "local");
+    let storage = memory_backend();
+    let secrets = storage_secrets_in(storage.as_ref(), "local");
     let read = get_adopting(secrets, "alice:k", "k", || {
         legacy_or_warn(Err(SecretStorageError::Backend("locked".into())))
     })

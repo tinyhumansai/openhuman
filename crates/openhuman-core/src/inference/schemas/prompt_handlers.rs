@@ -47,7 +47,7 @@ pub(super) fn handle_inference_summarize(
     Box::pin(async move {
         let p = deserialize_params::<InferenceSummarizeParams>(params)?;
         let config = ctx.load_config().await?;
-        to_json(crate::inference::rpc::inference_summarize(&config, &p.text, p.max_tokens).await?)
+        to_json(crate::inference::ops::inference_summarize(&config, &p.text, p.max_tokens).await?)
     })
 }
 
@@ -59,7 +59,7 @@ pub(super) fn handle_inference_prompt(
         let p = deserialize_params::<InferencePromptParams>(params)?;
         let config = ctx.load_config().await?;
         to_json(
-            crate::inference::rpc::inference_prompt(&config, &p.prompt, p.max_tokens, p.no_think)
+            crate::inference::ops::inference_prompt(&config, &p.prompt, p.max_tokens, p.no_think)
                 .await?,
         )
     })
@@ -73,7 +73,7 @@ pub(super) fn handle_inference_vision_prompt(
         let p = deserialize_params::<InferenceVisionPromptParams>(params)?;
         let config = ctx.load_config().await?;
         to_json(
-            crate::inference::rpc::inference_vision_prompt(
+            crate::inference::ops::inference_vision_prompt(
                 &config,
                 &p.prompt,
                 &p.image_refs,
@@ -92,7 +92,7 @@ pub(super) fn handle_inference_test_provider_model(
         let p = deserialize_params::<InferenceTestChatModelParams>(params)?;
         let config = ctx.load_config().await?;
         to_json(
-            crate::inference::rpc::inference_test_provider_model(
+            crate::inference::ops::inference_test_provider_model(
                 &config,
                 &p.workload,
                 &p.provider,
@@ -110,6 +110,6 @@ pub(super) fn handle_inference_analyze_sentiment(
     Box::pin(async move {
         let p = deserialize_params::<InferenceAnalyzeSentimentParams>(params)?;
         let config = ctx.load_config().await?;
-        to_json(crate::inference::rpc::inference_analyze_sentiment(&config, &p.message).await?)
+        to_json(crate::inference::ops::inference_analyze_sentiment(&config, &p.message).await?)
     })
 }

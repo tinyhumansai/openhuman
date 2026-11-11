@@ -12,6 +12,7 @@ impl AttachmentModel {
         &self,
         block: &ContentBlock,
         scope: &AttachmentAccessScope,
+        allow_committed_history: bool,
     ) -> tinyinference_llm::Result<Option<(InputModality, String, String, Vec<u8>, bool)>> {
         let (modality, source, mime, is_local) = match block {
             ContentBlock::Image(image) => (
@@ -27,6 +28,34 @@ impl AttachmentModel {
             ContentBlock::Document(media) => Self::media_source(InputModality::Document, media)?,
             _ => return Ok(None),
         };
+        if let Some(opaque_id) = source.strip_prefix("openhuman-staged://") {
+            let thread_id = scope.thread_id.as_deref().ok_or_else(|| {
+                tinyinference_llm::Error::Model("native attachment session is unavailable".into())
+            })?;
+            let resolved = crate::threads::attachments::read_authorized_native_attachment(
+                &self.dispatch_ctx(),
+                &self.config,
+                thread_id,
+                opaque_id,
+                &scope.native_staged_parts,
+                allow_committed_history,
+            )
+            .await
+            .map_err(tinyinference_llm::Error::Model)?;
+            let expected_image = modality == InputModality::Image;
+            if expected_image != resolved.mime.starts_with("image/") {
+                return Err(tinyinference_llm::Error::Model(
+                    "native attachment type does not match its staged record".into(),
+                ));
+            }
+            return Ok(Some((
+                modality,
+                resolved.path,
+                resolved.mime,
+                resolved.bytes,
+                false,
+            )));
+        }
         if self.config.multimodal_files.max_files == 0 {
             return Err(tinyinference_llm::Error::Model(
                 "attachments are disabled for this origin".into(),

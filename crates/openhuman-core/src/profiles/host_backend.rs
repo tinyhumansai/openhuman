@@ -4,16 +4,36 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use super::host::{ProfileHost, Slot};
+use super::host::{Profile, ProfileHost, Slot};
 use super::lease as profile_lease;
 use super::lifecycle::ProfileLocks;
 use super::registry::ProfileRegistry;
 use crate::core::runtime::{CoreContext, SaasConfig};
 use crate::storage::fence::FenceRegistry;
 use crate::storage::fenced_backend::FencedBackend;
-use crate::storage::StorageBackend;
+use crate::storage::{StorageBackend, StorageError};
 
 impl ProfileHost {
+    /// A backend captured for one currently open profile's exact lease fence.
+    /// Maintenance work must keep this backend together with the scopes it
+    /// visits, so a later lease takeover cannot replace the captured epoch.
+    ///
+    /// Returns `None` when this profile host uses file leases and has no
+    /// storage backend.
+    pub(crate) fn storage_backend_for(
+        &self,
+        profile: &Profile,
+    ) -> Result<Option<Arc<dyn StorageBackend>>, StorageError> {
+        let Some(backend) = &self.backend else {
+            return Ok(None);
+        };
+        Ok(Some(Arc::new(FencedBackend::for_fence(
+            Arc::clone(backend),
+            Arc::clone(&self.fences),
+            Arc::clone(profile.lease_fence()),
+        ))))
+    }
+
     /// A host over `backend` when given (the shared registry and cluster
     /// leases), else as [`Self::new`]. Supplied backends are guarded by this
     /// host's profile fences for cron policy writes; an already-fenced backend

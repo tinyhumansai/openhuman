@@ -2,7 +2,11 @@ use crate::core::runtime::DispatchCtx;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
-use crate::core::all::{ControllerFuture, RegisteredController};
+use crate::config::Config;
+use crate::core::all::{
+    BoundRegisteredController, ControllerEntry, ControllerFuture, ControllerTask,
+    RegisteredController,
+};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
@@ -21,6 +25,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_decrypt_secret,
         },
     ]
+}
+
+pub(crate) fn all_controller_entries() -> Vec<ControllerEntry> {
+    vec![
+        ControllerEntry::bound(encrypt_secret_controller()),
+        ControllerEntry::bound(decrypt_secret_controller()),
+    ]
+}
+
+#[cfg(test)]
+pub(crate) fn encryption_parameter_contracts() -> Vec<crate::core::all::ControllerParamContract> {
+    tests::parameter_contracts()
 }
 
 pub fn schemas(function: &str) -> ControllerSchema {
@@ -74,18 +90,52 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
+fn encrypt_secret_controller() -> BoundRegisteredController {
+    BoundRegisteredController::after_gate(
+        schemas("encrypt_secret"),
+        load_config,
+        parse_encrypt_secret,
+        run_encrypt_secret,
+    )
+}
+
+fn decrypt_secret_controller() -> BoundRegisteredController {
+    BoundRegisteredController::after_gate(
+        schemas("decrypt_secret"),
+        load_config,
+        parse_decrypt_secret,
+        run_decrypt_secret,
+    )
+}
+
 fn handle_encrypt_secret(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    encrypt_secret_controller().invoke(ctx, params)
+}
+
+fn handle_decrypt_secret(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    decrypt_secret_controller().invoke(ctx, params)
+}
+
+fn load_config(ctx: DispatchCtx) -> ControllerTask<Config> {
+    Box::pin(async move { ctx.load_config().await })
+}
+
+fn parse_encrypt_secret(params: Map<String, Value>) -> Result<String, String> {
+    read_required(&params, "plaintext")
+}
+
+fn parse_decrypt_secret(params: Map<String, Value>) -> Result<String, String> {
+    read_required(&params, "ciphertext")
+}
+
+fn run_encrypt_secret(_ctx: DispatchCtx, config: Config, plaintext: String) -> ControllerFuture {
     Box::pin(async move {
-        let config = ctx.load_config().await?;
-        let plaintext = read_required::<String>(&params, "plaintext")?;
         to_json(crate::security::encryption::rpc::encrypt_secret(&config, &plaintext).await?)
     })
 }
 
-fn handle_decrypt_secret(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+fn run_decrypt_secret(_ctx: DispatchCtx, config: Config, ciphertext: String) -> ControllerFuture {
     Box::pin(async move {
-        let config = ctx.load_config().await?;
-        let ciphertext = read_required::<String>(&params, "ciphertext")?;
         to_json(crate::security::encryption::rpc::decrypt_secret(&config, &ciphertext).await?)
     })
 }

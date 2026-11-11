@@ -70,6 +70,13 @@ const importInstead = (page: Page) =>
   page.getByRole('button', { name: 'I already have a recovery phrase' });
 const cancelButton = (page: Page) => page.getByRole('button', { name: 'Cancel' });
 const copyButton = (page: Page) => page.getByRole('button', { name: 'Copy to Clipboard' });
+const createWalletMenuItem = (page: Page) =>
+  page.getByRole('menuitem', { name: 'Create a New Wallet' });
+async function enterReplacementGate(page: Page): Promise<void> {
+  await replaceButton(page).click();
+  await createWalletMenuItem(page).click();
+  await expect(confirmReplace(page)).toBeVisible();
+}
 
 async function gotoRecoveryPhrase(page: Page) {
   await page.goto('/#/settings/recovery-phrase');
@@ -92,6 +99,7 @@ async function gotoRecoveryPhrase(page: Page) {
 async function ensureConfiguredWallet(page: Page) {
   if (!(await walletState()).configured) {
     await gotoRecoveryPhrase(page);
+    await page.getByRole('button', { name: 'Reveal recovery phrase' }).click();
     await expect(copyButton(page)).toBeVisible({ timeout: 30_000 });
     await page.locator('#mnemonic-confirm-checkbox').check();
     await page.getByRole('button', { name: 'Save Recovery Phrase' }).click();
@@ -112,7 +120,6 @@ async function ensureConfiguredWallet(page: Page) {
 }
 
 test.describe('Recovery phrase — the replace gate', () => {
-  test.skip(true, 'wallet replacement UI is unavailable in the browser mock profile');
   test.beforeEach(async ({ page }) => {
     await bootAuthenticatedPage(page, 'pw-w1-recovery');
     await emulateTauriRuntime(page);
@@ -130,9 +137,9 @@ test.describe('Recovery phrase — the replace gate', () => {
 
   test('clicking Replace wallet shows the gate, not the new phrase', async ({ page }) => {
     await replaceButton(page).click();
-
+    await expect(createWalletMenuItem(page)).toBeVisible();
+    await createWalletMenuItem(page).click();
     await expect(confirmReplace(page)).toBeVisible();
-    await expect(importInstead(page)).toBeVisible();
     await expect(cancelButton(page)).toBeVisible();
     // The gate must not have already produced a replacement phrase behind it.
     await expect(copyButton(page)).toHaveCount(0);
@@ -143,8 +150,7 @@ test.describe('Recovery phrase — the replace gate', () => {
     expect(before.configured).toBe(true);
     expect(before.addresses.length).toBeGreaterThan(0);
 
-    await replaceButton(page).click();
-    await expect(confirmReplace(page)).toBeVisible();
+    await enterReplacementGate(page);
 
     await cancelButton(page).click();
 
@@ -161,8 +167,7 @@ test.describe('Recovery phrase — the replace gate', () => {
   test('navigating away from the open gate does not replace the wallet', async ({ page }) => {
     const before = await walletState();
 
-    await replaceButton(page).click();
-    await expect(confirmReplace(page)).toBeVisible();
+    await enterReplacementGate(page);
 
     // Abandoning the flow mid-gate is the likeliest real-world exit, and must
     // be as safe as pressing Cancel.
@@ -176,8 +181,7 @@ test.describe('Recovery phrase — the replace gate', () => {
   test('re-entering the panel after Cancel starts from view mode, not the gate', async ({
     page,
   }) => {
-    await replaceButton(page).click();
-    await expect(confirmReplace(page)).toBeVisible();
+    await enterReplacementGate(page);
     await cancelButton(page).click();
     await expect(replaceButton(page)).toBeVisible();
 
@@ -195,7 +199,9 @@ test.describe('Recovery phrase — the replace gate', () => {
   }) => {
     const before = await walletState();
 
-    await replaceButton(page).click();
+    await enterReplacementGate(page);
+    await confirmReplace(page).click();
+    await expect(importInstead(page)).toBeVisible();
     await importInstead(page).click();
 
     // Import mode: word slots, and no generated phrase to copy. The slots are

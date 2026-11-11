@@ -95,7 +95,7 @@ pub(crate) fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         "monitor_stop",
         "notify_user",
     ];
-    const THREADS_EXTRA: &[&str] = &["goal_get", "goal_set", "goal_complete"];
+    const THREADS_EXTRA: &[&str] = &["goal_get", "goal_set", "goal_complete", "goal_resume"];
 
     // MCP: every MCP tool name is `mcp_` prefixed (mcp_registry_*,
     // mcp_call_tool, mcp_list_servers, mcp_list_tools).
@@ -140,15 +140,12 @@ pub(crate) fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         || matches!(
             name,
             "ask_user_clarification"
-                | "delegate"
-                | "delegate_graph"
                 | "delegate_to_personality"
                 | "todo"
                 | "wait"
                 | "wait_loop"
                 | "request_plan_review"
                 | "plan_exit"
-                | "spawn_parallel_agents"
         )
     {
         return DomainGroup::Agent;

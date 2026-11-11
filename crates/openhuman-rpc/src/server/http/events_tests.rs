@@ -109,15 +109,21 @@ async fn events_stream_forwards_only_the_bound_client() {
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body().into_data_stream();
 
-    publish_web_channel_event(WebChannelEvent {
-        event: "wrong_client_probe".into(),
-        client_id: "another-client".into(),
-        ..Default::default()
+    publish_web_channel_event(WebChannelEvent::UserError {
+        context: crate::core_host::web_chat::WebEventContext {
+            client_id: "another-client".into(),
+            ..Default::default()
+        },
+        error_type: Some("wrong_client_probe".into()),
+        error_source: None,
     });
-    publish_web_channel_event(WebChannelEvent {
-        event: "right_client_probe".into(),
-        client_id: "stream-client".into(),
-        ..Default::default()
+    publish_web_channel_event(WebChannelEvent::UserError {
+        context: crate::core_host::web_chat::WebEventContext {
+            client_id: "stream-client".into(),
+            ..Default::default()
+        },
+        error_type: Some("right_client_probe".into()),
+        error_source: None,
     });
 
     let chunk = tokio::time::timeout(std::time::Duration::from_secs(1), body.next())
@@ -126,7 +132,8 @@ async fn events_stream_forwards_only_the_bound_client() {
         .expect("SSE body chunk")
         .expect("SSE bytes");
     let event = String::from_utf8_lossy(&chunk);
-    assert!(event.contains("event: right_client_probe"));
+    assert!(event.contains("event: user_error"));
+    assert!(event.contains("right_client_probe"));
     assert!(!event.contains("wrong_client_probe"));
 }
 

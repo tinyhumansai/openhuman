@@ -14,16 +14,16 @@
 //!
 //! The registry is generic: it knows nothing about what a source builds.
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use futures_util::future::BoxFuture;
 use tinytools::Tool;
 
-use crate::config::{BrowserConfig, Config, DelegateAgentConfig, HttpRequestConfig};
+use crate::config::{BrowserConfig, Config, HttpRequestConfig};
 use crate::core::slots::HookSlot;
 use crate::modules::tinybox::host_runtime::RuntimeAdapter;
-use crate::security::{AuditLogger, SecurityPolicy};
+use crate::security::{AuditSink, SecurityPolicy};
 
 /// What a tool source can see while the catalogue is assembled: the same
 /// handles `all_tools_with_runtime` was given.
@@ -34,22 +34,22 @@ pub struct ToolSourceCtx<'a> {
     pub root_config: &'a Config,
     pub security: &'a Arc<SecurityPolicy>,
     pub runtime: &'a Arc<dyn RuntimeAdapter>,
-    pub audit: &'a Arc<AuditLogger>,
+    pub audit: &'a Arc<AuditSink>,
     pub browser_config: &'a BrowserConfig,
     pub http_config: &'a HttpRequestConfig,
     /// The agent's permitted read/write root.
     pub action_dir: &'a Path,
-    pub agents: &'a HashMap<String, DelegateAgentConfig>,
     pub approval_workspace_root: Option<&'a Path>,
 }
 
 /// A registered tool source.
 pub type ToolSourceFactory =
-    Arc<dyn for<'a> Fn(&ToolSourceCtx<'a>) -> Vec<Box<dyn Tool>> + Send + Sync>;
+    Arc<dyn for<'a> Fn(&'a ToolSourceCtx<'a>) -> BoxFuture<'a, Vec<Box<dyn Tool>>> + Send + Sync>;
 
 /// Anchor point: right after the search tools, before hosting.
 pub const ANCHOR_AFTER_SEARCH: &str = "after_search";
-/// Anchor point: right after the delegation tool, before the Composio tools.
+/// Stable insertion point for registered hosted tools after the former
+/// configured-delegate catalogue slot and before Composio.
 pub const ANCHOR_AFTER_DELEGATE: &str = "after_delegate";
 /// Every anchor `all_tools_with_runtime` splices sources into.
 pub const ANCHORS: [&str; 2] = [ANCHOR_AFTER_SEARCH, ANCHOR_AFTER_DELEGATE];
@@ -78,7 +78,10 @@ static TOOL_SOURCES: HookSlot<ToolSourceEntry> = HookSlot::new("tools::sources")
 /// its position.
 pub fn register_tool_source<F>(id: impl Into<String>, factory: F)
 where
-    F: for<'a> Fn(&ToolSourceCtx<'a>) -> Vec<Box<dyn Tool>> + Send + Sync + 'static,
+    F: for<'a> Fn(&'a ToolSourceCtx<'a>) -> BoxFuture<'a, Vec<Box<dyn Tool>>>
+        + Send
+        + Sync
+        + 'static,
 {
     register_tool_source_at(id, ToolSourcePlacement::End, factory);
 }
@@ -86,7 +89,10 @@ where
 /// Registers a tool source for the whole process at `placement`.
 pub fn register_tool_source_at<F>(id: impl Into<String>, placement: ToolSourcePlacement, factory: F)
 where
-    F: for<'a> Fn(&ToolSourceCtx<'a>) -> Vec<Box<dyn Tool>> + Send + Sync + 'static,
+    F: for<'a> Fn(&'a ToolSourceCtx<'a>) -> BoxFuture<'a, Vec<Box<dyn Tool>>>
+        + Send
+        + Sync
+        + 'static,
 {
     TOOL_SOURCES.register(
         id,
@@ -104,7 +110,10 @@ pub fn register_tool_source_in<F>(
     id: impl Into<String>,
     factory: F,
 ) where
-    F: for<'a> Fn(&ToolSourceCtx<'a>) -> Vec<Box<dyn Tool>> + Send + Sync + 'static,
+    F: for<'a> Fn(&'a ToolSourceCtx<'a>) -> BoxFuture<'a, Vec<Box<dyn Tool>>>
+        + Send
+        + Sync
+        + 'static,
 {
     TOOL_SOURCES.register_in(
         extensions,
@@ -133,7 +142,7 @@ pub fn registered_tool_source_placements() -> Vec<(String, ToolSourcePlacement)>
 /// Builds the tools of every registered source placed at `anchor`
 /// (`Some(name)`) or at the end (`None`, which also collects sources whose
 /// anchor is unknown), in registration order.
-pub(crate) fn build_registered_tool_sources(
+pub(crate) async fn build_registered_tool_sources(
     ctx: &ToolSourceCtx<'_>,
     anchor: Option<&str>,
 ) -> Vec<Box<dyn Tool>> {
@@ -151,7 +160,7 @@ pub(crate) fn build_registered_tool_sources(
         if !applies {
             continue;
         }
-        let built = (entry.factory)(ctx);
+        let built = (entry.factory)(ctx).await;
         tracing::debug!(
             source = %id,
             anchor = ?anchor,

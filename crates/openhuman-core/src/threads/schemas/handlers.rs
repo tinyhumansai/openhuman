@@ -23,8 +23,17 @@ pub(super) fn handle_list(ctx: DispatchCtx, _params: Map<String, Value>) -> Cont
 }
 
 pub(super) fn handle_upsert(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { run_upsert(ctx, parse_upsert(params)?).await })
+}
+
+pub(super) fn parse_upsert(
+    params: Map<String, Value>,
+) -> Result<UpsertConversationThreadRequest, String> {
+    parse(params)
+}
+
+pub(super) fn run_upsert(ctx: DispatchCtx, p: UpsertConversationThreadRequest) -> ControllerFuture {
     Box::pin(async move {
-        let p = parse::<UpsertConversationThreadRequest>(params)?;
         // A SaaS user picks thread ids for their own threads only; reserved
         // prefixes and path-like ids are refused (no-op outside SaaS).
         crate::profiles::surface::check_thread_id(&p.id)?;
@@ -201,6 +210,13 @@ pub(super) fn handle_todos_get(_ctx: DispatchCtx, params: Map<String, Value>) ->
     Box::pin(async move {
         let p = parse::<ops::ThreadLiveStateRequest>(params)?;
         to_json(ops::todos_get(p).await?)
+    })
+}
+
+pub(super) fn handle_state_get(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<ops::ThreadLiveStateRequest>(params)?;
+        to_json(ops::state_get(p).await?)
     })
 }
 

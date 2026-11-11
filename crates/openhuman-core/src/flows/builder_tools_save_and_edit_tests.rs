@@ -373,13 +373,19 @@ async fn save_workflow_accepts_correctly_schemad_graph() {
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
             { "id": "summarize", "kind": "agent", "name": "Summarize",
-              "config": { "agent_ref": "planner", "prompt": "summarize",
+              "config": { "agent_ref": "workflow_builder", "prompt": "summarize",
                 "output_parser": { "schema": { "type": "object",
-                    "required": ["channel"],
-                    "properties": { "channel": { "type": "string" } } } } } },
+                        "required": ["channel", "text"],
+                        "properties": {
+                            "channel": { "type": "string" },
+                            "text": { "type": "string" }
+                        } } } } },
             { "id": "notify", "kind": "tool_call", "name": "Notify",
               "config": { "slug": "SLACK_SEND_MESSAGE",
-                "args": { "channel": "=nodes.summarize.item.json.channel" } } }
+                "args": {
+                    "channel": "=nodes.summarize.item.json.channel",
+                    "text": "=nodes.summarize.item.json.text"
+                } } }
         ],
         "edges": [
             { "from_node": "t", "to_node": "summarize" },
@@ -392,6 +398,12 @@ async fn save_workflow_accepts_correctly_schemad_graph() {
         .await
         .unwrap();
 
+    if result.is_error {
+        eprintln!(
+            "save_workflow rejected the fixture graph: {}",
+            result.output()
+        );
+    }
     assert!(!result.is_error, "{}", result.output());
     let parsed: Value = serde_json::from_str(&result.output()).unwrap();
     assert_eq!(parsed["type"], "workflow_saved");

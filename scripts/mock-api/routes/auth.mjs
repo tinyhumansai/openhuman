@@ -63,6 +63,11 @@ export async function handleAuth(ctx) {
       json(res, 401, { success: false, error: "Unauthorized" });
       return true;
     }
+    // A refusal on a live session (plan, WAF, proxy): only a 401 expires it.
+    if (mockBehavior.session === "forbidden") {
+      json(res, 403, { success: false, error: "Forbidden", errorCode: "FORBIDDEN" });
+      return true;
+    }
     json(res, 200, { success: true, data: getMockUser() });
     return true;
   }

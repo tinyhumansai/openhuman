@@ -1,237 +1,143 @@
-//! Boot-time preparation of a freshly opened backend.
+//! Prepare the host's known storage scopes before installing a backend.
 //!
-//! [`prepare_and_migrate`] runs, in order, and logs each step:
+//! Tiny Storage Drivers v2 has no global schema registry or scope enumerator.
+//! Collection declarations belong to each record owner. The host asks each
+//! linked crate for its declarations and prepares them on the shared local and
+//! cluster scopes; tenant scopes are prepared when their owner is created.
 //!
-//! 1. **prepare** — declare every owner's collections from the composed
-//!    registry ([`super::schema`]);
-//! 2. **scope move** — copy v1 scopes to the one scope grammar
-//!    ([`super::scope_move`]), because an owner step runs inside one scope;
-//! 3. per scope the backend holds (always `local`): the **pre-migrate**
-//!    importer (`import_legacy_ledger`), then `Registry::migrate`, then the
-//!    **post-migrate** importers that move key-value state and counters into
-//!    `tsd.kv` / `tsd.counters` (a document step cannot write another owner's
-//!    collections).
-//!
-//! Every piece is resumable and idempotent (progress lives in each scope's
-//! `tsd.migrations`), so a crash anywhere re-runs from the last finished
-//! batch. A failure in one scope is logged and counted, never silently
-//! dropped, and does not stop the other scopes; the next boot retries it.
-//! Scopes created after boot (a new profile, a new agent) hold no v1 data and
-//! need no run.
+//! Preparing a scope also runs the tinyagents graph and harness owner-local
+//! migrations (`migrate_owners`), which carry their v1 collection names and
+//! shapes forward. Both are idempotent, so a prepared scope re-runs nothing.
 
 use std::sync::Arc;
 
-use tinystoragedrivers::schema::{MigrateOptions, Registry};
-use tinystoragedrivers::{Capability, Scope, StorageBackend, StorageError};
+use tinystoragedrivers::{Scope, Storage, StorageBackend, StorageError};
 
-/// What a boot run did.
+/// What a boot preparation run did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct BootReport {
-    /// Scopes migrated (including ones with nothing to do).
+    /// Known scopes prepared.
     pub scopes: usize,
-    /// Migration steps that ran to completion.
-    pub steps_run: usize,
-    /// `(scope, step, message)` for every piece that failed.
-    pub failures: Vec<(String, &'static str, String)>,
+    /// Collection declarations ensured across those scopes.
+    pub collections: usize,
+    /// Owner migrations that failed (logged; the next boot retries them).
+    pub failures: usize,
 }
 
-/// Prepares `backend` and migrates every scope it holds. See the module docs.
+/// Ensures each linked crate's collections in the host's shared scopes.
+///
+/// Per-profile and per-agent scopes are prepared when their owner is created;
+/// no driver-specific scope enumeration is required or used.
 ///
 /// # Errors
-///
-/// When the registry does not compose or the backend cannot be prepared or
-/// its scopes cannot be moved; a failure inside one scope's migration is
-/// recorded in [`BootReport::failures`] instead.
+/// Returns a collection validation, scope binding, or preparation error.
+/// Preparation is idempotent and may be retried on the next boot. A failed
+/// owner migration is logged and counted in [`BootReport::failures`] instead,
+/// so one scope's migration never stops the boot.
 pub async fn prepare_and_migrate(
     backend: &Arc<dyn StorageBackend>,
 ) -> Result<BootReport, StorageError> {
-    let registry = super::schema::registry()?;
-    tracing::debug!(target: "openhuman::storage", "[storage][boot] preparing the composed schema");
-    registry.prepare(backend.as_ref()).await?;
-
-    super::scope_move::run(backend).await?;
-
+    let owners = super::schema::collection_owners()?;
+    let scopes = [Scope::new("local")?, Scope::new("cluster")?];
     let mut report = BootReport::default();
-    for scope in scopes_to_migrate(backend).await {
+    for scope in scopes {
+        let storage = backend.for_scope(&scope)?;
+        for owner in &owners {
+            for collection in &owner.collections {
+                storage.ensure_collection(collection).await?;
+                report.collections += 1;
+            }
+        }
+        if let Err(error) = migrate_owners(&storage, &scope).await {
+            tracing::warn!(
+                target: "openhuman::storage",
+                scope = scope.as_str(),
+                %error,
+                "[storage][boot] owner migration failed; retried at the next boot"
+            );
+            report.failures += 1;
+        }
         report.scopes += 1;
-        migrate_scope(registry, backend, &scope, &mut report).await;
     }
-    if report.failures.is_empty() {
-        tracing::info!(
-            target: "openhuman::storage",
-            scopes = report.scopes,
-            steps = report.steps_run,
-            "[storage][boot] schema prepared and migrated"
-        );
-    } else {
-        tracing::warn!(
-            target: "openhuman::storage",
-            failures = report.failures.len(),
-            "[storage][boot] some migrations failed and will be retried at the next boot"
-        );
-    }
+    tracing::info!(
+        target: "openhuman::storage",
+        scopes = report.scopes,
+        collections = report.collections,
+        failures = report.failures,
+        "[storage][boot] owner collections prepared"
+    );
     Ok(report)
 }
 
-/// Runs `owner`'s steps again over `scope` after a legacy-file importer wrote
-/// v1-shaped records there. The steps finished at boot (or an earlier import),
-/// and a finished step is skipped, so the owner's progress records are cleared
-/// first; the steps are pure and write absent-only, so re-running over the
-/// already migrated records changes nothing. Returns the steps that ran.
+/// Prepares a tenant or module scope before its owner starts writing there,
+/// including the graph and harness owner migrations (`migrate_owners`).
+///
+/// # Errors
+/// Returns the first owner declaration, migration or backend error.
+pub async fn prepare_scope(storage: &Storage, scope: &Scope) -> Result<usize, StorageError> {
+    let owners = super::schema::collection_owners()?;
+    let mut count = 0;
+    for owner in &owners {
+        for collection in &owner.collections {
+            storage.ensure_collection(collection).await?;
+            count += 1;
+        }
+    }
+    migrate_owners(storage, scope).await?;
+    Ok(count)
+}
+
+/// Runs the tinyagents harness owner-local migrations on `scope`: v1 run
+/// status, journals, blobs and key-value stores move to their v2 names.
+/// Idempotent. (The graph owner is gone with `tinyagents-graph`.)
+async fn migrate_owners(storage: &Storage, scope: &Scope) -> Result<(), StorageError> {
+    let scoped = tinyagents_storage_kit::ScopedStorage::new(storage.clone(), scope.clone());
+    tinyagents_harness::storage::migrate_storage(scoped)
+        .await
+        .map(|_| ())
+}
+
+/// Runs the harness owner migrations on `scope` again after an
+/// importer copied v1 records into it (the scope move). Their steps already
+/// finished on the then-empty scope when it was prepared, and a finished step
+/// is skipped, so the two owners' progress records are cleared first. The
+/// steps write absent-only, so re-running over migrated records changes
+/// nothing.
 ///
 /// # Errors
 ///
-/// The first storage error. The importer's records stay in their v1 form and
-/// the next call retries.
-pub async fn remigrate_owner(
-    backend: &Arc<dyn StorageBackend>,
-    scope: &Scope,
-    owner: &str,
-) -> Result<usize, StorageError> {
-    use tinystoragedrivers::{DocumentStoreExt, Query};
-    let registry = super::schema::registry()?;
-    let scoped = backend.for_scope(scope)?;
-    let docs = scoped.documents();
-    docs.ensure_collection(&tinystoragedrivers::CollectionSpec::new(
-        tinystoragedrivers::MIGRATIONS_COLLECTION,
-    ))
-    .await?;
-    for progress in docs
-        .query_all(tinystoragedrivers::MIGRATIONS_COLLECTION, &Query::all())
-        .await?
-    {
-        if progress.doc.get("owner").and_then(|v| v.as_str()) == Some(owner)
-            && progress.doc.get("to").and_then(|v| v.as_u64()).unwrap_or(0) > 0
-        {
-            docs.delete(
-                tinystoragedrivers::MIGRATIONS_COLLECTION,
-                &progress.id,
-                tinystoragedrivers::Precondition::None,
-            )
-            .await?;
+/// The first storage error; the cleared steps re-run on the next preparation.
+pub async fn remigrate_owners(storage: &Storage, scope: &Scope) -> Result<(), StorageError> {
+    use tinyagents_storage_kit::{DocumentStoreExt, MIGRATIONS_COLLECTION};
+    use tinystoragedrivers::{CollectionSpec, Precondition, Query};
+    let docs = storage.documents();
+    docs.ensure_collection(&CollectionSpec::new(MIGRATIONS_COLLECTION))
+        .await?;
+    for progress in docs.query_all(MIGRATIONS_COLLECTION, &Query::all()).await? {
+        let owner = progress.doc.get("owner").and_then(|value| value.as_str());
+        if matches!(owner, Some("harness")) {
+            docs.delete(MIGRATIONS_COLLECTION, &progress.id, Precondition::None)
+                .await?;
         }
     }
-    let report = registry.migrate(&scoped, &MigrateOptions::new()).await?;
-    tracing::info!(
-        target: "openhuman::storage",
-        scope = scope.as_str(),
-        owner,
-        steps = report.ran.len(),
-        "[storage][boot] re-ran an owner's steps after a legacy import"
-    );
-    Ok(report.ran.len())
+    rerun_harness_steps(storage, scope).await
 }
 
-/// `local`, plus every v2 scope the backend reports (when it can enumerate).
-pub(crate) async fn scopes_to_migrate(backend: &Arc<dyn StorageBackend>) -> Vec<Scope> {
-    let mut scopes = vec![Scope::local()];
-    if backend
-        .capabilities()
-        .contains(Capability::ScopeEnumeration)
-    {
-        match backend.scopes("").await {
-            Ok(found) => {
-                for scope in found {
-                    if scope.parsed().is_ok() && !scope.is_cluster() && !scopes.contains(&scope) {
-                        scopes.push(scope);
-                    }
-                }
-            }
-            Err(error) => tracing::warn!(
-                target: "openhuman::storage",
-                %error,
-                "[storage][boot] could not list scopes; migrating the local scope only"
-            ),
-        }
-    }
-    scopes
-}
-
-async fn migrate_scope(
-    registry: &Registry,
-    backend: &Arc<dyn StorageBackend>,
-    scope: &Scope,
-    report: &mut BootReport,
-) {
-    let scoped = match backend.for_scope(scope) {
-        Ok(scoped) => scoped,
-        Err(error) => {
-            record(report, scope, "bind", &error);
-            return;
-        }
-    };
-    // Pre-migrate importer: the run ledger's v1 leases and counters.
-    if let Err(error) = tinyagents_session::import_legacy_ledger(&scoped).await {
-        record(report, scope, "import_legacy_ledger", &error);
-    }
-    // Marker rows older builds wrote become `tsd.migrations` entries, so an
-    // already imported profile is not imported again.
-    if let Err(error) = super::import_state::migrate_legacy_markers(&scoped).await {
-        record(report, scope, "migrate_legacy_markers", &error);
-    }
-    match registry.migrate(&scoped, &MigrateOptions::new()).await {
-        Ok(done) => {
-            if !done.ran.is_empty() {
-                tracing::info!(
-                    target: "openhuman::storage",
-                    scope = scope.as_str(),
-                    steps = done.ran.len(),
-                    "[storage][boot] migration steps ran"
-                );
-            }
-            report.steps_run += done.ran.len();
-        }
-        Err(error) => {
-            record(report, scope, "migrate", &error);
-            return;
-        }
-    }
-    post_migrate_importers(&scoped, scope, report).await;
-}
-
-async fn post_migrate_importers(
-    scoped: &tinystoragedrivers::ScopedStorage,
-    scope: &Scope,
-    report: &mut BootReport,
-) {
-    use tinyagents_harness::storage::{import_legacy_kv, LegacyKv};
-    for (owner, legacy, kind) in [
-        ("harness", "harness_store", LegacyKv::Flat),
-        ("session", "session_kv", LegacyKv::Flat),
-        ("harness", "harness_namespaced_store", LegacyKv::Namespaced),
-        ("harness", "harness_response_cache", LegacyKv::ResponseCache),
-    ] {
-        if let Err(error) = import_legacy_kv(scoped, owner, legacy, kind).await {
-            record(report, scope, "import_legacy_kv", &error);
-        }
-    }
-    if let Err(error) = tinyagents_graph::import_legacy_leases(scoped).await {
-        record(report, scope, "import_legacy_leases", &error);
-    }
-    if let Err(error) = tinyagents_graph::import_legacy_task_cache(scoped).await {
-        record(report, scope, "import_legacy_task_cache", &error);
-    }
-    for (step, error) in super::host_importers::run(scoped).await {
-        record(report, scope, step, &error);
-    }
-}
-
-fn record(
-    report: &mut BootReport,
-    scope: &Scope,
-    step: &'static str,
-    error: &dyn std::fmt::Display,
-) {
-    tracing::warn!(
-        target: "openhuman::storage",
-        scope = scope.as_str(),
-        step,
-        %error,
-        "[storage][boot] step failed"
-    );
-    report
-        .failures
-        .push((scope.as_str().to_owned(), step, error.to_string()));
+/// Re-runs the harness schema steps under the owner's migration lease.
+///
+/// `open_storage` remembers a scope it already migrated in this process and
+/// returns at once, so it cannot carry rows copied in after preparation. The
+/// lease-taking primitive it is built on runs the steps again.
+async fn rerun_harness_steps(storage: &Storage, scope: &Scope) -> Result<(), StorageError> {
+    use tinyagents_storage_kit::{MigrateOptions, Registry};
+    let scoped = tinyagents_storage_kit::ScopedStorage::new(storage.clone(), scope.clone());
+    let owned = scoped.clone();
+    tinyagents_storage_kit::with_migration_lease(&scoped, "harness", move |lease| async move {
+        let registry = Registry::compose([tinyagents_harness::storage_schema()])?;
+        registry.migrate(&owned, &MigrateOptions::new()).await?;
+        lease.renew().await
+    })
+    .await
 }
 
 #[cfg(test)]

@@ -211,10 +211,10 @@ fn all_variants_have_correct_domain() {
                 source: "cron:morning_briefing".into(),
                 message: "Good morning!".into(),
                 job_name: Some("morning_briefing".into()),
+                tenant: None,
             },
             "cron",
         ),
-        // Workflow
         (
             DomainEvent::WorkflowLoaded {
                 skill_id: "s".into(),
@@ -446,11 +446,11 @@ fn all_variants_have_correct_domain() {
             },
             "system",
         ),
-        // Auth
         (
             DomainEvent::SessionExpired {
                 source: "test".into(),
                 reason: "401".into(),
+                credential_fingerprint: None,
             },
             "auth",
         ),
@@ -773,20 +773,20 @@ fn a_long_error_is_clipped_on_a_character_boundary() {
 /// Every other variant is unchanged: no detail, so its row renders as before.
 #[test]
 fn events_outside_the_supervisor_have_no_event_log_detail() {
-    assert!(DomainEvent::CronJobCompleted {
-        job_id: "job-1".into(),
-        success: true,
-        output: "done".into(),
-        tenant: None,
+    for event in [
+        DomainEvent::CronJobCompleted {
+            job_id: "job-1".into(),
+            success: true,
+            output: "done".into(),
+            tenant: None,
+        },
+        DomainEvent::McpServerConnected {
+            server_id: "srv-1".into(),
+            tool_count: 25,
+        },
+    ] {
+        assert!(event.log_detail().is_none());
     }
-    .log_detail()
-    .is_none());
-    assert!(DomainEvent::McpServerConnected {
-        server_id: "srv-1".into(),
-        tool_count: 25,
-    }
-    .log_detail()
-    .is_none());
 }
 
 // ── workspace_dir ────────────────────────────────────────────────────────

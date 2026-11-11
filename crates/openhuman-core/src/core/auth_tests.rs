@@ -105,3 +105,44 @@ fn token_file_has_owner_only_permissions() {
     assert_eq!(mode & 0o777, 0o600, "token file must be 0o600");
     std::fs::remove_dir_all(&tmp).ok();
 }
+
+#[cfg(unix)]
+#[test]
+fn token_file_tightens_preexisting_loose_permissions() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // A token file left world-readable (an older build, a copy, a restore)
+    // must come back owner-only when the token is rewritten.
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("core.token");
+    std::fs::write(&path, "old").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    write_token_file(&path, "new").unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(
+        mode & 0o777,
+        0o600,
+        "rewritten token kept mode {:o}",
+        mode & 0o777
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_descriptor_open_on_the_old_token_never_sees_the_new_one() {
+    use std::io::{Read as _, Seek as _};
+
+    // Someone who opened the old (loose) file keeps that descriptor after a
+    // chmod; the rewrite must land on a new inode so it reads only the old token.
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("core.token");
+    std::fs::write(&path, "old").unwrap();
+    let mut held = std::fs::File::open(&path).unwrap();
+    write_token_file(&path, "new").unwrap();
+    let mut seen = String::new();
+    held.rewind().unwrap();
+    held.read_to_string(&mut seen).unwrap();
+    assert_eq!(seen, "old");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+}

@@ -24,7 +24,7 @@ impl CoreContext {
             self.tool_groups.clone(),
         )
         .session_agent(agent);
-        let parts = self.agent.derive(&mut overlay);
+        let parts = self.agent.derive(&mut overlay, false);
         Arc::new(CoreContext {
             host_kind: self.host_kind,
             workspace_binding: RwLock::new(binding),
@@ -41,6 +41,7 @@ impl CoreContext {
             channel_thread: self.channel_thread.clone(),
             session_agent: Some(agent.to_string()),
             profile: self.profile.clone(),
+            profile_admission: Arc::clone(&self.profile_admission),
             agent: parts,
             bare: self.bare,
         })

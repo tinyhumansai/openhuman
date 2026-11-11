@@ -4,18 +4,38 @@ use std::collections::HashSet;
 use std::sync::{Arc, Weak};
 
 use super::registry;
-use tinyagents_harness::tool::packs::{PackRegistryHandle, UseSkillTool, USE_SKILL};
+use tinyagents_harness_tools::skills::{PackRegistryHandle, UseSkillTool, USE_SKILL};
 use tinytools::Tool;
 
-/// Append `use_skill` to a freshly built registry.
-///
-/// It starts unbound; [`bind_pack_registry`] gives it its view of the registry
-/// once that is behind an `Arc`.
-pub fn append_pack_tools(tools: &mut Vec<Box<dyn Tool>>) {
+/// Append `use_skill` to a freshly built registry and return the handle its
+/// owner must retain for later rebinding.
+pub fn append_pack_tools(tools: &mut Vec<Box<dyn Tool>>) -> PackRegistryHandle {
+    let handle = PackRegistryHandle::default();
     tools.push(Box::new(UseSkillTool::new(
-        PackRegistryHandle::default(),
+        handle.clone(),
         registry::CATALOG,
     )));
+    handle
+}
+
+/// Whether `tool` is the canonical OpenHuman `use_skill` proxy built from the
+/// compiled pack catalog. Public callers of `all_tools()` cannot carry the
+/// handle separately, so the session builder uses this signature to replace
+/// only that proxy with a session-owned handle before binding it.
+pub(crate) fn is_canonical_use_skill_tool(tool: &dyn Tool) -> bool {
+    if tool.name() != USE_SKILL
+        || tool
+            .host_extension()
+            .and_then(|extension| {
+                extension.downcast_ref::<tinyagents_harness::tool::ToolCallBinding>()
+            })
+            .is_none()
+    {
+        return false;
+    }
+    let canonical = UseSkillTool::new(PackRegistryHandle::default(), registry::CATALOG);
+    tool.description() == canonical.description()
+        && tool.parameters_schema() == canonical.parameters_schema()
 }
 
 /// Point the pack tool at the durable registry it lives in.
@@ -28,10 +48,13 @@ pub fn append_pack_tools(tools: &mut Vec<Box<dyn Tool>>) {
 /// This is only half the registry. Every `delegate_*` tool lives in the agent's
 /// separate `synthesized_tools` `Arc`, so a packed delegate is reachable only
 /// once [`bind_synthesized_pack_registry`] has run too.
-pub fn bind_pack_registry(tools: &Arc<Vec<Box<dyn Tool>>>) {
+pub fn bind_pack_registry(handle: &PackRegistryHandle, tools: &Arc<Vec<Box<dyn Tool>>>) {
     let weak: Weak<Vec<Box<dyn Tool>>> = Arc::downgrade(tools);
-    let bound = for_each_pack_tool(tools, |handle| handle.bind(weak.clone()));
-    tracing::debug!(bound, "[toolpacks] bound pack tool to durable registry");
+    handle.bind(weak);
+    tracing::debug!(
+        tools = tools.len(),
+        "[toolpacks] bound pack tool to durable registry"
+    );
 }
 
 /// Point the pack tool at the synthesised delegate set.
@@ -45,13 +68,12 @@ pub fn bind_pack_registry(tools: &Arc<Vec<Box<dyn Tool>>>) {
 /// at which point every packed delegate reports "no tool in skill" instead of
 /// running.
 pub fn bind_synthesized_pack_registry(
-    durable: &Arc<Vec<Box<dyn Tool>>>,
+    handle: &PackRegistryHandle,
     synthesized: &Arc<Vec<Box<dyn Tool>>>,
 ) {
     let weak: Weak<Vec<Box<dyn Tool>>> = Arc::downgrade(synthesized);
-    let bound = for_each_pack_tool(durable, |handle| handle.bind_synthesized(weak.clone()));
+    handle.bind_synthesized(weak);
     tracing::debug!(
-        bound,
         delegates = synthesized.len(),
         "[toolpacks] bound pack tool to synthesised delegate set"
     );
@@ -68,13 +90,12 @@ fn for_each_pack_tool(
             continue;
         }
         if let Some(handle) = crate::tools::host_extensions::pack_registry_handle(tool.as_ref()) {
-            edit(handle);
+            edit(&handle);
             bound += 1;
         }
     }
     bound
 }
-
 /// Remove packed tool names from an agent's advertised set.
 ///
 /// This is the whole compression: the tools stay registered and executable, but
@@ -123,17 +144,8 @@ pub fn strip_packed_from_visible(visible: &mut HashSet<String>, agent_id: &str) 
 /// Is `tool` withheld from `agent_id` by the pack table right now?
 ///
 /// The predicate behind [`strip_packed_from_visible`], exposed for callers that
-/// build a *listing* of tools rather than a visible set — today the collapsed
-/// `delegate_to` tool, whose `agent` enum is an advertised surface that no
-/// `visible` subtraction can reach.
-///
-/// That distinction is load-bearing. Collapsing the archetype delegates without
-/// it silently re-advertised seven routes the pack table deliberately withholds
-/// (`do_crypto`, `use_mcp_server`, `setup_skills`,
-/// `run_skill`, `build_workflow`, `discover_workflows`): each one stopped being
-/// a tool — so `strip_packed_from_visible` had nothing to remove — and became a
-/// string inside another tool's schema instead. A collapse must never widen
-/// what the pack posture narrowed.
+/// build a listing of tools rather than a visible set. This keeps packed tools
+/// out of listings while preserving their registered dispatch paths.
 pub fn is_withheld_from(agent_id: &str, tool: &str) -> bool {
     let groups = super::groups::current();
     groups.mode_for_tool(tool) == super::groups::GroupMode::Withheld
@@ -152,54 +164,43 @@ pub fn is_withheld_from(agent_id: &str, tool: &str) -> bool {
 /// guessed at tool names, and never handed off. Closing the raw tools leaves the
 /// hand-off as the route, and the pack listing then names it (`route_sentence`).
 ///
-/// A pack closes only when all of this holds:
-/// * it is withheld from `agent_id` (a pack's owner keeps its own belt),
-/// * one of the pack's owners is the [`delegation_target`] of a hand-off this
-///   agent carries **unpacked** — a delegate no pack withholds, and therefore
-///   one it advertises by construction.
-///
-/// [`delegation_target`]: crate::tools::host_extensions::delegation_target
-///
-/// Inside a closed pack, a tool that is itself a hand-off (e.g. `create_skill`)
-/// stays reachable: it is a route, not a raw tool. A tool whose group an embedder
-/// advertised is on the wire, not withheld, and is left alone too.
-///
-/// **Deliberately not keyed on the visible set.** It used to be, and that made
-/// the rule true in tests and false in production. An agent with
-/// `ToolScope::Named` is built with `visible` = its named list, which cannot
-/// contain a *synthesised* delegate like `setup_skills`; those names arrive
-/// later, when `refresh_delegation_tools` inserts them. So at build time no
-/// hand-off looked reachable and nothing closed, while a harness agent — whose
-/// empty visible set is seeded from every tool, synthesised ones included —
-/// closed correctly. The live orchestrator kept its raw `skill_registry_*` /
-/// `mcp_registry_*` route the whole time (#6302). Pack membership is knowable
-/// the moment the tools exist, so the answer no longer depends on when the
-/// visible set is filled in.
+/// Close packs whose task family this agent can reach through its
+/// `spawn_subagent` schema. The schema's agent-id enum is the same allowlist
+/// enforced during execution. The host's explicit closure-owner table is used
+/// instead of every `ToolPack::owners` entry because some agents own only
+/// auxiliary tools in a broader pack.
 pub fn closed_by_direct_handoff(agent_id: &str, tools: &[&dyn Tool]) -> Vec<&'static str> {
-    let reachable_owners: HashSet<&str> = tools
+    let reachable_owners: HashSet<String> = tools
         .iter()
-        .filter(|tool| registry::pack_for_tool(tool.name()).is_none())
-        .filter_map(|tool| crate::tools::host_extensions::delegation_target(*tool))
+        .filter(|tool| tool.name() == "spawn_subagent")
+        .flat_map(|tool| {
+            let schema = tool.parameters_schema();
+            schema
+                .pointer("/properties/agent_id/enum")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
         .collect();
     if reachable_owners.is_empty() {
         return Vec::new();
     }
-    let handoffs: HashSet<&str> = tools
-        .iter()
-        .filter(|tool| crate::tools::host_extensions::delegation_target(**tool).is_some())
-        .map(|tool| tool.name())
-        .collect();
     let groups = super::groups::current();
     registry::PACKS
         .iter()
         .filter(|pack| !pack.is_owner(agent_id))
         .filter(|pack| {
-            pack.owners
+            registry::DIRECT_HANDOFF_PACK_OWNERS
                 .iter()
-                .any(|owner| reachable_owners.contains(owner))
+                .find(|(pack_id, _)| *pack_id == pack.id)
+                .is_some_and(|(_, owners)| {
+                    owners.iter().any(|owner| reachable_owners.contains(*owner))
+                })
         })
         .flat_map(|pack| pack.tools.iter().copied())
-        .filter(|name| !handoffs.contains(name))
         .filter(|name| groups.mode_for_tool(name) == super::groups::GroupMode::Withheld)
         .collect()
 }

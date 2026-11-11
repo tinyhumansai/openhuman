@@ -34,6 +34,15 @@ import {
   useChatMascotSendBinding,
 } from '../../features/human/chatMascot';
 import MicComposer from '../../features/human/MicComposer';
+import type { VoiceNoteDraft } from '../../features/voiceNotes/useVoiceNoteRecorder';
+import {
+  storeVoiceNote,
+  transcribeVoiceNote,
+  VOICE_NOTE_SOURCE,
+  voiceNoteContentPart,
+  type VoiceNoteMeta,
+} from '../../features/voiceNotes/voiceNoteApi';
+import { VoiceNoteComposer } from '../../features/voiceNotes/VoiceNoteComposer';
 import { useFlowApprovalRequests } from '../../hooks/useFlowApprovalRequests';
 import { useUnroutedApprovals } from '../../hooks/useUnroutedApprovals';
 import { useUsageState } from '../../hooks/useUsageState';
@@ -42,7 +51,7 @@ import {
   ATTACHMENT_MAX_FILES,
   ATTACHMENT_MAX_IMAGES,
   attachmentMetadata,
-  buildMessageWithAttachments,
+  attachmentsToParts,
   imageMarkerCost,
   parseMessageImages,
   validateAndReadFile,
@@ -56,9 +65,11 @@ import {
   aiRegenerate,
   chatCancel,
   chatSend,
+  chatSendWithAck,
   editMessage,
   useRustChat,
 } from '../../services/chatService';
+import type { ContentPart } from '../../services/chatWire';
 import { callCoreRpc } from '../../services/coreRpcClient';
 import type { RootState } from '../../store';
 import {
@@ -72,6 +83,7 @@ import {
   type ProcessingTranscriptItem,
   setToolTimelineForThread,
   type ToolTimelineEntry,
+  workflowProposalKey,
 } from '../../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { pendingFollowupAdded } from '../../store/queueSlice';
@@ -91,6 +103,7 @@ import {
   truncateMessagesFrom,
   updateThreadTitle,
 } from '../../store/threadSlice';
+import { userScopedStorage } from '../../store/userScopedStorage';
 import type { ConfirmationModal as ConfirmationModalType } from '../../types/intelligence';
 import type { ThreadMessage } from '../../types/thread';
 import { chatThreadPath } from '../../utils/chatRoutes';
@@ -110,7 +123,7 @@ import { StallWarning } from './aui/StallWarning';
 import { ThreadWorkspaceChip } from './aui/ThreadWorkspaceChip';
 import { useChatSurfaceRegistration } from './hooks/useChatSurfaceRegistration';
 import { useThreadArtifactsHydration } from './hooks/useThreadArtifactsHydration';
-import { useThreadDraft } from './hooks/useThreadDraft';
+import { draftStorageKey, useThreadDraft } from './hooks/useThreadDraft';
 import { ThreadList } from './threadList/ThreadList';
 import { useThreadPins } from './threadList/useThreadPins';
 import { useUnreadThreads } from './threadList/useUnreadThreads';
@@ -287,6 +300,10 @@ const Conversations = ({
   // Per-thread, reload-surviving draft (`useThreadDraft`): switching threads
   // swaps it instead of carrying half-typed text into the next conversation.
   const [inputValue, setInputValue] = useThreadDraft(selectedThreadId ?? null);
+  // The live selection, for async send paths that finish after the user may
+  // have switched threads.
+  const selectedThreadIdRef = useRef(selectedThreadId);
+  selectedThreadIdRef.current = selectedThreadId;
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // Failed sends retain their attachments by originating thread. A send may
   // reject after the user has navigated elsewhere, so restoring into the
@@ -503,6 +520,9 @@ const Conversations = ({
   // `default_model` (the core keys per-model levels by it after a restart,
   // before anything is picked here).
   const [persistedDefaultModel, setPersistedDefaultModel] = useState<string | null>(null);
+  // Set once the user picks or clears a model here, so a slow mount read of
+  // the persisted default can't overwrite that choice when it lands.
+  const composerModelChosenRef = useRef(false);
   const reasoningModel = composerModelOverride ?? persistedDefaultModel;
   const composerReasoningEffort: ReasoningEffortChoice =
     (reasoningModel ? reasoningEffortByModel[reasoningModel] : undefined) ?? globalReasoningEffort;
@@ -512,7 +532,9 @@ const Conversations = ({
       .then(res => {
         if (!cancelled) {
           setGlobalReasoningEffort(toReasoningEffortChoice(res.result?.reasoning_effort));
-          setPersistedDefaultModel(res.result?.default_model?.trim() || null);
+          if (!composerModelChosenRef.current) {
+            setPersistedDefaultModel(res.result?.default_model?.trim() || null);
+          }
           const byModel: Record<string, ReasoningEffortChoice> = {};
           for (const [model, effort] of Object.entries(
             res.result?.reasoning_effort_by_model ?? {}
@@ -618,6 +640,7 @@ const Conversations = ({
 
   const applyComposerModel = useCallback(
     (value: string | null, contextWindow?: number | null) => {
+      composerModelChosenRef.current = true;
       setComposerModelOverride(value);
       setPersistedDefaultModel(value);
       setComposerModelContextWindow(contextWindow ?? null);
@@ -635,7 +658,7 @@ const Conversations = ({
     let cancelled = false;
     (async () => {
       try {
-        const hint = composerModelOverride ?? CHAT_MODEL_HINT;
+        const hint = composerModelOverride ?? persistedDefaultModel ?? CHAT_MODEL_HINT;
         const res = await callCoreRpc<{ model: string }>({
           method: 'openhuman.inference_resolve_model',
           params: { hint },
@@ -652,7 +675,7 @@ const Conversations = ({
     return () => {
       cancelled = true;
     };
-  }, [composerModelOverride]);
+  }, [composerModelOverride, persistedDefaultModel]);
 
   // One-shot guard for the Stop/ESC partial-preservation path (#4862): request
   // ids whose partial reply has already been persisted, so a repeated Stop/ESC
@@ -1214,7 +1237,10 @@ const Conversations = ({
     return run;
   };
 
-  const handleSendMessage = async (text?: string) => {
+  const handleSendMessage = async (
+    text?: string,
+    opts?: { voiceNote?: VoiceNoteMeta; voicePart?: ContentPart }
+  ) => {
     // Guard double-submit to the SAME thread only; a send to another thread
     // may proceed concurrently.
     if (selectedThreadId && pendingSendsRef.current.has(selectedThreadId)) return;
@@ -1270,12 +1296,19 @@ const Conversations = ({
     failedAttachmentsByThreadRef.current.set(sendingThreadId, pendingAttachments);
     const modelOverride = composerModelOverride ?? undefined;
     const modelClearBarrier = modelOverride === undefined ? waitForComposerModelClear() : null;
-    let messageText = buildMessageWithAttachments(trimmed, pendingAttachments);
+    // Originals ride beside the text as typed parts; the core stages them.
+    const attachmentParts = attachmentsToParts(pendingAttachments);
+    let messageText = trimmed;
+    let persistedMessageId: string | undefined;
+    let persistedAttachmentParts: ContentPart[] = [];
     const userMessage: ThreadMessage = {
       id: `msg_${globalThis.crypto.randomUUID()}`,
       content: messageText,
       type: 'text',
-      extraMetadata: attachmentMetadata(pendingAttachments),
+      extraMetadata: {
+        ...attachmentMetadata(pendingAttachments),
+        ...(opts?.voiceNote ? { voiceNote: opts.voiceNote } : {}),
+      },
       sender: 'user',
       createdAt: new Date().toISOString(),
     };
@@ -1302,6 +1335,8 @@ const Conversations = ({
       if (retryingUnchangedMessage) {
         // The core already has this exact prompt from the failed attempt.
         messageText = previousFailedMessage.content;
+        persistedMessageId = previousFailedMessage.id;
+        persistedAttachmentParts = previousFailedMessage.attachments ?? [];
       } else if (previousFailedMessage) {
         // A corrected retry must replace the already-persisted failed prompt;
         // appending it would leave both prompts in the transcript. The edit
@@ -1317,6 +1352,7 @@ const Conversations = ({
           threadId: sendingThreadId,
           messageId: previousFailedMessage.id,
           content: messageText,
+          attachments: attachmentParts,
         });
         setInputValue('');
         setAttachments([]);
@@ -1329,10 +1365,16 @@ const Conversations = ({
         return;
       } else {
         const persisted = await dispatch(
-          addMessageLocal({ threadId: sendingThreadId, message: userMessage })
+          addMessageLocal({
+            threadId: sendingThreadId,
+            message: userMessage,
+            attachments: attachmentParts,
+          })
         ).unwrap();
         // The core saved the originals before returning this durable reference.
         messageText = persisted.message.content;
+        persistedMessageId = persisted.message.id;
+        persistedAttachmentParts = persisted.message.attachments ?? [];
         persistedFailedMessageByThreadRef.current.set(sendingThreadId, persisted.message);
       }
     } catch (error) {
@@ -1348,6 +1390,18 @@ const Conversations = ({
       }
       const msg = error instanceof Error ? error.message : String(error);
       setSendError(chatSendError('cloud_send_failed', msg));
+      // assistant-ui already cleared the composer; give the draft back to its
+      // own thread so a failed persist doesn't lose what the user typed.
+      failedAttachmentsByThreadRef.current.set(sendingThreadId, pendingAttachments);
+      if (selectedThreadIdRef.current === sendingThreadId) {
+        preserveSendErrorForRestoredDraftRef.current = true;
+        setInputValue(normalized);
+        attachmentsRef.current = pendingAttachments.slice();
+        setAttachments(pendingAttachments);
+      } else {
+        // The user moved on: keep it as that thread's draft, not this one's.
+        void userScopedStorage.setItem(draftStorageKey(sendingThreadId), normalized);
+      }
       pendingSendsRef.current.delete(sendingThreadId);
       removePendingSendingThread(sendingThreadId);
       return;
@@ -1382,12 +1436,22 @@ const Conversations = ({
       await chatSend({
         threadId: sendingThreadId,
         message: messageText,
+        ...(persistedAttachmentParts.length || opts?.voicePart
+          ? {
+              persistedMessageId,
+              attachments: [
+                ...persistedAttachmentParts,
+                ...(opts?.voicePart ? [opts.voicePart] : []),
+              ],
+            }
+          : {}),
         ...(modelOverride !== undefined ? { model: modelOverride } : {}),
         locale: uiLocale,
         reasoningEffort: composerReasoningEffort,
+        ...(opts?.voiceNote ? { source: VOICE_NOTE_SOURCE } : {}),
       });
       trackAnalyticsEvent('chat_message_sent', {
-        send_mode: 'standard',
+        send_mode: opts?.voiceNote ? 'voice_note' : 'standard',
         has_attachments: pendingAttachments.length > 0,
       });
       // Backend accepted the send; lifecycle ('started' → 'streaming') now
@@ -1444,6 +1508,27 @@ const Conversations = ({
 
   handleSendMessageRef.current = handleSendMessage;
 
+  // Voice note: transcribe (the text the agent reads), keep the audio in the
+  // core, then send the transcript as a normal turn whose row points at the
+  // audio. A failure throws so the composer keeps the draft for another try.
+  const handleSendVoiceNote = async (draft: VoiceNoteDraft) => {
+    const transcript = await transcribeVoiceNote(draft.blob);
+    if (!transcript) throw new Error(t('voiceNote.transcribeFailed'));
+    const noteId = `vn_${globalThis.crypto.randomUUID().replace(/-/g, '')}`;
+    const { mime } = await storeVoiceNote(noteId, draft.blob);
+    const voicePart = await voiceNoteContentPart(
+      noteId,
+      mime,
+      draft.blob,
+      draft.durationMs,
+      draft.waveform
+    );
+    await handleSendMessage(transcript, {
+      voiceNote: { noteId, mime, durationMs: draft.durationMs, waveform: draft.waveform },
+      voicePart,
+    });
+  };
+
   // Queue a FOLLOW-UP on the selected thread while a turn is streaming
   // (queue_mode 'followup'): the backend sends it as a fresh turn once the
   // current turn finishes. We do NOT insert it into the transcript now —
@@ -1462,7 +1547,8 @@ const Conversations = ({
 
     const modelOverride = composerModelOverride ?? undefined;
     const modelClearBarrier = modelOverride === undefined ? waitForComposerModelClear() : null;
-    const messageText = buildMessageWithAttachments(normalized, pendingAttachments);
+    const attachmentParts = attachmentsToParts(pendingAttachments);
+    const messageText = normalized;
     // Build the full user message exactly like a normal send (content +
     // attachment metadata) so the follow-up persists identically when it is
     // flushed into the transcript on turn end. Guard `crypto.randomUUID` like
@@ -1492,19 +1578,34 @@ const Conversations = ({
           throw error;
         }
       }
-      await chatSend({
+      const ack = await chatSendWithAck({
         threadId,
         message: messageText,
+        attachments: attachmentParts,
         ...(modelOverride !== undefined ? { model: modelOverride } : {}),
         locale: uiLocale,
         queueMode: 'followup',
         reasoningEffort: composerReasoningEffort,
       });
+      if (!ack.requestId) throw new Error('The core did not identify the queued follow-up');
+      if (attachmentParts.length > 0 && ack.queuedAttachments.length === 0) {
+        throw new Error(
+          'The core did not return staged attachment references for the queued follow-up'
+        );
+      }
       // Only clear the composer once the backend has accepted the queue, so a
       // failed send leaves the user's draft + attachments intact to retry.
       setInputValue('');
       setAttachments([]);
-      dispatch(pendingFollowupAdded({ threadId, message: followupMessage, text: messageText }));
+      dispatch(
+        pendingFollowupAdded({
+          threadId,
+          message: followupMessage,
+          text: messageText,
+          requestId: ack.requestId,
+          attachments: ack.queuedAttachments,
+        })
+      );
       trackAnalyticsEvent('chat_message_sent', {
         send_mode: 'followup',
         has_attachments: pendingAttachments.length > 0,
@@ -1950,11 +2051,12 @@ const Conversations = ({
           path from proposal to saved automation via "Save & enable"
           (`flows_create`), or the user can Dismiss it outright. */}
       {selectedThreadId && pendingWorkflowProposal && (
-        // Keyed by name so a second proposal in the same thread (before the
-        // first is resolved) remounts the card and resets its local
-        // saving/error state, matching the PlanReviewCard pattern above.
+        // Keyed by the proposal's identity (source message + name) so a
+        // second proposal in the same thread (before the first is resolved)
+        // remounts the card and resets its local saving/error state, matching
+        // the PlanReviewCard pattern above.
         <WorkflowProposalCard
-          key={pendingWorkflowProposal.name}
+          key={workflowProposalKey(pendingWorkflowProposal)}
           threadId={selectedThreadId}
           proposal={pendingWorkflowProposal}
         />
@@ -2219,6 +2321,11 @@ const Conversations = ({
         onChange={applyComposerReasoningEffort}
         modelLabel={reasoningModel}
       />
+      <VoiceNoteComposer
+        disabled={composerInteractionBlocked || isSending || !selectedThreadId}
+        onSend={handleSendVoiceNote}
+        onError={message => setSendError(chatSendError('voice_transcription', message))}
+      />
     </>
   );
 
@@ -2297,7 +2404,7 @@ const Conversations = ({
           : 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden'
       }>
       <AssistantUiChat
-        model={composerModelOverride ?? resolvedModel ?? CHAT_MODEL_HINT}
+        model={composerModelOverride ?? persistedDefaultModel ?? resolvedModel ?? CHAT_MODEL_HINT}
         modelContextWindow={composerModelContextWindow}
         composerHeader={assistantComposerHeader}
         composerFooterExtras={assistantComposerFooterExtras}

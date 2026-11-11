@@ -194,6 +194,23 @@ describe('FlowCanvasPage', () => {
     expect(screen.getByText('core unreachable')).toBeInTheDocument();
   });
 
+  it('retries a transient workflow load error without losing the requested flow', async () => {
+    getFlow
+      .mockRejectedValueOnce(new Error('temporary core outage'))
+      .mockResolvedValueOnce(makeFlow());
+    renderAtFlowId('test-id');
+
+    expect(await screen.findByTestId('flow-canvas-error')).toHaveTextContent(
+      'temporary core outage'
+    );
+
+    fireEvent.click(screen.getByTestId('flow-canvas-retry'));
+
+    expect(await screen.findByTestId('flow-canvas')).toBeInTheDocument();
+    expect(getFlow).toHaveBeenCalledTimes(2);
+    expect(getFlow).toHaveBeenLastCalledWith('test-id');
+  });
+
   describe('run-error banner (#flows-canvas-error-banner)', () => {
     // Run always goes through the header icon → confirm popup → accept, same
     // as a real user flow (see `handleRun` wiring around `confirmAction`).

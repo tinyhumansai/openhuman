@@ -122,6 +122,14 @@ mod module_backed {
                 )
                 .unwrap()),
                 names::methods::STATIC_LIST => Ok(json!(self.statics)),
+                names::methods::STATIC_LIST_TOOLS => Ok(json!([{
+                    "name": "show",
+                    "description": "Shows a card",
+                    "input_schema": {},
+                    "_meta": {"ui": {"resourceUri": "ui://card"}},
+                    "annotations": {"readOnlyHint": true}
+                }])),
+                names::methods::STATIC_SCRUB_TOOLS => Ok(args[0]["tools"].clone()),
                 names::methods::LIST_TOOLS => Ok(json!([{
                     "name": "show",
                     "description": "Shows a card",
@@ -218,9 +226,9 @@ mod module_backed {
     }
 
     #[tokio::test]
-    async fn an_installed_tool_descriptor_carries_the_tools_meta() {
+    async fn a_static_tool_descriptor_carries_the_tools_meta_and_annotations() {
         let fake = Arc::new(ModulePort {
-            installed: vec!["srv-1"],
+            statics: vec!["srv-1"],
             ..ModulePort::default()
         });
         let descriptor = port_over(&fake)
@@ -231,6 +239,7 @@ mod module_backed {
             descriptor.meta,
             Some(json!({"ui": {"resourceUri": "ui://card"}}))
         );
+        assert_eq!(descriptor.annotations, Some(json!({"readOnlyHint": true})));
     }
 
     #[tokio::test]

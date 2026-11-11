@@ -96,6 +96,8 @@ pub(crate) struct Wiring {
     /// The hosted RPC proxies, unless [`InstallOptions::hosted_controllers`]
     /// is off.
     pub(crate) controllers: Option<ControllerExtension>,
+    /// OpenAI OAuth controllers owned by this host layer.
+    pub(crate) provider_oauth: ControllerExtension,
     /// The Jev `tool_search` ranker, unless [`InstallOptions::tool_ranker`]
     /// is off or the `jev` feature is compiled out.
     pub(crate) ranker: Option<Arc<dyn ToolRanker>>,
@@ -109,6 +111,7 @@ impl std::fmt::Debug for Wiring {
                 &self.controllers.as_ref().map(|ext| ext.group),
             )
             .field("ranker", &self.ranker.as_ref().map(|ranker| ranker.kind()))
+            .field("provider_oauth", &self.provider_oauth.group)
             .finish_non_exhaustive()
     }
 }
@@ -118,7 +121,10 @@ impl std::fmt::Debug for Wiring {
 ///
 /// A new identity drops the cached transport, because a transport captures
 /// its attribution headers once; [`connect_transport`] then rebuilds it.
-fn prepare(options: &InstallOptions) -> (Option<ControllerExtension>, Option<Arc<dyn ToolRanker>>) {
+fn prepare(
+    options: &InstallOptions,
+    doctor_registration: crate::register::DoctorRegistration<'_>,
+) -> (Option<ControllerExtension>, Option<Arc<dyn ToolRanker>>) {
     if let Some(identity) = options.product_identity.clone() {
         log::debug!(
             "[tinyhumans] install: product identity {}",
@@ -131,7 +137,7 @@ fn prepare(options: &InstallOptions) -> (Option<ControllerExtension>, Option<Arc
     }
 
     // Plug every area into the core's generic registries (idempotent).
-    crate::register::register_all(options);
+    crate::register::register_all(options, doctor_registration);
 
     let controllers = options.hosted_controllers.then(crate::hosted::extension);
 
@@ -164,8 +170,14 @@ fn connect_transport() -> Result<Arc<SdkBackendTransport>, InstallError> {
 /// Resolve everything a TinyHumans connection wires in and connect the
 /// transport. The builder's path; [`install`] runs the same two steps with
 /// the registry and ranker applied in between, in its historical order.
-pub(crate) fn wiring(options: &InstallOptions) -> Result<Wiring, InstallError> {
-    let (controllers, ranker) = prepare(options);
+pub(crate) fn wiring(
+    options: &InstallOptions,
+    extensions: &openhuman_embed::__host::core::slots::Extensions,
+) -> Result<Wiring, InstallError> {
+    let (controllers, ranker) = prepare(
+        options,
+        crate::register::DoctorRegistration::Context(extensions),
+    );
     // Connecting builds the process transport; only tests read it back.
     #[cfg_attr(not(test), allow(unused_variables))]
     let transport = connect_transport()?;
@@ -173,6 +185,7 @@ pub(crate) fn wiring(options: &InstallOptions) -> Result<Wiring, InstallError> {
         #[cfg(test)]
         transport,
         controllers,
+        provider_oauth: crate::provider_oauth::extension(),
         ranker,
     })
 }
@@ -189,7 +202,10 @@ pub(crate) fn wiring(options: &InstallOptions) -> Result<Wiring, InstallError> {
 /// The core holds no transport of its own; the returned handle is the one
 /// every hosted caller in this crate sends through.
 pub fn install(options: InstallOptions) -> Result<Arc<SdkBackendTransport>, InstallError> {
-    let (controllers, ranker) = prepare(&options);
+    let (controllers, ranker) = prepare(&options, crate::register::DoctorRegistration::Process);
+
+    register_controller_extension(crate::provider_oauth::extension())
+        .map_err(InstallError::Registry)?;
 
     if let Some(extension) = controllers {
         // Idempotent in the core: an identical re-registration is a no-op.

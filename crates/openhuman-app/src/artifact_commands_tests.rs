@@ -22,6 +22,39 @@ fn sanitize_accepts_plain_names() {
     assert_eq!(sanitize_filename("  trim me  ").unwrap(), "trim me");
 }
 
+#[test]
+fn sanitize_maps_windows_special_names_to_one_plain_component() {
+    for (input, expected) in [
+        ("C:evil.dll", "C_evil.dll"),
+        ("notes.txt:hidden", "notes.txt_hidden"),
+        ("Q3: plan <draft>?.pptx", "Q3_ plan _draft__.pptx"),
+        ("a\"b|c*.txt", "a_b_c_.txt"),
+        ("tab\there.txt", "tab_here.txt"),
+        ("evil.dll. . ", "evil.dll"),
+        ("CON", "_CON"),
+        ("nul.txt", "_nul.txt"),
+        ("com1.log", "_com1.log"),
+        ("LPT9", "_LPT9"),
+        ("CON .txt", "_CON .txt"),
+        ("conin$", "_conin$"),
+        ("CONOUT$.log", "_CONOUT$.log"),
+        ("COM¹.txt", "_COM¹.txt"),
+        ("lpt³.pdf", "_lpt³.pdf"),
+        ("COM⁴.txt", "COM⁴.txt"),
+        ("COM10.log", "COM10.log"),
+        ("Console.txt", "Console.txt"),
+    ] {
+        let out = sanitize_filename(input).unwrap();
+        assert_eq!(out, expected, "{input:?}");
+        assert_eq!(
+            std::path::Path::new(&out).components().count(),
+            1,
+            "{input:?}"
+        );
+    }
+    assert!(sanitize_filename("...").is_err());
+}
+
 async fn ready_artifact(workspace: &Path, files_dir: &Path) -> String {
     use openhuman_rpc::embed::artifacts::{create_artifact, finalize_artifact, ArtifactKind};
     let (meta, path) = create_artifact(

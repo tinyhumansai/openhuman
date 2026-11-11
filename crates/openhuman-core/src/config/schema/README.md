@@ -17,29 +17,34 @@ is mounted as a submodule of [`load/dirs.rs`](./load/dirs.rs) via `#[path]`.
 
 | `config.toml` section | File | Struct |
 | --- | --- | --- |
-| `[agent]`, `[orchestrator]`, `[teams.*]`, `[agents.*]` | [`agent.rs`](./agent.rs) | `AgentConfig`, `OrchestratorModelConfig`, `TeamModelConfig`, `DelegateAgentConfig` |
+| `[agent]`, `[orchestrator]`, `[teams.*]` | [`agent.rs`](./agent.rs) | `AgentConfig`, `OrchestratorModelConfig`, `TeamModelConfig` |
 | `[autonomy]` | [`autonomy.rs`](./autonomy.rs) | `AutonomyConfig`: feeds `security::SecurityPolicy` |
 | `[[capability_providers]]` | [`capability_providers.rs`](./capability_providers.rs) | `CapabilityProviderConfig` |
 | `[channels_config]`, `[sandbox]` | [`channels.rs`](./channels.rs) | `ChannelsConfig` and per-provider configs re-exported from `tinychannels_bus`; `SandboxConfig`, `ResourceLimitsConfig`, `AuditConfig`, and `SecurityConfig` (only `DaemonConfig` embeds the last one) |
 | `[claude_agent_sdk]` | [`claude_agent_sdk.rs`](./claude_agent_sdk.rs) | `ClaudeAgentSdkConfig` |
 | `[[cloud_providers]]`, `primary_cloud`, `*_provider` slugs | [`cloud_providers.rs`](./cloud_providers.rs) | `CloudProviderCreds`, `AuthStyle` |
-| `[context]` | [`context.rs`](./context.rs) | `ContextConfig` |
+| `[context]` | TinyAgents `ContextConfig` re-exported by [`context.rs`](./context.rs); OpenHuman environment overlays remain in `load/env_overlay/context.rs` | `ContextConfig` |
 | `[cost]` | [`identity_cost.rs`](./identity_cost.rs) | `CostConfig`, `ModelPricing` |
 | `[dashboard]` | [`dashboard.rs`](./dashboard.rs) | `DashboardConfig`, `DiagramViewerConfig`, `EventStreamConfig`, `ModelHealthConfig` |
+| `[channel_voice]` | [`channel_voice.rs`](./channel_voice.rs) | `ChannelVoiceConfig`, `ChannelVoiceOverride`, `VoiceReplyMode` |
 | `[ephemeral_route]` | [`ephemeral_route.rs`](./ephemeral_route.rs) | `EphemeralRoute` |
-| `[cron]` | [`cron.rs`](./cron.rs) | `CronConfig` |
+| `[cron]` | [`cron.rs`](./cron.rs) | `CronConfig` (`shell_timeout_secs`: shell-job timeout, default 120) |
 | `[hooks]` | [`hooks.rs`](./hooks.rs) | `HooksConfig` |
 | `[hosting]` | [`hosting.rs`](./hosting.rs) | `HostingConfig` |
+| `[wallet_policy]` (+ `[[wallet_policy.assets]]`) | [`wallet_policy.rs`](./wallet_policy.rs) | `WalletPolicyConfig`, `WalletAssetCap`: allowlist and per-transaction / rolling-day / per-recipient-week caps for wallet executes without a per-transfer confirmation |
 | `[learning]` | `learning.rs` | `LearningConfig`, `ReflectionSource` |
 | `[inbound_debounce]` (+ `by_channel.<name>`) | [`inbound_debounce.rs`](./inbound_debounce.rs) | `InboundDebounceConfig`, `InboundDebounceOverride`: per-conversation batching of inbound channel messages before a turn |
 | `[local_ai]` | [`local_ai.rs`](./local_ai.rs) | `LocalAiConfig`, `LocalAiUsage` |
 | `[modules]` | [`modules.rs`](./modules.rs) | `ModulesConfig`, `ModuleOverride`: controls only whether compiled-in modules load. The loadable *set* is fixed by `crate::modules::registry` |
 | `[observability]` | [`observability.rs`](./observability.rs) | `ObservabilityConfig`, `AgentTracingConfig` |
 | `[privacy]` | [`privacy.rs`](./privacy.rs) | `PrivacyConfig`, `PrivacyMode` |
+| `[prompt_screen]` | [`prompt_screen.rs`](./prompt_screen.rs) | `PromptScreenConfig`, `PromptScreenMode` (TinySecurity prompt screen; `off` is an explicit opt-out, default enforces and fails closed; `[security] mode = "off"` also turns it off) |
+| `[security]` | [`security_mode.rs`](./security_mode.rs) | `SecurityModeConfig`, `SecurityMode` (whether TinySecurity-delegated checks run; `off` allows them and passes redaction through, default enforces and fails closed). Not the daemon's `SecurityConfig` in `security.rs` |
 | `[proxy]` | [`proxy.rs`](./proxy.rs) | `ProxyConfig`, `ProxyScope`, plus `runtime_proxy_config()` / `set_runtime_proxy_config()` process-wide accessors |
 | `[[model_routes]]`, `[[embedding_routes]]` | [`routes.rs`](./routes.rs) | `ModelRouteConfig`, `EmbeddingRouteConfig` |
 | `[runtime]` (+ `[runtime.docker]`), `[shell]`, `[reliability]`, `[scheduler]` | [`runtime.rs`](./runtime.rs) | `RuntimeConfig`, `DockerRuntimeConfig`, `ShellConfig`, `ReliabilityConfig`, `SchedulerConfig` |
 | `[runtime.local_jail]` | [`runtime_local_jail.rs`](./runtime_local_jail.rs) | `LocalJailConfig`: filesystem grants for the local OS jail |
+| `[runtime.openshell]` | [`runtime_openshell.rs`](./runtime_openshell.rs) | `OpenShellRuntimeConfig`: image, CPU, memory (whole MiB), idle TTL and `max_live` for the OpenShell sandbox backend |
 | `[scheduler_gate]` | [`scheduler_gate.rs`](./scheduler_gate.rs) | `SchedulerGateConfig`, `SchedulerGateMode` |
 | `[memory]` (engine, `engines.<id>`, `conversations`, `context`, `sources`, embedding settings) | [`memory.rs`](./memory.rs) | `MemoryConfig`, `MemoryEngineSettings`, `MemoryConversationsConfig`, `MemoryContextConfig`, `MemorySourceConfig` (see [`docs/specs/memory-v2.md`](../../../../../docs/specs/memory-v2.md)) |
 | `[task_sources]` | [`task_sources.rs`](./task_sources.rs) | `TaskSourcesConfig` |
@@ -48,7 +53,7 @@ is mounted as a submodule of [`load/dirs.rs`](./load/dirs.rs) via `#[path]`.
 | `[update]` | [`update.rs`](./update.rs) | `UpdateConfig`, `UpdateRestartStrategy` |
 | `[voice_server]` | [`voice_server.rs`](./voice_server.rs) | `VoiceServerConfig`, `SttEngine` |
 | `[[voice_providers]]`, `stt_provider` / `tts_provider` | [`voice_providers.rs`](./voice_providers.rs) | `VoiceProviderCreds`, `BuiltinVoiceProvider`, `BUILTIN_VOICE_PROVIDERS` |
-| top-level `Config` and its scalar keys | `types.rs` (+ `types/config.rs`, `types/model_ids.rs`) | `Config`, `ModelRegistryEntry`, `MODEL_*` / `DEFAULT_MODEL` constants |
+| top-level `Config` and its scalar keys | `types.rs` (+ `types/config.rs`, `types/model_ids.rs`) | `Config`, `ModelRegistryEntry`, provider-neutral workload roles |
 | built-in defaults | [`defaults.rs`](./defaults.rs) | `impl Default for Config` and per-field `default_*` fns |
 
 [`tools/mod.rs`](./tools/mod.rs) groups the tool-facing sections: `browser.rs` (`BrowserConfig`,
@@ -66,6 +71,11 @@ format and are migrated on load ([`tools/search_migrate.rs`](./tools/search_migr
 `load/migrate.rs::migrate_search_settings`); Parallel keeps its key as a
 direct-only provider, and a keyless managed-Parallel selection is dropped. Seltz and SearXNG keep their options in their own sections, but only
 the `providers` map decides whether they are on.
+
+The parser drops the retired top-level `[agents]` delegate table before typed
+decoding, so existing config files with stale `[agents.*]` entries continue to
+load. Agent definitions now come from the agent registry and live sub-agent
+tools.
 
 Most sections have a matching `*_tests.rs` (some further split into several
 `*_tests.rs` siblings, e.g. [`types_model_pin_tests.rs`](./types_model_pin_tests.rs)); this is the repo's

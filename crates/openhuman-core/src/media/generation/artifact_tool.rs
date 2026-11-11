@@ -1,135 +1,94 @@
-//! [`MediaArtifactTool`] — wraps a media-generation [`Tool`] (TinyAgents'
-//! `GenerateImageTool` / `GenerateVideoTool`, boxed in `super::tools`) so
-//! every file the inner tool saves is also filed as a versioned OpenHuman
-//! artifact, through the same [`Production`] flow the document and
-//! presentation producers use.
+//! OpenHuman's media-generation adapters around TinyAgents' generic artifact tool.
 //!
-//! The inner tool writes bytes to its `MediaOutput` blob store and reports
-//! each blob key in its JSON result's `artifacts` array
-//! (`{"type": "image"|"video", "path", "media_type"|"format", "bytes"}`, see
-//! `tinyagents_harness::media::{GenerateImageTool, GenerateVideoTool}`). Host
-//! adapters may also report absolute file paths. This wrapper runs the inner
-//! tool unchanged, then for every reported output: starts a [`Production`]
-//! (recording the provider-assigned tool-call id so the card correlates with
-//! the tool-call bubble, #C5), stores the blob or file into the artifact's
-//! reserved path, and completes it — or fails just that one
-//! artifact and annotates its entry with `artifact_error`, without
-//! disturbing the others (`n > 1` generations are common for images). On
-//! success each entry gains an `artifact_id` field so the model (and the
-//! bridged `chat.tool_result`) can reference the card; the rest of the
-//! tool's JSON/markdown result shape is preserved byte-for-byte.
-//!
-//! A run with no context (`execute`/`execute_with_options`, e.g. CLI/tests)
-//! still creates artifacts — the production simply records no
-//! `tool_call_id` and the chat-context bridge in `artifacts/store.rs`
-//! degrades to `thread_id = None` as it already does for every other
-//! producer.
+//! TinyAgents owns the result traversal, per-call tool construction, and progress
+//! heartbeat. OpenHuman supplies the artifact store, file placement, blob access,
+//! and the policy for reusing previously generated files as references.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use serde_json::{json, Value};
+use tinyagents_harness_tools::media::{
+    ArtifactFiling, FiledArtifact, GeneratedArtifact, MediaArtifactKind, MediaInnerFactory,
+    MediaProgressFn,
+};
 use tinytools::{
-    PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolContent, ToolPolicy, ToolResult,
-    ToolRunContext, ToolScope, ToolTimeout,
+    PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolPolicy, ToolResult, ToolRunContext,
+    ToolScope, ToolTimeout,
 };
 use tokio::io::AsyncWriteExt;
 
 use crate::artifacts::production::Production;
 use crate::artifacts::ArtifactKind;
-use crate::security::approval::ApprovalChatContext;
-use crate::tools::host_extensions::tool_call_id;
-use tinyagents_harness::tinyinference_video::ProgressFn;
+use tinystoragedrivers_api::BlobStore;
 
-use super::progress::{video_status_observer, JobStateSlot};
-
-const FILE_REFERENCE_FIELDS: [&str; 8] = [
-    "references",
-    "reference_images",
-    "input_images",
-    "inputImages",
-    "first_frame",
-    "inputImage",
-    "input_image",
-    "last_frame",
-];
-
-/// Whether a media call references an absolute path under a trusted Files root.
-/// Only these requests need a durable-artifact refresh before tool execution.
-fn has_reusable_files_reference(args: &Value, files: &crate::artifacts::FileRoots) -> bool {
-    for field in FILE_REFERENCE_FIELDS {
-        let Some(value) = args.get(field) else {
-            continue;
-        };
-        let candidates = value.as_str().into_iter().chain(
-            value
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str),
-        );
-        if candidates.into_iter().any(|candidate| {
-            let path = Path::new(candidate);
-            path.is_absolute() && files.contains_path(path)
-        }) {
-            return true;
-        }
-    }
-    false
+/// A host adapter that retains OpenHuman artifact behavior while delegating
+/// generic media result handling to TinyAgents' harness-tools crate.
+pub struct MediaArtifactTool<T: Tool> {
+    inner: tinyagents_harness_tools::media::MediaArtifactTool<ReferenceRefreshTool<T>>,
+    policy: Arc<RwLock<MediaArtifactPolicy>>,
+    workspace_dir: PathBuf,
+    files_dir: crate::artifacts::FileRoots,
+    allowed_references: Option<super::tools::MediaReferenceAllowlist>,
 }
 
-/// Maximum characters of the prompt kept in a generated artifact's title.
-const TITLE_PROMPT_CHARS: usize = 60;
-
-/// Wraps a media-generation tool so every file it saves is also tracked as
-/// an OpenHuman artifact. See module docs for the flow.
-pub struct MediaArtifactTool<T: Tool> {
-    inner: T,
+#[derive(Clone)]
+struct MediaArtifactPolicy {
     kind: ArtifactKind,
     workspace_dir: PathBuf,
-    /// Visible folder each generated file is moved into (#5505).
     files_dir: crate::artifacts::FileRoots,
-    blobs: Option<Arc<dyn tinystoragedrivers::BlobStore>>,
+    blobs: Option<Arc<dyn BlobStore>>,
     allowed_references: Option<super::tools::MediaReferenceAllowlist>,
-    /// Builds the inner tool for one call around that call's poll observer.
-    /// Set for the video tool, whose `WaitPolicy::progress` hook is fixed at
-    /// construction: a tool per call lets the observer record into the call's
-    /// own [`JobStateSlot`]. `inner` still answers the static `Tool` metadata.
-    per_call: Option<PerCallInner<T>>,
 }
 
-type PerCallInner<T> =
-    std::sync::Arc<dyn Fn(ProgressFn, Option<&ApprovalChatContext>) -> T + Send + Sync>;
-
-impl<T: Tool> MediaArtifactTool<T> {
-    /// `kind` is the artifact category to file every generated output
-    /// under (`ArtifactKind::Image` / `ArtifactKind::Video`); `workspace_dir`
-    /// holds the artifact metadata; `files_dir` is the visible folder the
-    /// generated file is moved into (#5505).
+impl<T: Tool + 'static> MediaArtifactTool<T> {
+    /// Creates the host adapter for a media generation tool.
     pub fn new(
         inner: T,
         kind: ArtifactKind,
         workspace_dir: impl Into<PathBuf>,
         files_dir: impl Into<crate::artifacts::FileRoots>,
     ) -> Self {
-        Self {
-            inner,
+        let workspace_dir = workspace_dir.into();
+        let files_dir = files_dir.into();
+        let upstream_kind = match &kind {
+            ArtifactKind::Image => MediaArtifactKind::Image,
+            _ => MediaArtifactKind::Video,
+        };
+        let policy = Arc::new(RwLock::new(MediaArtifactPolicy {
             kind,
-            workspace_dir: workspace_dir.into(),
-            files_dir: files_dir.into(),
+            workspace_dir: workspace_dir.clone(),
+            files_dir: files_dir.clone(),
             blobs: None,
             allowed_references: None,
-            per_call: None,
+        }));
+        let filing = Arc::new(OpenHumanArtifactFiling(Arc::clone(&policy)));
+        let refreshing = ReferenceRefreshTool::new(inner, Arc::clone(&policy));
+        let inner = tinyagents_harness_tools::media::MediaArtifactTool::new(
+            refreshing,
+            upstream_kind,
+            filing,
+        )
+        .with_tool_call_id(Arc::new(crate::tools::host_extensions::tool_call_id));
+        Self {
+            inner,
+            policy,
+            workspace_dir,
+            files_dir,
+            allowed_references: None,
         }
     }
 
     /// Reads generated outputs addressed by blob key from the media tool's
-    /// backing store. This keeps TinyAgents' blob-backed output contract
-    /// separate from the host's visible Files-folder artifact store.
+    /// backing store.
     #[must_use]
-    pub fn with_blobs(mut self, blobs: Arc<dyn tinystoragedrivers::BlobStore>) -> Self {
-        self.blobs = Some(blobs);
+    pub fn with_blobs(self, blobs: Arc<dyn BlobStore>) -> Self {
+        self.policy
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .blobs = Some(blobs);
         self
     }
 
@@ -139,321 +98,53 @@ impl<T: Tool> MediaArtifactTool<T> {
         mut self,
         allowed_references: super::tools::MediaReferenceAllowlist,
     ) -> Self {
+        self.policy
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .allowed_references = Some(Arc::clone(&allowed_references));
         self.allowed_references = Some(allowed_references);
         self
     }
 
-    /// Run each call on a tool built by `build` around that call's poll
-    /// observer and chat routing, so a long job's polled state reaches that
-    /// call's heartbeat and its egress disclosures reach that call's chat.
-    #[must_use]
-    pub fn with_per_call_inner(
-        mut self,
-        build: impl Fn(ProgressFn, Option<&ApprovalChatContext>) -> T + Send + Sync + 'static,
-    ) -> Self {
-        self.per_call = Some(std::sync::Arc::new(build));
-        self
-    }
-
-    /// Derives a human-readable artifact title from the call's `prompt`
-    /// argument, suffixed with `(i/n)` when the call produced more than one
-    /// file (`n > 1`).
-    fn artifact_title(args: &Value, index: usize, total: usize) -> String {
-        let prompt = args
-            .get("prompt")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        let base = prompt.map_or_else(
-            || "Generated media".to_string(),
-            |p| p.chars().take(TITLE_PROMPT_CHARS).collect(),
-        );
-        if total > 1 {
-            format!("{base} ({}/{})", index + 1, total)
-        } else {
-            base
-        }
-    }
-
-    /// Walks the inner tool's `artifacts` array (if any) and files each
-    /// entry as an OpenHuman artifact in place, adding `artifact_id` on
-    /// success or `artifact_error` on failure. Any content block shape the
-    /// wrapper does not recognise (no JSON block, or JSON with no
-    /// `artifacts` array) is returned unmodified.
-    async fn attach_artifacts(
-        &self,
-        mut result: ToolResult,
-        args: &Value,
-        call_id: Option<String>,
-        chat: Option<&ApprovalChatContext>,
-    ) -> ToolResult {
-        let Some(data) = result.content.iter_mut().find_map(|block| match block {
-            ToolContent::Json { data } => Some(data),
-            _ => None,
-        }) else {
-            return result;
-        };
-        let Some(artifacts) = data.get_mut("artifacts").and_then(Value::as_array_mut) else {
-            return result;
-        };
-        let total = artifacts.len();
-        let mut filed_paths = Vec::new();
-        for (index, entry) in artifacts.iter_mut().enumerate() {
-            let Some(src_path) = entry.get("path").and_then(Value::as_str).map(PathBuf::from)
-            else {
-                continue;
-            };
-            if let Some(filed_path) = self
-                .file_one(
-                    entry,
-                    &src_path,
-                    args,
-                    index,
-                    total,
-                    call_id.as_deref(),
-                    chat,
-                )
-                .await
-            {
-                filed_paths.push((src_path.to_string_lossy().into_owned(), filed_path));
-            }
-        }
-        if let Some(markdown) = result.markdown_formatted.as_mut() {
-            for (source, destination) in filed_paths {
-                *markdown = markdown.replace(&source, &destination);
-            }
-        }
-        result
-    }
-
-    async fn file_one(
-        &self,
-        entry: &mut Value,
-        src: &Path,
-        args: &Value,
-        index: usize,
-        total: usize,
-        call_id: Option<&str>,
-        chat: Option<&ApprovalChatContext>,
-    ) -> Option<String> {
-        let ext = src
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("bin")
-            .to_string();
-        let title = Self::artifact_title(args, index, total);
-        let kind = match self.kind {
-            ArtifactKind::Image => tiny_artifacts::ArtifactKind::Image,
-            _ => tiny_artifacts::ArtifactKind::File,
-        };
-        // Reserve the file in the files folder (the card shows
-        // "generating…", tied to this tool call's bubble) and open the
-        // versioned artifact under the same id.
-        let production = match Production::start(
-            &self.workspace_dir,
-            self.files_dir.clone(),
-            kind,
-            &title,
-            &ext,
-            call_id,
-            None,
-            chat,
-        )
-        .await
-        {
-            Ok(production) => production,
-            Err(err) => {
-                tracing::warn!(
-                    target: "media_generation",
-                    err = %err,
-                    "[media_generation] could not open the artifact; generated file left unfiled"
-                );
-                set_artifact_error(entry, &err);
-                return None;
-            }
-        };
-        let dest = production.path().to_path_buf();
-        let stored = if src.is_absolute() {
-            move_or_copy(src, &dest).await
-        } else {
-            self.file_blob(src, &dest).await
-        };
-        if let Err(err) = stored {
-            production.fail(&err).await;
-            tracing::warn!(
-                target: "media_generation",
-                err = %err,
-                artifact_id = %production.id(),
-                "[media_generation] failed to file generated media as an artifact"
-            );
-            set_artifact_error(entry, &err);
-            return None;
-        }
-        let canonical = dest.canonicalize().ok();
-        let filed_path = canonical.as_deref().unwrap_or(&dest).display().to_string();
-        if let Some(obj) = entry.as_object_mut() {
-            obj.insert("path".into(), json!(filed_path));
-        }
-        // The stored file becomes the artifact's first version; the card turns
-        // ready from that record.
-        match self.complete_and_discard_blob(&production, src).await {
-            Ok(_) => {
-                if let (Some(allowed), Some(canonical)) = (&self.allowed_references, canonical) {
-                    allowed
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .insert(canonical);
-                }
-                if let Some(obj) = entry.as_object_mut() {
-                    obj.insert("artifact_id".into(), json!(production.id()));
-                }
-                Some(filed_path)
-            }
-            Err(err) => {
-                set_artifact_error(entry, &err);
-                None
-            }
-        }
-    }
-
-    async fn delete_blob_after_finalize(&self, src: &Path) {
-        if src.is_absolute() {
-            return;
-        }
-        let (Some(blobs), Some(key)) = (self.blobs.as_ref(), src.to_str()) else {
-            return;
-        };
-        if let Err(error) = blobs.delete(key).await {
-            tracing::warn!(
-                target: "media_generation",
-                %error,
-                blob_key = key,
-                "[media_generation] finalized media but could not discard its source blob"
-            );
-        }
-    }
-
-    /// Complete `production` and only then discard its source blob, so a
-    /// failed completion leaves the blob for a retry.
-    async fn complete_and_discard_blob(
-        &self,
-        production: &Production,
-        src: &Path,
-    ) -> Result<u64, String> {
-        let size = production.complete().await?;
-        self.delete_blob_after_finalize(src).await;
-        Ok(size)
-    }
-
-    /// Rehydrates finalized media paths after a session rebuild. Only Ready
-    /// image/video artifacts whose files still resolve through the configured
-    /// trusted roots enter the exact-path allowlist.
     async fn refresh_allowed_references(&self) -> Result<(), String> {
-        let Some(allowed) = &self.allowed_references else {
-            return Ok(());
-        };
-
-        let mut recovered = std::collections::HashSet::new();
-        let previously_allowed = allowed
-            .lock()
+        let policy = self
+            .policy
+            .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        let artifacts =
-            match crate::artifacts::store::list_artifacts(&self.workspace_dir, 0, usize::MAX, None)
-                .await
-            {
-                Ok((artifacts, _)) => artifacts,
-                Err(error) => {
-                    tracing::warn!(
-                        target: "media_generation",
-                        %error,
-                        "[media_generation] could not refresh reusable artifact paths"
-                    );
-                    return Err(
-                    "could not validate previously generated media references; retry the media call"
-                        .to_string(),
-                );
-                }
-            };
+        refresh_allowed_references(&policy).await
+    }
 
-        for meta in artifacts.iter().filter(|meta| {
-            matches!(&meta.kind, ArtifactKind::Image | ArtifactKind::Video)
-                && matches!(&meta.status, crate::artifacts::ArtifactStatus::Ready)
-        }) {
-            let Ok(path) = crate::artifacts::resolve_ready_file_meta(
-                &self.workspace_dir,
-                &self.files_dir,
-                meta,
-            )
-            .await
-            else {
-                continue;
-            };
-            if let Ok(path) = tokio::fs::canonicalize(path).await {
-                recovered.insert(path);
-            }
+    /// Builds the inner generator for one call around its provider progress
+    /// observer and the call's own host context.
+    #[must_use]
+    pub fn with_per_call_inner(
+        self,
+        build: impl for<'a> Fn(MediaProgressFn, Option<&'a dyn ToolRunContext>) -> T
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        let Self {
+            inner,
+            policy,
+            workspace_dir,
+            files_dir,
+            allowed_references,
+        } = self;
+        let build: MediaInnerFactory<T> = Arc::new(build);
+        let per_call_policy = Arc::clone(&policy);
+        let inner = inner.with_per_call_inner(Arc::new(move |progress, context| {
+            ReferenceRefreshTool::new(build(progress, context), Arc::clone(&per_call_policy))
+        }));
+        Self {
+            inner,
+            policy,
+            workspace_dir,
+            files_dir,
+            allowed_references,
         }
-
-        // Prune paths that were allowed before this scan but are no longer
-        // Ready. Paths added concurrently after the snapshot are preserved.
-        let mut allowed = allowed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        allowed.retain(|path| !previously_allowed.contains(path) || recovered.contains(path));
-        allowed.extend(recovered);
-        Ok(())
     }
-
-    async fn file_blob(&self, key: &Path, dest: &Path) -> Result<u64, String> {
-        let key = key
-            .to_str()
-            .ok_or_else(|| "generated media blob key is not valid UTF-8".to_string())?;
-        let blobs = self.blobs.as_ref().ok_or_else(|| {
-            format!("generated media returned blob key {key:?} without a blob store")
-        })?;
-        let mut blob = blobs
-            .get_stream(key)
-            .await
-            .map_err(|error| format!("failed to read generated media blob {key:?}: {error}"))?
-            .ok_or_else(|| format!("generated media blob {key:?} was not found"))?;
-        copy_blob_to_file(&mut *blob.reader, dest, key).await
-    }
-}
-
-async fn copy_blob_to_file<R>(reader: &mut R, dest: &Path, key: &str) -> Result<u64, String>
-where
-    R: tokio::io::AsyncRead + Unpin + ?Sized,
-{
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(dest)
-        .await
-        .map_err(|error| {
-            format!(
-                "failed to open artifact destination {}: {error}",
-                dest.display()
-            )
-        })?;
-    let size = match tokio::io::copy(reader, &mut file).await {
-        Ok(size) => size,
-        Err(error) => {
-            drop(file);
-            let _ = tokio::fs::remove_file(dest).await;
-            return Err(format!(
-                "failed to copy generated media blob {key:?}: {error}"
-            ));
-        }
-    };
-    if let Err(error) = file.flush().await {
-        drop(file);
-        let _ = tokio::fs::remove_file(dest).await;
-        return Err(format!(
-            "failed to flush artifact destination {}: {error}",
-            dest.display()
-        ));
-    }
-    Ok(size)
 }
 
 fn set_artifact_error(entry: &mut Value, message: &str) {
@@ -483,7 +174,7 @@ async fn move_or_copy(src: &Path, dest: &Path) -> Result<u64, String> {
 }
 
 #[async_trait]
-impl<T: Tool> Tool for MediaArtifactTool<T> {
+impl<T: Tool + 'static> Tool for MediaArtifactTool<T> {
     fn name(&self) -> &str {
         self.inner.name()
     }
@@ -532,6 +223,10 @@ impl<T: Tool> Tool for MediaArtifactTool<T> {
         self.inner.supports_markdown()
     }
 
+    fn max_result_size_chars(&self) -> Option<usize> {
+        self.inner.max_result_size_chars()
+    }
+
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         self.execute_with_context(args, ToolCallOptions::default(), None)
             .await
@@ -551,43 +246,433 @@ impl<T: Tool> Tool for MediaArtifactTool<T> {
         options: ToolCallOptions,
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
-        if has_reusable_files_reference(&args, &self.files_dir) {
+        if let Err(error) = check_media_reference_floor(&args).await {
+            return Ok(ToolResult::error(error));
+        }
+        self.inner
+            .execute_with_context(args, options, context)
+            .await
+    }
+}
+
+async fn check_media_reference_floor(args: &Value) -> Result<(), String> {
+    let mut paths = args
+        .get("references")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    for key in ["first_frame", "last_frame"] {
+        if let Some(path) = args.get(key).and_then(Value::as_str) {
+            if !path.starts_with("https://") && !path.starts_with("http://") {
+                paths.push(PathBuf::from(path));
+            }
+        }
+    }
+    // Security disabled (`crate::security::switch`): no protected floor.
+    if paths.is_empty() || crate::security::switch::disabled().is_some() {
+        return Ok(());
+    }
+    #[cfg(not(feature = "security-module"))]
+    {
+        Err(
+            "[policy-blocked] TinySecurity path authorization unavailable; media reference refused"
+                .into(),
+        )
+    }
+    #[cfg(feature = "security-module")]
+    {
+        let protected = crate::modules::security::gap::protected_paths(&paths)
+        .await
+        .map_err(|error| {
+            format!(
+                "[policy-blocked] TinySecurity path authorization unavailable; media reference refused: {error}"
+            )
+        })?;
+        if protected.len() != paths.len() || protected.iter().any(|denied| *denied) {
+            return Err("[policy-blocked] media reference is in a protected location".into());
+        }
+        Ok(())
+    }
+}
+
+/// OpenHuman's implementation of the TinyAgents artifact-filing port.
+struct OpenHumanArtifactFiling(Arc<RwLock<MediaArtifactPolicy>>);
+
+#[async_trait]
+impl ArtifactFiling for OpenHumanArtifactFiling {
+    async fn file(
+        &self,
+        generated: GeneratedArtifact,
+        context: Option<&dyn ToolRunContext>,
+    ) -> Result<FiledArtifact, String> {
+        let policy = self
+            .0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let source = &generated.path;
+        let extension = source
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("bin")
+            .to_owned();
+        let kind = match policy.kind {
+            ArtifactKind::Image => tiny_artifacts::ArtifactKind::Image,
+            _ => tiny_artifacts::ArtifactKind::File,
+        };
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        let production = Production::start(
+            &policy.workspace_dir,
+            policy.files_dir.clone(),
+            kind,
+            &generated.title,
+            &extension,
+            generated.tool_call_id.as_deref(),
+            None,
+            approval.chat.as_ref(),
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(
+                target = "media_generation",
+                %error,
+                "[media_generation] could not open the artifact; generated file left unfiled"
+            );
+            error
+        })?;
+
+        let destination = production.path().to_path_buf();
+        let stored = if source.is_absolute() {
+            move_or_copy(source, &destination).await
+        } else {
+            self.file_blob(&policy, source, &destination).await
+        };
+        if let Err(error) = stored {
+            production.fail(&error).await;
+            tracing::warn!(
+                target = "media_generation",
+                %error,
+                artifact_id = %production.id(),
+                "[media_generation] failed to file generated media as an artifact"
+            );
+            return Err(error);
+        }
+
+        let canonical = destination.canonicalize().ok();
+        let filed_path = canonical
+            .as_deref()
+            .unwrap_or(&destination)
+            .display()
+            .to_string();
+        match self.complete_and_discard_blob(&production, source).await {
+            Ok(_) => {
+                if let (Some(allowed), Some(canonical)) = (&policy.allowed_references, canonical) {
+                    allowed
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(canonical);
+                }
+                Ok(FiledArtifact {
+                    id: production.id().to_string(),
+                    path: filed_path,
+                })
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl OpenHumanArtifactFiling {
+    async fn delete_blob_after_finalize(&self, policy: &MediaArtifactPolicy, source: &Path) {
+        if source.is_absolute() {
+            return;
+        }
+        let (Some(blobs), Some(key)) = (policy.blobs.as_ref(), source.to_str()) else {
+            return;
+        };
+        if let Err(error) = blobs.delete(key).await {
+            tracing::warn!(
+                target = "media_generation",
+                %error,
+                blob_key = key,
+                "[media_generation] finalized media but could not discard its source blob"
+            );
+        }
+    }
+
+    /// Completes the artifact before discarding its source blob, so a failed
+    /// completion leaves the blob available for retry.
+    async fn complete_and_discard_blob(
+        &self,
+        production: &Production,
+        source: &Path,
+    ) -> Result<u64, String> {
+        let size = production.complete().await?;
+        let policy = self
+            .0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        self.delete_blob_after_finalize(&policy, source).await;
+        Ok(size)
+    }
+
+    async fn file_blob(
+        &self,
+        policy: &MediaArtifactPolicy,
+        key: &Path,
+        destination: &Path,
+    ) -> Result<u64, String> {
+        let key = key
+            .to_str()
+            .ok_or_else(|| "generated media blob key is not valid UTF-8".to_owned())?;
+        let blobs = policy.blobs.as_ref().ok_or_else(|| {
+            format!("generated media returned blob key {key:?} without a blob store")
+        })?;
+        let mut blob = blobs
+            .get_stream(key)
+            .await
+            .map_err(|error| format!("failed to read generated media blob {key:?}: {error}"))?
+            .ok_or_else(|| format!("generated media blob {key:?} was not found"))?;
+        copy_blob_to_file(&mut blob.reader, destination, key).await
+    }
+}
+
+async fn copy_blob_to_file(
+    reader: &mut tinyagents_storage_kit::blob::BlobReader,
+    destination: &Path,
+    key: &str,
+) -> Result<u64, String> {
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(destination)
+        .await
+        .map_err(|error| {
+            format!(
+                "failed to open artifact destination {}: {error}",
+                destination.display()
+            )
+        })?;
+    let mut size = 0_u64;
+    while let Some(chunk) = reader.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                drop(file);
+                let _ = tokio::fs::remove_file(destination).await;
+                return Err(format!(
+                    "failed to copy generated media blob {key:?}: {error}"
+                ));
+            }
+        };
+        if let Err(error) = file.write_all(&chunk).await {
+            drop(file);
+            let _ = tokio::fs::remove_file(destination).await;
+            return Err(format!(
+                "failed to write generated media blob {key:?}: {error}"
+            ));
+        }
+        size = size.saturating_add(chunk.len() as u64);
+    }
+    if let Err(error) = file.flush().await {
+        drop(file);
+        let _ = tokio::fs::remove_file(destination).await;
+        return Err(format!(
+            "failed to flush artifact destination {}: {error}",
+            destination.display()
+        ));
+    }
+    Ok(size)
+}
+
+/// Host policy wrapper that refreshes the allowlist before a generated-media
+/// call references an absolute path under the Files root.
+struct ReferenceRefreshTool<T: Tool> {
+    inner: T,
+    policy: Arc<RwLock<MediaArtifactPolicy>>,
+}
+
+impl<T: Tool> ReferenceRefreshTool<T> {
+    fn new(inner: T, policy: Arc<RwLock<MediaArtifactPolicy>>) -> Self {
+        Self { inner, policy }
+    }
+
+    async fn refresh_allowed_references(&self) -> Result<(), String> {
+        let policy = self
+            .policy
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        refresh_allowed_references(&policy).await
+    }
+}
+
+async fn refresh_allowed_references(policy: &MediaArtifactPolicy) -> Result<(), String> {
+    let Some(allowed) = &policy.allowed_references else {
+        return Ok(());
+    };
+
+    let previously_allowed = allowed
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let artifacts =
+        match crate::artifacts::store::list_artifacts(&policy.workspace_dir, 0, usize::MAX, None)
+            .await
+        {
+            Ok((artifacts, _)) => artifacts,
+            Err(error) => {
+                tracing::warn!(
+                    target = "media_generation",
+                    %error,
+                    "[media_generation] could not refresh reusable artifact paths"
+                );
+                return Err(
+                "could not validate previously generated media references; retry the media call"
+                    .to_owned(),
+            );
+            }
+        };
+
+    let mut recovered = std::collections::HashSet::new();
+    for artifact in artifacts.iter().filter(|artifact| {
+        matches!(&artifact.kind, ArtifactKind::Image | ArtifactKind::Video)
+            && matches!(&artifact.status, crate::artifacts::ArtifactStatus::Ready)
+    }) {
+        let Ok(path) = crate::artifacts::resolve_ready_file_meta(
+            &policy.workspace_dir,
+            &policy.files_dir,
+            artifact,
+        )
+        .await
+        else {
+            continue;
+        };
+        if let Ok(path) = tokio::fs::canonicalize(path).await {
+            recovered.insert(path);
+        }
+    }
+
+    let mut allowed = allowed
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    allowed.retain(|path| !previously_allowed.contains(path) || recovered.contains(path));
+    allowed.extend(recovered);
+    Ok(())
+}
+
+#[async_trait]
+impl<T: Tool> Tool for ReferenceRefreshTool<T> {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn description(&self) -> &str {
+        self.inner.description()
+    }
+    fn parameters_schema(&self) -> Value {
+        self.inner.parameters_schema()
+    }
+    fn policy(&self) -> ToolPolicy {
+        self.inner.policy()
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        self.inner.permission_level()
+    }
+    fn permission_level_with_args(&self, args: &Value) -> PermissionLevel {
+        self.inner.permission_level_with_args(args)
+    }
+    fn scope(&self) -> ToolScope {
+        self.inner.scope()
+    }
+    fn category(&self) -> ToolCategory {
+        self.inner.category()
+    }
+    fn external_effect(&self) -> bool {
+        self.inner.external_effect()
+    }
+    fn external_effect_with_args(&self, args: &Value) -> bool {
+        self.inner.external_effect_with_args(args)
+    }
+    fn timeout_policy(&self, args: &Value) -> ToolTimeout {
+        self.inner.timeout_policy(args)
+    }
+    fn supports_markdown(&self) -> bool {
+        self.inner.supports_markdown()
+    }
+    fn max_result_size_chars(&self) -> Option<usize> {
+        self.inner.max_result_size_chars()
+    }
+
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_options(
+        &self,
+        args: Value,
+        options: ToolCallOptions,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, options, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        options: ToolCallOptions,
+        context: Option<&dyn ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        if has_reusable_files_reference(
+            &args,
+            &self
+                .policy
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .files_dir,
+        ) {
             self.refresh_allowed_references()
                 .await
                 .map_err(anyhow::Error::msg)?;
         }
-
-        // Generation blocks for minutes; report a heartbeat (with the video
-        // job's polled state) so the wait is visible on the call.
-        let label = match self.kind {
-            ArtifactKind::Video => "Generating video",
-            _ => "Generating image",
-        };
-        let job_state = JobStateSlot::default();
-        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
-        let per_call_inner = self.per_call.as_ref().map(|build| {
-            build(
-                video_status_observer(job_state.clone()),
-                approval.chat.as_ref(),
-            )
-        });
-        let inner = per_call_inner.as_ref().unwrap_or(&self.inner);
-        let result = super::progress::with_progress_heartbeat(
-            context,
-            label,
-            super::progress::HEARTBEAT_INTERVAL,
-            job_state,
-            inner.execute_with_context(args.clone(), options, context),
-        )
-        .await?;
-        if result.is_error {
-            return Ok(result);
-        }
-        let call_id = tool_call_id(context);
-        Ok(self
-            .attach_artifacts(result, &args, call_id, approval.chat.as_ref())
-            .await)
+        self.inner
+            .execute_with_context(args, options, context)
+            .await
     }
+}
+
+const FILE_REFERENCE_FIELDS: [&str; 8] = [
+    "references",
+    "reference_images",
+    "input_images",
+    "inputImages",
+    "first_frame",
+    "inputImage",
+    "input_image",
+    "last_frame",
+];
+
+/// Whether a media call references an absolute path under a trusted Files root.
+fn has_reusable_files_reference(args: &Value, files: &crate::artifacts::FileRoots) -> bool {
+    FILE_REFERENCE_FIELDS.iter().any(|field| {
+        let Some(value) = args.get(field) else {
+            return false;
+        };
+        let candidates = value.as_str().into_iter().chain(
+            value
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str),
+        );
+        candidates.into_iter().any(|candidate| {
+            let path = Path::new(candidate);
+            path.is_absolute() && files.contains_path(path)
+        })
+    })
 }
 
 #[cfg(test)]

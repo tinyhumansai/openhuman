@@ -66,7 +66,7 @@ use tinyagents_harness::host::budget_gate::{
 };
 use tinyinference_llm::usage::Usage;
 
-use crate::config::{Config, DEFAULT_MODEL};
+use crate::config::Config;
 use crate::platform::cost;
 use crate::platform::llm_gate;
 use tinyjuice_bus::types::AgentTokenjuiceCompression;
@@ -88,7 +88,7 @@ pub struct OpenHumanBudgetGate {
     /// Model attributed to the next [`record`](Self::record). Seeded from the
     /// session config and re-stamped by each [`acquire`](Self::acquire); see
     /// mismatch (1) in the module docs.
-    last_model: RwLock<String>,
+    last_model: RwLock<Option<String>>,
     /// Whether this session's model calls are **background** work that must
     /// queue behind [`llm_gate`].
     ///
@@ -121,10 +121,7 @@ impl OpenHumanBudgetGate {
     /// The profile is a ceiling on the hint, not a trigger: see
     /// [`Self::cap_hint`].
     pub fn with_compression(config: Arc<Config>, compression: AgentTokenjuiceCompression) -> Self {
-        let fallback = config
-            .default_model
-            .clone()
-            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+        let fallback = config.default_model.clone();
         Self {
             config,
             compression,
@@ -162,7 +159,7 @@ impl OpenHumanBudgetGate {
     }
 
     /// The model id [`record`](Self::record) will attribute usage to.
-    fn attributed_model(&self) -> String {
+    fn attributed_model(&self) -> Option<String> {
         self.last_model.read().clone()
     }
 
@@ -238,8 +235,17 @@ impl OpenHumanBudgetGate {
         let model = if est.model.trim().is_empty() {
             self.attributed_model()
         } else {
-            est.model.clone()
+            Some(est.model.clone())
         };
+        // With no model to name, the call still counts against every budget
+        // that doesn't depend on it (global, thread, agent, user agent);
+        // model-scoped budgets skip an empty model (`budget::bucket_of`).
+        let model = model.unwrap_or_else(|| {
+            log::debug!(
+                "[tinyagents][budget] no model for estimate; checking model-independent budgets"
+            );
+            String::new()
+        });
         let call = cost::budget::CallUnderCheck {
             model: &model,
             scope: &scope,
@@ -298,7 +304,7 @@ impl BudgetGate for OpenHumanBudgetGate {
     /// session is signed out); the caller's turn timeout is what bounds that.
     async fn acquire(&self, est: &CallEstimate) -> Result<Permit> {
         if !est.model.trim().is_empty() {
-            *self.last_model.write() = est.model.clone();
+            *self.last_model.write() = Some(est.model.clone());
         }
 
         // Configured budgets (`[[cost.budgets]]`) are checked before anything
@@ -385,7 +391,7 @@ impl BudgetGate for OpenHumanBudgetGate {
     /// a call, so there is no enforcement to feed.
     async fn record(&self, usage: &Usage) -> Result<()> {
         log::debug!(
-            "[tinyagents][budget] observed usage model={} in={} out={} cached={} (ledger is \
+            "[tinyagents][budget] observed usage model={:?} in={} out={} cached={} (ledger is \
              written by the event bridge)",
             self.attributed_model(),
             usage.input_tokens,

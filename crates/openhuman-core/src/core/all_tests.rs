@@ -31,7 +31,7 @@ fn grouped(controllers: Vec<RegisteredController>) -> Vec<GroupedController> {
         .into_iter()
         .map(|controller| GroupedController {
             group: DomainGroup::Platform,
-            controller,
+            controller: ControllerEntry::legacy(controller),
         })
         .collect()
 }

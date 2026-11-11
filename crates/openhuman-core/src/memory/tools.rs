@@ -85,7 +85,12 @@ impl CallFacts {
     /// The facts of a call made by `identity`, without a run context.
     #[must_use]
     pub fn of(config: &Config, identity: &tinymemory_tools::layout::identity::Identity) -> Self {
-        let resolved = identity.resolve(&crate::memory::scope::identity_pins(config));
+        Self::of_resolved(&identity.resolve(&crate::memory::scope::identity_pins(config)))
+    }
+
+    /// The facts of a call made by an already resolved identity.
+    #[must_use]
+    pub fn of_resolved(resolved: &tinymemory_tools::layout::identity::ResolvedIdentity) -> Self {
         Self {
             agent_id: Some(resolved.agent_id.clone()),
             namespace: resolved.layout.learnings().clone(),
@@ -94,7 +99,7 @@ impl CallFacts {
         }
     }
 
-    fn native_scope(&self, config: &Config) -> ToolScope {
+    pub(crate) fn native_scope(&self, config: &Config) -> ToolScope {
         ToolScope {
             place: self.namespace.clone(),
             reach: Some(self.reach.clone()),
@@ -179,7 +184,7 @@ impl MemoryTool {
                 }) {
                     return ToolResult::error(render_error(error));
                 }
-                let engine = match super::engine::resolve(&self.config).engine() {
+                let engine = match super::engine::resolve(&self.config).await.engine() {
                     Ok(bound) => bound.engine,
                     Err(error) => return ToolResult::error(render_error(error)),
                 };
@@ -194,11 +199,8 @@ impl MemoryTool {
                     .await
             };
             let outcome = if is_write_action(&args) {
-                let runtime = tokio::runtime::Handle::current();
-                match dispatch
-                    .spawn_blocking(move || runtime.block_on(call))
-                    .await
-                {
+                let write_dispatch = dispatch.clone();
+                match write_dispatch.spawn(call).await {
                     Ok(result) => result,
                     Err(_) => {
                         return ToolResult::error(render_error(
@@ -258,7 +260,7 @@ impl Tool for MemoryTool {
     }
 
     fn parameters_schema(&self) -> Value {
-        crate::tools::schema_cache::static_schema!(include_str!("parameters/memory.json"))
+        tinyagents_harness_tools::static_schema!(include_str!("parameters/memory.json"))
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -346,6 +348,9 @@ mod offline_tests;
 #[cfg(test)]
 #[path = "tools_queue_failure_tests.rs"]
 mod queue_failure_tests;
+#[cfg(test)]
+#[path = "tools_queue_tests.rs"]
+mod queue_tests;
 #[cfg(test)]
 #[path = "tools_read_tests.rs"]
 mod read_tests;

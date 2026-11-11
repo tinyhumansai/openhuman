@@ -189,7 +189,17 @@ fn a_missing_sandbox_is_refused() {
 fn only_the_scheduler_and_clock_tools_are_operator_admittable() {
     assert_eq!(
         OPERATOR_ADMITTABLE,
-        ["cron", "current_time", "resolve_time"]
+        [
+            "cron",
+            "cron_add",
+            "cron_list",
+            "cron_update",
+            "cron_remove",
+            "cron_run",
+            "cron_runs",
+            "current_time",
+            "resolve_time"
+        ]
     );
     for tool in OPERATOR_ADMITTABLE {
         assert!(!is_hard_denied(tool), "{tool}");

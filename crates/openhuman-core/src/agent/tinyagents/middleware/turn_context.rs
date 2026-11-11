@@ -54,6 +54,9 @@ pub(crate) struct TurnContextMiddleware {
     /// the window is unknown; `None` keeps the window-relative default) and
     /// how a compaction writes its checkpoint.
     pub(crate) compaction: crate::config::CompactionSettings,
+    /// `[context].keep_recent_tokens`: the verbatim tail an in-turn compaction
+    /// keeps. `None` keeps the strategy's own default.
+    pub(crate) keep_recent_tokens: Option<u64>,
     /// Live transcript snapshot sink (#4466). When set, a
     /// [`TranscriptSnapshotMiddleware`] mirrors the running conversation into
     /// this shared buffer before every model call, so an erroring run can still
@@ -272,17 +275,16 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
                 .as_ref()
                 .filter(|_| !response.served_from_cache)
             {
-                let host_usage =
-                    crate::inference::provider::model::usage_info_from_response(response)
-                        .unwrap_or(
-                            crate::inference::provider::BilledUsage::from_counts(
-                                usage.input_tokens,
-                                usage.output_tokens,
-                            )
-                            .with_cached_input_tokens(usage.cache_read_tokens)
-                            .with_cache_creation_tokens(usage.cache_creation_tokens)
-                            .with_reasoning_tokens(usage.reasoning_tokens),
-                        );
+                let host_usage = tinyinference_llm::usage::usage_info_from_response(response)
+                    .unwrap_or(
+                        tinyinference_llm::usage::BilledUsage::from_counts(
+                            usage.input_tokens,
+                            usage.output_tokens,
+                        )
+                        .with_cached_input_tokens(usage.cache_read_tokens)
+                        .with_cache_creation_tokens(usage.cache_creation_tokens)
+                        .with_reasoning_tokens(usage.reasoning_tokens),
+                    );
                 // Use the host's per-call pricing helper whenever the provider
                 // omitted an authoritative amount. `route` is preferred over a
                 // construction-time model because it preserves fallback pricing.
@@ -362,6 +364,7 @@ impl TurnContextMiddleware {
             microcompact_keep_recent: 0,
             autocompact_enabled: true,
             compaction: Default::default(),
+            keep_recent_tokens: None,
             transcript_snapshot: None,
         }
     }

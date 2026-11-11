@@ -12,41 +12,6 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
-/// Params for `inference.agent_chat` and `inference.agent_chat_simple`.
-///
-/// A near-copy of the params in [`crate::agent_runs::schemas`], which
-/// backs the `agent.chat` / `agent.chat_simple` namespace over the same ops.
-/// The two diverge in one field: only this surface accepts a per-call
-/// `inference_url` + `api_key`, because `agent.chat` describes a turn on the
-/// account's own configured inference.
-#[derive(Debug, Deserialize)]
-struct AgentChatParams {
-    message: String,
-    model_override: Option<String>,
-    temperature: Option<f64>,
-    thread_id: Option<String>,
-    /// Which agent definition to run the turn as. Absent runs the
-    /// orchestrator, as before. Resolved through the definition registry and
-    /// then `config.agent_registry.entries`; an unknown id is an error.
-    #[serde(default)]
-    agent_id: Option<String>,
-    /// Optional per-turn working directory for the agent's filesystem / shell
-    /// tools. Absent or empty keeps the configured `action_dir`. Ignored by the
-    /// `*_simple` variant, which runs a bare provider call with no tools.
-    cwd: Option<String>,
-    /// OpenAI-compatible endpoint this one call should run against. Paired with
-    /// `api_key`; either alone is ignored. See
-    /// [`ephemeral_route`](crate::config::schema::ephemeral_route).
-    #[serde(default)]
-    inference_url: Option<String>,
-    /// Bearer for `inference_url`. Never persisted and never handed to any
-    /// other provider.
-    #[serde(default)]
-    api_key: Option<String>,
-    #[serde(default)]
-    inference_headers: Vec<(String, String)>,
-}
-
 #[derive(Debug, Deserialize)]
 struct LocalAiTranscribeParams {
     audio_path: String,
@@ -66,8 +31,6 @@ struct LocalAiTtsParams {
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
-        schemas("agent_chat"),
-        schemas("agent_chat_simple"),
         schemas("transcribe"),
         schemas("transcribe_bytes"),
         schemas("tts"),
@@ -77,14 +40,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
-        RegisteredController {
-            schema: schemas("agent_chat"),
-            handler: handle_agent_chat,
-        },
-        RegisteredController {
-            schema: schemas("agent_chat_simple"),
-            handler: handle_agent_chat_simple,
-        },
         RegisteredController {
             schema: schemas("transcribe"),
             handler: handle_local_ai_transcribe,
@@ -106,68 +61,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
-        "agent_chat" => ControllerSchema {
-            namespace: "inference",
-            function: "agent_chat",
-            description: "Run one-shot agent chat with optional model overrides.",
-            inputs: vec![
-                required_string("message", "User message."),
-                optional_string("model_override", "Optional model override."),
-                optional_f64("temperature", "Optional temperature override."),
-                optional_string(
-                    "thread_id",
-                    "Optional backend thread id for cache grouping and inference logs.",
-                ),
-                optional_string(
-                    "agent_id",
-                    "Optional agent definition id to run the turn as. Omit for the \
-                     orchestrator.",
-                ),
-                optional_string(
-                    "cwd",
-                    "Optional working directory for this turn: the agent's file and shell \
-                     tools are rooted here, so relative paths resolve inside it. Must be an \
-                     existing directory. Omit (or pass empty) to use the configured action_dir.",
-                ),
-                optional_string(
-                    "inference_url",
-                    "Optional OpenAI-compatible endpoint for this call only. \
-                     Requires api_key; never persisted.",
-                ),
-                optional_string(
-                    "api_key",
-                    "Bearer for inference_url. Scoped to this call and to that \
-                     endpoint alone.",
-                ),
-                FieldSchema {
-                    name: "inference_headers",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::Json)))),
-                    comment: "Custom header name/value pairs for inference_url only; never persisted.",
-                    required: false,
-                },
-            ],
-            outputs: vec![json_output(
-                "response",
-                "Agent response payload: `result` (the reply text), `logs`, `hit_cap` (true when \
-                 the turn stopped at its tool-iteration cap instead of finishing) and, only when \
-                 hit_cap is true, `checkpoint` (the resumable checkpoint text, equal to `result`).",
-            )],
-        },
-        "agent_chat_simple" => ControllerSchema {
-            namespace: "inference",
-            function: "agent_chat_simple",
-            description: "Run one-shot lightweight provider chat.",
-            inputs: vec![
-                required_string("message", "User message."),
-                optional_string("model_override", "Optional model override."),
-                optional_f64("temperature", "Optional temperature override."),
-                optional_string(
-                    "thread_id",
-                    "Optional backend thread id for cache grouping and inference logs.",
-                ),
-            ],
-            outputs: vec![json_output("response", "Agent response payload.")],
-        },
         "transcribe" => ControllerSchema {
             namespace: "inference",
             function: "transcribe",
@@ -220,51 +113,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
             }],
         },
     }
-}
-
-fn handle_agent_chat(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let p = deserialize_params::<AgentChatParams>(params)?;
-        let mut config = ctx.load_config().await?;
-        let target = match p.agent_id.as_deref().map(str::trim) {
-            Some(id) if !id.is_empty() => {
-                crate::inference::host_runtime::ops::AgentChatTarget::AgentId(id)
-            }
-            _ => crate::inference::host_runtime::ops::AgentChatTarget::Orchestrator,
-        };
-        crate::inference::host_runtime::ops::agent_chat_reply_for(
-            &mut config,
-            target,
-            &p.message,
-            p.model_override,
-            p.temperature,
-            p.thread_id,
-            p.cwd,
-            crate::config::schema::EphemeralRoute::from_params(p.inference_url, p.api_key)
-                .map(|route| route.with_headers(p.inference_headers)),
-            crate::inference::host_runtime::ops::AgentChatEnv::default(),
-        )
-        .await?
-        .into_rpc_json()
-    })
-}
-
-fn handle_agent_chat_simple(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let p = deserialize_params::<AgentChatParams>(params)?;
-        let config = ctx.load_config().await?;
-        to_json(
-            crate::inference::host_runtime::ops::agent_chat_simple(
-                &ctx,
-                &config,
-                &p.message,
-                p.model_override,
-                p.temperature,
-                p.thread_id,
-            )
-            .await?,
-        )
-    })
 }
 
 fn handle_local_ai_transcribe(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {

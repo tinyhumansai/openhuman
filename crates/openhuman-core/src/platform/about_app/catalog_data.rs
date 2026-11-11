@@ -28,23 +28,6 @@ const DESKTOP_TO_JEV: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     ],
 });
 
-// Reply remixing sends the chat and the reply to the inference provider and
-// Jev; background slang and meme research sends short queries derived from the
-// chat to the configured web search provider and fetches GIF pages and media.
-// The `TINYMEMES_*` overrides can route the rewrite model, research and Jev
-// straight to OpenRouter, TypeSafe or OpenJEV instead.
-const REMIX_TO_PROVIDERS: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
-    leaves_device: true,
-    data_kind: PrivacyDataKind::Raw,
-    destinations: &[
-        "Configured OpenHuman inference provider",
-        "TinyHumans OpenRouter Jev proxy",
-        "OpenRouter, TypeSafe or OpenJEV (only when a TINYMEMES_* override selects them)",
-        "Configured web search provider (research queries)",
-        "GIPHY and Imgflip (reaction GIF pages and media)",
-    ],
-});
-
 const DERIVED_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: true,
     data_kind: PrivacyDataKind::Derived,

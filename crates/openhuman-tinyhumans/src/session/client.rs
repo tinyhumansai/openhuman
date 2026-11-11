@@ -19,10 +19,6 @@ const CORE_VERSION_HEADER: &str = "x-core-version";
 const TAURI_VERSION_HEADER: &str = "x-tauri-version";
 const HEADER_VALUE_MAX_LEN: usize = 64;
 
-/// HTTP statuses that mean "the backend was not healthy", not "the credential
-/// is bad". Shared by store-time validation and the current-user refresh.
-pub const TRANSIENT_STATUSES: &[u16] = &[408, 429, 500, 502, 503, 504, 520];
-
 /// Transport-failure phrases treated as transient (same list as the core's
 /// `observability::TRANSIENT_TRANSPORT_PHRASES`, kept in sync by hand because
 /// this crate must not depend on the core).
@@ -120,9 +116,11 @@ fn sanitize_version(raw: &str) -> Option<String> {
 /// Why a `GET /auth/me` did not yield a user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchMeError {
-    /// The backend answered and refused the credential (401/403/…).
+    /// The backend answered 401: the session credential is dead.
     Rejected(String),
-    /// The backend answered with a status from [`TRANSIENT_STATUSES`].
+    /// The backend answered with any other non-2xx status or a `success:false`
+    /// envelope. 402/403/404 are refusals (plan, WAF, proxy), not an expired
+    /// session, so the session is kept and the caller backs off.
     Transient(String),
     /// The request never got an answer (connect/timeout/TLS/read failure).
     Transport(String),
@@ -160,13 +158,16 @@ impl FetchMeError {
                 // Error bodies are controlled by the backend or an intervening
                 // proxy.  Do not carry them into the manager's logs.
                 let message = format!("http {status}: {}", error_body_shape(&body));
-                if TRANSIENT_STATUSES.contains(&status) || (500..=599).contains(&status) {
-                    Self::Transient(message)
-                } else {
+                // `/auth/me` always carries the session credential.
+                if openhuman_embed::__host::core::session_expiry::backend_status_means_session_expired(
+                    status, false,
+                ) {
                     Self::Rejected(message)
+                } else {
+                    Self::Transient(message)
                 }
             }
-            tinyhumans_sdk::Error::Envelope { error, .. } => Self::Rejected(error),
+            tinyhumans_sdk::Error::Envelope { error, .. } => Self::Transient(error),
             other => {
                 let message = format!("{other:#}");
                 if contains_transient_transport_phrase(&message) {
@@ -264,6 +265,9 @@ impl SessionClient {
 
         let http = openhuman_embed::__host::util::tls::tls_client_builder()
             .http1_only()
+            // `sdk_with` adds `x-api-key` per request. Reqwest does not strip
+            // this custom header when following a cross-origin redirect.
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(REQUEST_TIMEOUT)
             .connect_timeout(CONNECT_TIMEOUT)
             .default_headers(headers.header_map())

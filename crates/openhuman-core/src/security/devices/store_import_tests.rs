@@ -42,15 +42,19 @@ fn legacy_devices_are_imported_once_and_the_file_is_left_alone() {
     let db = db_path(&config);
     let before = std::fs::read(&db).unwrap();
 
+    crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
     let backend = crate::storage::local::backend_for(&config.workspace_dir).unwrap();
     let reports = run_with(&backend, &config, &[super::super::import_source()]);
-    assert!(matches!(
-        reports[0].outcome,
-        Ok(Outcome::Imported {
-            found: 3,
-            written: 3
-        })
-    ));
+    assert!(
+        matches!(
+            reports[0].outcome,
+            Ok(Outcome::Imported {
+                found: 3,
+                written: 3
+            })
+        ),
+        "unexpected import report: {reports:#?}"
+    );
 
     let listed = live::list_devices(&config).unwrap();
     let labels: Vec<_> = listed.iter().map(|d| d.label.as_str()).collect();

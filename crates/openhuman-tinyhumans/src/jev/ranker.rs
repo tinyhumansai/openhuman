@@ -32,14 +32,22 @@ pub type ConfigLoader =
 /// The second argument is the chat the search runs for: a cloud provider shows
 /// its egress disclosure there. The default is the core's configured provider;
 /// a test hands in one that records the chat.
-pub type EmbedderFactory =
-    Arc<dyn Fn(&Config, Option<ApprovalChatContext>) -> SharedEmbeddingModel + Send + Sync>;
+pub type EmbedderFactory = Arc<
+    dyn for<'a> Fn(
+            &'a Config,
+            Option<ApprovalChatContext>,
+        ) -> Pin<Box<dyn Future<Output = SharedEmbeddingModel> + Send + 'a>>
+        + Send
+        + Sync,
+>;
 
 /// The core's configured embedding provider, routed to the chat when there is one.
 fn default_embedder() -> EmbedderFactory {
     Arc::new(|config, chat| {
-        openhuman_embed::__host::inference::embedding_host::default_embedding_provider_for_chat(
-            config, chat,
+        Box::pin(
+            openhuman_embed::__host::inference::embedding_host::default_embedding_provider_for_chat(
+                config, chat,
+            ),
         )
     })
 }
@@ -68,6 +76,7 @@ pub struct TinyHumansJevRanker {
 /// Default per-evaluation deadline; see `TinyHumansJevRanker::deadline`.
 const DEFAULT_DEADLINE: Duration = Duration::from_secs(6);
 
+#[derive(Clone)]
 struct Cached {
     fingerprint: u64,
     ranker: JevRanker,
@@ -156,26 +165,32 @@ impl TinyHumansJevRanker {
                 reason: format!("config unavailable: {error}"),
             })?;
         let env: EnvLookup<'_> = &*self.env;
-        let resolved = route::resolve(&config, env)?;
+        let resolved = route::resolve(&config, env).await?;
         let base_url = resolved.client.base_url.clone();
         let route_label = resolved.route.label();
         let fingerprint = fingerprint(&format!("{route_label}:{}", resolved.secret), &base_url);
 
-        let mut cached = self
-            .cached
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(entry) = cached
-            .as_ref()
-            .filter(|entry| entry.fingerprint == fingerprint)
-        {
+        let (cached_match, cached_retriever) = {
+            let cached = self
+                .cached
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            (
+                cached
+                    .as_ref()
+                    .filter(|entry| entry.fingerprint == fingerprint)
+                    .cloned(),
+                cached.as_ref().map(|entry| entry.retriever.clone()),
+            )
+        };
+        if let Some(entry) = cached_match {
             return Ok(match chat {
                 None => entry.ranker.clone(),
                 // The cached retriever was built without a chat, so its cloud
                 // disclosures reach nobody. A search made in a chat gets a
                 // retriever routed to that chat; the catalogue embeddings it
                 // reads live in the durable cache, not in the retriever.
-                Some(chat) => self.routed(entry, &config, chat)?,
+                Some(chat) => self.routed(&entry, &config, chat).await?,
             });
         }
         let client_config = resolved.client;
@@ -187,44 +202,55 @@ impl TinyHumansJevRanker {
         // embed (the same one memory recall uses), so a family larger than
         // one Jev Choice is cut by meaning, not by shared words. Reused
         // across rebuilds so the catalogue is embedded once per process.
-        let retriever: Arc<dyn ToolRanker> = match cached.as_ref() {
-            Some(entry) => entry.retriever.clone(),
-            None => retriever_for(&config, None, &self.embedder)?,
+        let retriever = match cached_retriever {
+            Some(retriever) => retriever,
+            None => retriever_for(&config, None, &self.embedder).await?,
         };
         let ranker = JevRanker::new(
             evaluator.clone(),
             self.config.clone().with_retriever(retriever.clone()),
         );
+        let credential_or_backend_changed = {
+            let cached = self
+                .cached
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            fingerprint_changed(cached.as_ref(), fingerprint)
+        };
         log::info!(
             "[tool-search] jev ranker bound to route={route_label} backend {} ({})",
             openhuman_embed::__host::util::redact::redact_url_for_log(&base_url),
-            if fingerprint_changed(cached.as_ref(), fingerprint) {
+            if credential_or_backend_changed {
                 "credential or backend changed"
             } else {
                 "first search"
             }
         );
-        *cached = Some(Cached {
+        let entry = Cached {
             fingerprint,
             ranker: ranker.clone(),
             evaluator,
             retriever,
-        });
-        match (chat, cached.as_ref()) {
-            (Some(chat), Some(entry)) => self.routed(entry, &config, chat),
-            _ => Ok(ranker),
+        };
+        *self
+            .cached
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(entry.clone());
+        match chat {
+            Some(chat) => self.routed(&entry, &config, chat).await,
+            None => Ok(ranker),
         }
     }
 
     /// `entry`'s ranker, retrieving through a provider whose cloud
     /// disclosures go to `chat`.
-    fn routed(
+    async fn routed(
         &self,
         entry: &Cached,
         config: &Config,
         chat: ApprovalChatContext,
     ) -> Result<JevRanker, RankError> {
-        let retriever = retriever_for(config, Some(chat), &self.embedder)?;
+        let retriever = retriever_for(config, Some(chat), &self.embedder).await?;
         Ok(JevRanker::new(
             entry.evaluator.clone(),
             self.config.clone().with_retriever(retriever),
@@ -238,12 +264,12 @@ impl TinyHumansJevRanker {
 /// the harness answers the search with its own BM25 catalogue in that case,
 /// and a Jev decision over a lexical shortlist would only add a network
 /// round trip to the same recall.
-fn retriever_for(
+async fn retriever_for(
     config: &Config,
     chat: Option<ApprovalChatContext>,
     embedder: &EmbedderFactory,
 ) -> Result<Arc<dyn ToolRanker>, RankError> {
-    let provider = embedder(config, chat);
+    let provider = embedder(config, chat).await;
     if !embedding_provider_is_usable(provider.as_ref()) {
         log::info!(
             "[tool-search] embedding provider `{}` cannot embed; jev search disabled, bm25 answers",

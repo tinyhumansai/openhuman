@@ -1,5 +1,5 @@
 use super::*;
-use crate::storage::{MemoryStorage, Scope, StorageBackend};
+use crate::storage::{test_support::memory_backend, Scope, StorageBackend};
 use serde_json::json;
 use tinyflows_bus::schedule::{DOCUMENT_INTERFACE, DOCUMENT_METHOD};
 
@@ -12,7 +12,7 @@ async fn port_with_backend() -> (tinybus::Proxy, CallbackAddress, Arc<dyn Storag
     let config = Config::default();
     // Start the module runtime and attach the module before touching the bus.
     module::proxy(&config).await.expect("module attaches");
-    let backend: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let backend = memory_backend();
     let scope = DocScope::on_backend(&config, Arc::clone(&backend), Scope::local());
     let address = address(&scope).await.expect("port is served");
     let runtime = crate::modules::runtime::runtime().await.unwrap();
@@ -130,8 +130,12 @@ async fn schedule_store_migration_moves_legacy_jobs_runs_and_counter_before_read
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].output.as_deref(), Some("legacy output"));
 
+    // Schedule schema v2 keeps a job's creation time in its body
+    // (`created_ms`), which every read prefers; the record's own metadata time
+    // is the migration's write.
     let migrated_job = docs.get("cron.jobs", "legacy-job").await.unwrap().unwrap();
-    assert_eq!(migrated_job.meta.created_ms, 1772600767123_i64);
+    assert_eq!(migrated_job.doc["created_ms"], 1772600767123_i64);
+    assert_eq!(listed[0].created_at.timestamp_millis(), 1772600767123_i64);
     for (collection, id) in [
         ("cron_jobs", "legacy-job"),
         ("cron_runs", "00000000000000000007"),
@@ -142,12 +146,15 @@ async fn schedule_store_migration_moves_legacy_jobs_runs_and_counter_before_read
             "successful migration retires {collection}/{id}"
         );
     }
+    // v1 kept the next run number to hand out; the v2 counter (`{value}`)
+    // holds the last one issued, so the next run is still number 8.
     assert_eq!(
-        tinystoragedrivers::primitives::Counters::new(docs)
-            .next("cron", "runs")
+        docs.get("tsd.counters", "cron/runs")
             .await
-            .unwrap(),
-        8
+            .unwrap()
+            .expect("the imported counter remains readable")
+            .doc["value"],
+        7
     );
     for progress in [
         "cron/cron.jobs/jobs_v2",
@@ -343,7 +350,7 @@ async fn an_unknown_operation_is_refused_not_guessed() {
 async fn one_object_is_served_per_scope_and_reused() {
     let config = Config::default();
     module::proxy(&config).await.unwrap();
-    let backend: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let backend: Arc<dyn StorageBackend> = crate::storage::test_support::memory_backend();
     let a = DocScope::on_backend(&config, Arc::clone(&backend), Scope::local());
     let b = DocScope::on_backend(&config, backend, crate::storage::scope_for_agent("other"));
     let (first, again, other) = (

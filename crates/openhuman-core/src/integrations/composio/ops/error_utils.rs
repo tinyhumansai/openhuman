@@ -52,11 +52,12 @@ pub(crate) const COMPOSIO_NO_SESSION: &str =
 /// (`config.composio.api_key`). Checking only the keychain would wrongly
 /// short-circuit to an empty list for a user who configured their key via
 /// `config.toml`, hiding their real connections.
-pub(crate) fn direct_mode_without_key(config: &Config) -> OpResult<bool> {
+pub(crate) async fn direct_mode_without_key(config: &Config) -> OpResult<bool> {
     if config.composio.mode.trim() != crate::config::schema::COMPOSIO_MODE_DIRECT {
         return Ok(false);
     }
-    let has_key = crate::security::credentials::get_composio_api_key(config)
+    let has_key = crate::integrations::composio::get_composio_api_key(config)
+        .await
         .map_err(|e| format!("[composio] get_composio_api_key failed: {e}"))?
         .or_else(|| {
             config
@@ -96,18 +97,17 @@ pub(crate) fn direct_mode_without_key(config: &Config) -> OpResult<bool> {
 /// A *failed* token lookup (store unreadable) deliberately returns `false`:
 /// that is a real fault, and it must keep surfacing through the normal error
 /// path rather than being read as "not signed in".
-pub(crate) fn backend_mode_without_session(config: &Config) -> bool {
+pub(crate) async fn backend_mode_without_session(config: &Config) -> bool {
     let mode = config.composio.mode.trim();
     if !(mode.is_empty() || mode == crate::config::schema::COMPOSIO_MODE_BACKEND) {
         return false;
     }
-    if crate::security::credentials::api_key::has_api_key(config) {
+    if crate::credentials::api_key::has_api_key(config).await {
         return false;
     }
-    match crate::security::credentials::jwt::get_session_token(config) {
+    match crate::credentials::session_state::get_session_token(config).await {
         Ok(token) => token.as_deref().map(str::trim).is_none_or(|token| {
-            token.is_empty()
-                || crate::security::credentials::session_support::is_local_session_token(token)
+            token.is_empty() || crate::credentials::session_state::is_local_session_token(token)
         }),
         Err(error) => {
             tracing::warn!(
@@ -136,11 +136,12 @@ pub(crate) fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation:
         // Bus failures are reported once, with sanitized module metadata.
         return;
     }
+    let message = composio_op_report_message(rendered.as_str());
     let failure_tag = classify_composio_failure_tag(rendered.as_str());
     if failure_tag == "non_2xx" {
         if let Some(status) = extract_backend_returned_status(&rendered) {
             crate::core::observability::report_error_or_expected(
-                "connector operation failed",
+                message,
                 "composio",
                 operation,
                 &[("failure", failure_tag), ("status", status.as_str())],
@@ -149,11 +150,35 @@ pub(crate) fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation:
         }
     }
     crate::core::observability::report_error_or_expected(
-        "connector operation failed",
+        message,
         "composio",
         operation,
         &[("failure", failure_tag)],
     );
+}
+
+/// The static message [`report_composio_op_error`] reports for `rendered`.
+///
+/// Normally `"connector operation failed"`, so no provider content reaches
+/// Sentry. The direct-mode invalid-key backoff (TAURI-RUST-116R, #8509) is
+/// user state, not a fault: it is reported as its static anchor
+/// [`COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR`](crate::integrations::composio::direct_auth::COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR)
+/// instead, which `expected_error_kind` demotes to `ProviderUserState`.
+/// Classifying here, before the message is replaced, is what lets that
+/// demotion see the backoff at all.
+pub(crate) fn composio_op_report_message(rendered: &str) -> &'static str {
+    let anchor = crate::integrations::composio::direct_auth::COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR;
+    // Anchored, so a provider body that merely quotes the phrase stays reportable.
+    let lower = rendered.to_ascii_lowercase();
+    if lower
+        .strip_prefix("[composio-direct] ")
+        .unwrap_or(&lower)
+        .starts_with(anchor)
+    {
+        anchor
+    } else {
+        "connector operation failed"
+    }
 }
 
 /// Pick the `failure` tag for a composio op-layer error message based on

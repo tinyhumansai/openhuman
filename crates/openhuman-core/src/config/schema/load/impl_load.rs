@@ -7,8 +7,7 @@ use super::dirs::{
 };
 use super::env::{EnvLookup, NoEnv, ProcessEnv, ProcessEnvWithoutWorkspace};
 use super::migrate::{
-    migrate_cloud_provider_slugs, migrate_components, migrate_legacy_inference_url,
-    migrate_legacy_memory_backend, migrate_search_settings,
+    apply_loaded_config_migrations, migrate_components, migrate_legacy_memory_backend,
 };
 use super::secrets::{
     decrypt_config_secrets, decrypt_config_secrets_strict, encrypt_config_secrets,
@@ -137,6 +136,23 @@ pub(super) async fn read_config_with_recovery_or_default(
 }
 
 impl Config {
+    pub(crate) async fn load_or_init_unsealed() -> Result<Self> {
+        let (openhuman_dir, workspace_dir) = default_config_and_workspace_dirs()?;
+        Self::load_or_init_unsealed_with_env_lookup(&openhuman_dir, &workspace_dir, &ProcessEnv)
+            .await
+    }
+
+    /// Open sealed values after the desktop's approval preflight is serving.
+    /// Returns whether the legacy ciphertext format was upgraded.
+    pub(crate) async fn decrypt_secrets_after_preflight(&mut self) -> Result<bool> {
+        let openhuman_dir = self
+            .config_path
+            .parent()
+            .context("config path has no parent directory")?
+            .to_path_buf();
+        decrypt_config_secrets(self, &openhuman_dir).await
+    }
+
     pub async fn load_or_init() -> Result<Self> {
         Self::load_or_init_unenriched()
             .await
@@ -161,6 +177,38 @@ impl Config {
         default_openhuman_dir: &Path,
         default_workspace_dir: &Path,
         env: &(dyn EnvLookup + Send + Sync),
+    ) -> Result<Self> {
+        Self::load_or_init_with_env_lookup_mode(
+            default_openhuman_dir,
+            default_workspace_dir,
+            env,
+            true,
+        )
+        .await
+    }
+
+    /// Load config structure while leaving encrypted values sealed. Hosts use
+    /// this during the restricted security preflight, before the cipher module
+    /// and approval surface are available.
+    pub(crate) async fn load_or_init_unsealed_with_env_lookup(
+        default_openhuman_dir: &Path,
+        default_workspace_dir: &Path,
+        env: &(dyn EnvLookup + Send + Sync),
+    ) -> Result<Self> {
+        Self::load_or_init_with_env_lookup_mode(
+            default_openhuman_dir,
+            default_workspace_dir,
+            env,
+            false,
+        )
+        .await
+    }
+
+    async fn load_or_init_with_env_lookup_mode(
+        default_openhuman_dir: &Path,
+        default_workspace_dir: &Path,
+        env: &(dyn EnvLookup + Send + Sync),
+        decrypt_secrets: bool,
     ) -> Result<Self> {
         let (openhuman_dir, workspace_dir, resolution_source) = Box::pin(
             resolve_runtime_config_dirs_with(default_openhuman_dir, default_workspace_dir, env),
@@ -213,6 +261,7 @@ impl Config {
                 config_path,
                 resolution_source,
                 env,
+                decrypt_secrets,
             ))
             .await
         } else {
@@ -273,7 +322,7 @@ impl Config {
         config.apply_env_overrides();
         // Debug-dump path is read-only; ignore the migration signal (the
         // authoritative `load_or_init` path persists upgraded secrets).
-        let _ = decrypt_config_secrets(&mut config, &openhuman_dir)?;
+        let _ = decrypt_config_secrets(&mut config, &openhuman_dir).await?;
         Ok(config)
     }
 
@@ -354,13 +403,23 @@ impl Config {
         config.workspace_dir = workspace_dir;
         config.action_dir = resolve_action_dir(&config.action_dir_override);
         config.recovered_from_corruption = config_was_corrupted;
-        migrate_legacy_inference_url(&mut config);
         let migration_raw = migration_source(&config_path, &raw).await;
-        migrate_legacy_memory_backend(&mut config, &migration_raw);
-        migrate_components(&mut config, &migration_raw);
-        migrate_cloud_provider_slugs(&mut config);
-        migrate_search_settings(&mut config);
+        apply_loaded_config_migrations(&mut config, &migration_raw);
         config.apply_env_overrides_from(env);
+        // Hand callers the same plaintext secrets the first load does. All or
+        // nothing: callers reload, edit and save, so a field that cannot be
+        // opened must stay sealed rather than be cleared and saved as `None`.
+        if let Some(openhuman_dir) = config.config_path.parent().map(Path::to_path_buf) {
+            let mut opened = config.clone();
+            match decrypt_config_secrets_strict(&mut opened, &openhuman_dir).await {
+                Ok(()) => config = opened,
+                Err(error) => tracing::warn!(
+                    path = %config.config_path.display(),
+                    %error,
+                    "[config] snapshot reload keeps secrets sealed"
+                ),
+            }
+        }
 
         if config_was_corrupted {
             tracing::warn!(
@@ -444,9 +503,9 @@ impl Config {
                 .parent()
                 .context("Config path must have a parent directory")?
                 .to_path_buf();
-            decrypt_config_secrets_strict(&mut config_to_save, &openhuman_dir)?;
+            decrypt_config_secrets_strict(&mut config_to_save, &openhuman_dir).await?;
         } else {
-            encrypt_config_secrets(&mut config_to_save)?;
+            encrypt_config_secrets(&mut config_to_save).await?;
         }
 
         let toml_str =

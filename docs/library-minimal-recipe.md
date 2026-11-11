@@ -193,7 +193,7 @@ build-fact error:
 - **tui:** `openhuman tui` / `chat` returns "tui feature disabled at compile time".
 
 Everything the opencompany use cases need remains: the agent harness + turn
-runner, subagent delegation (`spawn_parallel_agents`), the Memory v2 host
+runner, subagent delegation, the Memory v2 host
 (engine binding, sources, conversations, context + secret/PII scrubbing), threads, config,
 security policy, provider routing/inference, `skills` (SKILL.md discovery/install
 

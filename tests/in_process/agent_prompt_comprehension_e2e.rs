@@ -439,15 +439,23 @@ async fn wait_for_terminal(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>)
 }
 
 struct Stack {
+    /// The connectors module serves the integration catalogue from the host's
+    /// installed storage backend.
+    _storage: crate::storage_case::Case,
     rpc_base: String,
     _guards: Vec<EnvVarGuard>,
     _tmp: tempfile::TempDir,
+    previous_storage: Option<std::sync::Arc<dyn openhuman_core::storage::StorageBackend>>,
     joins: Vec<tokio::task::JoinHandle<Result<(), std::io::Error>>>,
 }
 
 impl Drop for Stack {
     fn drop(&mut self) {
         self.joins.iter().for_each(|j| j.abort());
+        openhuman_core::storage::clear();
+        if let Some(previous) = self.previous_storage.take() {
+            openhuman_core::storage::install(previous);
+        }
     }
 }
 
@@ -455,7 +463,6 @@ async fn boot_stack(extra_config: &str) -> Stack {
     // The managed chat provider is installed by the TinyHumans layer; without
     // it every turn ends in `chat_error.inference` and no request reaches the
     // scripted upstream.
-    crate::tinyhumans_boot::boot();
     AGENT_DEF_REGISTRY_INIT.get_or_init(|| {
         AgentDefinitionRegistry::init_global_builtins()
             .expect("AgentDefinitionRegistry::init_global_builtins must not fail");
@@ -465,10 +472,15 @@ async fn boot_stack(extra_config: &str) -> Stack {
         openhuman_core::agent::bus::register_agent_handlers();
     });
 
+    let storage = crate::storage_case::Case::open();
+    storage.install();
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path().to_path_buf();
     let openhuman_home = home.join(".openhuman");
-    let guards = vec![
+    let previous_storage = openhuman_core::storage::install(std::sync::Arc::new(
+        tinystoragedrivers_testkit::MemoryBackend::new(),
+    ));
+    let mut guards = vec![
         EnvVarGuard::set_to_path("HOME", &home),
         EnvVarGuard::unset("OPENHUMAN_WORKSPACE"),
         EnvVarGuard::unset("BACKEND_URL"),
@@ -477,6 +489,12 @@ async fn boot_stack(extra_config: &str) -> Stack {
 
     let (mock_addr, mock_join) = serve_on_ephemeral(scripted_upstream_router()).await;
     let mock_origin = format!("http://{mock_addr}");
+    // `api_url` is the inference override. Backend routing deliberately
+    // rejects arbitrary loopback endpoints as hosted APIs, so point the
+    // backend-specific resolver at this same local fixture explicitly.
+    guards.push(EnvVarGuard::set("BACKEND_URL", &mock_origin));
+    guards.push(EnvVarGuard::set("VITE_BACKEND_URL", &mock_origin));
+    crate::tinyhumans_boot::boot();
     write_min_config(&openhuman_home, &mock_origin, extra_config);
     write_min_config(
         &openhuman_home.join("users").join("e2e-user"),
@@ -498,9 +516,11 @@ async fn boot_stack(extra_config: &str) -> Stack {
     assert_no_jsonrpc_error(&store, "auth_store_session");
 
     Stack {
+        _storage: storage,
         rpc_base,
         _guards: guards,
         _tmp: tmp,
+        previous_storage,
         joins: vec![mock_join, rpc_join],
     }
 }
@@ -643,7 +663,7 @@ async fn run_case_inner(case: Case) {
 
     match case.entry {
         Entry::Summarizer => {
-            use openhuman_core::inference::host_runtime::ops::{agent_chat_for, AgentChatTarget};
+            use openhuman_core::agent_runs::agent_chat::{agent_chat_for, AgentChatTarget};
             let mut config = openhuman_core::config::Config::load_or_init()
                 .await
                 .unwrap();
@@ -656,7 +676,7 @@ async fn run_case_inner(case: Case) {
                 None,
                 None,
                 None,
-                openhuman_core::inference::host_runtime::ops::AgentChatEnv::default(),
+                openhuman_core::agent_runs::agent_chat::AgentChatEnv::default(),
             )
             .await
             .expect("summarizer turn must finish");
@@ -834,7 +854,6 @@ fn news_digest_graph() -> Value {
 /// failure — so a loop in the runtime (a re-issued call, a retry that repeats
 /// the search) cannot pass as progress.
 #[test]
-#[ignore = "TODO(#6376): hosted TinyAgents omits workflow specialist tools"]
 fn workflow_builder_reaches_propose_workflow() {
     run_case(Case {
         agent: "workflow_builder",
@@ -868,7 +887,6 @@ fn workflow_builder_reaches_propose_workflow() {
 /// Composio or cron tools its specialists own. The action itself is
 /// `Deferred`: off the advertised belt, found through `tool_search`.
 #[test]
-#[ignore = "TODO(#6376): hosted TinyAgents omits the deferred integration catalogue"]
 fn orchestrator_searches_for_and_calls_the_integration_action() {
     run_case(Case {
         agent: "orchestrator",
@@ -892,7 +910,10 @@ fn orchestrator_searches_for_and_calls_the_integration_action() {
         ],
         advertises_nothing: false,
         max_consecutive_calls_of: None,
-        extra_config: "",
+        // Keep discovery local and deterministic; the default Jev ranker is
+        // installed by the host and this fixture does not mock its ranking
+        // service.
+        extra_config: "[agent.tool_search]\nranker = \"bm25\"\n",
     });
 }
 

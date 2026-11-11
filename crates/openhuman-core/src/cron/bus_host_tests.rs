@@ -49,15 +49,18 @@ async fn host(config: &Config, agent_only: bool) -> (HostRegistration, tinybus::
 }
 
 fn shell_job(config: &Config, command: &str) -> CronJob {
-    crate::cron::add_shell_job(
+    let result = crate::cron::add_shell_job(
         config,
         None,
         Schedule::Every {
             every_ms: 3_600_000,
         },
         command,
-    )
-    .unwrap()
+    );
+    if let Err(error) = &result {
+        eprintln!("add_shell_job failed: {error:#}");
+    }
+    result.unwrap()
 }
 
 pub(super) fn flow_job(config: &Config, flow_id: &str) -> CronJob {

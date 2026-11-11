@@ -18,7 +18,7 @@ pub(crate) fn build_completion_messages(messages: &[CompletionMessage]) -> Vec<T
 }
 
 /// Maps provider usage onto the established flow completion wire shape.
-pub(crate) fn usage_to_json(usage: &Option<crate::inference::provider::BilledUsage>) -> Value {
+pub(crate) fn usage_to_json(usage: &Option<tinyinference_llm::usage::BilledUsage>) -> Value {
     match usage {
         None => Value::Null,
         Some(usage) => json!({
@@ -45,7 +45,7 @@ pub(crate) fn model_response_to_completion_value(
             .map(crate::agent::tinyagents::ta_call_to_oh_call)
             .collect::<Vec<_>>(),
         "usage": usage_to_json(
-            &crate::inference::provider::model::usage_info_from_response(response)
+            &tinyinference_llm::usage::usage_info_from_response(response)
         ),
         "reasoning_content": tinyagents_runtime::transcript::reasoning_from_content(
             &response.message.content

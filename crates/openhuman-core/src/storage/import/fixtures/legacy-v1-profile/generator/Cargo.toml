@@ -1,0 +1,16 @@
+[package]
+name = "legacy-v1-profile-writer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers.git", rev = "0c6dcfce57201fadd830431f36fd759c3baa897a", features = ["sqlite", "secrets"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tinyagents-storage-kit = { path = "../../../../../../../../vendor/tinyagents/crates/tinyagents-storage-kit" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+zeroize = "1"

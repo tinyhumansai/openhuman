@@ -6,7 +6,10 @@
 
 mod adapter;
 pub mod backend;
-pub mod crypto;
+#[cfg(feature = "secret-file")]
+pub mod encrypted_file_backend;
+#[cfg(not(feature = "secret-file"))]
+#[path = "encrypted_file_backend_disabled.rs"]
 pub mod encrypted_file_backend;
 pub mod encrypted_store;
 pub mod error;

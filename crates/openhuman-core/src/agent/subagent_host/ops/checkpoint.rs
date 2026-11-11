@@ -1,11 +1,11 @@
 //! OpenHuman billing adapter for TinyAgents' cap-hit checkpoint summary.
 
-use crate::inference::provider::BilledUsage;
 use std::sync::{Arc, Mutex};
 use tinyagents_harness::summarization::CapToolResult;
 use tinyagents_orchestration::subagent::{summarize_at_cap, CapSummaryModel};
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::{ChatModel, ModelRequest};
+use tinyinference_llm::usage::BilledUsage;
 
 /// The provider usage from a summary call, charged by the host after the owner
 /// API applies its shared digest and fallback policy.
@@ -86,7 +86,7 @@ impl CapSummaryModel for HostCapSummaryModel<'_> {
                         &response,
                     );
                 }
-                let usage = crate::inference::provider::model::usage_info_from_response(&response);
+                let usage = tinyinference_llm::usage::usage_info_from_response(&response);
                 *self
                     .usage
                     .lock()

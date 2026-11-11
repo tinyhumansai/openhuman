@@ -17,6 +17,7 @@ import {
   memorySourcesList,
   memorySourcesRemove,
   memorySourcesSync,
+  memoryStatusError,
   type Source,
   type SourceAddRequest,
 } from '../../services/api/memoryApi';
@@ -222,7 +223,7 @@ export default function MemorySyncedSources() {
                       <p
                         className="text-xs text-coral-600 dark:text-coral-300"
                         data-testid={`memory-source-${source.id}-error`}>
-                        {source.error}
+                        {memoryStatusError(source.error, t)}
                       </p>
                     )}
                   </div>

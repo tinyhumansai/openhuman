@@ -14,7 +14,6 @@ pub struct TokenjuiceSettingsPatch {
     pub router_enabled: Option<bool>,
     pub ccr_enabled: Option<bool>,
     pub repl_handle_enabled: Option<bool>,
-    pub repl_save_enabled: Option<bool>,
     pub ccr_disk_enabled: Option<bool>,
     pub max_cache_entries: Option<usize>,
     pub max_cache_bytes: Option<usize>,
@@ -38,9 +37,6 @@ impl TokenjuiceSettingsPatch {
         }
         if let Some(v) = self.repl_handle_enabled {
             cfg.repl_handle_enabled = v;
-        }
-        if let Some(v) = self.repl_save_enabled {
-            cfg.repl_save_enabled = v;
         }
         if let Some(v) = self.ccr_disk_enabled {
             cfg.ccr_disk_enabled = v;

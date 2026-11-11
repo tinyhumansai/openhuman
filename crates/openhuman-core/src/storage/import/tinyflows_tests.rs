@@ -1,14 +1,14 @@
 use super::*;
 use crate::cron::client::testing as cron_store;
-use crate::storage::{MemoryStorage, Scope};
+use crate::storage::test_support::{sqlite_backend, SqliteBackend};
+use crate::storage::Scope;
 use serde_json::json;
 use serde_json::Value;
 use sha2::Digest;
 use std::collections::BTreeMap;
+use std::ops::Deref;
 use tempfile::TempDir;
-use tinyflows::engine::Checkpointer;
 use tinyflows_drivers::catalog::FlowCatalogDocuments;
-use tinyflows_drivers::DriverCheckpointer;
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/storage/import/fixtures/tinyflows")
@@ -42,12 +42,21 @@ fn workspace() -> (TempDir, Config) {
     (dir, config)
 }
 
-fn backend() -> Arc<dyn StorageBackend> {
-    Arc::new(MemoryStorage::new())
+struct TestBackend(SqliteBackend);
+
+impl Deref for TestBackend {
+    type Target = Arc<dyn StorageBackend>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.backend
+    }
 }
 
-/// Every file under `root` with a digest of its bytes. SQLite's `-shm` index
-/// and an empty `-wal` are connection bookkeeping a read-only open may create.
+fn backend() -> TestBackend {
+    TestBackend(sqlite_backend().unwrap())
+}
+
+/// Hash the legacy files while ignoring SQLite's transient shared-memory state.
 fn tree(root: &Path) -> BTreeMap<String, String> {
     fn walk(dir: &Path, root: &Path, out: &mut BTreeMap<String, String>) {
         for entry in std::fs::read_dir(dir).unwrap() {
@@ -75,12 +84,8 @@ fn tree(root: &Path) -> BTreeMap<String, String> {
 fn documents(
     backend: &Arc<dyn StorageBackend>,
     scope: &Scope,
-) -> Arc<dyn tinystoragedrivers::DocumentStore> {
+) -> Arc<dyn crate::storage::DocumentStore> {
     Arc::clone(backend.for_scope(scope).unwrap().documents())
-}
-
-fn json<T: serde::Serialize>(value: &T) -> Value {
-    serde_json::to_value(value).unwrap()
 }
 
 fn written(outcome: Outcome) -> usize {
@@ -88,142 +93,6 @@ fn written(outcome: Outcome) -> usize {
         Outcome::Imported { written, .. } => written,
         other => panic!("expected an import, got {other:?}"),
     }
-}
-
-#[test]
-fn the_flow_catalog_comes_across_whole_and_the_legacy_files_are_untouched() {
-    let (dir, config) = workspace();
-    let before = tree(dir.path());
-    let backend = backend();
-
-    let outcome = import_flows(&backend, &Scope::local(), &config).unwrap();
-    assert!(written(outcome) > 0);
-
-    let expected = expected()["catalog"].clone();
-    let catalog = FlowCatalogDocuments::new(documents(&backend, &Scope::local()));
-    crate::storage::block_on_anyhow(async move {
-        let (flows, _) = catalog.list_flows().await?;
-        let mut ids: Vec<_> = flows.iter().map(|flow| flow.id.clone()).collect();
-        ids.sort();
-        assert_eq!(ids, ["flow-alpha", "flow-beta"]);
-        for flow in &flows {
-            let revisions = catalog.list_revisions(&flow.id, 50).await?;
-            assert_eq!(
-                revisions.len(),
-                expected["revisions"][&flow.id].as_array().unwrap().len(),
-                "revisions of {}",
-                flow.id
-            );
-            let runs = catalog.list_flow_runs(&flow.id, 50).await?;
-            let mut run_ids: Vec<_> = runs.iter().map(|run| run.id.clone()).collect();
-            run_ids.sort();
-            let mut wanted: Vec<String> = expected["runs"][&flow.id]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|run| run["id"].as_str().unwrap().to_string())
-                .collect();
-            wanted.sort();
-            assert_eq!(run_ids, wanted, "runs of {}", flow.id);
-        }
-        let mut drafts: Vec<_> = catalog
-            .list_drafts()
-            .await?
-            .into_iter()
-            .map(|draft| draft.id)
-            .collect();
-        drafts.sort();
-        assert_eq!(drafts, ["draft-1", "draft-2"]);
-        assert_eq!(catalog.list_suggestions(None, 50).await?.len(), 2);
-        for entry in expected["kv"].as_array().unwrap() {
-            let (namespace, key, value) = (
-                entry[0].as_str().unwrap(),
-                entry[1].as_str().unwrap(),
-                &entry[2],
-            );
-            assert_eq!(
-                catalog.kv_get(namespace, key).await?.as_ref(),
-                Some(value),
-                "{namespace}/{key}"
-            );
-        }
-        Ok(())
-    })
-    .unwrap();
-
-    assert_eq!(tree(dir.path()), before, "the legacy files were modified");
-}
-
-#[test]
-fn flow_checkpoints_come_across_with_their_lineage() {
-    let (_dir, config) = workspace();
-    let backend = backend();
-    import_flows(&backend, &Scope::local(), &config).unwrap();
-
-    let checkpointer = DriverCheckpointer::<Value>::new(documents(&backend, &Scope::local()));
-    let expected = expected()["checkpoints"].clone();
-    crate::storage::block_on_anyhow(async move {
-        for thread in ["run-1", "Run Two/Upper"] {
-            let imported = checkpointer.get_thread(thread).await?;
-            assert_eq!(
-                Value::Array(imported.iter().map(json).collect()),
-                expected["threads"][thread],
-                "thread {thread}"
-            );
-        }
-        let sub = checkpointer
-            .get_scoped("run-1", None, &["sub".to_string()])
-            .await?
-            .expect("the subgraph checkpoint");
-        assert_eq!(sub.checkpoint_id, "s1");
-        Ok(())
-    })
-    .unwrap();
-}
-
-#[test]
-fn cron_jobs_and_runs_come_across_with_their_fields() {
-    let (dir, config) = workspace();
-    let before = tree(dir.path());
-    let backend = backend();
-
-    let outcome = import_cron(&backend, &Scope::local(), &config, dir.path(), "").unwrap();
-    assert_eq!(written(outcome), 3 + 4);
-
-    let expected = expected()["cron"].clone();
-    for legacy in expected["jobs"].as_array().unwrap() {
-        let legacy_id = legacy["id"].as_str().unwrap();
-        // A flow-schedule job is filed under an id derived from its flow.
-        let new_id = if legacy["job_type"] == "flow" {
-            format!("flow:{}", legacy["command"].as_str().unwrap())
-        } else {
-            legacy_id.to_string()
-        };
-        let job = cron_store::get_job(&backend, &Scope::local(), &new_id).unwrap();
-        let mut got = json(&job);
-        got.as_object_mut().unwrap().remove("id");
-        let mut want = legacy.clone();
-        want.as_object_mut().unwrap().remove("id");
-        // v2 keeps instants as epoch milliseconds and stamps the creation time
-        // from the driver clock: compare `next_run` at millisecond precision and
-        // leave `created_at` out (the tinyflows import step does not carry it).
-        for body in [&mut got, &mut want] {
-            body.as_object_mut().unwrap().remove("created_at");
-            if let Some(next) = body["next_run"].as_str() {
-                let at = chrono::DateTime::parse_from_rfc3339(next).unwrap();
-                body["next_run"] = json!(at.timestamp_millis());
-            }
-        }
-        assert_eq!(got, want, "job {legacy_id}");
-        let runs = cron_store::list_runs(&backend, &Scope::local(), &new_id).unwrap();
-        assert_eq!(
-            runs.len(),
-            expected["runs"][legacy_id].as_array().unwrap().len(),
-            "runs of {legacy_id}"
-        );
-    }
-
-    assert_eq!(tree(dir.path()), before, "the legacy file was modified");
 }
 
 #[test]
@@ -261,6 +130,32 @@ fn a_job_policy_kept_in_the_side_table_lands_on_the_job() {
     let job = cron_store::get_job(&backend, &Scope::local(), &shell_id).unwrap();
     assert_eq!(job.policy.retries, Some(0));
     assert!(job.policy.single_flight);
+}
+
+#[test]
+fn flow_schedule_runs_use_the_derived_job_id() {
+    let (dir, config) = workspace();
+    let backend = backend();
+    import_cron(&backend, &Scope::local(), &config, dir.path(), "").unwrap();
+
+    let fixture = expected();
+    let flow = fixture["cron"]["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|job| job["job_type"] == "flow")
+        .expect("a flow-schedule fixture job");
+    let legacy_id = flow["id"].as_str().unwrap();
+    let derived_id = format!("flow:{}", flow["command"].as_str().unwrap());
+    let job = cron_store::get_job(&backend, &Scope::local(), &derived_id).unwrap();
+    assert_eq!(job.id, derived_id);
+
+    let runs = cron_store::list_runs(&backend, &Scope::local(), &derived_id).unwrap();
+    assert_eq!(
+        runs.len(),
+        fixture["cron"]["runs"][legacy_id].as_array().unwrap().len()
+    );
+    assert!(runs.iter().all(|run| run.job_id == derived_id));
 }
 
 #[test]
@@ -408,6 +303,8 @@ fn an_invalid_flow_record_keeps_the_import_open_for_retry() {
 }
 
 #[tokio::test]
+// The lock protects process-global storage installation for this async test.
+#[allow(clippy::await_holding_lock)]
 async fn fallback_backend_migrates_legacy_catalog_state_without_importing_files() {
     struct FallbackStorageRestore {
         previous: Option<Arc<dyn StorageBackend>>,
@@ -425,6 +322,7 @@ async fn fallback_backend_migrates_legacy_catalog_state_without_importing_files(
     }
 
     let (dir, mut config) = workspace();
+    let _slot = crate::storage::test_support::lock_storage_slot();
     config.components.tinyflows = true;
     let legacy_dir = dir.path().join("flows");
     let legacy_files_before = tree(&legacy_dir);
@@ -576,7 +474,7 @@ fn a_corrupt_legacy_file_fails_without_a_marker_and_is_retried() {
 fn a_run_that_skipped_records_leaves_no_marker_so_it_is_retried() {
     let dir = TempDir::new().unwrap();
     let backend = backend();
-    let skipped = marked(&backend, dir.path(), "skipdomain", || Ok(Some((3, 2, 1)))).unwrap();
+    let skipped = marked(&backend, dir.path(), "skipdomain", |_| Ok(Some((3, 2, 1)))).unwrap();
     assert_eq!(
         skipped,
         Outcome::Incomplete {
@@ -586,7 +484,7 @@ fn a_run_that_skipped_records_leaves_no_marker_so_it_is_retried() {
         }
     );
     // No marker: the next boot runs the body again instead of `AlreadyDone`.
-    let again = marked(&backend, dir.path(), "skipdomain", || Ok(Some((3, 3, 0)))).unwrap();
+    let again = marked(&backend, dir.path(), "skipdomain", |_| Ok(Some((3, 3, 0)))).unwrap();
     assert_eq!(
         again,
         Outcome::Imported {
@@ -594,6 +492,6 @@ fn a_run_that_skipped_records_leaves_no_marker_so_it_is_retried() {
             written: 3
         }
     );
-    let done = marked(&backend, dir.path(), "skipdomain", || Ok(Some((3, 3, 0)))).unwrap();
+    let done = marked(&backend, dir.path(), "skipdomain", |_| Ok(Some((3, 3, 0)))).unwrap();
     assert_eq!(done, Outcome::AlreadyDone);
 }

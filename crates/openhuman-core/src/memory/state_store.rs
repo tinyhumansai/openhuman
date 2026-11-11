@@ -102,10 +102,17 @@ fn workspace_scope(workspace_dir: &Path) -> Result<crate::storage::Scope> {
     )?)
 }
 
-fn open_workspace_quarantining<T: DeserializeOwned>(
+pub(crate) fn open_workspace_quarantining<T: DeserializeOwned>(
     workspace_dir: &Path,
     name: &str,
 ) -> Result<StateKv> {
+    // Workspace state uses conditional writes for safe legacy import and
+    // updates. The ordinary unit-test backend is in-memory and does not
+    // implement that capability, so use the durable workspace default just
+    // as `StateKv::open` does for the acting scope.
+    #[cfg(all(test, feature = "storage-sqlite"))]
+    crate::storage::local::use_persistent_default_for_test(workspace_dir);
+
     let scope = workspace_scope(workspace_dir)?;
     let backend = crate::storage::local::backend_for(workspace_dir)?;
     open_workspace_quarantining_on::<T>(workspace_dir, &backend, &scope, name)
@@ -298,8 +305,7 @@ pub(crate) fn import_all(
     backend: &std::sync::Arc<dyn crate::storage::StorageBackend>,
     workspace_dir: &Path,
 ) -> Result<Vec<String>> {
-    let local = backend.for_scope(&crate::storage::Scope::local())?;
-    let local_kv = StateKv::over(&local, OWNER, NS);
+    let local_kv = StateKv::on_backend(backend, &crate::storage::Scope::local(), OWNER, NS)?;
     let queue_scope = workspace_scope(workspace_dir)?;
     let queue_kv = StateKv::on_backend(backend, &queue_scope, OWNER, NS)?;
     let mut names = Vec::new();

@@ -342,9 +342,10 @@ async fn flow_id_comes_from_the_runs_context_not_the_calling_tasks_scope() {
     adapter.ctx = crate::core::runtime::DispatchCtx::unbound().with_turn_origin(own);
 
     // A different flow's origin scoped on the task must not win.
-    let id = crate::security::turn_origin::with_origin(other, async { adapter.trusted_flow_id() })
-        .await
-        .unwrap();
+    let id =
+        crate::core::runtime::turn_origin::with_origin(other, async { adapter.trusted_flow_id() })
+            .await
+            .unwrap();
     assert_eq!(id, "flow-own");
 }
 
@@ -353,6 +354,7 @@ async fn a_context_without_a_workflow_origin_refuses_flow_scope_even_inside_a_wo
     let (_tmp, adapter) = adapter(AutonomyLevel::Full);
     let other = workflow_origin("flow-other");
     let result =
-        crate::security::turn_origin::with_origin(other, async { adapter.trusted_flow_id() }).await;
+        crate::core::runtime::turn_origin::with_origin(other, async { adapter.trusted_flow_id() })
+            .await;
     assert!(result.is_err());
 }

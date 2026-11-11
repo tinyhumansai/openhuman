@@ -588,3 +588,32 @@ async fn regenerate_preserves_original_created_at() {
         "regenerate must preserve created_at, not bump it"
     );
 }
+
+#[test]
+fn a_windows_device_name_never_becomes_a_file_stem() {
+    for (title, stem) in [
+        ("CON", "_con"),
+        ("aux", "_aux"),
+        ("NUL", "_nul"),
+        ("com1", "_com1"),
+        ("LPT9", "_lpt9"),
+        ("prn", "_prn"),
+    ] {
+        assert_eq!(sanitize_filename_stem(title), stem, "{title}");
+    }
+    assert_eq!(
+        sanitize_filename_stem(strip_extension("CON.txt", "txt")),
+        "_con"
+    );
+    assert_eq!(
+        sanitize_filename_stem(strip_extension("AUX.csv", "csv")),
+        "_aux"
+    );
+}
+
+#[test]
+fn a_name_that_only_starts_like_a_device_stays_as_it_is() {
+    for title in ["console", "com0", "com10", "auxiliary", "null"] {
+        assert_eq!(sanitize_filename_stem(title), title);
+    }
+}

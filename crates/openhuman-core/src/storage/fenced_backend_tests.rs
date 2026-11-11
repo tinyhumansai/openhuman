@@ -1,523 +1,403 @@
-//! Node A loses a profile's lease to node B; A's writes through its fenced
-//! view of the shared backend are refused while B's succeed.
+//! The host checks local lease state on cached handles; native conditions
+//! independently fence each storage port against cross-process takeover.
+
+#![cfg(feature = "storage-sqlite")]
 
 use super::*;
 use crate::storage::fence::{fence_error, FenceError, LeaseFence, ScopeMatch};
 use crate::storage::lease::{DocumentLeases, LeaseGrant, LeaseStore, LocalLeases};
-use crate::storage::MemoryStorage;
 use serde_json::json;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::Duration;
-
-#[path = "fenced_blob_stream_tests.rs"]
-mod blob_stream_tests;
+use tinystoragedrivers_types::{CollectionSpec, NewMessage, Precondition, QueueSpec, Scope};
 
 const TTL: Duration = Duration::from_secs(30);
 const MARGIN_MS: u64 = 5_000;
 
-/// One node: its clock, its lease store and fence registry, and its fenced
-/// view of the shared backend.
 struct Node {
     name: &'static str,
-    clock: Arc<AtomicU64>,
-    leases: Arc<dyn LeaseStore>,
+    now: Arc<AtomicU64>,
+    leases: Arc<DocumentLeases>,
     fences: Arc<FenceRegistry>,
-    storage: FencedBackend,
+    backend: FencedBackend,
 }
 
 impl Node {
-    fn new(name: &'static str, shared: &Arc<dyn StorageBackend>) -> Self {
-        let clock = Arc::new(AtomicU64::new(0));
-        let reading = Arc::clone(&clock);
-        let fences = Arc::new(FenceRegistry::new(move || reading.load(Ordering::SeqCst)));
+    fn new(name: &'static str, shared: Arc<dyn StorageBackend>) -> Self {
+        let now = Arc::new(AtomicU64::new(crate::storage::fence::system_now_ms()));
+        let clock = Arc::clone(&now);
+        let fences = Arc::new(FenceRegistry::new(move || clock.load(Ordering::SeqCst)));
+        let leases = Arc::new(DocumentLeases::cluster(shared.as_ref(), name, None, TTL).unwrap());
         Self {
             name,
-            leases: Arc::new(DocumentLeases::cluster(shared.as_ref(), name, None, TTL).unwrap()),
-            storage: FencedBackend::new(Arc::clone(shared), Arc::clone(&fences)),
-            fences,
-            clock,
+            now,
+            leases,
+            fences: Arc::clone(&fences),
+            backend: FencedBackend::new(shared, fences),
         }
     }
 
-    fn set_clock(&self, ms: u64) {
-        self.clock.store(ms, Ordering::SeqCst);
+    fn set_now(&self, now: u64) {
+        self.now.store(now, Ordering::SeqCst);
     }
 
-    async fn take(&self, key: &str) -> LeaseGrant {
+    async fn acquire(&self, key: &str) -> (LeaseGrant, Arc<LeaseFence>) {
         let grant = self
             .leases
-            .acquire(key, self.clock.load(Ordering::SeqCst))
+            .acquire(key, self.now.load(Ordering::SeqCst))
             .await
             .unwrap();
-        self.fences.register(Arc::new(LeaseFence::new(
-            Arc::clone(&self.leases),
+        let fence = Arc::new(LeaseFence::new(
+            Arc::clone(&self.leases) as Arc<dyn LeaseStore>,
             key,
             self.name,
             grant.epoch,
             grant.expires_at_ms,
             MARGIN_MS,
-            vec![
-                ScopeMatch::Exact(format!("profile:{key}")),
-                ScopeMatch::Prefix(format!("{key}~")),
-            ],
-        )));
-        grant
+            vec![ScopeMatch::Exact(format!("profile:{key}"))],
+        ));
+        self.fences.register(Arc::clone(&fence));
+        (grant, fence)
     }
 
-    fn scoped(&self, scope: &str) -> ScopedStorage {
-        self.storage.for_scope(&Scope::new(scope).unwrap()).unwrap()
-    }
-
-    async fn put(&self, scope: &str, id: &str) -> Result<Version> {
-        self.scoped(scope)
-            .documents()
-            .put("notes", id, json!({"by": self.name}), Precondition::None)
-            .await
+    fn storage(&self) -> Storage {
+        self.backend
+            .for_scope(&Scope::new("profile:alice").unwrap())
+            .unwrap()
     }
 }
 
-fn shared() -> Arc<dyn StorageBackend> {
-    Arc::new(MemoryStorage::new())
+fn shared() -> crate::storage::test_support::SqliteBackend {
+    crate::storage::test_support::sqlite_backend().unwrap()
 }
 
 #[tokio::test]
-async fn a_node_that_lost_the_lease_cannot_write_and_the_new_holder_can() {
-    let backend = shared();
-    let (a, b) = (Node::new("node-a", &backend), Node::new("node-b", &backend));
-
-    a.take("alice").await;
-    a.put("profile:alice", "n1").await.unwrap();
-    a.put("alice~default", "n1").await.unwrap();
-
-    // Node B's clock passes A's expiry and takes the profile over. Node A's
-    // clock is still early (it was paused, or runs behind): its local check
-    // passes, so the stored record is what stops it.
-    b.set_clock(TTL.as_millis() as u64 + 1);
-    let stolen = b.take("alice").await;
-    assert!(stolen.previous_unclean);
-    a.set_clock(1_000);
-
-    let refused = a.put("profile:alice", "n2").await.unwrap_err();
-    assert!(matches!(
-        fence_error(&refused),
-        Some(FenceError::Superseded {
-            held: 1,
-            stored: Some(2)
-        })
-    ));
-    // Every write port, and every session scope of the profile, is fenced.
-    let session = a.scoped("alice~default");
-    assert!(session.streams().append("log", json!(1)).await.is_err());
-    assert!(session.blobs().put("k", b"x".to_vec(), None).await.is_err());
-    assert!(session
-        .documents()
-        .delete("notes", "n1", Precondition::None)
-        .await
-        .is_err());
-    // Reads are not.
-    assert!(session
-        .documents()
-        .get("notes", "n1")
-        .await
-        .unwrap()
-        .is_some());
-    // Other profiles' scopes are untouched.
-    a.put("profile:bob", "n1").await.unwrap();
-
-    // The new holder writes, and its write is the one that stands.
-    b.put("profile:alice", "n2").await.unwrap();
-    let stored = backend
-        .for_scope(&Scope::new("profile:alice").unwrap())
-        .unwrap()
-        .documents()
-        .get("notes", "n2")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(stored.doc["by"], "node-b");
-}
-
-#[tokio::test]
-async fn a_paused_node_refuses_its_own_writes_once_its_grant_runs_out() {
-    let backend = shared();
-    let a = Node::new("node-a", &backend);
-    a.take("alice").await;
-
-    // Nobody took over yet, but node A's renewals stopped landing: inside
-    // the skew margin it already refuses, with no I/O.
-    a.set_clock(TTL.as_millis() as u64 - MARGIN_MS);
-    let refused = a.put("profile:alice", "n").await.unwrap_err();
-    assert_eq!(
-        fence_error(&refused),
-        Some(&FenceError::Expired { epoch: 1 })
-    );
-}
-
-#[tokio::test]
-async fn a_renewed_grant_keeps_admitting_writes() {
-    let backend = shared();
-    let a = Node::new("node-a", &backend);
-    let grant = a.take("alice").await;
-    a.set_clock(20_000);
-    let renewed = a.leases.renew(&grant, 20_000).await.unwrap();
-    a.fences
-        .lookup("profile:alice")
-        .unwrap()
-        .renewed(renewed.expires_at_ms);
-    a.set_clock(40_000);
-    a.put("profile:alice", "n").await.unwrap();
-}
-
-/// File leases (`LocalLeases`, hosts without a backend) cannot be lost while
-/// the process lives, so a fence over one admits writes until the holder
-/// releases it.
-#[tokio::test]
-async fn a_fence_over_file_leases_admits_until_release() {
-    let tmp = tempfile::tempdir().unwrap();
-    let leases: Arc<dyn LeaseStore> = Arc::new(LocalLeases::new(tmp.path(), "node-a"));
+async fn a_file_lease_guards_profile_handles_until_release() {
+    let shared = shared();
+    let root = tempfile::tempdir().unwrap();
+    let leases: Arc<dyn LeaseStore> = Arc::new(LocalLeases::new(root.path(), "node-a"));
     let grant = leases.acquire("alice", 0).await.unwrap();
-    assert_eq!(grant.expires_at_ms, u64::MAX, "file leases never expire");
-    let fence = LeaseFence::new(
+    let fences = Arc::new(FenceRegistry::new(crate::storage::fence::system_now_ms));
+    let fence = Arc::new(LeaseFence::new(
         Arc::clone(&leases),
         "alice",
         "node-a",
         grant.epoch,
         grant.expires_at_ms,
-        MARGIN_MS,
-        vec![ScopeMatch::Exact("profile:alice".into())],
-    );
-    assert_eq!(fence.check(u64::MAX / 2).await, Ok(()));
-    leases.release(grant).await.unwrap();
-    assert!(matches!(
-        fence.check(1).await,
-        Err(FenceError::Superseded { .. })
-    ));
-}
-
-/// Node A's lease store, with the pause the host check cannot see: its next
-/// record read returns what it read and *then* lets node B take the key
-/// over, as if A were paused between its check and its write.
-struct PausedAfterCheck {
-    inner: Arc<dyn LeaseStore>,
-    thief: Arc<dyn LeaseStore>,
-    armed: std::sync::atomic::AtomicBool,
-}
-
-#[async_trait]
-impl LeaseStore for PausedAfterCheck {
-    async fn acquire(
-        &self,
-        key: &str,
-        now_ms: u64,
-    ) -> std::result::Result<LeaseGrant, crate::storage::lease::LeaseError> {
-        self.inner.acquire(key, now_ms).await
-    }
-
-    async fn renew(
-        &self,
-        grant: &LeaseGrant,
-        now_ms: u64,
-    ) -> std::result::Result<LeaseGrant, crate::storage::lease::LeaseError> {
-        self.inner.renew(grant, now_ms).await
-    }
-
-    async fn release(
-        &self,
-        grant: LeaseGrant,
-    ) -> std::result::Result<(), crate::storage::lease::LeaseError> {
-        self.inner.release(grant).await
-    }
-
-    async fn holder(
-        &self,
-        key: &str,
-    ) -> std::result::Result<
-        Option<crate::storage::lease::LeaseRecord>,
-        crate::storage::lease::LeaseError,
-    > {
-        let record = self.inner.holder(key).await?;
-        if self.armed.swap(false, Ordering::SeqCst) {
-            let stolen = self.thief.acquire(key, TTL.as_millis() as u64 + 1).await?;
-            assert_eq!(stolen.epoch, 2);
-        }
-        Ok(record)
-    }
-
-    fn driver_fence(&self, key: &str, node: &str, epoch: u64) -> Option<tinystoragedrivers::Fence> {
-        self.inner.driver_fence(key, node, epoch)
-    }
-}
-
-/// Node A holds `alice` on `shared`; returns A's fenced view, its fence,
-/// and the switch that makes its next check go stale.
-async fn paused_holder(
-    shared: &Arc<dyn StorageBackend>,
-) -> (FencedBackend, Arc<LeaseFence>, Arc<PausedAfterCheck>) {
-    let leases = Arc::new(PausedAfterCheck {
-        inner: Arc::new(DocumentLeases::cluster(shared.as_ref(), "node-a", None, TTL).unwrap()),
-        thief: Arc::new(DocumentLeases::cluster(shared.as_ref(), "node-b", None, TTL).unwrap()),
-        armed: std::sync::atomic::AtomicBool::new(false),
-    });
-    let grant = leases.acquire("alice", 0).await.unwrap();
-    let fences = Arc::new(FenceRegistry::new(|| 1_000));
-    let fence = Arc::new(LeaseFence::new(
-        Arc::clone(&leases) as Arc<dyn LeaseStore>,
-        "alice",
-        "node-a",
-        grant.epoch,
-        grant.expires_at_ms,
-        MARGIN_MS,
+        0,
         vec![ScopeMatch::Exact("profile:alice".into())],
     ));
     fences.register(Arc::clone(&fence));
-    (
-        FencedBackend::new(Arc::clone(shared), fences),
-        fence,
-        leases,
-    )
-}
-
-/// The race the host check alone leaves open: A's check passes, A pauses,
-/// B takes over, A's write lands. The driver re-reads the lease record in
-/// the write's own atomic step and refuses it.
-async fn driver_refuses_the_write_the_host_check_admitted(shared: Arc<dyn StorageBackend>) {
-    assert!(shared.capabilities().contains(Capability::Fencing));
-    let (a, fence, leases) = paused_holder(&shared).await;
-    let scoped = a.for_scope(&Scope::new("profile:alice").unwrap()).unwrap();
-    scoped
+    let backend = FencedBackend::new(Arc::clone(&shared.backend), Arc::clone(&fences));
+    let scope = Scope::new("profile:alice").unwrap();
+    let storage = backend.for_scope(&scope).unwrap();
+    storage
         .documents()
-        .put("notes", "n1", json!({"v": 1}), Precondition::None)
+        .ensure_collection(&CollectionSpec::new("items"))
         .await
         .unwrap();
-
-    leases.armed.store(true, Ordering::SeqCst);
-    let refused = scoped
+    storage
         .documents()
-        .put("notes", "n1", json!({"v": 2}), Precondition::None)
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(
-            fence_error(&refused),
-            Some(FenceError::Superseded {
-                held: 1,
-                stored: Some(2)
-            })
-        ),
-        "{refused:?}"
-    );
-    assert!(fence.is_fenced(), "a driver refusal latches the fence");
-    let stored = shared
-        .for_scope(&Scope::new("profile:alice").unwrap())
-        .unwrap()
-        .documents()
-        .get("notes", "n1")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(stored.doc["v"], 1, "the late write did not land");
-    // Latched: every later write is refused before it reaches the driver.
-    assert!(scoped.streams().append("log", json!(1)).await.is_err());
-}
-
-#[tokio::test]
-async fn memory_driver_refuses_a_write_after_a_takeover_the_check_missed() {
-    driver_refuses_the_write_the_host_check_admitted(shared()).await;
-}
-
-/// Streams and blobs go through the driver fence too.
-#[tokio::test]
-async fn stream_and_blob_writes_are_driver_fenced() {
-    let backend = shared();
-    let (a, _fence, leases) = paused_holder(&backend).await;
-    let scoped = a.for_scope(&Scope::new("profile:alice").unwrap()).unwrap();
-    leases.armed.store(true, Ordering::SeqCst);
-    assert!(scoped.streams().append("log", json!(1)).await.is_err());
-    let raw = backend
-        .for_scope(&Scope::new("profile:alice").unwrap())
-        .unwrap();
-    assert_eq!(raw.streams().len("log").await.unwrap(), 0);
-
-    let (b, _fence, leases) = paused_holder(&shared()).await;
-    let scoped = b.for_scope(&Scope::new("profile:alice").unwrap()).unwrap();
-    leases.armed.store(true, Ordering::SeqCst);
-    assert!(scoped.blobs().put("k", b"x".to_vec(), None).await.is_err());
-}
-
-/// A driver without fencing gets the host check only, and writes through.
-#[tokio::test]
-async fn a_driver_without_fencing_falls_back_to_the_host_check() {
-    let backend: Arc<dyn StorageBackend> = Arc::new(NoFencing(MemoryStorage::new()));
-    let (a, _fence, _leases) = paused_holder(&backend).await;
-    let scoped = a.for_scope(&Scope::new("profile:alice").unwrap()).unwrap();
-    scoped
-        .documents()
-        .put("notes", "n", json!({}), Precondition::None)
-        .await
-        .unwrap();
-}
-
-/// The memory driver, reporting no fencing (MongoDB without transactions).
-#[derive(Debug)]
-struct NoFencing(MemoryStorage);
-
-impl StorageBackend for NoFencing {
-    fn driver(&self) -> &'static str {
-        "no-fencing"
-    }
-    fn capabilities(&self) -> Capabilities {
-        self.0.capabilities().without(Capability::Fencing)
-    }
-    fn for_scope(&self, scope: &Scope) -> Result<ScopedStorage> {
-        self.0.for_scope(scope)
-    }
-}
-
-/// The run ledger claims team tasks with `atomic_batch_checked`. The fenced
-/// view must pass it through to a driver that supports it (the default trait
-/// method answers `Unsupported`), and still refuse it for a stale lease.
-#[tokio::test]
-async fn a_checked_batch_reaches_the_driver_through_the_fenced_view() {
-    use tinystoragedrivers::{ExpectedDocument, ReadCheck};
-
-    let shared: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
-    let a = Node::new("a", &shared);
-    let docs = Arc::clone(a.scoped("plain").documents());
-    docs.ensure_collection(&CollectionSpec::new("things"))
-        .await
-        .unwrap();
-
-    let applied = docs
-        .atomic_batch_checked(
-            vec![ReadCheck {
-                collection: "things".into(),
-                id: "dependency".into(),
-                expected: ExpectedDocument::Absent,
-            }],
-            vec![WriteOp::Put {
-                collection: "things".into(),
-                id: "claimed".into(),
-                doc: json!({ "by": "a" }),
-                precondition: Precondition::Absent,
-            }],
+        .put(
+            "items",
+            "during-lease",
+            json!({"ok": true}),
+            Precondition::Absent,
         )
         .await
-        .expect("the checked batch is not answered Unsupported");
-    assert_eq!(applied.len(), 1);
-    assert!(docs.get("things", "claimed").await.unwrap().is_some());
-
-    // The dependency is validated: a check that no longer holds writes nothing.
-    docs.put("things", "dependency", json!({}), Precondition::Absent)
-        .await
         .unwrap();
-    let conflict = docs
-        .atomic_batch_checked(
-            vec![ReadCheck {
-                collection: "things".into(),
-                id: "dependency".into(),
-                expected: ExpectedDocument::Absent,
-            }],
-            vec![WriteOp::Put {
-                collection: "things".into(),
-                id: "second".into(),
-                doc: json!({}),
-                precondition: Precondition::Absent,
-            }],
+
+    fences.retire("alice", grant.epoch);
+    leases.release(grant).await.unwrap();
+    let error = storage
+        .documents()
+        .put(
+            "items",
+            "after-release",
+            json!({"ok": false}),
+            Precondition::Absent,
         )
         .await
         .unwrap_err();
-    assert_eq!(conflict.kind(), ErrorKind::Conflict);
-    assert!(docs.get("things", "second").await.unwrap().is_none());
+    assert!(matches!(
+        fence_error(&error),
+        Some(FenceError::Fenced { .. })
+    ));
 }
 
-/// The fenced view must not hide what the driver can do: an expiring blob
-/// written through it is stored, reads back, and the view advertises the
-/// capability (before, `FencedBlobs` reported none and `put_expiring` fell to
-/// the trait default, `Unsupported`, on every driver).
 #[tokio::test]
-async fn fenced_blobs_forward_expiry_and_capabilities() {
-    let backend = shared();
-    let node = Node::new("node-a", &backend);
-    node.take("alice").await;
-    let scoped = node.scoped("profile:alice");
-
-    let blobs = scoped.blobs();
-    assert!(blobs.capabilities().contains(Capability::BlobTtl));
-    assert!(!blobs.capabilities().contains(Capability::PresignedUrls));
-    assert_eq!(
-        blobs.max_key_len(),
-        backend
-            .for_scope(&Scope::new("profile:alice").unwrap())
-            .unwrap()
-            .blobs()
-            .max_key_len()
-    );
-
-    blobs
-        .put_expiring("live", b"x".to_vec(), None, Duration::from_secs(3600))
+async fn cached_handles_enforce_local_expiry_margin_and_accept_same_epoch_renewal() {
+    let shared = shared();
+    let node = Node::new("node-a", Arc::clone(&shared.backend));
+    let base = node.now.load(Ordering::SeqCst);
+    let (grant, fence) = node.acquire("alice").await;
+    let storage = node.storage();
+    storage
+        .documents()
+        .ensure_collection(&CollectionSpec::new("items"))
         .await
         .unwrap();
-    assert_eq!(blobs.get("live").await.unwrap().unwrap().bytes, b"x");
-    assert!(blobs.get_stream("live").await.unwrap().is_some());
 
-    // A zero lifetime is already expired: written, never visible.
-    blobs
-        .put_expiring("gone", b"x".to_vec(), None, Duration::ZERO)
+    node.set_now(base + 20_000);
+    let renewed = node.leases.renew(&grant, base + 20_000).await.unwrap();
+    assert_eq!(renewed.epoch, grant.epoch);
+    fence.renewed(renewed.expires_at_ms);
+    node.set_now(base + 40_000);
+    storage
+        .documents()
+        .put(
+            "items",
+            "renewed",
+            json!({"ok": true}),
+            Precondition::Absent,
+        )
         .await
-        .unwrap();
-    assert!(blobs.get("gone").await.unwrap().is_none());
-    assert!(blobs.get_stream("gone").await.unwrap().is_none());
-}
+        .expect("the bound condition reads the renewed deadline dynamically");
 
-/// An expiring write is a write: a node that lost the lease cannot make one.
-#[tokio::test]
-async fn expiring_blob_writes_are_fenced() {
-    let backend = shared();
-    let (a, b) = (Node::new("node-a", &backend), Node::new("node-b", &backend));
-    a.take("alice").await;
-    b.set_clock(TTL.as_millis() as u64 + 1);
-    b.take("alice").await;
-    a.set_clock(1_000);
-
-    let session = a.scoped("alice~default");
-    assert!(session
-        .blobs()
-        .put_expiring("k", b"x".to_vec(), None, Duration::from_secs(60))
+    node.set_now(renewed.expires_at_ms - MARGIN_MS);
+    let error = storage
+        .documents()
+        .put("items", "too-late", json!({}), Precondition::Absent)
         .await
-        .is_err());
-    assert!(backend
-        .for_scope(&Scope::new("alice~default").unwrap())
-        .unwrap()
-        .blobs()
-        .get("k")
+        .unwrap_err();
+    assert!(matches!(
+        fence_error(&error),
+        Some(FenceError::Expired { .. })
+    ));
+    assert!(storage
+        .documents()
+        .get("items", "too-late")
         .await
         .unwrap()
         .is_none());
 }
 
-/// The wrapper must pass a conditional append through to a driver that has it:
-/// the trait default answers `Unsupported(ConditionalStreamAppend)`, which
-/// refused every conversation append on the default (SQLite) backend.
-async fn conditional_append_passes_through(inner: Arc<dyn StorageBackend>) {
-    let wrapped = wrap(inner);
-    let scoped = wrapped.for_scope(&Scope::local()).unwrap();
-    let streams = scoped.streams();
-    assert_eq!(
-        streams
-            .append_batch_if_offset("log", 0, vec![json!(1)])
-            .await
-            .unwrap(),
-        0
-    );
-    let stale = streams
-        .append_batch_if_offset("log", 0, vec![json!(2)])
+#[tokio::test]
+async fn a_cached_handle_cannot_mutate_after_cross_process_takeover_on_any_port() {
+    let shared = shared();
+    let a = Node::new("node-a", Arc::clone(&shared.backend));
+    let b = Node::new("node-b", Arc::clone(&shared.backend));
+    let base = a.now.load(Ordering::SeqCst);
+    let (_grant, _fence) = a.acquire("alice").await;
+    let storage = a.storage();
+    storage
+        .documents()
+        .ensure_collection(&CollectionSpec::new("items"))
         .await
-        .unwrap_err();
-    assert_eq!(stale.kind(), tinystoragedrivers::ErrorKind::Conflict);
-    assert_eq!(streams.len("log").await.unwrap(), 1);
+        .unwrap();
+    storage
+        .documents()
+        .put("items", "kept", json!({}), Precondition::Absent)
+        .await
+        .unwrap();
+    storage
+        .queues()
+        .ensure_queue("work", &QueueSpec::default())
+        .await
+        .unwrap();
+    storage
+        .queues()
+        .enqueue("work", &[NewMessage::new(json!({"job": 1}))])
+        .await
+        .unwrap();
+    let delivery = storage
+        .queues()
+        .receive("work", 1, 10_000, "worker")
+        .await
+        .unwrap();
+    let receipt = delivery[0].receipt.clone();
+
+    b.set_now(base + TTL.as_millis() as u64 + 1);
+    let (stolen, _) = b.acquire("alice").await;
+    assert_eq!(stolen.epoch, 2);
+    // A's local clock is deliberately behind. The local precheck succeeds;
+    // the driver's atomic condition is what refuses each cached-handle write.
+    a.set_now(base + 1_000);
+    assert!(storage
+        .documents()
+        .put("items", "late", json!({}), Precondition::Absent)
+        .await
+        .is_err());
+    assert!(storage.streams().append("events", json!(1)).await.is_err());
+    assert!(storage
+        .blobs()
+        .put("blob", b"x".to_vec(), None)
+        .await
+        .is_err());
+    assert!(storage.kv().put("key", json!(1)).await.is_err());
+    let error = storage.queues().ack("work", &receipt).await.unwrap_err();
+    assert!(matches!(
+        fence_error(&error),
+        Some(FenceError::Fenced { .. })
+    ));
+
+    let raw = shared
+        .backend
+        .for_scope(&Scope::new("profile:alice").unwrap())
+        .unwrap();
+    assert!(raw
+        .documents()
+        .get("items", "late")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(raw.streams().len("events").await.unwrap(), 0);
+    assert!(raw.blobs().get("blob").await.unwrap().is_none());
+    assert!(raw.kv().get("key").await.unwrap().is_none());
+    assert_eq!(raw.queues().stats("work").await.unwrap().leased, 1);
+    assert!(raw
+        .documents()
+        .get("items", "kept")
+        .await
+        .unwrap()
+        .is_some());
 }
 
 #[tokio::test]
-async fn fenced_memory_backend_passes_conditional_appends_through() {
-    conditional_append_passes_through(shared()).await;
+async fn a_manually_latched_cached_fence_refuses_mutations_before_driver_io() {
+    let shared = shared();
+    let node = Node::new("node-a", Arc::clone(&shared.backend));
+    let (_grant, fence) = node.acquire("alice").await;
+    let storage = node.storage();
+    storage
+        .documents()
+        .ensure_collection(&CollectionSpec::new("items"))
+        .await
+        .unwrap();
+    fence.fence();
+    assert!(storage
+        .documents()
+        .put("items", "late", json!({}), Precondition::Absent)
+        .await
+        .is_err());
+    assert!(shared
+        .backend
+        .for_scope(&Scope::new("profile:alice").unwrap())
+        .unwrap()
+        .documents()
+        .get("items", "late")
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn captured_profile_sweeps_cannot_follow_a_replacement_epoch() {
+    let shared = shared();
+    let a = Node::new("node-a", Arc::clone(&shared.backend));
+    let b = Node::new("node-b", Arc::clone(&shared.backend));
+    let base = a.now.load(Ordering::SeqCst);
+    let (_grant, fence) = a.acquire("alice").await;
+    let captured = FencedBackend::for_fence(
+        Arc::clone(&shared.backend),
+        Arc::clone(&a.fences),
+        Arc::clone(&fence),
+    );
+    let scope = Scope::new("profile:alice").unwrap();
+    let storage = captured.for_scope(&scope).unwrap();
+    storage
+        .blobs()
+        .put_expiring("aging", b"preserve".to_vec(), None, Duration::ZERO)
+        .await
+        .unwrap();
+
+    b.set_now(base + TTL.as_millis() as u64 + 1);
+    b.acquire("alice").await;
+    a.set_now(base + 1_000);
+    assert_eq!(
+        super::super::blob_sweep::sweep_scope(&captured, &scope).await,
+        0
+    );
+}
+
+#[path = "fenced_backend_upstream_tests.rs"]
+mod upstream_tests;
+
+#[tokio::test]
+async fn fenced_handles_declare_collections_on_a_backend_that_refuses_conditioned_declarations() {
+    // Leases kept in the backend put a driver condition on every profile
+    // handle; MongoDB refuses to declare collections under one (#8422).
+    let shared = shared();
+    let refusing = crate::storage::test_support::refusing_conditioned_declarations(Arc::clone(
+        &shared.backend,
+    ));
+    let node = Node::new("node-a", Arc::clone(&refusing));
+    let (_grant, fence) = node.acquire("alice").await;
+    assert!(
+        fence.write_condition().is_some(),
+        "a lease kept in the backend has a driver condition"
+    );
+    let storage = node.storage();
+    let spec = CollectionSpec::new("declared_under_lease");
+    storage.documents().ensure_collection(&spec).await.unwrap();
+    storage
+        .documents()
+        .validate_collection_spec(&spec)
+        .await
+        .unwrap();
+    storage
+        .documents()
+        .put(
+            "declared_under_lease",
+            "row",
+            json!({}),
+            Precondition::Absent,
+        )
+        .await
+        .unwrap();
+
+    // An import claim on top of the lease (an admitted profile's import),
+    // taken through the fenced backend and released before it is used, so
+    // its condition no longer holds.
+    let profile = Scope::new("profile:alice").unwrap();
+    let fenced: Arc<dyn StorageBackend> = Arc::new(FencedBackend::new(
+        Arc::clone(&refusing),
+        Arc::clone(&node.fences),
+    ));
+    let claims = crate::storage::documents::Repo::on(
+        &fenced,
+        &crate::storage::Scope::from(profile.clone()),
+        "fence-claim-test",
+        Vec::new,
+    )
+    .unwrap();
+    let stale = tokio::task::spawn_blocking(move || {
+        crate::storage::import_state::with_claim(&claims, "fence_test", "import", |condition| {
+            Ok(condition.clone())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap()
+    .expect("the claim is free");
+
+    let conditioned = node
+        .backend
+        .for_scope_conditioned(&profile, &stale)
+        .unwrap();
+    let docs = conditioned.documents();
+    docs.ensure_collection(&CollectionSpec::new("declared_under_claim"))
+        .await
+        .expect("a lease and a lost claim may still declare a collection");
+    let written = docs
+        .put(
+            "declared_under_claim",
+            "stale",
+            json!({}),
+            Precondition::Absent,
+        )
+        .await;
+    assert!(
+        written.is_err(),
+        "a lost claim cannot write under the lease"
+    );
+    assert!(storage
+        .documents()
+        .get("declared_under_claim", "stale")
+        .await
+        .unwrap()
+        .is_none());
 }

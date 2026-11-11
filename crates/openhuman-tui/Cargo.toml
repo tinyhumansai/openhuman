@@ -29,6 +29,9 @@ default = [
     "file-logging",
     "modules",
     "storage-sqlite",
+    "storage-file",
+    "secret-file",
+    "legacy-import",
 ]
 crash-reporting = ["openhuman-rpc/crash-reporting"]
 jev = ["openhuman-rpc/jev"]
@@ -36,9 +39,9 @@ http-server = ["openhuman-rpc/http-server"]
 inference = ["openhuman-rpc/inference"]
 documents = ["openhuman-rpc/documents"]
 hosting = ["openhuman-rpc/hosting"]
-tinymemes = ["openhuman-rpc/tinymemes"]
 inbound-queues = ["openhuman-rpc/inbound-queues"]
 modules = ["openhuman-rpc/modules"]
+security-module = ["openhuman-rpc/security-module"]
 voice = ["openhuman-rpc/voice"]
 web3 = ["openhuman-rpc/web3"]
 # Storage drivers for `[storage] url` / `OPENHUMAN_STORAGE_URL`.
@@ -46,6 +49,9 @@ storage-sqlite = ["openhuman-rpc/storage-sqlite"]
 storage-mongodb = ["openhuman-rpc/storage-mongodb"]
 storage-s3 = ["openhuman-rpc/storage-s3"]
 storage-file = ["openhuman-rpc/storage-file"]
+storage-rabbitmq = ["openhuman-rpc/storage-rabbitmq"]
+secret-file = ["openhuman-rpc/secret-file"]
+legacy-import = ["openhuman-rpc/legacy-import"]
 media = ["openhuman-rpc/media"]
 flows = ["openhuman-rpc/flows"]
 skills = ["openhuman-rpc/skills"]

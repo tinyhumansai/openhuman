@@ -1,9 +1,11 @@
 //! Streamed blobs and watch signals, decided by the host without a bus.
 
 use super::*;
+use bytes::Bytes;
+use futures_util::{stream, StreamExt};
 
 fn blob_body(bytes: Vec<u8>) -> BlobReader {
-    Box::pin(std::io::Cursor::new(bytes))
+    Box::pin(stream::iter([Ok(Bytes::from(bytes))]))
 }
 
 fn head(key: &str, len: u64) -> PutBlobStreamRequest {
@@ -35,9 +37,9 @@ async fn a_streamed_blob_is_stored_in_the_callers_scope_and_read_back() {
         .expect("the blob is there");
     assert_eq!(meta.meta.len, bytes.len() as u64);
     let mut read = Vec::new();
-    tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut read)
-        .await
-        .unwrap();
+    while let Some(chunk) = reader.next().await {
+        read.extend_from_slice(&chunk.unwrap());
+    }
     assert_eq!(read, bytes);
     // Another module never sees it, even by the same key.
     let other = rig

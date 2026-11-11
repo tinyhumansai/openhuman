@@ -73,13 +73,14 @@ fn hosted_base() -> Arc<crate::agent::tinyagents::host::OpenHumanHostBase> {
     })
 }
 
-fn root_models(reply: &str) -> TurnModels {
+async fn root_models(reply: &str) -> TurnModels {
     let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
         Arc::new(tinyagents_harness::testkit::ScriptedModel::replies(vec![
             reply,
         ]));
     TurnModelSource::from_model(model)
         .build("root-test-model", 0.0, None, None)
+        .await
         .expect("scripted turn models build")
 }
 
@@ -112,6 +113,7 @@ async fn scoped_tool_limit_is_honored_by_the_hosted_runner_inner() {
     let model: Arc<dyn ChatModel<()>> = Arc::new(RequestLimitedToolModel(model_calls.clone()));
     let models = TurnModelSource::from_model(model)
         .build("root-test-model", 0.0, None, None)
+        .await
         .expect("scripted turn models build");
     let (tx, _rx) = tokio::sync::mpsc::channel(8);
 
@@ -173,6 +175,7 @@ async fn positive_scoped_tool_limit_caps_hosted_runner_inner() {
     let model: Arc<dyn ChatModel<()>> = Arc::new(RequestLimitedToolModel(model_calls.clone()));
     let models = TurnModelSource::from_model(model)
         .build("root-test-model", 0.0, None, None)
+        .await
         .expect("scripted turn models build");
     let (tx, _rx) = tokio::sync::mpsc::channel(8);
 
@@ -224,11 +227,13 @@ fn root_context(
     progress: tokio::sync::mpsc::Sender<crate::progress::AgentProgress>,
 ) -> OpenHumanRunContext {
     let mut context = OpenHumanRunContext::new();
-    context.origin = Some(crate::security::turn_origin::AgentTurnOrigin::WebChat {
-        thread_id: thread_id.to_string(),
-        client_id: format!("client-{thread_id}"),
-        request_id: Some(format!("request-{thread_id}")),
-    });
+    context.origin = Some(
+        crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
+            thread_id: thread_id.to_string(),
+            client_id: format!("client-{thread_id}"),
+            request_id: Some(format!("request-{thread_id}")),
+        },
+    );
     context.thread_id = Some(thread_id.to_string());
     context.workspace = Some(tinytools::WorkspaceDescriptor::new(workspace));
     context.progress = Some(progress);
@@ -253,7 +258,7 @@ async fn run_root_with(
 ) -> anyhow::Result<TinyagentsTurnOutcome> {
     TurnSpec {
         run_context: context,
-        turn_models: root_models(reply),
+        turn_models: root_models(reply).await,
         provider_id: "test".to_string(),
         model: "root-test-model",
         history: messages,
@@ -325,7 +330,9 @@ fn hosted_roots_share_only_an_unconfigured_process_harness() {
 
     assert_eq!(first, second, "all roots enter the same durable harness");
     assert!(
-        root_hosted_harness().models().default_name().is_none(),
+        root_hosted_harness()
+            .preview_model_profile_for_request(&ModelRequest::default())
+            .is_none(),
         "models are invocation-local overlays, never mutable shared root state"
     );
     assert!(
@@ -475,6 +482,7 @@ async fn an_in_stream_provider_failure_is_re_surfaced_past_the_hosted_sanitizer(
     let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> = Arc::new(InStreamRejectionModel);
     let models = TurnModelSource::from_model(model)
         .build("root-test-model", 0.0, None, None)
+        .await
         .expect("turn models build");
     let (tx, _rx) = tokio::sync::mpsc::channel(8);
     let error = TurnSpec {
@@ -546,6 +554,7 @@ async fn session_screens_the_new_input_but_not_a_replayed_tool_results_row() {
             // Splices rows into the head: the host writes through this store.
             .with_session_history_locator(Arc::clone(&locator))
             .chat_model(chat_model.clone())
+            .model_name("fixture/replay-screening".to_string())
             .tools(Vec::new())
             .workspace_dir(root.path().join("workspace"))
             .action_dir(root.path().to_path_buf())
@@ -633,6 +642,7 @@ async fn a_root_turn_reports_its_compaction_before_the_model_call() {
         run_context: root_context("compacting", "/tmp/compacting", progress),
         turn_models: TurnModelSource::from_model(model)
             .build("root-test-model", 0.0, None, None)
+            .await
             .expect("scripted turn models build"),
         provider_id: "test".to_string(),
         model: "root-test-model",

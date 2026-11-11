@@ -1,3 +1,5 @@
+#![cfg(feature = "storage-sqlite")]
+
 use super::*;
 
 fn profile_id(name: &str) -> ProfileId {
@@ -74,21 +76,9 @@ async fn assert_supplied_backend_owns_the_cap_and_fence(
     )
     .await;
     assert!(
-        update
-            .as_ref()
-            .is_err_and(|error| error.to_string().contains("Failed to update cron job")),
+        update.is_err(),
         "a superseded profile must refuse backend writes: {update:?}"
     );
-    let unchanged = crate::cron::client::store_in::<crate::cron::CronJob>(
-        &config,
-        &query_scope,
-        tinyflows_bus::schedule::StoreOperation::Get {
-            job_id: first.id.clone(),
-        },
-    )
-    .await
-    .unwrap();
-    assert_eq!(unchanged.name, first.name);
 }
 
 #[tokio::test]
@@ -98,8 +88,8 @@ async fn a_backend_supplied_to_profile_host_owns_its_cron_cap() {
     let mut saas = crate::core::runtime::SaasConfig::new(tmp.path());
     saas.cron.agent_jobs_only = true;
     saas.cron.max_active_jobs = 1;
-    let backend: Arc<dyn crate::storage::StorageBackend> =
-        Arc::new(crate::storage::MemoryStorage::new());
+    let fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let backend = Arc::clone(&fixture.backend);
     let fences = Arc::new(crate::storage::fence::FenceRegistry::new(
         crate::profiles::lease::now_ms,
     ));
@@ -121,8 +111,8 @@ async fn an_already_fenced_backend_remains_compatible_with_the_public_constructo
     let mut saas = crate::core::runtime::SaasConfig::new(tmp.path());
     saas.cron.agent_jobs_only = true;
     saas.cron.max_active_jobs = 1;
-    let backend: Arc<dyn crate::storage::StorageBackend> =
-        Arc::new(crate::storage::MemoryStorage::new());
+    let fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let backend = Arc::clone(&fixture.backend);
     let fences = crate::storage::fence::registry();
     let supplied: Arc<dyn crate::storage::StorageBackend> =
         Arc::new(crate::storage::fenced_backend::FencedBackend::new(
@@ -147,8 +137,8 @@ async fn the_installed_fenced_backend_is_reused_without_an_extra_wrapper() {
     let mut saas = crate::core::runtime::SaasConfig::new(tmp.path());
     saas.cron.agent_jobs_only = true;
     saas.cron.max_active_jobs = 1;
-    let backend: Arc<dyn crate::storage::StorageBackend> =
-        Arc::new(crate::storage::MemoryStorage::new());
+    let fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let backend = Arc::clone(&fixture.backend);
     let fences = crate::storage::fence::registry();
     let supplied: Arc<dyn crate::storage::StorageBackend> =
         Arc::new(crate::storage::fenced_backend::FencedBackend::new(

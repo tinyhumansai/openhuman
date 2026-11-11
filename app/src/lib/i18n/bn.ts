@@ -217,6 +217,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'এজেন্ট ও স্বায়ত্তশাসন',
   'settings.devGroups.automationIntegrations': 'অটোমেশন ও ইন্টিগ্রেশন',
   'settings.tokenUsage.title': 'টোকেন সাশ্রয়',
+  'settings.secretGrant.title': 'OpenHuman-কে আপনার সংরক্ষিত গোপন তথ্য আনলক করতে দেবেন?',
+  'settings.secretGrant.subtitle':
+    'এই সেটিং সংরক্ষণ করতে এটি এনক্রিপ্ট করার জন্য আপনার এককালীন অনুমোদন প্রয়োজন। সংরক্ষণ বাতিল করতে প্রত্যাখ্যান করুন।',
   'settings.tokenUsage.menuDesc': 'সংকোচন সেটিংস এবং সেগুলি কত টোকেন ও ডলার সাশ্রয় করেছে',
   'settings.tokenUsage.saving': 'সংরক্ষণ করা হচ্ছে…',
   'settings.tokenUsage.saved': 'সংরক্ষিত হয়েছে',
@@ -578,6 +581,8 @@ const messages: TranslationMap = {
   'desktop.pendingUnavailable':
     'অপেক্ষমাণ ডেস্কটপ অনুমোদন লোড করা যায়নি। আবার চেষ্টা করতে রিফ্রেশ করুন।',
   'desktop.unsupported': 'এই পরিবেশে ডেস্কটপ নিয়ন্ত্রণ উপলব্ধ নয়।',
+  'desktop.unsupportedWindows':
+    'Windows-এ ডেস্কটপ নিয়ন্ত্রণ এখনও উপলব্ধ নয়। ব্রাউজার নিয়ন্ত্রণ এখনই Windows-এ কাজ করে।',
   'desktop.localOnly': 'এই সেটিং শুধু এই কম্পিউটারে প্রযোজ্য।',
   'desktop.permissions': 'সিস্টেম অনুমতি',
   'desktop.openSettings': 'সেটিংস খুলুন',
@@ -597,6 +602,10 @@ const messages: TranslationMap = {
     'এই মুহূর্তে মেমরিতে পৌঁছানো যাচ্ছে না। সংরক্ষিত কিছুই হারায়নি; একটু পরে আবার চেষ্টা করুন।',
   'memory.outOfCredits.title': 'ক্রেডিট শেষ',
   'memory.outOfCredits.action': 'টপ আপ করুন',
+  'memory.error.planRequired':
+    'আপনার বর্তমান প্ল্যানে মেমরি অন্তর্ভুক্ত নেই, তাই OpenHuman যা শেখে তা সংরক্ষণ করতে বা খুঁজে দেখতে পারে না। মেমরি চালু করতে আপগ্রেড করুন, অথবা সেটিংস থেকে অন্য কোনো মেমরি বিকল্পে যান।',
+  'memory.planRequired.title': 'মেমরি আপনার প্ল্যানের অংশ নয়',
+  'memory.planRequired.action': 'প্ল্যানগুলো দেখুন',
   'alerts.title': 'সতর্কতা',
   'alerts.empty': 'এখনো কোনো সতর্কতা নেই',
   'alerts.markAllRead': 'সব পঠিত চিহ্নিত করুন',
@@ -658,6 +667,15 @@ const messages: TranslationMap = {
   'invites.title': 'আমন্ত্রণ',
   'invites.noInvites': 'কোনো মুলতুবি আমন্ত্রণ নেই',
   'devOptions.titleDiagnostics': 'ডেভেলপার ও ডায়াগনস্টিক্স',
+  'devOptions.doctor.run': 'ডায়াগনস্টিক চালান',
+  'devOptions.doctor.runLive': 'লাইভ পরীক্ষা চালান',
+  'devOptions.doctor.liveWarning':
+    'লাইভ পরীক্ষায় মডেল বা এমবেডিং কলের জন্য টোকেন খরচ হতে পারে। চালিয়ে যাবেন?',
+  'devOptions.doctor.severity.pass': 'সফল',
+  'devOptions.doctor.severity.info': 'তথ্য',
+  'devOptions.doctor.severity.warn': 'সতর্কতা',
+  'devOptions.doctor.severity.error': 'ত্রুটি',
+  'devOptions.doctor.severity.skipped': 'এড়িয়ে যাওয়া',
   'devOptions.diagnostics': 'ডায়াগনস্টিক্স',
   'devOptions.toolPolicyDiagnosticsDesc': 'টুল- মেকআপ, নীতি পোস্ট, xqxqxs, এবং সম্প্রতি ব্যবহৃত',
   'devOptions.toolPolicyDiagnostics.loading': 'লোড করা হচ্ছে...',
@@ -1627,6 +1645,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'ক্যানভাসে খুলুন',
   'chat.flowProposal.dismiss': 'খারিজ করুন',
   'chat.flowProposal.error': 'ওয়ার্কফ্লো সংরক্ষণ করা যায়নি। আবার চেষ্টা করুন।',
+  'chat.flowProposal.versionConflict':
+    'প্রস্তাবটি তৈরির পরে এই ওয়ার্কফ্লো পরিবর্তিত হয়েছে, তাই এটি ওভাররাইট করা হয়নি। একটি নতুন সংশোধন চান।',
   'chat.flowProposal.enableError':
     'ওয়ার্কফ্লো সংরক্ষিত হয়েছে, কিন্তু সক্ষম করা যায়নি। আবার চেষ্টা করুন, বা Workflows পৃষ্ঠা থেকে সক্ষম করুন।',
   'chat.flowProposal.savedConfirmation': 'সংরক্ষিত হয়েছে',
@@ -1819,11 +1839,6 @@ const messages: TranslationMap = {
   'chat.todos.ofTotal': '{total}-এর মধ্যে {done}',
   'chat.todos.receipt': 'অগ্রগতি হালনাগাদ · {done}/{total}',
   'chat.subagents.ranFor': '{duration} ধরে চলেছে',
-  'chat.subagents.ofTotal': '{total}-এর মধ্যে {complete}',
-  'chat.subagents.runningCount': '{count}টি চলছে',
-  'chat.subagents.failedCount': '{count}টি ব্যর্থ',
-  'chat.subagents.incompleteCount': '{count}টি অসম্পূর্ণ',
-  'chat.subagents.settled': 'সহকারী কাজগুলো শেষ হয়েছে। তাদের ফলাফল প্রক্রিয়া করা হচ্ছে।',
   'conversations.planReview.title': 'পরিকল্পনা পর্যালোচনা করুন',
   'conversations.planReview.subtitle':
     'চালানোর জন্য অনুমোদন করুন, বাতিল করতে প্রত্যাখ্যান করুন, অথবা সংশোধনের জন্য মতামত পাঠান।',
@@ -1859,7 +1874,6 @@ const messages: TranslationMap = {
   'conversations.mcpUi.confirmAllow': 'অনুমতি দিন',
   'conversations.mcpUi.confirmDeny': 'প্রত্যাখ্যান করুন',
   'conversations.tools.delegatedTo': '{agent}-কে দায়িত্ব দেওয়া হয়েছে',
-  'conversations.tools.parallelAgentsAggregating': 'ফলাফল একত্র করা হচ্ছে',
   'conversations.tools.openInBrowser': 'ব্রাউজারে খুলুন',
   'conversations.tools.status.running': 'চলছে',
   'conversations.tools.status.done': 'সম্পন্ন',
@@ -1927,22 +1941,6 @@ const messages: TranslationMap = {
     'আবার চেষ্টা ব্যর্থ। সর্বশেষ অ্যাপ বিল্ড ডাউনলোড করে আবার চেষ্টা করুন।',
   'daemon.serviceBlockingGate.retrying': 'আবার চেষ্টা হচ্ছে...',
   'daemon.serviceBlockingGate.title': 'OpenHuman কোর পাওয়া যাচ্ছে না',
-  'worktree.label': 'ওয়ার্কট্রি',
-  'worktree.dirty': 'কমিট না-করা পরিবর্তন',
-  'worktree.clean': 'পরিচ্ছন্ন',
-  'worktree.removing': 'সরানো হচ্ছে…',
-  'worktree.removeFailed': 'ওয়ার্কট্রি সরাতে ব্যর্থ',
-  'worktree.diffFailed': 'ডিফ লোড করতে ব্যর্থ',
-  'worktree.diffLoading': 'ডিফ লোড হচ্ছে…',
-  'worktree.diffEmpty': 'HEAD-এর তুলনায় কোনো পরিবর্তন নেই।',
-  'worktree.dirtyConfirm':
-    'এই ওয়ার্কট্রিতে কমিট না-করা পরিবর্তন আছে। এটি সরালে সেই কাজ বাতিল হয়ে যাবে। ওয়ার্কার ব্রাঞ্চ রাখা হবে।',
-  'worktree.action.open': 'ফোল্ডার খুলুন',
-  'worktree.action.diff': 'ডিফ',
-  'worktree.action.hideDiff': 'ডিফ লুকান',
-  'worktree.action.remove': 'সরান',
-  'worktree.action.removeAnyway': 'বাতিল করে সরান',
-  'worktree.action.preserve': 'রেখে দিন',
   'notifications.card.dismiss': 'বিজ্ঞপ্তি বাদ দিন',
   'notifications.card.importanceTitle': 'গুরুত্ব: {pct}%',
   'notifications.center.empty': 'এখনো কোনো বিজ্ঞপ্তি নেই',
@@ -3464,6 +3462,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'মডেল লোড হচ্ছে…',
   'composer.voiceMode': 'ভয়েস মোড',
   'composer.humanMode': 'হিউম্যান মোড',
+  'voiceNote.record': 'ভয়েস নোট রেকর্ড করুন',
+  'voiceNote.stop': 'রেকর্ডিং থামান',
+  'voiceNote.discard': 'ভয়েস নোট বাতিল করুন',
+  'voiceNote.send': 'ভয়েস নোট পাঠান',
+  'voiceNote.recording': 'রেকর্ড হচ্ছে…',
+  'voiceNote.play': 'ভয়েস নোট চালান',
+  'voiceNote.pause': 'ভয়েস নোট থামান',
+  'voiceNote.seek': 'ভয়েস নোটে এগিয়ে-পিছিয়ে যান',
+  'voiceNote.transcript': 'ট্রান্সক্রিপ্ট',
+  'voiceNote.noTranscript': 'কোনো ট্রান্সক্রিপ্ট নেই',
+  'voiceNote.label': 'ভয়েস নোট {duration}',
+  'voiceNote.micDenied': 'মাইক্রোফোনের অনুমতি প্রত্যাখ্যাত বা অনুপলব্ধ।',
+  'voiceNote.transcribeFailed': 'ভয়েস নোট ট্রান্সক্রাইব করা যায়নি।',
+  'voiceNote.loadFailed': 'এই ভয়েস নোট লোড করা যায়নি।',
+  'voiceNote.sendFailed': 'ভয়েস নোট পাঠানো যায়নি।',
 
   // Sync budget dialog
 
@@ -3857,6 +3870,10 @@ const messages: TranslationMap = {
     'এজেন্ট এক টার্নে সর্বোচ্চ সংখ্যক টুল ধাপ চালিয়েছে কিন্তু কাজ শেষ করতে পারেনি। সাধারণত এর অর্থ কোনো টুল বারবার ব্যর্থ হচ্ছিল (প্রায়ই ওয়েব ফেচে রেট লিমিটের কারণে)। সীমা কেটে গেলে আপনি এই থ্রেডেই একই প্রশ্ন আবার করতে পারেন।',
   'chat_error.turn_timeout':
     'এই টার্নটি সময়সীমা পেরিয়ে গেছে কিন্তু শেষ হয়নি, তাই আটকে না থাকার জন্য এটি থামিয়ে দেওয়া হয়েছে। সাধারণত এর অর্থ কোনো টুল কল বা অর্পিত সাব-এজেন্ট আটকে গিয়েছিল। আপনি এই থ্রেডেই আপনার প্রশ্ন আবার করতে পারেন।',
+  'chat_error.disk_full':
+    'আপনার ডিস্ক পূর্ণ, তাই এই কথোপকথনটি সংরক্ষণ করা যায়নি। কিছু ডিস্ক স্থান খালি করুন, তারপর এই থ্রেডেই আপনার বার্তাটি আবার পাঠান।',
+  'chat_error.prompt_screened':
+    'OpenHuman-এর নিরাপত্তা যাচাই এই বার্তাটি আটকে দিয়েছে, তাই এটি মডেলে পাঠানো হয়নি। যদি এতে কোনো সহকারীর উদ্দেশে লেখা নির্দেশনা উদ্ধৃত থাকে (যেমন কোনো ওয়েব পেজ বা ইমেল থেকে), সেগুলো সরিয়ে আবার চেষ্টা করুন। সাধারণ বার্তাও আটকে গেলে নিরাপত্তা মডিউলটি হয়তো উপলব্ধ নেই: OpenHuman আবার চালু করে আবার চেষ্টা করুন।',
   'chat_error.empty_response':
     'মডেল একটি ফাঁকা উত্তর দিয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন। বারবার হলে অন্য একটি মডেল ব্যবহার করুন বা সংযোগ → API কী → LLM-এ এর সেটআপ দেখুন।',
   'chat_error.chat_template_rejected':
@@ -4343,6 +4360,10 @@ const messages: TranslationMap = {
     'মাইক্রোফোনের অনুমতি দেওয়া হয়নি। সিস্টেম সেটিংসে অনুমতি দিয়ে আবার চেষ্টা করুন।',
   'voice.live.error.micUnavailable': 'কোনো মাইক্রোফোন পাওয়া যায়নি।',
   'voice.live.error.connection': 'ভয়েস এজেন্টের সাথে সংযোগ করা যায়নি।',
+  'voice.live.error.insufficientCredits':
+    'লাইভ ভয়েসের জন্য আরও ক্রেডিট প্রয়োজন। চালিয়ে যেতে ক্রেডিট যোগ করুন।',
+  'voice.live.error.paidPlanRequired':
+    'লাইভ ভয়েসের জন্য একটি পেইড প্ল্যান প্রয়োজন। চালিয়ে যেতে আপগ্রেড করুন।',
   'voice.live.toolRunning': '{name} চলছে',
   'voice.live.toolOk': '{name} সম্পন্ন',
   'voice.live.toolFailed': '{name} ব্যর্থ হয়েছে',
@@ -4593,11 +4614,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'আই. ডি.',
   'settings.sandbox.backendHint.bubblewrap': 'লাইটওয়েট ব্যবহারকারীর সংখ্যা',
   'settings.sandbox.backendHint.none': 'চলমান টুলগুলি সরাসরি সঞ্চালন করা হবে, উপেক্ষা করা হবে',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'টুলের তালিকা',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'মোট টুল',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'চালু টুল',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP stdio টুল',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC টুল',
   'devOptions.toolPolicyDiagnostics.posture.title': 'নীতির অবস্থা',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'স্বায়ত্তশাসনের স্তর',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'শুধু কর্মক্ষেত্র',
@@ -4812,8 +4828,6 @@ const messages: TranslationMap = {
   'conversations.tools.updateLearnings.done': 'যা শিখেছি তা হালনাগাদ করা হয়েছে',
   'conversations.tools.delegateTask.active': 'কাজ অর্পণ করা হচ্ছে',
   'conversations.tools.delegateTask.done': 'কাজ অর্পণ করা হয়েছে',
-  'conversations.tools.runAgentsInParallel.active': 'এজেন্টগুলো একসাথে চালানো হচ্ছে',
-  'conversations.tools.runAgentsInParallel.done': 'এজেন্টগুলো একসাথে চালানো হয়েছে',
   'conversations.tools.messageAgent.active': 'এজেন্টকে বার্তা পাঠানো হচ্ছে',
   'conversations.tools.messageAgent.done': 'এজেন্টকে বার্তা পাঠানো হয়েছে',
   'conversations.tools.waitForAgent.active': 'এজেন্টের জন্য অপেক্ষা করা হচ্ছে',
@@ -4850,6 +4864,8 @@ const messages: TranslationMap = {
   'conversations.tools.checkGoal.done': 'লক্ষ্য যাচাই করা হয়েছে',
   'conversations.tools.completeGoal.active': 'লক্ষ্য সম্পন্ন করা হচ্ছে',
   'conversations.tools.completeGoal.done': 'লক্ষ্য সম্পন্ন করা হয়েছে',
+  'conversations.tools.resumeGoal.active': 'লক্ষ্য পুনরায় শুরু করা হচ্ছে',
+  'conversations.tools.resumeGoal.done': 'লক্ষ্য পুনরায় শুরু করা হয়েছে',
   'conversations.tools.scheduleTask.active': 'কাজের সময়সূচি নির্ধারণ করা হচ্ছে',
   'conversations.tools.scheduleTask.done': 'কাজের সময়সূচি নির্ধারণ করা হয়েছে',
   'conversations.tools.checkSchedules.active': 'সময়সূচি যাচাই করা হচ্ছে',
@@ -5083,6 +5099,54 @@ const messages: TranslationMap = {
   'settings.layout.corners.none': 'কোনোটিই নয়',
 
   'settings.layout.corners.round': 'গোলাকার',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'এই কোরে নীতি নির্ণয় অন্তর্ভুক্ত নেই।',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'সক্রিয় নিরাপত্তা নীতি',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'স্বায়ত্তশাসন',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'শুধু কর্মক্ষেত্র',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'প্রতি ঘণ্টায় সর্বোচ্চ কাজ',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': 'মাঝারি ঝুঁকিতে অনুমোদন আবশ্যক',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'উচ্চ ঝুঁকির কমান্ড বন্ধ করুন',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'অনুমোদিত কমান্ড',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'কোনো কমান্ড স্পষ্টভাবে অনুমোদিত নয়।',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'নীতি',
+  'settings.approvalHistory.judgeScores':
+    'উদ্দেশ্য {intent} · প্রত্যাবর্তনযোগ্য {reversible} · তথ্য ফাঁস {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'ক্যাশ করা',
+  'settings.approvalHistory.judgeExpires': '{time}-এ মেয়াদ শেষ',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'সবসময় অনুমোদিত টুল',
+  'keyring.settings.toolTrustDescription':
+    'এই নিরাপত্তা পরিসরে অনুমোদন না চেয়েই এই টুলগুলো চালানো যায়।',
+  'keyring.settings.toolTrustLoading': 'অনুমোদিত টুল লোড হচ্ছে…',
+  'keyring.settings.toolTrustLoadFailed': 'অনুমোদিত টুল লোড করা যায়নি।',
+  'keyring.settings.toolTrustRevokeFailed': 'এই টুলের অনুমতি প্রত্যাহার করা যায়নি।',
+  'keyring.settings.toolTrustEmpty': 'সবসময় অনুমোদিত কোনো টুল নেই।',
+  'keyring.settings.toolTrustRetry': 'আবার চেষ্টা করুন',
+  'keyring.settings.toolTrustRevoke': 'প্রত্যাহার',
+  'keyring.settings.toolTrustRevoking': 'প্রত্যাহার হচ্ছে…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'কীরিং অ্যাক্সেসের অনুরোধ',
+  'keyring.operation.description':
+    'TinySecurity একটি কীরিং আইটেমে অ্যাক্সেস চাইছে। সিদ্ধান্তের আগে অপারেশনটি পর্যালোচনা করুন।',
+  'keyring.operation.access': 'অ্যাক্সেস',
+  'keyring.operation.requester': 'অনুরোধকারী',
+  'keyring.operation.origin': 'উৎস',
+  'keyring.operation.purpose': 'উদ্দেশ্য',
+  'keyring.operation.name': 'কীরিং আইটেম',
+  'keyring.operation.access.read': 'পড়া',
+  'keyring.operation.access.write': 'লেখা',
+  'keyring.operation.access.delete': 'মুছে ফেলা',
+  'keyring.operation.allow': 'একবার অনুমতি দিন',
+  'keyring.operation.deny': 'প্রত্যাখ্যান',
+  'keyring.operation.submitting': 'পাঠানো হচ্ছে…',
+  'keyring.operation.expires': 'অনুরোধটি {seconds} সেকেন্ডে মেয়াদোত্তীর্ণ হবে।',
+  'keyring.operation.error': 'সিদ্ধান্ত পাঠানো যায়নি। অনুরোধটির মেয়াদ শেষ হয়ে থাকতে পারে।',
 };
 
 export default messages;

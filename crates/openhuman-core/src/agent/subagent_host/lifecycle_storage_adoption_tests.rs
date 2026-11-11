@@ -150,9 +150,9 @@ fn legacy_host_kv_pause_is_converted_without_rewriting_the_source_record() {
 fn owner_file_pause_is_imported_and_the_original_bytes_stay_unchanged() {
     let workspace = tempfile::tempdir().unwrap();
     let key = task();
-    let file_store =
-        tinyagents_orchestration::subagent::FileSubagentPersistence::new(workspace.path());
-    let file = file_store.pause_path(&key).unwrap();
+    let adapter =
+        super::super::persistence::OpenHumanPersistence::new(workspace.path().to_path_buf());
+    let file = adapter.legacy_pause_path(&key);
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     let bytes = serde_json::to_vec(&paused(&key)).unwrap();
     std::fs::write(&file, &bytes).unwrap();
@@ -166,35 +166,54 @@ fn owner_file_pause_is_imported_and_the_original_bytes_stay_unchanged() {
 }
 
 #[tokio::test]
-async fn a_detached_driver_keeps_its_carried_actor_for_lifecycle_reads_and_commits() {
-    use super::super::driver_adapter::{HostInvocation, HostRequest};
+async fn a_detached_driver_uses_its_carried_actor_for_lifecycle_commits() {
+    use crate::agent::subagent_host::ParentExecutionContext;
     use crate::agent::tinyagents::host::OpenHumanRunContext;
+    use std::sync::Arc;
     use tinyagents_harness::context::{RunConfig, RunContext};
-
-    struct CompleteTool;
-    #[async_trait::async_trait]
-    impl tinytools::Tool for CompleteTool {
-        fn name(&self) -> &str {
-            "complete_fixture"
-        }
-        fn description(&self) -> &str {
-            "Finish without a provider"
-        }
-        fn parameters_schema(&self) -> serde_json::Value {
-            serde_json::json!({"type":"object"})
-        }
-        async fn execute(&self, _: serde_json::Value) -> anyhow::Result<tinytools::ToolResult> {
-            Ok(tinytools::ToolResult::success("detached actor result"))
-        }
-    }
 
     let workspace = tempfile::tempdir().unwrap();
     let checkpoints = workspace.path().join(".openhuman/subagent_checkpoints");
     let alice = actor(workspace.path(), "detached-lifecycle-alice");
     let bob = actor(workspace.path(), "detached-lifecycle-bob");
+    let parent_execution = ParentExecutionContext {
+        agent_definition_id: "detached-lifecycle-root".into(),
+        allowed_subagent_ids: ["same-agent".to_string()].into_iter().collect(),
+        turn_model_source: crate::agent::tinyagents::TurnModelSource::from_model(Arc::new(
+            tinyagents_harness::testkit::ScriptedModel::replies(vec!["detached actor result"]),
+        )),
+        all_tools: Arc::new(Vec::new()),
+        all_tool_specs: Arc::new(Vec::new()),
+        visible_tool_specs: Arc::new(Vec::new()),
+        visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
+        model_name: "test-model".into(),
+        temperature: 0.0,
+        workspace_dir: workspace.path().to_path_buf(),
+        workspace_descriptor: None,
+        agent_config: crate::config::AgentConfig::default(),
+        workflows: Arc::new(Vec::new()),
+        memory_context: Arc::new(None),
+        session_id: "detached-lifecycle-session".into(),
+        channel: "test".into(),
+        connected_integrations: Vec::new(),
+        tool_call_format: tinytools_agent::dialect::ToolCallFormat::Native,
+        session_key: "detached-lifecycle-key".into(),
+        session_parent_prefix: None,
+        on_progress: None,
+        run_queue: None,
+        host_env: Default::default(),
+    };
+    let mut definition = crate::agent_registry::host_definition::AgentDefinition::default();
+    definition.id = "same-agent".into();
+    definition.system_prompt =
+        tinyagents_definition::PromptSource::Inline("You are a test worker.".into());
+    definition.max_iterations = 2;
     let parent = RunContext::new(
         RunConfig::new("detached-lifecycle-root").with_thread("detached-lifecycle-thread"),
-        OpenHumanRunContext::new().with_core(Some(alice.clone())),
+        OpenHumanRunContext::new()
+            .with_core(Some(alice.clone()))
+            .with_parent(parent_execution),
     );
     let task_id = "detached-actor-child";
     let key = SubagentTaskKey::from_context(&parent, task_id, None);
@@ -204,26 +223,19 @@ async fn a_detached_driver_keeps_its_carried_actor_for_lifecycle_reads_and_commi
         run_context: parent.data.clone(),
         ..Default::default()
     };
-    let request = HostRequest {
-        invocation: HostInvocation::ConfiguredTool {
-            agent_id: "same-agent".into(),
-            tool: std::sync::Arc::new(CompleteTool),
-            arguments: serde_json::json!({}),
-        },
-        options,
-    };
     let (done, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-    let completion: super::super::HostCompletion = std::sync::Arc::new(move |_, result, _| {
+    let completion: super::super::HostCompletion = Arc::new(move |_, result, _| {
         let done = done.clone();
         Box::pin(async move {
             done.send(result).unwrap();
         })
     });
-    // No ambient CoreContext is installed here. The actor is carried only
-    // by the explicit parent, through the generic tool's real tokio::spawn.
     let (_, bundle) = super::super::invoke_driver_tool_with_request(
         &parent,
-        request,
+        super::super::driver_adapter::HostRequest {
+            invocation: super::super::HostInvocation::Agent(definition),
+            options,
+        },
         "finish".into(),
         "background",
         Some(completion),
@@ -237,45 +249,51 @@ async fn a_detached_driver_keeps_its_carried_actor_for_lifecycle_reads_and_commi
         .unwrap()
         .unwrap()
         .unwrap();
-    CoreContext::scope(alice, async {
-        let restarted = super::super::persistence::OpenHumanPersistence::new(checkpoints.clone());
-        let durable = restarted
-            .load_terminal(&key)
-            .await
-            .unwrap()
-            .expect("the detached driver committed in its carried actor scope");
-        assert_eq!(durable.output, "detached actor result");
+    // The persistence holds its actor weakly, so both contexts stay owned here
+    // until the reads finish.
+    let alice_dispatch = CoreContext::scope(alice.clone(), async {
+        crate::core::runtime::DispatchCtx::ambient()
     })
     .await;
-    CoreContext::scope(bob, async {
-        let other = super::super::persistence::OpenHumanPersistence::new(checkpoints);
-        assert!(other.load_terminal(&key).await.unwrap().is_none());
+    let alice_persistence =
+        super::super::persistence::OpenHumanPersistence::new(checkpoints.clone())
+            .with_dispatch(alice_dispatch);
+    let durable = alice_persistence
+        .load_terminal(&key)
+        .await
+        .unwrap()
+        .expect("detached lifecycle write committed in its carried actor scope");
+    assert_eq!(durable.output, "detached actor result");
+    let bob_dispatch = CoreContext::scope(bob.clone(), async {
+        crate::core::runtime::DispatchCtx::ambient()
     })
     .await;
-    // Keep the production bundle alive until its detached completion finished.
+    let other = super::super::persistence::OpenHumanPersistence::new(checkpoints)
+        .with_dispatch(bob_dispatch);
+    assert!(other.load_terminal(&key).await.unwrap().is_none());
     drop(bundle);
+    drop((alice, bob));
 }
 
-async fn assert_legacy_owner_terminal(format: &str) {
+async fn assert_legacy_terminal_fixture(format: &str) {
     use super::super::persistence::OpenHumanPersistence;
     let workspace = tempfile::tempdir().unwrap();
     let key = task();
-    let owner = tinyagents_orchestration::subagent::FileSubagentPersistence::new(workspace.path());
     let mut outcome = SubagentOutcome::cancelled(&key.task_id);
     outcome.output = "legacy terminal".into();
-    owner.record_terminal(&key, &outcome, None).await.unwrap();
-    let file = std::fs::read_dir(workspace.path().join("lifecycle"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .ends_with(".terminal.json")
-        })
-        .unwrap();
-    let mut record: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    let file = workspace
+        .path()
+        .join("lifecycle")
+        .join(format!("{}.terminal.json", super::key_component(&key)));
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let record = super::TerminalRecord {
+        key: Some(key.clone()),
+        outcome,
+        agent_id: String::new(),
+        elapsed_ms: 0,
+        extensions: Default::default(),
+    };
+    let mut record = serde_json::to_value(record).unwrap();
     if format == "bare" {
         record = record["outcome"].clone();
         record["agent_id"] = serde_json::json!("legacy-owner");
@@ -320,15 +338,15 @@ async fn assert_legacy_owner_terminal(format: &str) {
 
 #[tokio::test]
 async fn legacy_owner_terminal_key_bearing_keeps_flattened_extensions() {
-    assert_legacy_owner_terminal("current").await;
+    assert_legacy_terminal_fixture("current").await;
 }
 
 #[tokio::test]
 async fn legacy_owner_terminal_keyless_keeps_host_metadata() {
-    assert_legacy_owner_terminal("keyless").await;
+    assert_legacy_terminal_fixture("keyless").await;
 }
 
 #[tokio::test]
 async fn legacy_owner_terminal_bare_outcome_keeps_extensions() {
-    assert_legacy_owner_terminal("bare").await;
+    assert_legacy_terminal_fixture("bare").await;
 }

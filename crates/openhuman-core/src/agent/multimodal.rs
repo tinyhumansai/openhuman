@@ -6,8 +6,9 @@
 
 use crate::core::runtime::DispatchCtx;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+#[cfg(feature = "documents")]
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -297,33 +298,18 @@ pub(crate) fn attachments_dir() -> PathBuf {
         .unwrap_or_else(fallback_attachments_dir)
 }
 
-/// The calling tenant's blob-backed stash: the workspace's storage backend once
-/// [`init_attachments_dir`] ran, else a process-local in-memory one (a CLI or
-/// test with no workspace: placeholders resolve for the life of the process).
+/// The calling tenant's blob-backed stash. It exists only after
+/// [`init_attachments_dir`] supplies the workspace storage binding; absent
+/// that binding, ingress keeps the placeholder but cannot promise rehydration.
 /// The mechanism (dedup'd writes, cap eviction, TTL sweep, id index) is
 /// `tinyagents_harness::multimodal::BlobAttachmentStash`; the cap and TTL are
 /// this host's policy (none: references stay resolvable).
 fn stash() -> Option<BlobAttachmentStash> {
-    match ATTACHMENTS_WORKSPACE.get() {
-        Some(workspace) => crate::storage::sessions::attachment_stash_for(workspace),
-        None => Some(memory_stash().clone()),
-    }
+    stash_for_workspace(ATTACHMENTS_WORKSPACE.get().map(PathBuf::as_path))
 }
 
-fn memory_stash() -> &'static BlobAttachmentStash {
-    static MEMORY: OnceLock<BlobAttachmentStash> = OnceLock::new();
-    MEMORY.get_or_init(|| {
-        use tinystoragedrivers::StorageBackend as _;
-        let scoped = tinystoragedrivers::MemoryStorage::new()
-            .for_scope(&tinystoragedrivers::Scope::local())
-            .expect("the memory backend binds the local scope");
-        BlobAttachmentStash::new(
-            std::sync::Arc::clone(scoped.blobs()),
-            std::sync::Arc::clone(scoped.documents()),
-            u64::MAX,
-            Duration::MAX,
-        )
-    })
+fn stash_for_workspace(workspace: Option<&Path>) -> Option<BlobAttachmentStash> {
+    workspace.and_then(crate::storage::sessions::attachment_stash_for)
 }
 
 /// Per-user fallback attachments dir used only when [`init_attachments_dir`]

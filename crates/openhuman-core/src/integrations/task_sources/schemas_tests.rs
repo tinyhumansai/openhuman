@@ -1,15 +1,19 @@
 use super::*;
+use crate::core::all::{
+    assert_schema_controller_parity, expect_schema_fields, expect_schema_identity,
+};
 use serde_json::json;
 
 #[test]
-fn all_controller_schemas_covers_every_function() {
+fn task_source_schema_contracts_and_registration_are_preserved() {
+    crate::core::all::expect_schema_namespace(&all_controller_schemas(), "task_sources");
     let names: Vec<_> = all_controller_schemas()
         .into_iter()
         .map(|s| s.function)
         .collect();
     assert_eq!(
         names,
-        vec![
+        [
             "list",
             "get",
             "add",
@@ -23,25 +27,20 @@ fn all_controller_schemas_covers_every_function() {
             "status"
         ]
     );
-}
-
-#[test]
-fn all_registered_controllers_has_handler_per_schema() {
-    let controllers = all_registered_controllers();
-    assert_eq!(controllers.len(), all_controller_schemas().len());
-    assert!(controllers
-        .iter()
-        .all(|c| c.schema.namespace == "task_sources"));
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "list",
+    );
+    for function in names {
+        expect_schema_identity(&schemas(function), "task_sources", function);
+    }
 }
 
 #[test]
 fn schemas_add_requires_provider_and_filter() {
     let s = schemas("add");
-    let names: Vec<_> = s.inputs.iter().map(|f| f.name).collect();
-    assert!(names.contains(&"provider"));
-    assert!(names.contains(&"filter"));
-    let provider = s.inputs.iter().find(|f| f.name == "provider").unwrap();
-    assert!(provider.required);
+    expect_schema_fields(&s, &[("provider", Some(true)), ("filter", None)]);
 }
 
 #[test]

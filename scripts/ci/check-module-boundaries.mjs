@@ -6,6 +6,20 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const CONTRACT_REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index';
+const CONTRACT_GIT_SOURCES = new Map([
+  ['tinystoragedrivers-types', 'https://github.com/tinyhumansai/tinystoragedrivers'],
+]);
+
+function contractSourceAllowed(name, source) {
+  if (source === CONTRACT_REGISTRY) return true;
+  const repository = CONTRACT_GIT_SOURCES.get(name);
+  if (!repository || typeof source !== 'string') return false;
+  const prefix = `git+${repository}?rev=`;
+  if (!source.startsWith(prefix)) return false;
+  const [revision, resolved] = source.slice(prefix.length).split('#');
+  return /^[0-9a-f]{40}$/.test(revision) &&
+    typeof resolved === 'string' && resolved.length >= 8 && revision.startsWith(resolved);
+}
 
 export const CONTRACT_CLOSURE = new Set([
   'serde', 'serde_core', 'serde_derive', 'serde_json', 'itoa', 'memchr', 'zmij',
@@ -14,9 +28,12 @@ export const CONTRACT_CLOSURE = new Set([
   'proc-macro2', 'quote', 'syn', 'unicode-ident',
   // Base64 encoding of serialized binary contract fields; no transport/crypto.
   'base64',
+  // TSD v2's data-only storage contract vocabulary (Scope, specs, errors).
+  'tinystoragedrivers-types',
 ]);
 
 export function isImplementation(name, policy) {
+  if (policy.hostAdapterPackages?.includes(name)) return false;
   return policy.implementationPackages.includes(name) ||
     policy.implementationPrefixes.some(prefix => (name === prefix.replace(/-$/, '') || name.startsWith(prefix)) &&
       !policy.contracts.some(contract => contract.name === name));
@@ -56,6 +73,7 @@ export function auditGraph(metadata, roots, policy, contract = null) {
   const { packages, edges } = graph(metadata);
   const violations = [];
   const exceptions = [];
+  const reportedEdges = new Set();
   for (const root of roots) {
     const candidates = [...packages.values()].filter(pkg => pkg.name === root);
     if (candidates.length !== 1) throw new Error(`expected exactly one root package ${root}`);
@@ -64,8 +82,6 @@ export function auditGraph(metadata, roots, policy, contract = null) {
     for (let at = 0; at < queue.length; at++) {
       const path = queue[at];
       const id = path.at(-1);
-      if (seen.has(id)) continue;
-      seen.add(id);
       const name = packages.get(id).name;
       // The one crate that may link module implementations (local development
       // only). It is a legitimate edge only directly under an allowed host
@@ -80,19 +96,32 @@ export function auditGraph(metadata, roots, policy, contract = null) {
       if (path.length > 1) {
         const sourceMismatch = !contract && policy.contractManifests?.[name] &&
           packages.get(id).manifest_path !== policy.contractManifests[name];
-        const forbidden = contract ? !CONTRACT_CLOSURE.has(name) || packages.get(id).source !== CONTRACT_REGISTRY :
+        const forbidden = contract ? !CONTRACT_CLOSURE.has(name) || !contractSourceAllowed(name, packages.get(id).source) :
           isImplementation(name, policy) || sourceMismatch;
         if (forbidden) {
           const scope = contract ?? 'hosts';
-          const exemption = policy.exceptions.find(item => item.scope === scope && item.package === name);
+          const parent = path.length > 1 ? packages.get(path.at(-2)).name : null;
+          const exemption = policy.exceptions.find(item =>
+            item.scope === scope && item.package === name &&
+            (!item.parent || item.parent === parent));
           const finding = { scope, package: name, path: path.map(id => packages.get(id).name) };
-          (exemption ? exceptions : violations).push(finding);
+          const findings = exemption ? exceptions : violations;
+          const reportKey = `${exemption ? 'exception' : 'violation'}:${scope}:${id}`;
+          if (!reportedEdges.has(reportKey)) {
+            reportedEdges.add(reportKey);
+            findings.push(finding);
+          }
           // Contract exceptions pin the first unsafe dependency. Its implementation
           // closure is deliberately NOT approved vocabulary and must disappear
           // with this edge. Hosts still traverse it to catch indirect implementations.
           if (contract) continue;
         }
       }
+      // Exceptions apply to incoming edges, not to package identities. A
+      // second path can have a different parent and must be checked even when
+      // this package's descendants have already been traversed.
+      if (seen.has(id)) continue;
+      seen.add(id);
       for (const next of edges(id)) {
         if (!contract && packages.get(next).name === policy.linkedHost?.package) {
           const parent = packages.get(id).name;
@@ -207,7 +236,7 @@ export function linkedHostAudit(metadata, root, policy) {
 }
 
 export function validatePolicy(policy) {
-  for (const key of ['implementationPackages', 'implementationPrefixes', 'contracts', 'pendingContracts', 'exceptions']) {
+  for (const key of ['implementationPackages', 'implementationPrefixes', 'hostAdapterPackages', 'contracts', 'pendingContracts', 'exceptions']) {
     if (!Array.isArray(policy[key])) throw new Error(`policy.${key} must be an array`);
   }
   if (!policy.contracts.length || !policy.implementationPackages.length || !policy.implementationPrefixes.length) {
@@ -233,7 +262,8 @@ export function validatePolicy(policy) {
   const seen = new Set();
   for (const item of policy.exceptions) {
     const key = `${item.scope}:${item.package}`;
-    if (!item.reason?.trim() || !item.package || !item.scope || seen.has(key)) {
+    if (!item.reason?.trim() || !item.package || !item.scope ||
+        (item.parent !== undefined && !item.parent) || seen.has(key)) {
       throw new Error(`invalid or duplicate exception ${key}`);
     }
     if (item.scope === 'hosts' ? !isImplementation(item.package, policy) :

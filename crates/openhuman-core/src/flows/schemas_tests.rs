@@ -1,24 +1,64 @@
 use super::*;
-
+use crate::core::all::{
+    assert_schema_controller_parity, expect_schema_fields, expect_schema_identity,
+    expect_schema_input_order, expect_schema_output_names, expect_schema_required_inputs,
+};
 // Additional names from the extracted schema handler modules.
 use super::handlers::*;
 use serde_json::json;
 
 #[test]
-fn run_schema_advertises_both_input_channels() {
-    let run = all_controller_schemas()
-        .into_iter()
-        .find(|s| s.function == "run")
-        .expect("the run controller is registered");
-    let names: Vec<_> = run.inputs.iter().map(|f| f.name).collect();
-    assert!(names.contains(&"input"), "trigger payload, got {names:?}");
-    assert!(names.contains(&"inputs"), "declared inputs, got {names:?}");
-
-    let declared = run.inputs.iter().find(|f| f.name == "inputs").unwrap();
-    assert!(
-        !declared.required,
-        "a flow with no declared inputs must still be runnable without the param"
+fn flow_schema_wire_contracts_are_preserved() {
+    assert_schema_controller_parity(
+        &all_controller_schemas(),
+        &all_registered_controllers(),
+        "create",
     );
+    // None preserves optional-field-only tests; Some(&[]) asserts no required inputs.
+    let contracts = [
+        ("import", Some(&["graph"][..]), &["format"][..]),
+        (
+            "create",
+            Some(&["name", "graph"][..]),
+            &["require_approval"][..],
+        ),
+        ("duplicate", Some(&["id"][..]), &[][..]),
+        ("prune_runs", Some(&["id"][..]), &[][..]),
+        ("run", None, &["input", "inputs"][..]),
+        ("resume", Some(&["id", "thread_id"][..]), &["approvals"][..]),
+        ("list_runs", None, &["limit"][..]),
+        ("get_run", Some(&["run_id"][..]), &[][..]),
+        (
+            "build",
+            Some(&["mode"][..]),
+            &["thread_id", "request_id"][..],
+        ),
+        (
+            "build_cancel",
+            Some(&["thread_id"][..]),
+            &["request_id"][..],
+        ),
+        ("discover", Some(&[][..]), &["thread_id", "request_id"][..]),
+    ];
+    for (function, required, optional) in contracts {
+        let schema = schemas(function);
+        expect_schema_identity(&schema, "flows", function);
+        if let Some(required) = required {
+            expect_schema_required_inputs(&schema, required);
+        }
+        expect_schema_fields(
+            &schema,
+            &optional
+                .iter()
+                .map(|name| (*name, Some(false)))
+                .collect::<Vec<_>>(),
+        );
+    }
+    let discover = schemas("discover");
+    expect_schema_input_order(&discover, &["thread_id", "request_id"]);
+    expect_schema_output_names(&schemas("import"), &["graph", "warnings"]);
+    expect_schema_output_names(&schemas("duplicate"), &["flow"]);
+    assert_eq!(schemas("prune_runs").outputs[0].name, "result");
 }
 
 #[test]
@@ -120,23 +160,6 @@ fn all_controller_schemas_covers_every_supported_function() {
 }
 
 #[test]
-fn schemas_import_requires_graph_and_optional_format() {
-    let s = schemas("import");
-    assert_eq!(s.namespace, "flows");
-    let required: Vec<_> = s
-        .inputs
-        .iter()
-        .filter(|f| f.required)
-        .map(|f| f.name)
-        .collect();
-    assert_eq!(required, vec!["graph"]);
-    let format = s.inputs.iter().find(|f| f.name == "format").unwrap();
-    assert!(!format.required);
-    let names: Vec<_> = s.outputs.iter().map(|f| f.name).collect();
-    assert_eq!(names, vec!["graph", "warnings"]);
-}
-
-#[test]
 fn schemas_list_connections_has_no_inputs_and_secret_free_outputs() {
     let s = schemas("list_connections");
     assert_eq!(s.namespace, "flows");
@@ -179,144 +202,6 @@ fn schemas_list_connections_has_no_inputs_and_secret_free_outputs() {
 }
 
 #[test]
-fn schemas_create_requires_name_and_graph() {
-    let s = schemas("create");
-    assert_eq!(s.namespace, "flows");
-    let required: Vec<_> = s
-        .inputs
-        .iter()
-        .filter(|f| f.required)
-        .map(|f| f.name)
-        .collect();
-    assert_eq!(required, vec!["name", "graph"]);
-}
-
-#[test]
-fn schemas_create_require_approval_is_optional() {
-    let s = schemas("create");
-    let field = s
-        .inputs
-        .iter()
-        .find(|f| f.name == "require_approval")
-        .unwrap();
-    assert!(!field.required);
-}
-
-#[test]
-fn schemas_duplicate_requires_id_and_outputs_flow() {
-    let s = schemas("duplicate");
-    assert_eq!(s.namespace, "flows");
-    let required: Vec<_> = s
-        .inputs
-        .iter()
-        .filter(|f| f.required)
-        .map(|f| f.name)
-        .collect();
-    assert_eq!(required, vec!["id"]);
-    assert_eq!(s.outputs.len(), 1);
-    assert_eq!(s.outputs[0].name, "flow");
-}
-
-#[test]
-fn schemas_prune_runs_requires_id_and_reports_counts() {
-    let s = schemas("prune_runs");
-    assert_eq!(s.namespace, "flows");
-    let required: Vec<_> = s
-        .inputs
-        .iter()
-        .filter(|f| f.required)
-        .map(|f| f.name)
-        .collect();
-    assert_eq!(required, vec!["id"]);
-    assert_eq!(s.outputs[0].name, "result");
-}
-
-#[test]
-fn schemas_run_input_is_optional() {
-    let s = schemas("run");
-    let input = s.inputs.iter().find(|f| f.name == "input").unwrap();
-    assert!(!input.required);
-}
-
-#[test]
-fn schemas_resume_requires_id_and_thread_id_but_not_approvals() {
-    let s = schemas("resume");
-    let required: Vec<_> = s
-        .inputs
-        .iter()
-        .filter(|f| f.required)
-        .map(|f| f.name)
-        .collect();
-    assert_eq!(required, vec!["id", "thread_id"]);
-    let approvals = s.inputs.iter().find(|f| f.name == "approvals").unwrap();
-    assert!(!approvals.required);
-}
-
-#[test]
-fn schemas_list_runs_limit_is_optional() {
-    let s = schemas("list_runs");
-    let limit = s.inputs.iter().find(|f| f.name == "limit").unwrap();
-    assert!(!limit.required);
-}
-
-#[test]
-fn schemas_get_run_requires_run_id() {
-    let s = schemas("get_run");
-    let required: Vec<_> = s
-        .inputs
-        .iter()
-        .filter(|f| f.required)
-        .map(|f| f.name)
-        .collect();
-    assert_eq!(required, vec!["run_id"]);
-}
-
-#[test]
-fn schemas_build_exposes_optional_stream_params() {
-    let s = schemas("build");
-    assert_eq!(s.namespace, "flows");
-    // The only structurally required build input is `mode`.
-    let required: Vec<_> = s
-        .inputs
-        .iter()
-        .filter(|f| f.required)
-        .map(|f| f.name)
-        .collect();
-    assert_eq!(required, vec!["mode"]);
-    // The streaming params are present and optional.
-    let thread = s.inputs.iter().find(|f| f.name == "thread_id").unwrap();
-    assert!(!thread.required);
-    let request = s.inputs.iter().find(|f| f.name == "request_id").unwrap();
-    assert!(!request.required);
-}
-
-#[test]
-fn schemas_build_cancel_requires_thread_id_but_not_request_id() {
-    let s = schemas("build_cancel");
-    assert_eq!(s.namespace, "flows");
-    assert_eq!(s.function, "build_cancel");
-    let required: Vec<_> = s
-        .inputs
-        .iter()
-        .filter(|f| f.required)
-        .map(|f| f.name)
-        .collect();
-    assert_eq!(required, vec!["thread_id"]);
-    let request = s.inputs.iter().find(|f| f.name == "request_id").unwrap();
-    assert!(!request.required);
-}
-
-#[test]
-fn schemas_discover_exposes_optional_stream_params() {
-    let s = schemas("discover");
-    assert_eq!(s.namespace, "flows");
-    // Discover has no required inputs — the two stream params are optional.
-    assert!(s.inputs.iter().all(|f| !f.required));
-    let names: Vec<_> = s.inputs.iter().map(|f| f.name).collect();
-    assert_eq!(names, vec!["thread_id", "request_id"]);
-}
-
-#[test]
 fn read_flow_stream_target_none_without_thread_id() {
     let mut params = Map::new();
     // request_id alone is not enough — streaming needs a thread.
@@ -355,53 +240,33 @@ fn read_required_errors_when_missing() {
     assert!(err.contains("missing required param 'id'"));
 }
 
-// ── R-m7: parse_draft_update_flow_id ─────────────────────────────────────
-
+// R-m7: absent leaves the link untouched; null/blank explicitly unlink.
+// Invalid types must not silently become an explicit unlink.
 #[test]
-fn parse_draft_update_flow_id_absent_leaves_link_untouched() {
-    let params = Map::new();
-    assert_eq!(parse_draft_update_flow_id(&params).unwrap(), None);
-}
-
-#[test]
-fn parse_draft_update_flow_id_null_is_an_explicit_unlink() {
-    let mut params = Map::new();
-    params.insert("flow_id".to_string(), Value::Null);
-    assert_eq!(parse_draft_update_flow_id(&params).unwrap(), Some(None));
-}
-
-#[test]
-fn parse_draft_update_flow_id_string_links_to_that_flow() {
-    let mut params = Map::new();
-    params.insert("flow_id".to_string(), Value::String("flow-123".to_string()));
-    assert_eq!(
-        parse_draft_update_flow_id(&params).unwrap(),
-        Some(Some("flow-123".to_string()))
-    );
-}
-
-#[test]
-fn parse_draft_update_flow_id_empty_string_is_an_explicit_unlink() {
-    let mut params = Map::new();
-    params.insert("flow_id".to_string(), Value::String("   ".to_string()));
-    assert_eq!(parse_draft_update_flow_id(&params).unwrap(), Some(None));
-}
-
-// Regression for R-m7: a number must be REJECTED, not silently coerced
-// into `Some(None)` (an explicit unlink) the way `Value::as_str()`
-// returning `None` on a type mismatch used to produce.
-#[test]
-fn parse_draft_update_flow_id_rejects_a_number() {
-    let mut params = Map::new();
-    params.insert("flow_id".to_string(), Value::from(42));
-    let err = parse_draft_update_flow_id(&params).unwrap_err();
-    assert!(err.contains("invalid 'flow_id'"), "{err}");
-}
-
-#[test]
-fn parse_draft_update_flow_id_rejects_an_object() {
-    let mut params = Map::new();
-    params.insert("flow_id".to_string(), serde_json::json!({ "id": "flow-1" }));
-    let err = parse_draft_update_flow_id(&params).unwrap_err();
-    assert!(err.contains("invalid 'flow_id'"), "{err}");
+fn draft_update_flow_link_preserves_all_three_states_and_rejects_wrong_types() {
+    for (case, input, expected) in [
+        ("absent leaves link untouched", None, None),
+        ("null explicitly unlinks", Some(Value::Null), Some(None)),
+        (
+            "string links flow",
+            Some(json!("flow-123")),
+            Some(Some("flow-123".to_string())),
+        ),
+        ("blank explicitly unlinks", Some(json!("   ")), Some(None)),
+    ] {
+        let mut params = Map::new();
+        if let Some(input) = input {
+            params.insert("flow_id".into(), input);
+        }
+        assert_eq!(
+            parse_draft_update_flow_id(&params).unwrap(),
+            expected,
+            "{case}"
+        );
+    }
+    for (case, input) in [("number", json!(42)), ("object", json!({"id":"flow-1"}))] {
+        let params = Map::from_iter([("flow_id".into(), input)]);
+        let err = parse_draft_update_flow_id(&params).unwrap_err();
+        assert!(err.contains("invalid 'flow_id'"), "{case}: {err}");
+    }
 }

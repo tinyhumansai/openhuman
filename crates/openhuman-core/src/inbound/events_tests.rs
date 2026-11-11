@@ -131,3 +131,46 @@ fn a_digest_lists_every_folded_event() {
     );
     assert_eq!(digest.payload["events"][1]["text"], "hello");
 }
+
+#[test]
+fn an_external_event_is_keyed_by_its_source_and_key_and_round_trips() {
+    let payload = json!({ "author": "@alice", "conversation_id": "c1" });
+    let event = external(
+        "x:mentions",
+        "mentions",
+        "t1",
+        "hi @bot",
+        payload.clone(),
+        42,
+    )
+    .unwrap();
+    assert_eq!(event.source, "x:mentions");
+    assert_eq!(event.event_id, "t1");
+    assert_eq!(event.conversation_key, "mentions");
+    assert_eq!(event.sender.id, "x:mentions");
+    assert_eq!(event.kind, EventKind::Trigger);
+    assert_eq!(event.received_at_ms, 42);
+    assert_eq!(event.text, "hi @bot");
+    assert!(envelope_of(&event).is_none(), "not a trigger envelope");
+    let item = external_of(&event).unwrap();
+    assert_eq!(
+        serde_json::to_value(&item).unwrap(),
+        json!({ "id": "t1", "text": "hi @bot", "payload": payload, "received_at_ms": 42 })
+    );
+    let trigger = composio(&composio_envelope("u", "i")).unwrap();
+    assert!(external_of(&trigger).is_none());
+}
+
+#[test]
+fn an_oversize_external_event_is_refused() {
+    let big = "x".repeat(MAX_RAW_BYTES);
+    let refused = external(
+        "x:mentions",
+        "mentions",
+        "t1",
+        "",
+        json!({ "blob": big }),
+        0,
+    );
+    assert!(matches!(refused, Err(Unqueueable::Oversize(_))));
+}

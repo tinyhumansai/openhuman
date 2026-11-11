@@ -255,10 +255,6 @@ test.describe('Chat composer attachment gate', () => {
   }
 
   test('pasting an image attaches it', async ({ page }) => {
-    test.fixme(
-      true,
-      'Playwright synthetic ClipboardEvent cannot expose image DataTransfer to Lexical; picker coverage remains active'
-    );
     // The control for the case below: without this, "paste did not attach
     // while streaming" would be true of an idle composer too, and would be
     // testing nothing.
@@ -274,10 +270,6 @@ test.describe('Chat composer attachment gate', () => {
   });
 
   test('pasting an image while a turn streams does not attach it', async ({ page }) => {
-    test.fixme(
-      true,
-      'Playwright synthetic ClipboardEvent cannot expose image DataTransfer to Lexical; picker gate coverage remains active'
-    );
     // The bypass this file was chartered to check. `canAcceptComposerFiles`
     // folds in `attachmentInteractionBlocked`, so the paste path has to refuse
     // for the same reason the `[+]` button is disabled — a gate enforced on one

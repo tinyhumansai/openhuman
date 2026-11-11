@@ -35,12 +35,6 @@ const FORCED_RESPONSES = [
   { content: `Found the content using both tools: ${CANARY_FINAL}` },
 ];
 
-interface MockRequest {
-  method: string;
-  url: string;
-  body?: string;
-}
-
 async function resetMock(): Promise<void> {
   await fetch(`${MOCK_ADMIN_BASE}/__admin/reset`, {
     method: 'POST',
@@ -55,22 +49,6 @@ async function setMockBehavior(key: string, value: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key, value }),
   });
-}
-
-async function requests(): Promise<MockRequest[]> {
-  const response = await fetch(`${MOCK_ADMIN_BASE}/__admin/requests`);
-  const payload = (await response.json()) as { data?: MockRequest[] };
-  return Array.isArray(payload.data) ? payload.data : [];
-}
-
-function findToolInLlmLog(log: MockRequest[], toolName: string): boolean {
-  return log.some(
-    request =>
-      request.method === 'POST' &&
-      request.url.includes('/chat/completions') &&
-      typeof request.body === 'string' &&
-      request.body.includes(`"${toolName}"`)
-  );
 }
 
 async function openChat(page: Page): Promise<void> {
@@ -152,63 +130,34 @@ async function sendMessage(page: Page, prompt: string): Promise<void> {
   await page.getByTestId('send-message-button').click();
 }
 
-async function toolTimelineNames(page: Page, threadId: string): Promise<string[]> {
-  return page.evaluate(currentThreadId => {
-    const store = (
-      window as unknown as {
-        __OPENHUMAN_STORE__?: {
-          getState?: () => {
-            chatRuntime?: { toolTimelineByThread?: Record<string, Array<{ name?: string }>> };
-          };
-        };
-      }
-    ).__OPENHUMAN_STORE__;
-    const entries = store?.getState?.().chatRuntime?.toolTimelineByThread?.[currentThreadId] ?? [];
-    return entries.map(entry => entry.name ?? '');
-  }, threadId);
+async function openLatestActivityGroup(page: Page) {
+  const group = page.locator('[data-slot="tool-group-root"]').last();
+  await expect(group).toBeVisible({ timeout: 30_000 });
+  const trigger = group.locator('[data-slot="tool-group-trigger"]');
+  if ((await trigger.getAttribute('aria-expanded')) !== 'true') await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  return group;
 }
 
 test.describe('Chat Multi Tool Round', () => {
-  test('runs file_read then grep before the final answer', async ({ page }) => {
+  test('renders web_fetch then web_search_tool cards before the final answer', async ({ page }) => {
     await resetMock();
     await setMockBehavior('llmForcedResponses', JSON.stringify(FORCED_RESPONSES));
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await openChat(page);
-    const threadId = await createNewThread(page);
+    await createNewThread(page);
     await sendMessage(page, PROMPT);
 
     await expect(agentMessageText(page, CANARY_FINAL)).toBeVisible({ timeout: 50_000 });
-
-    await expect
-      .poll(
-        async () => {
-          const names = await toolTimelineNames(page, threadId);
-          if (names.some(name => name.includes('web_fetch'))) return true;
-          return findToolInLlmLog(await requests(), 'web_fetch');
-        },
-        { timeout: 20_000 }
-      )
-      .toBe(true);
-
-    await expect
-      .poll(
-        async () => {
-          const names = await toolTimelineNames(page, threadId);
-          if (names.some(name => name.includes('web_search'))) return true;
-          return findToolInLlmLog(await requests(), 'web_search_tool');
-        },
-        { timeout: 20_000 }
-      )
-      .toBe(true);
-
-    await expect
-      .poll(async () => {
-        const log = await requests();
-        return log.filter(
-          entry => entry.method === 'POST' && entry.url.includes('/openai/v1/chat/completions')
-        ).length;
-      })
-      .toBeGreaterThanOrEqual(3);
+    const activityGroup = await openLatestActivityGroup(page);
+    const cards = activityGroup.getByTestId('assistant-ui-tool-call');
+    await expect(cards).toHaveCount(2);
+    await expect(cards.nth(0)).toHaveAttribute('data-tool-name', 'web_fetch');
+    await expect(cards.nth(1)).toHaveAttribute('data-tool-name', 'web_search_tool');
+    await expect(cards.nth(0)).toContainText('Read webpage');
+    await expect(cards.nth(0)).toContainText('example.com');
+    await expect(cards.nth(1)).toContainText(/Search(?:ing|ed) the web/);
+    await expect(agentMessageText(page, CANARY_FINAL)).toBeVisible();
   });
 });

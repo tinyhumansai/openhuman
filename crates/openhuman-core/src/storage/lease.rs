@@ -4,11 +4,10 @@
 //! serves a profile) and until when. Two implementations share the
 //! [`LeaseStore`] contract:
 //!
-//! - [`DocumentLeases`] keeps one record per key in tinystoragedrivers'
-//!   `tsd.leases` ([`LEASE_COLLECTION`], scope [`CLUSTER_SCOPE`]) through
-//!   its [`Leases`](tinystoragedrivers::Leases) primitive, which moves it only
-//!   by compare-and-swap, so it is correct across processes on a driver
-//!   with cross-process CAS ([`super::driver_has_cross_process_cas`]).
+//! - [`DocumentLeases`] keeps one host-owned record per key in
+//!   [`LEASE_COLLECTION`] under [`CLUSTER_SCOPE`], using versioned document
+//!   writes as a compare-and-swap so it is correct across processes on a
+//!   driver with cross-process CAS ([`super::driver_has_cross_process_cas`]).
 //! - [`LocalLeases`] is for hosts without a backend: an exclusive `flock` on
 //!   `<root>/<sha256(key) hex>/.lease`, which the OS drops when the holder dies.
 //!
@@ -64,8 +63,8 @@ pub use super::lease_local::LocalLeases;
 /// The storage scope lease records live under, shared by every node.
 pub const CLUSTER_SCOPE: &str = "cluster";
 
-/// The collection lease records live in: tinystoragedrivers' `tsd.leases`.
-pub const LEASE_COLLECTION: &str = tinystoragedrivers::primitives::LEASES;
+/// The host-owned collection for process-placement lease records.
+pub const LEASE_COLLECTION: &str = "openhuman.leases";
 
 /// The longest key a lease accepts, in bytes.
 pub const MAX_KEY_LEN: usize = 200;
@@ -171,18 +170,27 @@ pub trait LeaseStore: Send + Sync {
     /// [`LeaseError::Storage`].
     async fn holder(&self, key: &str) -> Result<Option<LeaseRecord>, LeaseError>;
 
-    /// The fence a storage driver enforces for `node`'s grant on `key` at
+    /// Reads the stored holder without declaring schema or creating local
+    /// lease files. Implementations that cannot guarantee a read-only lookup
+    /// fail closed.
+    async fn holder_readonly(&self, _key: &str) -> Result<Option<LeaseRecord>, LeaseError> {
+        Err(LeaseError::Storage(StorageError::backend(
+            "lease store does not support read-only holder inspection",
+        )))
+    }
+
+    /// The condition a storage driver evaluates for `node`'s grant on `key` at
     /// `epoch`, when the record lives in the storage ports at all: the
     /// record must still name `node` at `epoch`, unreleased. The driver then
     /// checks a write against the record in the same atomic step
-    /// ([`super::fence::LeaseFence::driver_fence`]). `None` (the default) for
+    /// ([`super::fence::LeaseFence::write_condition`]). `None` (the default) for
     /// stores that keep records elsewhere, such as file locks.
-    fn driver_fence(
+    fn write_condition(
         &self,
         _key: &str,
         _node: &str,
         _epoch: u64,
-    ) -> Option<tinystoragedrivers::Fence> {
+    ) -> Option<tinystoragedrivers_types::WriteCondition> {
         None
     }
 }

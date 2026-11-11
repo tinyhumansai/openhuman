@@ -10,9 +10,8 @@ use crate::agent::tinyagents::middleware::tool_policy::ToolPolicyMiddleware;
 // these pin that the middleware feeds it the *session's* answer and resolves
 // the route out of the session's own delegation tools.
 
-use crate::agent::orchestration::tools::{ArchetypeDelegationTool, DelegationTarget};
 use crate::tools::toolpacks::{append_pack_tools, bind_pack_registry};
-use tinyagents_harness::tool::packs::USE_SKILL;
+use tinyagents_harness_tools::skills::USE_SKILL;
 use tinytools::{PermissionLevel, ToolResult};
 use tinytools::{
     TaskProfile, TaskRiskLevel, ToolCapability, ToolPolicyAction, ToolPolicyDecision,
@@ -30,7 +29,19 @@ impl tinytools::Tool for RoutingFakeTool {
         "fake"
     }
     fn parameters_schema(&self) -> serde_json::Value {
-        json!({ "type": "object" })
+        if self.0 == "spawn_subagent" {
+            json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "enum": ["workflow_builder", "flow_discovery"]
+                    }
+                }
+            })
+        } else {
+            json!({ "type": "object" })
+        }
     }
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
         Ok(ToolResult::success("ok"))
@@ -53,8 +64,7 @@ fn allow(name: &str) -> (String, ToolPolicyDecision) {
 }
 
 /// A non-owner session: it holds the whole `workflows` pack in its registry and
-/// a `build_workflow` delegate, but may only call the delegate and the pack
-/// tool — exactly the orchestrator's shape. Anything not named here is denied,
+/// the canonical `spawn_subagent` route to its owners. Anything not named here is denied,
 /// because `decision_for` defaults to `Deny`.
 fn non_owner_middleware() -> ToolPolicyMiddleware {
     non_owner_middleware_at(PermissionLevel::Dangerous)
@@ -65,17 +75,12 @@ fn non_owner_middleware() -> ToolPolicyMiddleware {
 /// for an inner name it cannot resolve (#6302).
 fn non_owner_middleware_at(allowed: PermissionLevel) -> ToolPolicyMiddleware {
     let mut tools: Vec<Box<dyn tinytools::Tool>> = vec![
-        Box::new(RoutingFakeTool("build_workflow")),
+        Box::new(RoutingFakeTool("spawn_subagent")),
         Box::new(RoutingFakeTool("propose_workflow")),
-        Box::new(ArchetypeDelegationTool {
-            tool_name: "build_workflow".to_string(),
-            agent_id: DelegationTarget("workflow_builder".to_string()),
-            tool_description: "Build a workflow".to_string(),
-        }),
     ];
-    append_pack_tools(&mut tools);
+    let pack_handle = append_pack_tools(&mut tools);
     let tools = Arc::new(tools);
-    bind_pack_registry(&tools);
+    bind_pack_registry(&pack_handle, &tools);
 
     let session = ToolPolicySession {
         profile: TaskProfile {
@@ -86,10 +91,10 @@ fn non_owner_middleware_at(allowed: PermissionLevel) -> ToolPolicyMiddleware {
             allowed_permission: allowed,
         },
         capabilities: vec![ToolCapability {
-            name: "build_workflow".to_string(),
+            name: "spawn_subagent".to_string(),
             required_permission: PermissionLevel::ReadOnly,
         }],
-        allowed_tool_names: ["build_workflow", USE_SKILL]
+        allowed_tool_names: ["spawn_subagent", USE_SKILL]
             .into_iter()
             .map(str::to_string)
             .collect(),
@@ -98,7 +103,7 @@ fn non_owner_middleware_at(allowed: PermissionLevel) -> ToolPolicyMiddleware {
             .map(str::to_string)
             .collect(),
         hidden_tool_names: Default::default(),
-        decisions: [allow("build_workflow"), allow(USE_SKILL)]
+        decisions: [allow("spawn_subagent"), allow(USE_SKILL)]
             .into_iter()
             .collect(),
     };
@@ -168,8 +173,8 @@ fn call(name: &str, args: serde_json::Value) -> TaToolCall {
     }
 }
 
-/// The bug: the orchestrator loaded `workflows`, read `propose_workflow` off
-/// the listing, called it, and was refused. The listing must not offer it.
+/// A non-owner cannot call workflow pack tools directly; it must be sent to an
+/// owner through the same spawn route advertised by the orchestrator.
 #[tokio::test]
 async fn a_use_skill_listing_hides_what_this_session_cannot_call_and_names_the_route() {
     let mw = non_owner_middleware();
@@ -182,27 +187,19 @@ async fn a_use_skill_listing_hides_what_this_session_cannot_call_and_names_the_r
         "a non-owner must not be offered a tool the gate will refuse:\n{}",
         result_text(&result)
     );
-    // Assert the LISTING entry in its exact rendered form, not the bare name.
-    //
-    // `build_workflow` occurs in two different outputs: a rendered listing
-    // (`## \`build_workflow\``) and the route sentence used when nothing is
-    // callable (``Call `build_workflow` instead``). A bare `contains` therefore
-    // passed even when the filter had dropped every tool and the render had
-    // fallen through to its error path — i.e. it passed in the exact case this
-    // test exists to catch. A check that cannot fail reads as coverage and is
-    // worse than none.
     assert!(
-        result_text(&result).contains("## `build_workflow`"),
-        "the tool it CAN call must still be LISTED, not merely mentioned in a \
-         route sentence:\n{}",
+        result_text(&result).contains("has no tools available in this session"),
+        "the listing must not invent a workflow tool for this non-owner:\n{}",
         result_text(&result)
     );
-    // And this really is a listing, not the "nothing callable" error.
     assert!(
-        result_text(&result).starts_with("# Skill `workflows`"),
-        "expected a rendered pack listing:\n{}",
+        result_text(&result).contains("Call `spawn_subagent` to delegate")
+            && (result_text(&result).contains("workflow_builder")
+                || result_text(&result).contains("flow_discovery")),
+        "the empty listing must name the callable owner hand-off:\n{}",
         result_text(&result)
     );
+    assert!(!result_text(&result).contains("## `propose_workflow`"));
 }
 
 /// The middleware renders the *disclosure* half only. A `use_skill` call that
@@ -216,7 +213,7 @@ async fn a_use_skill_call_that_names_a_tool_is_not_rendered_as_a_listing() {
     assert!(
         mw.render_skill_for_session(&call(
             USE_SKILL,
-            json!({ "skill": "workflows", "tool": "build_workflow" }),
+            json!({ "skill": "workflows", "tool": "propose_workflow" }),
         ))
         .is_none(),
         "the execution half must reach the tool, not the listing"
@@ -252,8 +249,9 @@ async fn a_use_skill_denial_names_a_delegate_this_session_can_call() {
         "the denial itself must survive: {message}"
     );
     assert!(
-        message.contains("build_workflow"),
-        "the denial must name the delegate to call instead: {message}"
+        message.contains("Call `spawn_subagent` to delegate")
+            && message.contains("owned by `workflow_builder`"),
+        "the denial must name the callable spawn tool and owning specialist: {message}"
     );
 }
 
@@ -264,9 +262,9 @@ async fn a_use_skill_denial_names_a_delegate_this_session_can_call() {
 async fn a_session_without_the_delegate_is_not_told_to_call_it() {
     let mut tools: Vec<Box<dyn tinytools::Tool>> =
         vec![Box::new(RoutingFakeTool("propose_workflow"))];
-    append_pack_tools(&mut tools);
+    let pack_handle = append_pack_tools(&mut tools);
     let tools = Arc::new(tools);
-    bind_pack_registry(&tools);
+    bind_pack_registry(&pack_handle, &tools);
 
     let session = ToolPolicySession {
         profile: TaskProfile {
@@ -307,7 +305,7 @@ async fn a_session_without_the_delegate_is_not_told_to_call_it() {
         "with no delegate to call, name the owning agent: {message}"
     );
     assert!(
-        !message.contains("Call `build_workflow`"),
+        !message.contains("Call `spawn_subagent`"),
         "must not instruct a call this session cannot make: {message}"
     );
 }
@@ -326,9 +324,9 @@ async fn use_skill_reaches_a_withheld_packed_tool() {
     use tinytools::ToolPolicyEngine;
 
     let mut tools: Vec<Box<dyn tinytools::Tool>> = vec![Box::new(RoutingFakeTool("goal_set"))];
-    append_pack_tools(&mut tools);
+    let pack_handle = append_pack_tools(&mut tools);
     let tools = Arc::new(tools);
-    bind_pack_registry(&tools);
+    bind_pack_registry(&pack_handle, &tools);
 
     // The real harness shape: seed `visible` with everything, then withhold the
     // packed names for a non-owner.
@@ -375,25 +373,21 @@ async fn a_prompt_hidden_delegate_is_not_offered_as_a_direct_route() {
 
     let mut tools: Vec<Box<dyn tinytools::Tool>> = vec![
         Box::new(RoutingFakeTool("propose_workflow")),
-        Box::new(ArchetypeDelegationTool {
-            tool_name: "build_workflow".to_string(),
-            agent_id: DelegationTarget("workflow_builder".to_string()),
-            tool_description: "Build a workflow".to_string(),
-        }),
+        Box::new(RoutingFakeTool("spawn_subagent")),
     ];
-    append_pack_tools(&mut tools);
+    let pack_handle = append_pack_tools(&mut tools);
     let tools = Arc::new(tools);
-    bind_pack_registry(&tools);
+    bind_pack_registry(&pack_handle, &tools);
 
-    // `build_workflow` is itself a member of the `workflows` pack, so
-    // `strip_packed_from_visible` withholds it for a non-owner — leaving the
-    // delegate prompt-hidden and therefore NOT directly callable.
+    // The spawn tool is withheld from this session, so even though its schema
+    // can reach the workflow owners it is not a callable route.
     let mut visible: std::collections::HashSet<String> =
         tools.iter().map(|t| t.name().to_string()).collect();
     strip_packed_from_visible(&mut visible, "unrelated_agent");
+    visible.remove("spawn_subagent");
     assert!(
-        !visible.contains("build_workflow"),
-        "precondition: the delegate is prompt-hidden here"
+        !visible.contains("spawn_subagent"),
+        "precondition: the owner hand-off is prompt-hidden here"
     );
 
     let session = ToolPolicyEngine::build_session(
@@ -414,12 +408,12 @@ async fn a_prompt_hidden_delegate_is_not_offered_as_a_direct_route() {
     let pack = crate::tools::toolpacks::pack("workflows").expect("workflows pack");
     let route = mw.route_for_pack(pack);
     assert!(
-        !route.contains("Call `build_workflow`"),
+        !route.contains("Call `spawn_subagent` to delegate"),
         "a prompt-hidden delegate must not be advertised as a direct call: {route}"
     );
     assert!(
-        route.contains("workflow_builder"),
-        "the hint must fall back to naming the owning agent: {route}"
+        route.contains("workflow_builder") || route.contains("flow_discovery"),
+        "when the spawn route is hidden, name an owning agent without claiming a callable tool: {route}"
     );
 }
 
@@ -450,7 +444,8 @@ async fn an_invented_tool_name_in_a_skill_is_not_reported_as_a_denial() {
         "an invented name must not read as a permission denial: {message}"
     );
     assert!(
-        message.contains("`build_workflow`"),
+        message.contains("Call `spawn_subagent` to delegate")
+            && (message.contains("workflow_builder") || message.contains("flow_discovery")),
         "the answer must name what this session can call in the skill: {message}"
     );
 }
@@ -496,7 +491,7 @@ fn an_invented_tool_name_is_not_found_even_under_the_packs_permission_ceiling() 
 fn a_pack_member_this_session_never_registered_is_not_found_not_forbidden() {
     let mw = non_owner_middleware();
     // `save_workflow` is in the `workflows` pack, but this session's registry
-    // holds only `build_workflow` and `propose_workflow`.
+    // holds the spawn tool and `propose_workflow`, but not `save_workflow`.
     let workflows = crate::tools::toolpacks::pack("workflows").expect("workflows pack");
     assert!(
         workflows.owns("save_workflow"),
@@ -521,5 +516,18 @@ fn a_pack_member_this_session_never_registered_is_not_found_not_forbidden() {
     assert!(
         !message.contains("not allowed"),
         "absence must not read as a permission denial: {message}"
+    );
+}
+
+/// Only `use_skill` renders a pack listing. Any other registered tool whose
+/// arguments carry a string `skill` (an MCP schema, a stray key) must fall
+/// through to its own `execute`.
+#[tokio::test]
+async fn a_non_use_skill_call_with_a_skill_argument_is_not_rendered_as_a_listing() {
+    let mw = non_owner_middleware();
+    assert!(
+        mw.render_skill_for_session(&call("build_workflow", json!({ "skill": "workflows" })))
+            .is_none(),
+        "build_workflow was answered with a pack listing instead of executing"
     );
 }

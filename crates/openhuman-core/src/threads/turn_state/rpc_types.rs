@@ -9,14 +9,14 @@ use serde::{Deserialize, Serialize};
 use tinyagents_session::turn_state::types::{PersistedToolFailure, TurnState};
 
 /// Request payload for `openhuman.threads_turn_state_get`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GetTurnStateRequest {
     pub thread_id: String,
 }
 
 /// Response payload for `openhuman.threads_turn_state_get`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTurnStateResponse {
     /// `None` when no snapshot exists for the thread.
@@ -26,7 +26,7 @@ pub struct GetTurnStateResponse {
 
 /// Response payload for `openhuman.threads_turn_state_list` and
 /// `openhuman.threads_turn_state_history`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTurnStatesResponse {
     pub turn_states: Vec<TurnState>,
@@ -50,7 +50,7 @@ pub struct ClearTurnStateRequest {
 }
 
 /// Response payload for `openhuman.threads_turn_state_clear`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ClearTurnStateResponse {
     pub cleared: bool,

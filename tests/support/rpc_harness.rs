@@ -27,6 +27,8 @@ pub async fn serve_rpc() -> (
     tokio::task::JoinHandle<Result<(), std::io::Error>>,
 ) {
     ensure_rpc_auth();
+    #[cfg(feature = "linked-modules")]
+    openhuman_modules_linked::install();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind rpc listener");
@@ -128,7 +130,12 @@ embedding_dimensions = 0
 [memory_tree]
 embedding_strict = false
 "#;
-    std::fs::write(openhuman_dir.join("config.toml"), cfg).expect("write config.toml");
+    let cfg = if cfg!(feature = "linked-modules") {
+        format!("{cfg}\n[modules]\nsource = \"linked\"\n")
+    } else {
+        cfg.to_string()
+    };
+    std::fs::write(openhuman_dir.join("config.toml"), &cfg).expect("write config.toml");
     let _: openhuman_core::config::Config =
-        toml::from_str(cfg).expect("test config must match schema");
+        toml::from_str(&cfg).expect("test config must match schema");
 }

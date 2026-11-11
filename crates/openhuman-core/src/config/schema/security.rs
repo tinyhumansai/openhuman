@@ -1,0 +1,96 @@
+//! OpenHuman-owned security, sandbox, and audit configuration.
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+pub struct SecurityConfig {
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
+    #[serde(default)]
+    pub resources: ResourceLimitsConfig,
+    #[serde(default)]
+    pub audit: AuditConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SandboxConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub backend: SandboxBackend,
+    #[serde(default)]
+    pub firejail_args: Vec<String>,
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            enabled: None,
+            backend: SandboxBackend::Auto,
+            firejail_args: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SandboxBackend {
+    #[default]
+    Auto,
+    Landlock,
+    Firejail,
+    Bubblewrap,
+    Docker,
+    /// One long-lived box per tenant on an NVIDIA OpenShell gateway, through
+    /// the TinyBox module (`[runtime.openshell]`).
+    #[serde(rename = "openshell")]
+    OpenShell,
+    /// A box per command on the hosted agent37 HTTP sandbox service, through
+    /// the TinyBox module (`[runtime.agent37]`).
+    #[serde(rename = "agent37")]
+    Agent37,
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[serde(default)]
+pub struct ResourceLimitsConfig {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct AuditConfig {
+    #[serde(default = "default_audit_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_audit_log_path")]
+    pub log_path: String,
+    #[serde(default = "default_audit_max_size_mb")]
+    pub max_size_mb: u32,
+}
+
+fn default_audit_enabled() -> bool {
+    true
+}
+
+fn default_audit_log_path() -> String {
+    "audit.log".to_string()
+}
+
+fn default_audit_max_size_mb() -> u32 {
+    100
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_audit_enabled(),
+            log_path: default_audit_log_path(),
+            max_size_mb: default_audit_max_size_mb(),
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "security_tests.rs"]
+mod tests;

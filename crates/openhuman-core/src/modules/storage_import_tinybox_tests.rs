@@ -1,15 +1,14 @@
 use super::*;
+use crate::storage::{Precondition, Scope, Storage};
 use serde_json::json;
 use sha2::Digest;
-use tinystoragedrivers::{MemoryStorage, Precondition, Scope, StorageBackend};
+use tinystoragedrivers_testkit::memory_storage;
 
-fn scoped() -> ScopedStorage {
-    MemoryStorage::new()
-        .for_scope(&Scope::new("module:tinybox@local").unwrap())
-        .unwrap()
+fn scoped() -> Storage {
+    memory_storage(&Scope::new("module:tinybox@local").unwrap())
 }
 
-const INDEX: &str = r#"{"jails":{"j1":{"id":"j1","label":"build","dir":"/w/jails/j1","backend_at_create":"landlock","created_at_unix":10,"updated_at_unix":20,"notes":"keep"}}}"#;
+const INDEX: &str = r#"{"records":{"j1":{"id":"j1","label":"build","dir":"/w/jails/j1","backend_at_create":"landlock","created_at_unix":10,"updated_at_unix":20,"notes":"keep"}}}"#;
 
 fn legacy_workspace() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -29,11 +28,22 @@ async fn the_jail_index_moves_into_one_document_with_the_same_shape() {
     assert_eq!(outcome, Outcome::Imported { written: true });
     let stored = scoped
         .documents()
-        .get(JAIL_INDEX_COLLECTION, "jails")
+        .get(tinybox_bus::storage::JAIL_INDEX_COLLECTION, "jails")
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.doc, serde_json::from_str::<Value>(INDEX).unwrap());
+    assert_eq!(
+        stored.doc,
+        json!({"records": {"j1": {
+            "id": "j1",
+            "label": "build",
+            "dir": "/w/jails/j1",
+            "backend_at_create": "landlock",
+            "created_ms": 10_000,
+            "updated_ms": 20_000,
+            "notes": "keep"
+        }}})
+    );
 }
 
 #[tokio::test]
@@ -54,13 +64,15 @@ async fn an_index_the_module_already_wrote_is_kept_and_a_rerun_is_a_noop() {
     let scoped = scoped();
     scoped
         .documents()
-        .ensure_collection(&CollectionSpec::new(JAIL_INDEX_COLLECTION))
+        .ensure_collection(&CollectionSpec::new(
+            tinybox_bus::storage::JAIL_INDEX_COLLECTION,
+        ))
         .await
         .unwrap();
     scoped
         .documents()
         .put(
-            JAIL_INDEX_COLLECTION,
+            tinybox_bus::storage::JAIL_INDEX_COLLECTION,
             "jails",
             json!({"jails": {}}),
             Precondition::Absent,
@@ -73,7 +85,7 @@ async fn an_index_the_module_already_wrote_is_kept_and_a_rerun_is_a_noop() {
     );
     let stored = scoped
         .documents()
-        .get(JAIL_INDEX_COLLECTION, "jails")
+        .get(tinybox_bus::storage::JAIL_INDEX_COLLECTION, "jails")
         .await
         .unwrap()
         .unwrap();

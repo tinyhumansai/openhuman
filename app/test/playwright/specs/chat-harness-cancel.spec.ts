@@ -1,5 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { inFlightThreadKey, persistedThreadMessages } from '../helpers/chat-transcript';
 import {
   bootAuthenticatedPage,
   dismissWalkthroughIfPresent,
@@ -122,18 +123,48 @@ test.describe('Chat Harness - Cancel', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '500');
 
     await openChat(page);
-    await createNewThread(page);
+    const threadId = await createNewThread(page);
     await sendMessage(page, PROMPT);
 
     // Mid-stream, the composer's Send button morphs into a Stop button (the
     // cancel control now lives in the composer for the text composer).
     await expect(page.getByTestId('stop-generation-button')).toBeVisible({ timeout: 10_000 });
+    await expect.poll(async () => page.locator('#root').innerText()).toContain('one two');
+    await expect.poll(() => inFlightThreadKey(threadId)).toBeTruthy();
 
     await page.getByTestId('stop-generation-button').click();
 
     await expect(page.getByTestId('stop-generation-button')).toHaveCount(0, { timeout: 10_000 });
     for (const piece of LATE_PIECES) {
       await expect(page.getByText(piece, { exact: false })).toHaveCount(0, { timeout: 5_000 });
+    }
+    await expect.poll(() => inFlightThreadKey(threadId)).toBeUndefined();
+    await expect.poll(async () => page.locator('#root').innerText()).toContain('one two');
+    await expect
+      .poll(
+        async () => {
+          const messages = await persistedThreadMessages(threadId);
+          return (
+            messages.some(message => message.sender === 'user' && message.content === PROMPT) &&
+            messages.some(
+              message =>
+                message.sender === 'agent' &&
+                message.content.includes('one two') &&
+                message.extraMetadata.stopped === true
+            )
+          );
+        },
+        { timeout: 10_000 }
+      )
+      .toBe(true);
+    const messages = await persistedThreadMessages(threadId);
+    const stopped = messages.find(
+      message => message.sender === 'agent' && message.extraMetadata.stopped === true
+    );
+    expect(stopped).toBeDefined();
+    expect(stopped?.extraMetadata.requestId).toBeTruthy();
+    for (const piece of LATE_PIECES) {
+      expect(messages.some(message => message.content.includes(piece))).toBe(false);
     }
 
     const composer = page.getByTestId('chat-message-input');

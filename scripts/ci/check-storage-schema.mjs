@@ -1,20 +1,19 @@
 #!/usr/bin/env node
 // Storage-schema gate (tinyhumansai/openhuman#7992, part of #7973).
 //
-// Every crate that stores records exports `storage_schema()`; the host composes
-// them (`crates/openhuman-core/src/storage/schema.rs`). This check dumps the
-// composed schema as JSON (the `storage_schema_dump` example of
-// `openhuman-cli`), lints it, and keeps `docs/storage-schema.md` in step.
+// Crates expose v2 `CollectionSpec` values; the host ensures each owner's
+// declarations separately (`crates/openhuman-core/src/storage/schema.rs`).
+// This check dumps those declarations by crate (the `storage_schema_dump`
+// example of `openhuman-cli`), lints them, and keeps `docs/storage-schema.md`
+// in step.
 //
 // Lint rules (the spec is docs/specs/schema-v2.md in tinystoragedrivers):
-//   1. owner names are `[a-z][a-z0-9_]{1,23}` and `tsd` is reserved;
-//   2. a collection or stream is `<owner>.<entity>` with a snake_case entity
-//      (lowercase letters, digits and `_`), no version suffix (`_v2`);
-//   3. a blob or secret prefix is `<owner>/<path>`;
-//   4. a name or prefix is declared by exactly one owner (single ownership);
-//   5. indexed fields that hold a time are `*_ms` (no `_at`, `_ns`, `_us`,
+//   1. collection names are `<owner>.<entity>` with a snake_case entity
+//      (lowercase letters, digits and `_`);
+//   2. each collection name and index name is unique;
+//   3. indexed fields that hold a time are `*_ms` (no `_at`, `_ns`, `_us`,
 //      `_secs`, `_ts` or `_time` suffix);
-//   6. a migration step names an item its owner declares (or a legacy source).
+//   4. expiry and search declarations are carried through the dump.
 //
 // Usage:
 //   check-storage-schema.mjs                  lint and fail on doc drift
@@ -32,11 +31,28 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..', '..');
 export const DOC_PATH = resolve(REPO_ROOT, 'docs', 'storage-schema.md');
 
-const OWNER = /^[a-z][a-z0-9_]{1,23}$/;
-const ENTITY = /^[a-z][a-z0-9_]*$/;
-const VERSION_SUFFIX = /_v\d+$/;
+const COLLECTION = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
 const TIME_SUFFIX = /(_at|_ns|_us|_secs|_ts|_time)$/;
-const SCOPES = new Set(['tenant', 'agent', 'module', 'cluster']);
+
+// TinyChannels keeps these historical source names in its collection grants
+// so the owner-local migrations can copy old rows. They are read-only inputs,
+// not v2 collection names; renaming them would orphan persisted data.
+const LEGACY_SOURCE_COLLECTIONS = new Set([
+  'tinychannels-bus\0channels_delivery_pending',
+  'tinychannels-bus\0channels_delivery_failed',
+  'tinychannels-bus\0channels_delivery_results',
+  'tinychannels-bus\0channel_remote_bindings',
+  'tinychannels-bus\0channel_remote_busy',
+  'tinychannels-bus\0channel_remote_meta',
+  'tinychannels-bus\0whatsapp_device',
+  'tinychannels-bus\0whatsapp_identity',
+  'tinychannels-bus\0whatsapp_session',
+  'tinychannels-bus\0whatsapp_prekey',
+  'tinychannels-bus\0whatsapp_signed_prekey',
+  'tinychannels-bus\0whatsapp_sender_key',
+  'tinychannels-bus\0whatsapp_sync_key',
+  'tinychannels-bus\0whatsapp_lid_mapping',
+]);
 
 /** Features the dump is built with: the contributor set plus the wallet owner. */
 export const DUMP_FEATURES = 'web3';
@@ -46,9 +62,8 @@ export const DUMP_FEATURES = 'web3';
  * dump with the feature set of an existing plain build so Cargo reuses it
  * instead of compiling the core again: a comma list, or `core-product` for
  * `scripts/ci/product-features.sh --core` (what the plain `openhuman-cli`
- * builds use). The schema is only gated on flows, skills, modules, web3 and
- * tinymemes, all of which are in the default set plus web3 and in the product
- * set, so the dump is identical; the wallet owner (web3) must be in any
+ * builds use). The schema is only gated on flows, skills, modules and web3,
+ * all of which are in the default set plus web3 and in the product set, so the dump is identical; the wallet owner (web3) must be in any
  * override.
  */
 export function dumpFeatures(env = process.env, root = REPO_ROOT) {
@@ -91,89 +106,74 @@ export function dumpSchema(root = REPO_ROOT, { run: spawn = spawnSync, env = pro
 /** @returns {string[]} one message per violation */
 export function lint(dump) {
   const problems = [];
-  const claimed = new Map();
-  const owners = new Set();
-  for (const { owner, items, steps } of dump.owners) {
-    if (!OWNER.test(owner) || owner === 'tsd') {
-      problems.push(`owner "${owner}" is not a valid owner name`);
+  if (!Array.isArray(dump.owners)) {
+    return ['schema dump must group collections under an owners array'];
+  }
+  const crates = new Set();
+  const names = new Set();
+  for (const owner of dump.owners ?? []) {
+    if (!owner.crate || crates.has(owner.crate)) {
+      problems.push(`crate name "${owner.crate}" is empty or declared more than once`);
     }
-    if (owners.has(owner)) problems.push(`owner "${owner}" is declared twice`);
-    owners.add(owner);
-    const declared = new Set();
-    for (const item of items) {
-      declared.add(item.name);
-      if (!SCOPES.has(item.scope)) {
-        problems.push(`${owner}: "${item.name}" has unknown scope class "${item.scope}"`);
+    crates.add(owner.crate);
+    for (const collection of owner.collections ?? []) {
+      const { name, indexes = [], ttl_field: ttlField, search } = collection;
+      if (!COLLECTION.test(name) && !LEGACY_SOURCE_COLLECTIONS.has(`${owner.crate}\0${name}`)) {
+        problems.push(`${owner.crate}: collection "${name}" must be <owner>.<entity> with a snake_case entity`);
       }
-      const where = `${owner}: ${item.kind} "${item.name}"`;
-      if (item.kind === 'collection' || item.kind === 'stream') {
-        const dot = item.name.indexOf('.');
-        const prefix = dot < 0 ? '' : item.name.slice(0, dot);
-        const entity = dot < 0 ? '' : item.name.slice(dot + 1);
-        if (prefix !== owner || !ENTITY.test(entity)) {
-          problems.push(`${where} must be <owner>.<entity> with a snake_case entity`);
-        } else if (VERSION_SUFFIX.test(entity)) {
-          problems.push(`${where} carries a version suffix; the version lives in the registry`);
+      const key = `${owner.crate}\0${name}`;
+      if (names.has(key)) problems.push(`${owner.crate}: collection "${name}" is declared more than once`);
+      names.add(key);
+      const indexNames = new Set();
+      for (const index of indexes) {
+        if (!index.name || indexNames.has(index.name)) {
+          problems.push(`${owner.crate}: ${name}: index name "${index.name}" is empty or duplicated`);
         }
-      } else if (!item.name.startsWith(`${owner}/`) || item.name === `${owner}/`) {
-        problems.push(`${where} must be <owner>/<path>`);
-      }
-      for (const field of item.index_fields ?? []) {
-        if (TIME_SUFFIX.test(field)) {
-          problems.push(`${where}: indexed field "${field}" holds a time and must be named *_ms`);
+        indexNames.add(index.name);
+        for (const field of index.fields ?? []) {
+          if (TIME_SUFFIX.test(field)) {
+            problems.push(`${owner.crate}: ${name}: indexed field "${field}" holds a time and must be named *_ms`);
+          }
         }
       }
-      const key = `${item.kind}:${item.name}`;
-      if (claimed.has(key)) {
-        problems.push(`${where} is also declared by "${claimed.get(key)}" (single ownership)`);
-      } else {
-        claimed.set(key, owner);
+      if (ttlField && TIME_SUFFIX.test(ttlField)) {
+        problems.push(`${owner.crate}: ${name}: expiry field "${ttlField}" holds a time and must be named *_ms`);
       }
-    }
-    for (const step of steps) {
-      if (!declared.has(step.item)) {
-        problems.push(`${owner}: step "${step.id}" names undeclared item "${step.item}"`);
-      }
-      if (!(step.to > step.from)) {
-        problems.push(`${owner}: step "${step.id}" does not go up (${step.from} -> ${step.to})`);
+      for (const field of search?.fields ?? []) {
+        if (!field) problems.push(`${owner.crate}: ${name}: search fields must not be empty`);
       }
     }
   }
   return problems;
 }
 
-/** Renders docs/storage-schema.md. */
+const compare = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
+
+/** Renders docs/storage-schema.md from stable crate-grouped CollectionSpecs. */
 export function render(dump) {
   const out = [
     '# Storage schema',
     '',
     '<!-- Generated by `pnpm docs:generate` (scripts/ci/check-storage-schema.mjs) from the',
-    'composed registry (`crates/openhuman-core/src/storage/schema.rs`). Do not edit by hand. -->',
+    'per-crate `CollectionSpec` values (`crates/openhuman-core/src/storage/schema.rs`). Do not edit by hand. -->',
     '',
-    'Every crate that stores records declares them in `storage_schema()`; the host composes',
-    'the declarations into one registry, prepares the backend from it and migrates every',
-    'scope at boot. Names are `<owner>.<entity>`; the scope class says where a record lives',
-    '(`tenant`: `local` or `u:<id>`, `agent`: `<tenant>/agent:<id>`, `module`:',
-    '`<tenant>/module:<id>`, `cluster`: the shared registry scope).',
+    'Each crate declares its collections with `CollectionSpec`; the host calls',
+    '`ensure_collection` for every declaration at boot. Sections preserve the declaring',
+    'crate, including when two crates use the same collection name.',
+    'Record shapes and migrations stay with their owners.',
     '',
   ];
-  const sorted = [...dump.owners].sort((a, b) => a.owner.localeCompare(b.owner));
-  for (const { owner, items, steps } of sorted) {
-    out.push(`## ${owner}`, '', '| Kind | Name | Version | Scope | Indexed fields |', '| --- | --- | --- | --- | --- |');
-    for (const item of [...items].sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const owner of [...(dump.owners ?? [])].sort((a, b) => compare(a.crate, b.crate))) {
+    out.push(`## ${owner.crate}`, '', '| Collection | Indexes | Expiry field | Search fields |', '| --- | --- | --- | --- |');
+    for (const collection of [...(owner.collections ?? [])].sort((a, b) => compare(a.name, b.name))) {
+      const indexes = (collection.indexes ?? []).map(index =>
+        `\`${index.name}\` (${index.fields.map(field => `\`${field}\``).join(', ')})${index.unique ? ' unique' : ''}`
+      ).sort(compare).join('<br>');
       out.push(
-        `| ${item.kind} | \`${item.name}\` | ${item.version ?? ''} | ${item.scope} | ${(item.index_fields ?? []).map(f => `\`${f}\``).join(', ')} |`
+        `| \`${collection.name}\` | ${indexes} | ${collection.ttl_field ? `\`${collection.ttl_field}\`` : ''} | ${(collection.search?.fields ?? []).map(field => `\`${field}\``).join(', ')} |`
       );
     }
     out.push('');
-    if (steps.length > 0) {
-      out.push('Migration steps:', '');
-      for (const step of steps) {
-        const source = step.source ? ` from \`${step.source}\`` : '';
-        out.push(`- \`${step.id}\`: \`${step.item}\` v${step.from} to v${step.to}${source}`);
-      }
-      out.push('');
-    }
   }
   return `${out.join('\n').trimEnd()}\n`;
 }
@@ -216,7 +216,8 @@ function main(argv) {
     console.error(`${docPath} is out of date. Run \`pnpm docs:generate\` and commit the result.`);
     return 1;
   }
-  console.log(`storage schema ok: ${dump.owners.length} owners`);
+  const collectionCount = (dump.owners ?? []).reduce((total, owner) => total + (owner.collections ?? []).length, 0);
+  console.log(`storage schema ok: ${(dump.owners ?? []).length} crates, ${collectionCount} collections`);
   return 0;
 }
 

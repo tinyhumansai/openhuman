@@ -5,7 +5,7 @@ use crate::agent::orchestration::running_subagents::resolve::{
 use crate::core::runtime::DispatchCtx;
 use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet, Mode};
 use crate::tools::toolpacks::ToolGroups;
-use tinyagents_orchestration::subagent::SteerError;
+use tinyagents_orchestration::steering::SteerError;
 
 const CHILD: &str = "OPENHUMAN_DETACHED_TENANT_TEST_CHILD";
 const PARENT: &str = "same-parent-session";
@@ -209,13 +209,7 @@ async fn saas_dispatch_exposes_only_the_callers_detached_worker_controls() {
             Some(true)
         );
         assert!(crate::core::all::schema_for_rpc_method("openhuman.config_get_config").is_none());
-        let unreviewed =
-            crate::agent_runs::command_center::all_command_center_registered_controllers()
-                .into_iter()
-                .find(|controller| controller.schema.function == "list")
-                .expect("existing Agent controller")
-                .schema;
-        let method = crate::core::all::rpc_method_name(&unreviewed);
+        let method = "openhuman.agent_work_list";
         assert!(crate::core::all::schema_for_rpc_method(&method).is_none());
         assert!(
             crate::core::invoke::invoke_method(
@@ -247,7 +241,7 @@ async fn unscoped_async_spawn_refuses_before_persisting_a_running_session() {
     ) {
         return;
     }
-    use crate::agent::harness::fork_context::ParentExecutionContext;
+    use crate::agent::subagent_host::ParentExecutionContext;
     use crate::agent::orchestration::subagent_sessions::SubagentSessionStore;
     use crate::agent::orchestration::tools::{SpawnAsyncSubagentDispatch, SpawnAsyncSubagentTool};
     use tinyagents_harness::tool::ToolDispatch;

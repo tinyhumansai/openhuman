@@ -22,92 +22,6 @@ pub(crate) fn decode_driver_job_result(
     Ok(public_id)
 }
 
-pub(crate) async fn resolve_inline_driver_outcome(
-    tool_result: tinytools::ToolResult,
-    bundle: &OpenHumanDriverBundle,
-    task_key: &SubagentTaskKey,
-    fallback_agent_id: &str,
-) -> Result<(SubagentRunOutcome, String), SubagentRunError> {
-    let (public_job_id, declared_status) =
-        decode_driver_job_reference(tool_result, bundle, task_key)?;
-    if let Some(error) = bundle_failure_for_key(bundle, task_key) {
-        return Err(error);
-    }
-    let cached = bundle
-        .host_outcome
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .remove(task_key);
-
-    // Observer cancellation belongs to this waiter, not to the persisted
-    // child outcome. It must remain authoritative even if the leader commits
-    // while this caller is projecting its ToolResult.
-    if let Some(outcome) = cached.as_ref().filter(|host| {
-        host.persistence_disposition == SubagentPersistenceDisposition::ObserverCancelled
-    }) {
-        return Ok((outcome.clone(), public_job_id));
-    }
-
-    // The driver's persistence CAS result is authoritative. Another
-    // invocation can win terminal/pause persistence while this executor's
-    // host-side cache still contains its local loser. Read the same scoped
-    // record the driver returned before projecting a host result.
-    let persisted = if let Some(outcome) = bundle
-        .persistence
-        .load_terminal(task_key)
-        .await
-        .map_err(map_lifecycle_error)?
-    {
-        Some((
-            outcome,
-            cached
-                .as_ref()
-                .map_or(SubagentPersistenceDisposition::TerminalExisting, |host| {
-                    host.persistence_disposition
-                }),
-        ))
-    } else {
-        bundle
-            .persistence
-            .load_pause(task_key)
-            .await
-            .map_err(map_lifecycle_error)?
-            .map(|outcome| {
-                (
-                    outcome,
-                    cached
-                        .as_ref()
-                        .map_or(SubagentPersistenceDisposition::PauseExisting, |host| {
-                            host.persistence_disposition
-                        }),
-                )
-            })
-    };
-
-    if let Some((outcome, disposition)) = persisted {
-        if declared_status
-            .as_deref()
-            .is_some_and(|status| neutral_status_for_outcome(&outcome.status) != Some(status))
-        {
-            return Err(SubagentRunError::Provider(anyhow::anyhow!(
-                "driver-backed async spawn failed: lifecycle status did not match its durable outcome"
-            )));
-        }
-        let host = outcome_to_host(
-            SubagentRunResult::new(outcome, disposition),
-            cached,
-            &bundle.persistence,
-            task_key,
-            fallback_agent_id,
-        );
-        return Ok((host, public_job_id));
-    }
-
-    Err(SubagentRunError::Provider(anyhow::anyhow!(
-        "driver-backed subagent returned without a durable host outcome"
-    )))
-}
-
 fn decode_driver_job_reference(
     tool_result: tinytools::ToolResult,
     bundle: &OpenHumanDriverBundle,
@@ -168,15 +82,6 @@ fn neutral_status_for_host(status: &SubagentRunStatus) -> Option<&'static str> {
         SubagentRunStatus::Incomplete { .. } => Some("incomplete"),
         SubagentRunStatus::Cancelled => Some("cancelled"),
         SubagentRunStatus::Completed => None,
-    }
-}
-
-fn neutral_status_for_outcome(status: &SubagentOutcomeKind) -> Option<&'static str> {
-    match status {
-        SubagentOutcomeKind::AwaitingInput(_) => Some("awaiting_input"),
-        SubagentOutcomeKind::Incomplete(_) => Some("incomplete"),
-        SubagentOutcomeKind::Cancelled => Some("cancelled"),
-        SubagentOutcomeKind::Completed => None,
     }
 }
 

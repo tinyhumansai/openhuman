@@ -1,8 +1,5 @@
 use crate::agent::subagent_host::types::SubagentCheckpointData;
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 use tinyagents_orchestration::subagent::{
     PersistedSubagentPause, SubagentOutcome, SubagentOutcomeKind, SubagentPause,
     SubagentPausePersistenceDisposition, SubagentPersistence, SubagentResume, SubagentTaskKey,
@@ -10,7 +7,7 @@ use tinyagents_orchestration::subagent::{
 
 use super::lifecycle::{
     decode_driver_job_result, load_subagent_checkpoint, merged_resume_history,
-    resolve_inline_driver_outcome, OpenHumanDriverBundle, OpenHumanPersistence,
+    OpenHumanDriverBundle, OpenHumanPersistence,
 };
 use super::{SubagentMode, SubagentRunError, SubagentRunOutcome, SubagentRunStatus, SubagentUsage};
 
@@ -259,6 +256,7 @@ async fn legacy_durable_session_resolves_its_key_only_from_owned_checkpoint() {
             worker_thread_id: None,
             task_id: "task".into(),
             lifecycle_key: None,
+            parent_epoch: None,
         },
         None,
     )
@@ -294,6 +292,7 @@ async fn tiny_session_port_recovers_legacy_key_from_owned_pause_and_hides_foreig
     use tinyagents_orchestration::subagent::SubagentSessionStore as _;
 
     let workspace = tempfile::tempdir().unwrap();
+    crate::storage::local::use_persistent_default_for_test(workspace.path());
     let checkpoint_dir = workspace.path().join(".openhuman/subagent_checkpoints");
     let key = key();
     let store = crate::agent::orchestration::subagent_sessions::SubagentSessionStore::new(
@@ -316,6 +315,7 @@ async fn tiny_session_port_recovers_legacy_key_from_owned_pause_and_hides_foreig
             worker_thread_id: None,
             task_id: "task".into(),
             lifecycle_key: None,
+            parent_epoch: None,
         },
         None,
     )
@@ -572,130 +572,6 @@ async fn legacy_pause_migration_does_not_return_a_stale_pause_after_terminal_com
     assert!(
         migrated.is_none(),
         "terminal CAS winner must close the stale pause"
-    );
-}
-
-#[tokio::test]
-async fn driver_inline_projection_returns_the_durable_winner_not_a_local_loser() {
-    use tinyagents_orchestration::subagent::SubagentPersistenceDisposition as Disposition;
-
-    let directory = tempfile::tempdir().unwrap();
-    let key = key();
-    let bundle = OpenHumanDriverBundle::new(directory.path().join("checkpoints")).unwrap();
-    let mut local_loser = cached_outcome(SubagentRunStatus::Completed);
-    local_loser.output = "local losing output".into();
-    local_loser.iterations = 2;
-    local_loser.persistence_disposition = Disposition::TerminalExisting;
-    bundle
-        .host_outcome
-        .lock()
-        .unwrap()
-        .insert(key.clone(), local_loser);
-
-    let mut winner = SubagentOutcome::cancelled("task");
-    winner.status = SubagentOutcomeKind::Incomplete(
-        tinyagents_orchestration::subagent::SubagentIncomplete::new("winner stopped"),
-    );
-    winner.output = "durable winning output".into();
-    winner.cost_usd = Some(0.75);
-    winner.cost_source = Some(tinyagents_harness::cost::CostSource::Estimated);
-    winner.history = vec![tinyinference_llm::message::Message::assistant(
-        "durable winning history",
-    )];
-    winner.usage.calls = 7;
-    winner.usage.usage.charged_amount =
-        Some(tinyinference_llm::usage::ChargedAmount::usd_micros(750_000));
-    winner
-        .extensions
-        .insert("agent_id".into(), serde_json::json!("winner-agent"));
-    let winning_host = SubagentRunOutcome {
-        output: winner.output.clone(),
-        agent_id: "winner-agent".into(),
-        iterations: 7,
-        failure_cause: None,
-        ..cached_outcome(SubagentRunStatus::Incomplete {
-            reason: "winner stopped".into(),
-            failure_cause: None,
-        })
-    };
-    let winner_cache = Arc::new(Mutex::new(HashMap::from([(key.clone(), winning_host)])));
-    let winner_persistence = OpenHumanPersistence::new(directory.path().join("checkpoints"))
-        .with_host_outcome(Arc::clone(&winner_cache));
-    winner_persistence
-        .record_terminal(&key, &winner, None)
-        .await
-        .unwrap();
-
-    let result = tinytools::ToolResult::error(
-        serde_json::json!({"task_id":"public-job-42", "status":"incomplete"}).to_string(),
-    );
-    let (projected, public_job_id) =
-        resolve_inline_driver_outcome(result, &bundle, &key, "fallback-agent")
-            .await
-            .unwrap();
-
-    assert_eq!(public_job_id, "public-job-42");
-    assert_eq!(projected.output, "durable winning output");
-    assert_eq!(projected.agent_id, "winner-agent");
-    assert_eq!(projected.iterations, 7);
-    assert_eq!(
-        projected.usage.cost_source,
-        tinyagents_harness::cost::CostSource::Estimated
-    );
-    assert_eq!(projected.usage.charged_amount_usd, 0.75);
-    assert!(matches!(
-        projected.status,
-        SubagentRunStatus::Incomplete { ref reason, .. } if reason == "winner stopped"
-    ));
-    assert_eq!(projected.final_history.len(), 1);
-    assert_eq!(
-        projected.final_history[0].content,
-        "durable winning history"
-    );
-    assert_eq!(
-        projected.persistence_disposition,
-        Disposition::TerminalExisting
-    );
-}
-
-#[tokio::test]
-async fn observer_cancel_survives_a_leader_commit_before_host_projection() {
-    let directory = tempfile::tempdir().unwrap();
-    let key = key();
-    let bundle = OpenHumanDriverBundle::new(directory.path().join("checkpoints")).unwrap();
-
-    // Model the Tiny driver ordering: this invocation has already received
-    // ObserverCancelled, then the independent leader commits before the host
-    // adapter reads the durable lifecycle record.
-    let mut observer = cached_outcome(SubagentRunStatus::Cancelled);
-    observer.persistence_disposition =
-        tinyagents_orchestration::subagent::SubagentPersistenceDisposition::ObserverCancelled;
-    bundle
-        .host_outcome
-        .lock()
-        .unwrap()
-        .insert(key.clone(), observer);
-    let mut leader = SubagentOutcome::cancelled("task");
-    leader.status = SubagentOutcomeKind::Completed;
-    leader.output = "leader result".into();
-    OpenHumanPersistence::new(directory.path().join("checkpoints"))
-        .record_terminal(&key, &leader, None)
-        .await
-        .unwrap();
-
-    let result = tinytools::ToolResult::error(
-        serde_json::json!({"task_id":"public-job-42", "status":"cancelled"}).to_string(),
-    );
-    let (projected, public_job_id) =
-        resolve_inline_driver_outcome(result, &bundle, &key, "fallback-agent")
-            .await
-            .expect("observer cancellation must survive the leader's later commit");
-
-    assert_eq!(public_job_id, "public-job-42");
-    assert!(matches!(projected.status, SubagentRunStatus::Cancelled));
-    assert_eq!(
-        projected.persistence_disposition,
-        tinyagents_orchestration::subagent::SubagentPersistenceDisposition::ObserverCancelled
     );
 }
 

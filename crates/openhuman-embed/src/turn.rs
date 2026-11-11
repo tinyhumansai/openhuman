@@ -10,7 +10,7 @@
 //! # Why the params are a struct rather than `json!`
 //!
 //! The controller behind this method deserializes
-//! [`AgentChatParams`](openhuman_core::inference::host_runtime::schemas) — which
+//! the `agent_runs::agent_chat` controller params — which
 //! carries no `#[serde(rename_all)]`, so its wire names are the Rust field names
 //! exactly as spelled. Every embedder that hand-writes that JSON is therefore
 //! depending on an unmarked, unversioned naming coincidence: rename a field
@@ -22,7 +22,7 @@
 //!
 //! A turn reads one `tokio` task-local that no parameter can carry yet:
 //!
-//! - **origin** ([`turn_origin`](openhuman_core::security::turn_origin)) — the
+//! - **origin** ([`turn_origin`](openhuman_core::core::runtime::turn_origin)) — the
 //!   caller's statement of authority. The approval gate is *fail-closed*: an
 //!   unlabelled call gets the `Cli` default, and a caller wanting anything
 //!   else — a workflow's blanket automation grant, say — must scope it around
@@ -42,14 +42,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::error::CoreError;
+use openhuman_core::agent_runs::INFERENCE_AGENT_CHAT as AGENT_CHAT;
+use openhuman_core::core::runtime::turn_origin::AgentTurnOrigin;
 use openhuman_core::core::runtime::CoreRuntime;
-use openhuman_core::inference::INFERENCE_AGENT_CHAT as AGENT_CHAT;
 use openhuman_core::progress::AgentProgress;
-use openhuman_core::security::turn_origin::AgentTurnOrigin;
 
 #[path = "turn_types.rs"]
 mod types;
-pub(crate) use types::{is_safe_endpoint_for_bearer, sanitize_url_for_display};
+pub(crate) use types::sanitize_url_for_display;
 pub use types::{Route, TurnOutcome, TurnRequest};
 #[path = "turn_control.rs"]
 mod control;
@@ -105,6 +105,9 @@ pub struct Turn {
     >,
     tools: Option<openhuman_core::agent::HostTools>,
     tool_env: Option<Arc<std::collections::BTreeMap<String, String>>>,
+    tool_discovery: Option<crate::ToolDiscoveryOptions>,
+    tool_discovery_force: bool,
+    context: crate::ContextOverrides,
 }
 
 impl Turn {
@@ -138,6 +141,9 @@ impl Turn {
             observer: None,
             trace_content: crate::observe::TraceContent::MetadataOnly,
             hooks: Default::default(),
+            tool_discovery: None,
+            tool_discovery_force: false,
+            context: Default::default(),
             tools: None,
             tool_env: None,
         }
@@ -176,8 +182,13 @@ impl Turn {
         mut self,
         factory: impl for<'a> Fn(
                 openhuman_core::agent::TurnContext<'a>,
-            ) -> openhuman_core::agent::HostTurnTools
-            + Send
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = openhuman_core::agent::HostTurnTools>
+                        + Send
+                        + 'a,
+                >,
+            > + Send
             + Sync
             + 'static,
     ) -> Self {
@@ -417,6 +428,93 @@ impl Turn {
         self
     }
 
+    /// The `tool_search` options for the thread this turn creates.
+    ///
+    /// They take the place of the agent's own
+    /// ([`AgentSpec::tool_discovery`](crate::AgentSpec::tool_discovery)) and
+    /// the config's `[agent.tool_search]` for a **new** session id, and are
+    /// recorded on the thread with its first prompt. A turn on an existing
+    /// session id ignores them: the thread keeps the options it started with,
+    /// and a thread created before any were recorded keeps today's behaviour.
+    /// That is how a host rolls a change out to new threads only.
+    #[must_use]
+    pub fn tool_discovery(mut self, options: crate::ToolDiscoveryOptions) -> Self {
+        self.tool_discovery = Some(options);
+        self.tool_discovery_force = false;
+        self
+    }
+
+    /// Like [`tool_discovery`](Self::tool_discovery), but also for a thread
+    /// that already exists.
+    ///
+    /// The turn runs with `options` and records them on the thread, the way
+    /// the turn that creates a thread does, so later turns keep them without
+    /// being forced again. A thread that already runs with exactly these
+    /// options records nothing, so a host can force on every turn at no cost.
+    /// This is how a host applies a change to the threads it already has: a
+    /// rollout to all threads, not only to new ones. Forcing the options that
+    /// equal today's behaviour ([`ToolDiscoveryOptions::TODAY`](crate::ToolDiscoveryOptions::TODAY))
+    /// is a change like any other and takes a thread off its earlier pin.
+    ///
+    /// The thread's earlier turns keep the bytes they were sent with; the
+    /// provider's cached prefix is lost once, at the turn that changes the
+    /// options.
+    #[must_use]
+    pub fn tool_discovery_force(mut self, options: crate::ToolDiscoveryOptions) -> Self {
+        self.tool_discovery = Some(options);
+        self.tool_discovery_force = true;
+        self
+    }
+
+    /// `[context] keep_recent_tokens` for the thread this turn creates: the verbatim tail, in
+    /// tokens, an in-turn compaction keeps after its summary. Unset keeps the
+    /// config's value, which defaults to 20,000.
+    #[must_use]
+    pub fn keep_recent_tokens(mut self, tokens: u32) -> Self {
+        self.context.keep_recent_tokens = Some(tokens);
+        self
+    }
+
+    /// `[context] tool_result_max_age_turns` for the thread this turn creates: a tool result with
+    /// more than `turns` user turns after it is replaced by a one-line note.
+    /// Off unless set. A turn on an existing session id ignores the pinned options (expiry and reasoning replay): the thread keeps what it started with.
+    #[must_use]
+    pub fn tool_result_max_age_turns(mut self, turns: u32) -> Self {
+        self.context.tool_result_max_age_turns = Some(turns);
+        self
+    }
+
+    /// `[context] tool_result_exempt_tools` for the thread this turn creates: tools whose results
+    /// never expire. Only read while a result age is set.
+    #[must_use]
+    pub fn tool_result_exempt_tools<I, S>(mut self, tools: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.context.tool_result_exempt_tools = Some(tools.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// `[context] replay_reasoning` for the thread this turn creates: whether requests replay every
+    /// turn's reasoning ([`ReasoningReplay::All`](crate::ReasoningReplay::All),
+    /// today's behaviour) or only the current turn's. The stored transcript
+    /// keeps every block either way.
+    #[must_use]
+    pub fn replay_reasoning(mut self, replay: crate::ReasoningReplay) -> Self {
+        self.context.replay_reasoning = Some(replay);
+        self
+    }
+
+    /// `[context] prune_retired_tools` for the thread this turn creates: drop a recorded tool
+    /// declaration the host no longer offers, live or deferred, instead of
+    /// carrying it forward for the life of the thread.
+    #[must_use]
+    pub fn prune_retired_tools(mut self, prune: bool) -> Self {
+        self.context.prune_retired_tools = Some(prune);
+        self
+    }
+
     /// Pin this turn to a model id.
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.request.model_override = Some(model.into());
@@ -461,6 +559,10 @@ impl Turn {
         self.request.inference_url = Some(route.base_url);
         self.request.api_key = Some(route.api_key);
         self.request.inference_headers = route.headers;
+        self.request.inference_provider_options = route.provider_options;
+        self.request.inference_reasoning_effort = route
+            .reasoning_effort
+            .map(|effort| effort.as_str().to_string());
         self
     }
 
@@ -554,9 +656,18 @@ struct AgentTurnOptions {
         Option<std::sync::Arc<tinyagents_harness::observability::turn_observer::ObserverScope>>,
     untrusted_input: bool,
     attachments: Vec<openhuman_core::agent::HostAttachment>,
+    /// The `tool_search` options a new thread starts with; see
+    /// [`Turn::tool_discovery`].
+    tool_discovery: Option<crate::ToolDiscoveryOptions>,
+    /// Whether they also apply to a thread that exists; see
+    /// [`Turn::tool_discovery_force`].
+    tool_discovery_force: bool,
+    /// The `[context]` overrides for the session this turn runs; see
+    /// [`Turn::keep_recent_tokens`] and its siblings.
+    context: crate::ContextOverrides,
     /// The explicit per-turn values the core honours: live progress and the
     /// host environment (budget, depth, cancellation, hooks, tool-belt authority).
-    chat_env: openhuman_core::inference::host_runtime::ops::AgentChatEnv,
+    chat_env: openhuman_core::agent_runs::agent_chat::AgentChatEnv,
 }
 
 async fn dispatch(
@@ -612,6 +723,9 @@ async fn dispatch(
             }
             let ctx = std::sync::Arc::clone(rt.context());
             let chat_env = options.chat_env;
+            let tool_discovery = options.tool_discovery;
+            let tool_discovery_force = options.tool_discovery_force;
+            let context = options.context;
             let dispatch =
                 openhuman_core::core::runtime::DispatchCtx::new(std::sync::Arc::clone(&ctx));
             let turn: futures_box::BoxFuture<'_, Result<AgentReply, CoreError>> =
@@ -623,6 +737,12 @@ async fn dispatch(
                         .load_config()
                         .await
                         .map_err(|raw| CoreError::from_rpc_string(AGENT_CHAT, raw))?;
+                    apply_tool_discovery(
+                        &mut config.agent.tool_search,
+                        tool_discovery,
+                        tool_discovery_force,
+                    );
+                    context.apply_to(&mut config.context);
                     let target = match request.agent_id.as_deref().map(str::trim) {
                         Some(id) if !id.is_empty() => AgentChatTarget::AgentId(id),
                         _ => AgentChatTarget::Orchestrator,
@@ -632,6 +752,13 @@ async fn dispatch(
                         request.api_key.clone(),
                     )
                     .map(|route| route.with_headers(request.inference_headers.clone()));
+                    let route = route
+                        .map(|route| {
+                            route.with_provider_options(request.inference_provider_options.clone())
+                        })
+                        .map(|route| {
+                            route.with_reasoning_effort(request.inference_reasoning_effort.clone())
+                        });
                     agent_chat_reply_for_controlled(
                         &mut config,
                         target,
@@ -666,11 +793,13 @@ async fn dispatch(
                         agent_chat_reply_for_controlled, AgentChatTarget,
                     };
                     let mut config = inner.config.clone();
-                    let route = openhuman_core::config::schema::EphemeralRoute::from_params(
-                        request.inference_url,
-                        request.api_key,
-                    )
-                    .map(|route| route.with_headers(request.inference_headers));
+                    apply_tool_discovery(
+                        &mut config.agent.tool_search,
+                        options.tool_discovery,
+                        options.tool_discovery_force,
+                    );
+                    options.context.apply_to(&mut config.context);
+                    let route = inference_route(&request);
                     let host = options.tools.or_else(|| inner.composed_host_tools());
                     let target = AgentChatTarget::Definition {
                         definition: &inner.definition,
@@ -768,6 +897,21 @@ async fn dispatch(
     }
 }
 
+/// The per-call inference route `request` names (endpoint, bearer, headers,
+/// provider options, reasoning effort), applied to the agent's config in
+/// memory for that call alone.
+pub(crate) fn inference_route(
+    request: &TurnRequest,
+) -> Option<openhuman_core::config::schema::EphemeralRoute> {
+    openhuman_core::config::schema::EphemeralRoute::from_params(
+        request.inference_url.clone(),
+        request.api_key.clone(),
+    )
+    .map(|route| route.with_headers(request.inference_headers.clone()))
+    .map(|route| route.with_provider_options(request.inference_provider_options.clone()))
+    .map(|route| route.with_reasoning_effort(request.inference_reasoning_effort.clone()))
+}
+
 fn map_agent_chat_error(
     error: anyhow::Error,
     usage: Option<tinyagents_harness::middleware::ResponseUsage>,
@@ -814,6 +958,19 @@ pub fn absolute(dir: impl AsRef<Path>) -> std::io::Result<PathBuf> {
         return Ok(dir.to_path_buf());
     }
     Ok(std::env::current_dir()?.join(dir))
+}
+
+/// Writes a turn's `tool_search` options into the config its session reads,
+/// with the instruction to apply them to an existing thread when `force`.
+fn apply_tool_discovery(
+    config: &mut openhuman_core::config::schema::ToolSearchConfig,
+    options: Option<crate::ToolDiscoveryOptions>,
+    force: bool,
+) {
+    if let Some(options) = options {
+        options.apply_to(config);
+        config.force_pin = force;
+    }
 }
 
 #[cfg(test)]

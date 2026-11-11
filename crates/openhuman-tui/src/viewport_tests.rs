@@ -62,15 +62,14 @@ fn idle_and_old_entry_edits_do_not_revisit_settled_history() {
 
 #[test]
 fn indexed_rows_equal_full_wrapping_after_updates_resizes_and_expired_journal() {
-    use openhuman_rpc::embed::chat_surface::WebChannelEvent;
     let mut state = TranscriptState::new("test");
-    state.apply_event(&WebChannelEvent {
-        event: "tool_call".into(),
-        client_id: "test".into(),
-        tool_call_id: Some("first".into()),
-        tool_name: Some("tool".into()),
-        ..Default::default()
-    });
+    state.apply_event(
+        &serde_json::from_value(serde_json::json!({
+            "event":"tool_call","client_id":"test","thread_id":"thread-1",
+            "request_id":"turn","tool_call_id":"first","tool_name":"tool"
+        }))
+        .unwrap(),
+    );
     for index in 0..150 {
         state.push_system(format!("entry {index} 界e\u{301}\nnext"));
     }
@@ -80,14 +79,14 @@ fn indexed_rows_equal_full_wrapping_after_updates_resizes_and_expired_journal() 
             state.toggle_entry(0);
         }
         if step == 4 {
-            state.apply_event(&WebChannelEvent {
-                event: "tool_result".into(),
-                client_id: "test".into(),
-                tool_call_id: Some("first".into()),
-                output: Some("a\nb\nc".into()),
-                success: Some(true),
-                ..Default::default()
-            });
+            state.apply_event(
+                &serde_json::from_value(serde_json::json!({
+                    "event":"tool_result","client_id":"test","thread_id":"thread-1",
+                    "request_id":"turn","tool_call_id":"first",
+                    "output":"a\nb\nc","success":true
+                }))
+                .unwrap(),
+            );
         }
         if step == 5 {
             for _ in 0..140 {
@@ -165,25 +164,28 @@ fn switching_between_cloned_transcripts_does_not_reuse_a_foreign_snapshot() {
 fn changing_an_old_tools_height_updates_prefix_lookup_without_rebuilding_history() {
     use openhuman_rpc::embed::chat_surface::WebChannelEvent;
     let mut state = TranscriptState::new("test");
-    let event = |name: &str| WebChannelEvent {
-        event: name.into(),
-        client_id: "test".into(),
-        tool_call_id: Some("old".into()),
-        tool_name: Some("tool".into()),
-        ..Default::default()
+    let event = |name: &str, fields: serde_json::Value| {
+        let mut value = serde_json::json!({
+            "event":name,"client_id":"test","thread_id":"thread","request_id":"turn",
+            "tool_call_id":"old","tool_name":"tool"
+        });
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        serde_json::from_value::<WebChannelEvent>(value).unwrap()
     };
-    state.apply_event(&event("tool_call"));
+    state.apply_event(&event("tool_call", serde_json::json!({})));
     for _ in 0..300 {
         state.push_system("settled");
     }
     let mut cache = ViewportCache::default();
     cache.rows(&state, 40, 20, 0);
     let before = cache.total_rows();
-    state.apply_event(&WebChannelEvent {
-        output: Some("first\nsecond\nthird\nfourth".into()),
-        success: Some(true),
-        ..event("tool_result")
-    });
+    state.apply_event(&event(
+        "tool_result",
+        serde_json::json!({"output":"first\nsecond\nthird\nfourth","success":true}),
+    ));
     state.toggle_entry(0);
     cache.rows(&state, 40, 20, 0);
     assert_eq!(cache.recomputed, 1);

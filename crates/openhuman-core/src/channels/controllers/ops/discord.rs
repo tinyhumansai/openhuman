@@ -5,8 +5,8 @@
 
 use crate::config::Config;
 use crate::core::Outcome;
+use crate::credentials;
 use crate::modules::channel_controller::{self, DiscordReply};
-use crate::security::credentials;
 use tinychannels_bus::{
     controllers::{BotPermissionCheck, DiscordGuild, DiscordTextChannel},
     ChannelControllerRequest,
@@ -25,6 +25,7 @@ async fn discord_bot_token(config: &Config) -> Result<String, String> {
     let auth = credentials::AuthService::from_config(config);
     let profile = auth
         .get_profile(&provider_key, None)
+        .await
         .map_err(|e| format!("failed to load Discord credentials: {e}"))?
         .ok_or("Discord bot token not configured. Connect Discord first.")?;
 

@@ -129,6 +129,30 @@ impl McpModulePort for TinyMcpPort {
         }
     }
 
+    async fn call_object_if_ready(
+        &self,
+        object_path: &str,
+        member: &str,
+        args: Value,
+        confidential: bool,
+    ) -> Result<Value, ModuleCallError> {
+        #[cfg(feature = "modules")]
+        {
+            let owner = self.pinned.get().ok_or(ModuleCallError::Unavailable)?;
+            let object = owner.object_at(object_path)?;
+            if confidential {
+                object.call_confidential(member, args).await
+            } else {
+                object.call(member, args).await
+            }
+        }
+        #[cfg(not(feature = "modules"))]
+        {
+            let _ = (object_path, member, args, confidential);
+            Err(ModuleCallError::Unavailable)
+        }
+    }
+
     async fn prepare_agent_tools(
         &self,
         request: PrepareAgentToolsRequest,
@@ -161,3 +185,7 @@ impl McpModulePort for TinyMcpPort {
             .await
     }
 }
+
+#[cfg(test)]
+#[path = "module_port_tests.rs"]
+mod tests;

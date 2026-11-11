@@ -1,5 +1,6 @@
 use super::*;
-use std::sync::{Arc, Mutex};
+use crate::security::secret_storage::file_store;
+use std::sync::Mutex;
 
 #[derive(Default)]
 struct FakeSource {
@@ -65,6 +66,34 @@ fn host_key_write_requires_matching_readback() {
 }
 
 #[test]
+fn master_key_file_read_is_limited_to_4096_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("master.key");
+    std::fs::write(&path, vec![b'a'; 4096]).unwrap();
+    assert_eq!(read_master_key_file(&path).unwrap().len(), 4096);
+
+    std::fs::write(&path, vec![b'a'; 4097]).unwrap();
+    assert!(read_master_key_file(&path)
+        .unwrap_err()
+        .contains("4096-byte limit"));
+}
+
+#[cfg(unix)]
+#[test]
+fn master_key_file_rejects_fifo_without_waiting_for_a_writer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("master-key.fifo");
+    let status = std::process::Command::new("mkfifo")
+        .arg(&path)
+        .status()
+        .expect("mkfifo is available on Unix test hosts");
+    assert!(status.success());
+
+    let error = read_master_key_file(&path).unwrap_err();
+    assert!(error.contains("regular file"));
+}
+
+#[test]
 fn workspace_key_is_created_private_and_reused() {
     let dir = tempfile::tempdir().unwrap();
     let first = workspace_master_key(dir.path()).unwrap();
@@ -125,6 +154,10 @@ fn workspace_key_rejects_shared_permissions_and_symlinks() {
     assert!(workspace_master_key(dir.path()).is_err());
 }
 
+// These exercise the enabled backend's resolver (`try_load_master_key`),
+// which a build without `secret-file` does not have: this file is also
+// mounted under the disabled stub.
+#[cfg(feature = "secret-file")]
 #[test]
 fn installed_source_wins_over_workspace_file_and_does_not_leak_threads() {
     let _env = crate::config::test_env::EnvVarGuard::locked()
@@ -133,7 +166,7 @@ fn installed_source_wins_over_workspace_file_and_does_not_leak_threads() {
     let dir = tempfile::tempdir().unwrap();
     let _workspace =
         crate::security::secret_storage::store::test_scope::ScopedWorkspace::new(dir.path());
-    install_master_key_source(Arc::new(FakeSource {
+    install_master_key_source(std::sync::Arc::new(FakeSource {
         key: Mutex::new(Some([7; 32])),
         ..Default::default()
     }));
@@ -149,12 +182,13 @@ fn installed_source_wins_over_workspace_file_and_does_not_leak_threads() {
     assert!(dir.path().join("keyring/master.key").exists());
 }
 
+#[cfg(feature = "secret-file")]
 #[test]
 fn configured_env_key_precedes_host_source_and_errors_never_fall_through() {
     let _env = crate::config::test_env::EnvVarGuard::locked()
         .with(MASTER_KEY_ENV, "ab".repeat(32))
         .without(MASTER_KEY_FILE_ENV);
-    let source = Arc::new(FakeSource {
+    let source = std::sync::Arc::new(FakeSource {
         denied: true,
         ..Default::default()
     });
@@ -169,6 +203,7 @@ fn configured_env_key_precedes_host_source_and_errors_never_fall_through() {
     clear_master_key_source();
 }
 
+#[cfg(feature = "secret-file")]
 #[test]
 fn denied_host_source_does_not_fall_back_to_workspace_key() {
     let _env = crate::config::test_env::EnvVarGuard::locked()
@@ -177,7 +212,7 @@ fn denied_host_source_does_not_fall_back_to_workspace_key() {
     let dir = tempfile::tempdir().unwrap();
     let _workspace =
         crate::security::secret_storage::store::test_scope::ScopedWorkspace::new(dir.path());
-    install_master_key_source(Arc::new(FakeSource {
+    install_master_key_source(std::sync::Arc::new(FakeSource {
         denied: true,
         ..Default::default()
     }));

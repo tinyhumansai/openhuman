@@ -26,6 +26,60 @@ fn default_policy_is_jev_with_no_ranker_and_top_three() {
 }
 
 #[test]
+fn an_agent_with_no_new_keys_runs_with_todays_policy() {
+    let _g = guard();
+    apply_tool_search_config(&ToolSearchConfig::default());
+    let policy = discovery_policy();
+    assert!(policy.promote_found_tools);
+    assert!(!policy.compact_search_results);
+    assert!(!policy.collapse_search_results);
+    assert!(policy.repair_tool_call_wrapper);
+    assert_eq!(policy.max_limit, 20);
+}
+
+#[test]
+fn each_tool_search_key_maps_onto_the_harness_policy() {
+    let _g = guard();
+    apply_tool_search_config(&ToolSearchConfig {
+        top_k: 9,
+        max_limit: 5,
+        promote_found_tools: false,
+        compact_search_results: true,
+        collapse_search_results: true,
+        repair_tool_call_wrapper: false,
+        ..ToolSearchConfig::default()
+    });
+    let policy = discovery_policy();
+    assert!(!policy.promote_found_tools);
+    assert!(policy.compact_search_results);
+    assert!(policy.collapse_search_results);
+    assert!(!policy.repair_tool_call_wrapper);
+    assert_eq!(policy.max_limit, 5);
+    assert_eq!(policy.default_limit, 5, "top_k is clamped to max_limit");
+    apply_tool_search_config(&ToolSearchConfig::default());
+}
+
+#[test]
+fn tool_search_keys_read_from_toml_and_default_when_absent() {
+    let absent: ToolSearchConfig = toml::from_str("top_k = 4").expect("parses");
+    assert_eq!(
+        absent,
+        ToolSearchConfig {
+            top_k: 4,
+            ..ToolSearchConfig::default()
+        }
+    );
+    let set: ToolSearchConfig = toml::from_str(
+        "max_limit = 8\npromote_found_tools = false\ncompact_search_results = true\n\
+         collapse_search_results = true\nrepair_tool_call_wrapper = false",
+    )
+    .expect("parses");
+    assert_eq!(set.max_limit, 8);
+    assert!(!set.promote_found_tools && !set.repair_tool_call_wrapper);
+    assert!(set.compact_search_results && set.collapse_search_results);
+}
+
+#[test]
 fn settings_select_the_mode_and_clamp_top_k() {
     let _g = guard();
     let ranker: Arc<dyn ToolRanker> = Arc::new(Bm25Ranker);

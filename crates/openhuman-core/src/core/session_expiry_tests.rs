@@ -1,4 +1,7 @@
-use super::{is_session_expired_error, is_unconfirmed_unauthorized_error};
+use super::{
+    backend_status_means_session_expired, is_session_expired_error,
+    is_unconfirmed_unauthorized_error,
+};
 
 #[test]
 fn is_session_expired_error_matches_backend_path_401() {
@@ -225,4 +228,29 @@ fn is_session_expired_error_matches_session_jwt_required() {
     assert!(is_session_expired_error("session JWT required"));
     // Case-insensitive.
     assert!(is_session_expired_error("SESSION JWT REQUIRED"));
+}
+
+#[test]
+fn is_session_expired_error_does_not_match_a_non_401_with_401_in_its_body() {
+    assert!(!is_session_expired_error(
+        "GET /teams failed (500 Internal Server Error): {\"status\":401,\"error\":\"Unauthorized\"}"
+    ));
+    assert!(!is_session_expired_error(
+        "POST /auth/me failed (403 Forbidden): 401 unauthorized upstream"
+    ));
+    assert!(!is_session_expired_error(
+        "GET /teams failed (500 Internal Server Error): {\"error\":\"upstream failed (401 Unauthorized)\"}"
+    ));
+}
+
+#[test]
+fn only_a_session_credential_401_means_the_session_expired() {
+    assert!(backend_status_means_session_expired(401, false));
+    assert!(!backend_status_means_session_expired(401, true));
+    for status in [400, 402, 403, 404, 429, 500, 503] {
+        assert!(
+            !backend_status_means_session_expired(status, false),
+            "{status} is a refusal, not an expired session"
+        );
+    }
 }

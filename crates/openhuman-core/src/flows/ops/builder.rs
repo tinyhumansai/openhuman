@@ -71,6 +71,7 @@ pub async fn flows_build(
     // `AgentDefinition` itself (`iteration_policy = "extended"` ->
     // `effective_max_iterations()` = 50), so no override is needed here.
     let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, config, "workflow_builder")
+        .await
         .map_err(|e| format!("failed to build workflow_builder agent: {e:#}"))?;
     agent.set_agent_definition_name("workflow_builder".to_string());
     start_builder_turn_clean(&mut agent);

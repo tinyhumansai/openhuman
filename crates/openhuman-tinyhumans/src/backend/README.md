@@ -58,8 +58,9 @@ OpenHuman backend. Three detectors feed that decision:
 - `looks_like_inference_provider_endpoint`: a host in the curated
   `INFERENCE_PROVIDER_DOMAINS` list (or a subdomain of one), or a path that is
   exactly `/v1` or `/api/v1`;
-- the core's built-in cloud provider host list
-  (`config::schema::cloud_providers::host_is_builtin_cloud_provider`).
+- the host-composed provider catalog in `hosted_config::provider_presets()`,
+  which includes TinyHumans' registered hosted endpoint alongside upstream
+  provider presets.
 
 The first fallback logs one `warn!` (guarded by `std::sync::Once`) so the
 redirect is visible without repeating on every request. URLs in logs go

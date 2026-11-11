@@ -71,6 +71,10 @@ pub(crate) fn persist_delivered_reply(
         // renders identical chips to one the client had appended itself.
         extra_metadata["citations"] = json!(citations);
     }
+    // The audio a spoken reply was synthesized into, if the turn stored any.
+    if let Some(note) = super::voice_notes::reply_note_metadata(ctx, workspace_dir, request_id) {
+        extra_metadata["voiceNote"] = note;
+    }
     conversations::append_message(
         ctx,
         workspace_dir.to_path_buf(),

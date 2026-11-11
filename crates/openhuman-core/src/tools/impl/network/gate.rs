@@ -5,13 +5,13 @@
 //! directly, with the same argument and the same answer. No policy is decided
 //! here; the adapter only names the questions.
 
-use tinytools_std::network::NetGate;
+use tinyagents_harness_tools::net::network::NetGate;
 
 use crate::security::egress::{
-    emit_external_transfer, local_only_tool_block, DataKind, EgressDescriptor,
+    emit_external_transfer, local_only_tool_block_blocking, DataKind, EgressDescriptor,
 };
+use crate::security::policy::CommandClass;
 use crate::security::{GateDecision, SecurityPolicy};
-use tinybox_bus::CommandClass;
 
 /// Build the egress descriptor for an outbound HTTP request (privacy epic S2,
 /// #4436). The host is the destination; a request body carries tool arguments
@@ -37,7 +37,7 @@ pub(super) fn network_egress_descriptor(
 /// `SecurityPolicy` as the network tools' [`NetGate`] for one turn: every answer is
 /// the policy's, and the disclosure additionally reaches the turn's chat.
 ///
-/// `NetGate::disclose` takes no run context (the trait lives in `tinytools_std`),
+/// `NetGate::disclose` takes no run context (the trait lives in `tinyagents_harness_tools`),
 /// so the chat the disclosure is routed to is held by the gate itself, which the
 /// per-call tool wrapper ([`crate::tools::per_call::PerCallTool`]) builds for each
 /// call.
@@ -123,7 +123,7 @@ impl NetGate for SecurityPolicy {
     }
 
     fn local_only_block(&self, host: &str) -> Option<String> {
-        local_only_tool_block(&EgressDescriptor::network_fetch(host))
+        local_only_tool_block_blocking(&EgressDescriptor::network_fetch(host))
     }
 
     fn disclose(&self, host: &str, has_body: bool, has_headers: bool) {

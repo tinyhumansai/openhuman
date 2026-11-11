@@ -13,8 +13,9 @@
 
 use async_trait::async_trait;
 use tinyinference_llm::providers::openai::server_http::{
-    strip_temperature_suffix, BackendFailure, ChatBackend, ListedModel, ResolvedChat,
+    BackendFailure, ChatBackend, ListedModel, ResolvedChat,
 };
+use tinyinference_providers::route::{bare_model_route, route_owner};
 use tracing::{debug, warn};
 
 use crate::config::Config;
@@ -26,11 +27,7 @@ pub(super) struct HostChatBackend;
 
 /// Bare model names (no `:`, not the `openhuman` sentinel) are local Ollama models.
 pub(super) fn provider_string_for(model: &str) -> String {
-    if model.contains(':') || model == "openhuman" {
-        model.to_string()
-    } else {
-        format!("ollama:{model}")
-    }
+    bare_model_route(model)
 }
 
 #[async_trait]
@@ -53,6 +50,7 @@ impl ChatBackend for HostChatBackend {
                 &config,
                 raw,
             )
+            .await
             .map_err(|e| {
                 warn!("{LOG_PREFIX} resolve: provider build failed: {e}");
                 BackendFailure::invalid_request(format!("provider error: {e}"))
@@ -106,24 +104,20 @@ pub(super) fn configured_models(config: &Config) -> Vec<ListedModel> {
         .map(str::trim)
         .filter(|model| !model.is_empty())
     {
-        push(
-            strip_temperature_suffix(default_model).to_string(),
-            "openhuman",
-        );
+        // A configured default is known to be managed even when its model id
+        // contains a colon (for example `qwen3:14b`).
+        push(route_owner(default_model).0, "openhuman");
     }
 
     for cp in &config.cloud_providers {
         if let Some(ref model) = cp.default_model {
-            push(
-                format!("{}:{}", cp.slug, strip_temperature_suffix(model)),
-                &cp.slug,
-            );
+            push(route_owner(&format!("{}:{model}", cp.slug)).0, &cp.slug);
         }
     }
 
     if !config.local_ai.chat_model_id.is_empty() {
         push(
-            format!("ollama:{}", config.local_ai.chat_model_id),
+            route_owner(&format!("ollama:{}", config.local_ai.chat_model_id)).0,
             "ollama",
         );
     }
@@ -142,14 +136,10 @@ pub(super) fn configured_models(config: &Config) -> Vec<ListedModel> {
     .map(str::trim)
     .filter(|value| !value.is_empty() && *value != "cloud" && *value != "openhuman")
     {
-        if let Some(model) = provider_string.strip_prefix("ollama:") {
-            push(
-                format!("ollama:{}", strip_temperature_suffix(model)),
-                "ollama",
-            );
-        } else if let Some((slug, model)) = provider_string.split_once(':') {
+        if let Some((slug, _)) = provider_string.split_once(':') {
             if slug != "openhuman" {
-                push(format!("{slug}:{}", strip_temperature_suffix(model)), slug);
+                let (id, _) = route_owner(provider_string);
+                push(id, slug);
             }
         }
     }

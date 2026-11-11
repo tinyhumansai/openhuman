@@ -226,3 +226,20 @@ fn remote_triage_scopes_the_remote_origin() {
     assert!(apply.contains("with_origin(origin, apply_decision("));
     assert!(!apply.contains("local_trigger_origin"));
 }
+
+#[test]
+fn an_external_inbound_turn_parks_external_effects() {
+    match external_inbound_origin("x:mentions", "turn-1") {
+        AgentTurnOrigin::TrustedAutomation { job_id, source } => {
+            assert_eq!(job_id, "inbound:x:mentions:turn-1");
+            assert_eq!(
+                source,
+                TrustedAutomationSource::Workflow {
+                    require_approval: true
+                },
+                "pushed content must force a park, not auto-allow"
+            );
+        }
+        other => panic!("an inbound turn must not run as {}", other.class()),
+    }
+}

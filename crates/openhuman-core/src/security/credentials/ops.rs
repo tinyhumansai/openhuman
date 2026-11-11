@@ -16,6 +16,10 @@ pub use composio::{
     clear_composio_api_key, get_composio_api_key, rpc_store_composio_api_key,
     store_composio_api_key, COMPOSIO_DIRECT_PROVIDER,
 };
+#[cfg(test)]
+pub(crate) use credential::clear_credential_with;
+#[cfg(test)]
+pub(crate) use credential::restore_api_key;
 pub use credential::{
     clear_credential, clear_session, set_credential, store_session, SetCredentialRequest,
     PENDING_BACKEND_VALIDATION_FIELD,

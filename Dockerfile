@@ -54,6 +54,11 @@ COPY crates/openhuman-modules-linked/Cargo.toml crates/openhuman-modules-linked/
 COPY crates/openhuman-rpc/Cargo.toml crates/openhuman-rpc/Cargo.toml
 COPY crates/openhuman-tinyhumans/Cargo.toml crates/openhuman-tinyhumans/Cargo.toml
 COPY crates/openhuman-tui/Cargo.toml crates/openhuman-tui/Cargo.toml
+# openhuman-embed declares its tests and examples as explicit [[test]] /
+# [[example]] targets; cargo refuses to load the manifest if their files are
+# missing, even for a binary-only build.
+COPY crates/openhuman-embed/tests/ crates/openhuman-embed/tests/
+COPY crates/openhuman-embed/examples/ crates/openhuman-embed/examples/
 # Vendored TinyAgents SDK (git submodule; [patch.crates-io] points here, so
 # the dep-cache build below already resolves it). CI must init the submodule
 # before docker build — see the "Init tinyagents submodule" steps in

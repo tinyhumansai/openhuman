@@ -1,5 +1,6 @@
 use super::*;
 use crate::core::runtime::{ContextOverlay, DomainSet};
+use crate::storage::Scope;
 
 /// A context derived for `agent` and registered as that agent's live one,
 /// the way an embed agent is. Each test uses its own agent ids, so tests
@@ -22,7 +23,7 @@ fn live_agent(agent: &str) -> Arc<CoreContext> {
 static CACHE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn memory_backend() -> Arc<dyn StorageBackend> {
-    Arc::new(crate::storage::MemoryStorage::new())
+    crate::storage::test_support::memory_backend()
 }
 
 fn visited(

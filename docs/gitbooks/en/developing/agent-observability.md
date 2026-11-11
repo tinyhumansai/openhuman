@@ -7,34 +7,32 @@ icon: eye
 
 # Agent observability
 
-This page covers three ways to see what OpenHuman did. E2E artifacts let a coding agent (Codex, Claude Code, Cursor) inspect the desktop app through the WDIO harness (see [E2E testing](e2e-testing.md)). The capture proxy shows what the core sent to inference. Langfuse traces cover real agent runs.
+This page covers three ways to see what OpenHuman did. E2E artifacts let a coding agent (Codex, Claude Code, Cursor) inspect the browser privacy flow through Playwright and the host-only desktop assertions through WDIO (see [E2E testing](e2e-testing.md)). The capture proxy shows what the core sent to inference. Langfuse traces cover real agent runs.
 
-The E2E layer is narrow on purpose. It covers one onboarding and privacy flow and saves screenshots, page-source dumps and mock backend request logs to disk.
+The browser review case covers shell readiness and the privacy panel. It attaches screenshots, page-source HTML and the mock backend request log at each checkpoint. Native WDIO owns the live desktop window and Tauri-only behavior; it does not duplicate the browser privacy flow.
 
 ## Quick start
 
 ```bash
-bash app/scripts/e2e-agent-review.sh
+bash app/scripts/e2e-web-shards.sh --lane=1 --lanes=4
 ```
 
-Artifacts land under:
+Playwright attachments are written with the test result under `app/test-results/`. To run the review case directly:
+
+```bash
+bash app/scripts/e2e-web-session.sh test/playwright/specs/agent-review.spec.ts
+```
+
+Artifacts include:
 
 ```text
-app/test/e2e/artifacts/<ISO-timestamp>-agent-review/
-  01-welcome.png
-  01-welcome.source.xml
-  02-post-welcome.png
-  02-post-welcome.source.xml
-  03-post-onboarding.png
-  03-post-onboarding.source.xml
-  04-privacy-panel.png
-  04-privacy-panel.source.xml
-  mock-requests-after-welcome.json
-  mock-requests-after-onboarding.json
-  mock-requests-after-privacy.json
-  failure-<test>.png              # only on failure
-  failure-<test>.source.xml       # only on failure
-  meta.json                       # run metadata + checkpoint index
+app/test-results/<run>/<test>/
+  01-shell-ready.png
+  01-shell-ready.html
+  01-shell-ready.mock-requests.json
+  02-privacy-panel.png
+  02-privacy-panel.html
+  02-privacy-panel.mock-requests.json
 ```
 
 The script prints the resolved artifact directory at the end.
@@ -43,28 +41,20 @@ The script prints the resolved artifact directory at the end.
 
 | Piece            | Path                                                                                                       | Role                                                                          |
 | ---------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Helper           | `app/test/e2e/helpers/artifacts.ts`                                                                        | Run dir, `captureCheckpoint`, `captureFailureArtifacts`, `saveMockRequestLog` |
-| WDIO hook        | `app/test/wdio.conf.ts` (`afterTest`)                                                                      | Always dumps screenshot + source on any failing test                          |
-| Canonical spec   | `app/test/e2e/specs/agent-review.spec.ts`                                                                  | Welcome, onboarding, then the privacy panel, with named checkpoints                   |
-| Wrapper script   | `app/scripts/e2e-agent-review.sh`                                                                          | Build + run + print artifact dir                                              |
-| Stable selectors | `data-testid` on `OnboardingNextButton`, `Onboarding` overlay + skip button, `WelcomeStep`, `PrivacyPanel` | Agent-reliable navigation anchors                                             |
+| Helper           | `app/test/playwright/specs/agent-review.spec.ts` | Attaches screenshots, page source and mock request logs |
+| Playwright owner | `app/test/playwright/specs/agent-review.spec.ts` | Shell readiness and privacy-panel labels/toggle |
+| Stable selectors | `chat-message-input`, `settings-privacy-panel`, `privacy-analytics-toggle` | Agent-reliable readiness anchors |
 
 ## Environment overrides
 
 | Variable             | Effect                                                                                      |
 | -------------------- | ------------------------------------------------------------------------------------------- |
-| `E2E_ARTIFACT_DIR`   | Force a specific run dir (skips auto-timestamped name)                                      |
-| `E2E_ARTIFACT_ROOT`  | Parent dir for auto-generated run dirs (default: `app/test/e2e/artifacts`)                  |
-| `E2E_ARTIFACT_LABEL` | Label used in the auto-generated run dir name (default: `run`; wrapper sets `agent-review`) |
+| `OPENHUMAN_WORKSPACE` | Isolated core workspace used by the Playwright session |
 
 ## Using the helper from new specs
 
 ```ts
-import { captureCheckpoint, saveMockRequestLog } from "../helpers/artifacts";
-import { getRequestLog } from "../mock-server";
-
-await captureCheckpoint("after-connect-click");
-saveMockRequestLog("after-connect-click", getRequestLog());
+await testInfo.attach("after-connect.png", { body: await page.screenshot(), contentType: "image/png" });
 ```
 
 `captureCheckpoint` numbers captures so the run dir reads chronologically.

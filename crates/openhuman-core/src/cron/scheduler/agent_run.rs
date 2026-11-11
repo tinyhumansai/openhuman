@@ -4,6 +4,7 @@
 use super::delivery::is_morning_briefing_job;
 use super::failure_classification::classify_agent_anyhow_for_user;
 use super::origin_context::build_run_prompt;
+use super::origin_delivery::{fallback_reminder, is_no_reply, job_allows_no_reply};
 use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 use {tinyflows_bus::schedule::types::CronJob, tinyflows_bus::schedule::types::SessionTarget};
@@ -38,10 +39,29 @@ pub(super) async fn run_agent_job_for_run(
     // A host-registered agent (`agent::host_agents`) carries its own
     // definition, model and route; the registry overrides below are for
     // registry agents only.
-    let is_host_agent = job
-        .agent_id
-        .as_deref()
-        .is_some_and(|id| crate::agent::host_agents::resolve(id).is_some());
+    let opened = host_agent_for_job(job).await;
+    let is_host_agent = opened.is_some();
+    // The scheduled-actions opt-in is read from the definition the run will
+    // actually use: the host agent's own, else the registry's.
+    let scheduled_actions = match opened.as_ref() {
+        Some(opened) => {
+            crate::cron::origin::scheduled_actions_enabled(job, &opened.agent.definition)
+        }
+        None => crate::agent_registry::host_definition::AgentDefinitionRegistry::current()
+            .and_then(|registry| {
+                registry
+                    .get(selected_agent_id)
+                    .map(|def| crate::cron::origin::scheduled_actions_enabled(job, def))
+            })
+            .unwrap_or(false),
+    };
+    if scheduled_actions {
+        tracing::info!(
+            job_id = %job.id,
+            agent_id = %selected_agent_id,
+            "[cron] agent opted into scheduled actions; root run executes as CronActions"
+        );
+    }
     if is_host_agent {
         tracing::debug!(
             job_id = %job.id,
@@ -71,10 +91,11 @@ pub(super) async fn run_agent_job_for_run(
                 // on. Inherit / Exact keep their literal `resolve()`
                 // behaviour because neither relies on the `-v1` trick.
                 use tinyagents_definition::ModelSpec;
-                let fallback_model = effective
-                    .default_model
-                    .clone()
-                    .unwrap_or_else(|| crate::config::DEFAULT_MODEL.to_string());
+                let fallback_model = effective.default_model.clone().or_else(|| {
+                    crate::inference::registry::provider_default_model(
+                        crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+                    )
+                });
                 let resolved_model = match &def.model {
                     ModelSpec::Hint(workload) => {
                         // Resolve the workload's configured model id via the crate
@@ -88,7 +109,9 @@ pub(super) async fn run_agent_job_for_run(
                             workload,
                             &effective,
                             effective.default_temperature,
-                        ) {
+                        )
+                        .await
+                        {
                             Ok((_, m)) => {
                                 tracing::debug!(
                                     job_id = %job.id,
@@ -97,7 +120,7 @@ pub(super) async fn run_agent_job_for_run(
                                     model = %m,
                                     "[cron] resolved Hint via workload factory"
                                 );
-                                m
+                                Some(m)
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -105,7 +128,7 @@ pub(super) async fn run_agent_job_for_run(
                                     agent_id = %agent_id,
                                     workload = %workload,
                                     error = %e,
-                                    fallback = %fallback_model,
+                                    fallback = ?fallback_model,
                                     "[cron] workload factory failed; using fallback model"
                                 );
                                 fallback_model.clone()
@@ -113,9 +136,11 @@ pub(super) async fn run_agent_job_for_run(
                         }
                     }
                     ModelSpec::Inherit => fallback_model.clone(),
-                    ModelSpec::Exact(name) => name.clone(),
+                    ModelSpec::Exact(name) => Some(name.clone()),
                 };
-                effective.default_model = Some(resolved_model);
+                if let Some(model) = resolved_model {
+                    effective.default_model = Some(model);
+                }
                 // Issue #4868 — the iteration cap is no longer set here. The
                 // session builder (`build_session_agent_inner`) resolves it
                 // from `def.effective_max_iterations()` directly, which (unlike
@@ -126,7 +151,7 @@ pub(super) async fn run_agent_job_for_run(
                 tracing::warn!(
                     job_id = %job.id,
                     agent_id = %agent_id,
-                    "[cron] agent_id not found in registry — falling back to canonical orchestrator"
+                    "[cron] agent_id not found in registry — the run fails rather than using another agent"
                 );
             }
         } else {
@@ -144,12 +169,29 @@ pub(super) async fn run_agent_job_for_run(
                 target = ?job.session_target,
                 "[cron] building isolated agent for scheduled job"
             );
-            match build_agent_for_cron_job(ctx, &effective, job) {
-                Ok(BuiltCronAgent { mut agent, context }) => {
+            match build_cron_agent(ctx, &effective, job, opened).await {
+                Ok(BuiltCronAgent {
+                    mut agent,
+                    context,
+                    _lease,
+                }) => {
                     // Tag events so downstream subscribers can correlate
                     // cron-triggered turns. `cron` is the channel so the
                     // event bus can filter from other flows (`cli`, `web`…).
                     agent.set_event_context(format!("cron:{}", job.id), "cron");
+                    agent.enable_headless_descendant_settlement();
+                    if scheduled_actions {
+                        agent.enable_scheduled_actions();
+                    }
+                    let timeout_secs = effective.agent.agent_timeout_secs;
+                    let deadline = tinyagents_harness::turn_deadline::TurnDeadline::starting_now(
+                        std::time::Duration::from_secs(timeout_secs),
+                    );
+                    let absolute_deadline =
+                        tokio::time::Instant::from_std(deadline.started() + deadline.backstop());
+                    let mut host_env = agent.host_env().clone();
+                    host_env.turn_deadline = Some(deadline);
+                    agent.set_host_env(host_env);
                     // A cron agent has no thread, so its first turn would fall
                     // back to `ResumeMode::LatestForAgent` and resume the newest
                     // unthreaded transcript for the agent name — some unrelated
@@ -171,30 +213,21 @@ pub(super) async fn run_agent_job_for_run(
                             MORNING_BRIEFING_TASK_RECENCY_SECS,
                         )));
                     }
-                    // Scope the run's origin around the turn. A job with no
-                    // channel origin runs as `TrustedAutomation { Cron }`: the
-                    // approval gate treats it as user-authorized automation
-                    // (the user created the job and authorized its prompt
-                    // together). A job created from a channel chat runs as
-                    // that channel's turn instead, so its external-effect
-                    // tools stay gated like its creator's were.
-                    let origin = crate::cron::origin::turn_origin_for_job_run(job, run_id);
-                    let turn = crate::security::turn_origin::with_origin(
-                        origin,
-                        agent.run_single(&prefixed_prompt),
-                    );
-                    // A host agent's turn runs in its own context, so every
-                    // ambient read (config, domains, tool groups, session
-                    // store) sees that agent rather than the process default.
-                    let turn: std::pin::Pin<
-                        Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>,
-                    > = match context {
-                        Some(context) => {
-                            Box::pin(crate::core::runtime::CoreContext::scope(context, turn))
-                        }
-                        None => Box::pin(turn),
-                    };
-                    turn.await
+                    // One absolute deadline bounds the turn and any corrective turn.
+                    let run = Box::pin(run_with_corrective_turn(
+                        &mut agent,
+                        context.as_ref(),
+                        job,
+                        run_id,
+                        &prefixed_prompt,
+                        scheduled_actions,
+                    ));
+                    match tokio::time::timeout_at(absolute_deadline, run).await {
+                        Ok(result) => result,
+                        Err(_) => Err(anyhow::anyhow!(
+                            "cron agent turn timed out after {timeout_secs}s"
+                        )),
+                    }
                 }
                 Err(e) => Err(e),
             }
@@ -229,6 +262,100 @@ pub(super) async fn run_agent_job_for_run(
     }
 }
 
+/// The whole prompt of a corrective turn: a delivery request only, never the
+/// job prompt, so an action the first turn took is not asked for again.
+pub(super) const NO_REPLY_CORRECTION: &str = "Your last reply was NO_REPLY, which is not allowed for this task. Write the message to send to the user now. Do not call tools or repeat any action.";
+
+/// Run the scheduled turn. A job that must deliver and answers `NO_REPLY`
+/// (or nothing) gets one corrective turn; if that still yields no message the
+/// host's fallback reminder is the run's output.
+async fn run_with_corrective_turn(
+    agent: &mut OpenHumanSessionHost,
+    context: Option<&std::sync::Arc<crate::core::runtime::CoreContext>>,
+    job: &CronJob,
+    run_id: &str,
+    prompt: &str,
+    scheduled_actions: bool,
+) -> anyhow::Result<String> {
+    let response = Box::pin(run_cron_turn(
+        agent,
+        context,
+        job,
+        run_id,
+        prompt,
+        scheduled_actions,
+    ))
+    .await?;
+    if job_allows_no_reply(job) || !needs_correction(&response) {
+        return Ok(response);
+    }
+    tracing::info!(
+        job_id = %job.id,
+        run_id = %run_id,
+        "[cron] run answered NO_REPLY but the job must deliver; running a corrective turn"
+    );
+    agent.set_next_turn_overrides(crate::agent::session_host::TurnOverrides {
+        suppress_tools: true,
+        ..Default::default()
+    });
+    let response = Box::pin(run_cron_turn(
+        agent,
+        context,
+        job,
+        run_id,
+        NO_REPLY_CORRECTION,
+        scheduled_actions,
+    ))
+    .await?;
+    if !needs_correction(&response) {
+        return Ok(response);
+    }
+    tracing::info!(
+        job_id = %job.id,
+        run_id = %run_id,
+        "[cron] corrective turn still produced no message; delivering the fallback reminder"
+    );
+    Ok(fallback_reminder(job))
+}
+
+fn needs_correction(response: &str) -> bool {
+    response.trim().is_empty() || is_no_reply(response)
+}
+
+/// One scheduled turn under the run's origin, in the host agent's context
+/// when there is one.
+async fn run_cron_turn(
+    agent: &mut OpenHumanSessionHost,
+    context: Option<&std::sync::Arc<crate::core::runtime::CoreContext>>,
+    job: &CronJob,
+    run_id: &str,
+    prompt: &str,
+    scheduled_actions: bool,
+) -> anyhow::Result<String> {
+    // A job with no channel origin runs as `TrustedAutomation { Cron }`: the
+    // approval gate treats it as user-authorized automation (the user created
+    // the job and authorized its prompt together). A job created from a
+    // channel chat runs as that channel's turn instead, so its external-effect
+    // tools stay gated like its creator's were. A job whose agent opted into
+    // scheduled actions runs as `TrustedAutomation { CronActions }`.
+    let origin = crate::cron::origin::turn_origin_for_job_run(job, run_id, scheduled_actions);
+    let turn =
+        crate::core::runtime::turn_origin::with_origin(origin, Box::pin(agent.run_single(prompt)));
+    // A host agent's turn runs in its own context, so every ambient read
+    // (config, domains, tool groups, session store) sees that agent rather
+    // than the process default.
+    let turn: std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>,
+    > = match context {
+        Some(context) => Box::pin(crate::core::runtime::CoreContext::scope(
+            context.clone(),
+            turn,
+        )),
+        None => Box::pin(turn),
+    };
+    turn.await
+}
+
 /// Placeholder recorded in run history when an agent job succeeds but returns
 /// no text. Never delivered to chat — used only for the run-history record.
 pub(super) const EMPTY_AGENT_OUTPUT: &str = "agent job executed";
@@ -256,20 +383,40 @@ pub(super) struct BuiltCronAgent {
     /// The host agent's context the turn must run in, when `job.agent_id`
     /// named a host-registered agent (`agent::host_agents`).
     pub(crate) context: Option<std::sync::Arc<crate::core::runtime::CoreContext>>,
+    /// Keeps an agent the host opened for this run alive until the run ends.
+    /// Declared last so it drops after the session built from the agent.
+    pub(crate) _lease: Option<Box<dyn std::any::Any + Send + Sync>>,
 }
 
-/// Build the session a cron agent job runs: the host-registered agent named
-/// by `job.agent_id` when there is one, else the registry definition.
-pub(super) fn build_agent_for_cron_job(
+/// Build the session a cron agent job runs: the host agent named by
+/// `job.agent_id` (live, or opened by the host on demand) when there is one,
+/// else the registry definition. An id that resolves nowhere is an error, never
+/// the canonical orchestrator.
+pub(super) async fn build_agent_for_cron_job(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     job: &CronJob,
 ) -> anyhow::Result<BuiltCronAgent> {
-    let host_agent = job
-        .agent_id
-        .as_deref()
-        .and_then(crate::agent::host_agents::resolve);
-    build_cron_agent(ctx, config, job, host_agent)
+    let opened = host_agent_for_job(job).await;
+    build_cron_agent(ctx, config, job, opened).await
+}
+
+/// The host agent `job.agent_id` names: a live one, else one the host opens on
+/// demand. An id the agent registry defines is never offered to the host's
+/// opener, so it cannot be shadowed by an agent opened under a built-in name.
+async fn host_agent_for_job(job: &CronJob) -> Option<crate::agent::host_agents::OpenedHostAgent> {
+    use crate::agent::host_agents;
+    use crate::agent_registry::host_definition::AgentDefinitionRegistry;
+    let id = job.agent_id.as_deref()?;
+    // With no registry installed yet the built-ins still define their ids.
+    let in_registry = match AgentDefinitionRegistry::current() {
+        Some(registry) => registry.get(id).is_some(),
+        None => AgentDefinitionRegistry::builtins_only().get(id).is_some(),
+    };
+    if in_registry {
+        return host_agents::resolve_leased(id);
+    }
+    host_agents::resolve_or_open(id).await
 }
 
 #[cfg(test)]
@@ -279,13 +426,14 @@ pub(super) mod tests;
 #[cfg(test)]
 pub(super) use tests::run_agent_job;
 
-fn build_cron_agent(
+async fn build_cron_agent(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     job: &CronJob,
-    host_agent: Option<crate::agent::host_agents::HostAgent>,
+    opened: Option<crate::agent::host_agents::OpenedHostAgent>,
 ) -> anyhow::Result<BuiltCronAgent> {
-    if let Some(host) = host_agent {
+    if let Some(opened) = opened {
+        let (host, lease) = opened.into_parts();
         // The host agent's own config (provider model and route applied),
         // with the job's model override on top, as for a registry agent. The
         // caller's config is not used: it is the process default's.
@@ -293,7 +441,7 @@ fn build_cron_agent(
         if let Some(model) = job.model.clone() {
             effective.default_model = Some(model);
         }
-        let agent = host.session_host(&effective, None)?;
+        let agent = host.session_host(&effective, None).await?;
         tracing::debug!(
             job_id = %job.id,
             agent_id = %host.definition.id,
@@ -302,34 +450,28 @@ fn build_cron_agent(
         return Ok(BuiltCronAgent {
             agent,
             context: Some(host.context),
+            _lease: lease,
         });
     }
     let agent_id = job.agent_id.as_deref().unwrap_or("orchestrator");
-    match OpenHumanSessionHost::from_config_for_agent(ctx, config, agent_id) {
-        Ok(agent) => {
-            tracing::debug!(
-                job_id = %job.id,
-                agent_id = %agent_id,
-                "[cron] built scheduled job agent from definition"
-            );
-            Ok(BuiltCronAgent {
-                agent,
-                context: None,
-            })
-        }
-        Err(e) => {
+    let agent = OpenHumanSessionHost::from_config_for_agent(ctx, config, agent_id)
+        .await
+        .inspect_err(|e| {
             tracing::warn!(
                 job_id = %job.id,
                 agent_id = %agent_id,
                 error = %e,
-                "[cron] failed to build agent from definition; falling back to canonical orchestrator"
+                "[cron] no agent to run the job as; failing it rather than using another agent"
             );
-            OpenHumanSessionHost::from_config_for_agent(ctx, config, "orchestrator").map(|agent| {
-                BuiltCronAgent {
-                    agent,
-                    context: None,
-                }
-            })
-        }
-    }
+        })?;
+    tracing::debug!(
+        job_id = %job.id,
+        agent_id = %agent_id,
+        "[cron] built scheduled job agent from definition"
+    );
+    Ok(BuiltCronAgent {
+        agent,
+        context: None,
+        _lease: None,
+    })
 }

@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::{json, Value};
-use tinyagents_graph::todos::{TodoItem, TodoStatus};
+use tinyagents_harness_tools::todos::{TodoItem, TodoStatus};
 
 /// Serialize tests that share the process-global scratch store. Same lock
 /// process-global scratch store.
@@ -30,7 +30,7 @@ fn test_workspace() -> std::path::PathBuf {
 }
 
 async fn reset_scratch(workspace_dir: &std::path::Path) {
-    tinyagents_graph::todos::store::clear(&todo_store(workspace_dir), "_scratch_")
+    tinyagents_harness_tools::todos::store::clear(&todo_store(workspace_dir), "_scratch_")
         .await
         .expect("clear scratch");
 }
@@ -228,7 +228,7 @@ async fn a_legacy_session_keyed_list_is_migrated_forward_once() {
         id: parent.session_id.clone(),
     };
     let item = TodoItem::with_status("carried over", TodoStatus::InProgress);
-    tinyagents_graph::todos::store::replace(
+    tinyagents_harness_tools::todos::store::replace(
         &todo_store(&workspace_dir),
         legacy_scope.key(),
         vec![item],
@@ -240,7 +240,7 @@ async fn a_legacy_session_keyed_list_is_migrated_forward_once() {
     let read = tool
         .execute_with_parent_context(
             json!({}),
-            Some(parent),
+            Some(parent.clone()),
             Some(&ThreadContext("thread-legacy")),
         )
         .await
@@ -254,11 +254,42 @@ async fn a_legacy_session_keyed_list_is_migrated_forward_once() {
     let thread_scope = TodoScope::Session {
         id: "thread-legacy".into(),
     };
-    let migrated =
-        tinyagents_graph::todos::store::list(&todo_store(&workspace_dir), thread_scope.key())
-            .await
-            .unwrap();
+    let migrated = tinyagents_harness_tools::todos::store::list(
+        &todo_store(&workspace_dir),
+        thread_scope.key(),
+    )
+    .await
+    .unwrap();
     assert_eq!(migrated.items.len(), 1);
+
+    // Clearing the new thread-keyed list must remain authoritative. The empty
+    // list is persisted, so a later read must not treat it as an absent target
+    // and copy the still-present legacy row back into it.
+    let cleared = tool
+        .execute_with_parent_context(
+            json!({ "todos": [] }),
+            Some(parent.clone()),
+            Some(&ThreadContext("thread-legacy")),
+        )
+        .await
+        .unwrap();
+    assert!(payload(&cleared)["todos"].as_array().unwrap().is_empty());
+
+    let read_after_clear = tool
+        .execute_with_parent_context(
+            json!({}),
+            Some(parent),
+            Some(&ThreadContext("thread-legacy")),
+        )
+        .await
+        .unwrap();
+    assert!(
+        payload(&read_after_clear)["todos"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "a cleared migrated list must not be resurrected from the legacy key"
+    );
 }
 
 #[tokio::test]
@@ -270,21 +301,26 @@ async fn sessions_do_not_see_each_other_and_a_list_survives_across_turns() {
     let b = TodoScope::Session {
         id: "sess-b".into(),
     };
-    tinyagents_graph::todos::store::clear(&todo_store(&workspace_dir), a.key())
+    tinyagents_harness_tools::todos::store::clear(&todo_store(&workspace_dir), a.key())
         .await
         .unwrap();
-    tinyagents_graph::todos::store::clear(&todo_store(&workspace_dir), b.key())
+    tinyagents_harness_tools::todos::store::clear(&todo_store(&workspace_dir), b.key())
         .await
         .unwrap();
 
     let item = TodoItem::with_status("only in a", TodoStatus::InProgress);
-    tinyagents_graph::todos::store::replace(&todo_store(&workspace_dir), a.key(), vec![item])
-        .await
-        .unwrap();
+    tinyagents_harness_tools::todos::store::replace(
+        &todo_store(&workspace_dir),
+        a.key(),
+        vec![item],
+    )
+    .await
+    .unwrap();
 
-    let a_again = tinyagents_graph::todos::store::list(&todo_store(&workspace_dir), a.key())
-        .await
-        .unwrap();
+    let a_again =
+        tinyagents_harness_tools::todos::store::list(&todo_store(&workspace_dir), a.key())
+            .await
+            .unwrap();
     assert_eq!(
         a_again.items.len(),
         1,
@@ -292,10 +328,118 @@ async fn sessions_do_not_see_each_other_and_a_list_survives_across_turns() {
     );
     assert_eq!(a_again.thread_id, "sess-a");
     assert!(
-        tinyagents_graph::todos::store::list(&todo_store(&workspace_dir), b.key())
+        tinyagents_harness_tools::todos::store::list(&todo_store(&workspace_dir), b.key())
             .await
             .unwrap()
             .items
             .is_empty()
     );
+}
+
+/// Runs `arguments` through the tool and returns the list the frontend's todo
+/// drawer would be sent (`ThreadTodosChanged`), if any.
+async fn sent_to_the_drawer(tool: &TodoTool, arguments: Value) -> Option<Value> {
+    let writes = writes_plan(&arguments);
+    let result = tool.execute(arguments).await.unwrap();
+    changed_todos(writes, &result)
+}
+
+fn drawer_statuses(todos: &Value) -> Vec<&str> {
+    todos
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["status"].as_str().unwrap())
+        .collect()
+}
+
+/// Every call that changes the plan reaches the drawer with the new list, in
+/// each shape the tool takes (whole list, a `complete` list or one sent as a
+/// string, `cancel` and `complete` together, a tick with notes); a read, a
+/// notes-only call and a refused call send nothing.
+#[tokio::test]
+async fn every_plan_change_reaches_the_todo_drawer_and_nothing_else_does() {
+    let _guard = scratch_lock_async().await;
+    let workspace_dir = test_workspace();
+    reset_scratch(&workspace_dir).await;
+    let tool = TodoTool::new(workspace_dir.clone());
+
+    let written = sent_to_the_drawer(
+        &tool,
+        json!({ "todos": [
+            { "content": "Inspect", "status": "pending" },
+            { "content": "Configure", "status": "pending" },
+            { "content": "Create list", "status": "pending" },
+            { "content": "Start", "status": "pending" },
+            { "content": "Verify", "status": "pending" }
+        ] }),
+    )
+    .await
+    .expect("a whole-list write is sent");
+    assert_eq!(drawer_statuses(&written)[0], "in_progress");
+
+    let ticked = sent_to_the_drawer(&tool, json!({ "complete": [1, 2] }))
+        .await
+        .expect("a `complete` list is sent");
+    assert_eq!(
+        drawer_statuses(&ticked),
+        [
+            "completed",
+            "completed",
+            "in_progress",
+            "pending",
+            "pending"
+        ]
+    );
+
+    let combined = sent_to_the_drawer(
+        &tool,
+        json!({ "complete": "[3]", "cancel": 4, "reason": "not needed" }),
+    )
+    .await
+    .expect("`complete` (as a string) with `cancel` is sent");
+    assert_eq!(
+        drawer_statuses(&combined),
+        [
+            "completed",
+            "completed",
+            "completed",
+            "cancelled",
+            "in_progress"
+        ]
+    );
+    assert_eq!(combined[3]["reason"], "not needed");
+
+    assert!(
+        sent_to_the_drawer(&tool, json!({ "facts": ["postfix runs"] }))
+            .await
+            .is_none(),
+        "notes alone leave the plan as it was"
+    );
+    assert!(
+        sent_to_the_drawer(&tool, json!({})).await.is_none(),
+        "a read changes nothing"
+    );
+
+    let refused = tool.execute(json!({ "complete": 9 })).await.unwrap();
+    assert!(refused.is_error, "{}", refused.output());
+    assert!(
+        changed_todos(true, &refused).is_none(),
+        "a refused call leaves the plan as it was"
+    );
+
+    let finished = sent_to_the_drawer(&tool, json!({ "complete": 5, "facts": ["eval.py passes"] }))
+        .await
+        .expect("a tick that carries notes is sent");
+    assert_eq!(
+        drawer_statuses(&finished),
+        [
+            "completed",
+            "completed",
+            "completed",
+            "cancelled",
+            "completed"
+        ]
+    );
+    reset_scratch(&workspace_dir).await;
 }

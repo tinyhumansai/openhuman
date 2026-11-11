@@ -1,47 +1,22 @@
-//! Phase-out migration: removes legacy `### PROFILE.md` blocks from
-//! persisted session transcripts.
+//! Phase-out migration: retires workspace `PROFILE.md` without modifying
+//! legacy transcript source files.
 //!
-//! `PROFILE.md` is being retired as a system-prompt injection. Earlier
-//! builds wrote the file into the system prompt of every session and
-//! froze those bytes inside `session_raw/{stem}.jsonl` (see
-//! [`tinyagents_session::transcript`]). Without
-//! this migration, an upgrade leaves the leaked content replaying
-//! inside every resumed thread forever — the runtime loader reuses the
-//! persisted system message verbatim for KV-cache stability.
+//! `PROFILE.md` is no longer injected into new prompts. Older transcripts may
+//! still contain its section; the session importer removes that section from
+//! imported bytes in memory while preserving all source files.
 //!
 //! ## What it does
 //!
-//! 1. **Deletes `{workspace}/PROFILE.md`** if it exists. With the file
-//!    gone, the renderer's `inject_workspace_file_capped` short-circuits
-//!    silently — agents that still have `omit_profile = false`
-//!    (orchestrator, welcome, trigger_*, help) produce a clean prompt
-//!    on every new session without any source-code change.
-//! 2. **Walks every JSONL transcript** under `{workspace}/session_raw/`
-//!    (both the current flat layout and the legacy `DDMMYYYY/`
-//!    date-grouped subdirs), reads each file, and — if the first
-//!    message is a system message containing a `### PROFILE.md`
-//!    heading — removes the heading and everything beneath it up to
-//!    the next `### ` heading (or end-of-prompt). The walk and the
-//!    rewrite are TinyAgents' legacy maintenance
-//!    (`tinyagents_session::legacy::rewrite_legacy_transcripts`), which
-//!    owns the format, so the on-disk shape stays byte-compatible and this
-//!    module names no transcript file. It runs before the workspace's
-//!    one-time import into the session store.
-//! 3. **Sweeps `.md` companions** under `{workspace}/sessions/**/*.md`,
-//!    rewriting in place any file whose body still contains a
-//!    `### PROFILE.md` heading. The rest of the transcript
-//!    (conversation messages, metadata header) is preserved — only
-//!    the PROFILE.md block is removed. Supports both the new
-//!    JSONL-companion format (`## [role]` headers, `---` separators)
-//!    and the legacy HTML-comment format (`<!--MSG …-->` markers) via
-//!    the boundary set in [`strip_profile_md_block`].
+//! 1. Leaves `PROFILE.md`, JSONL transcripts, and Markdown companions
+//!    byte-for-byte intact.
+//! 2. `storage::import::sessions` strips the old prompt section from imported
+//!    JSONL bytes through TinyAgents' format-aware pure transformer.
 //!
 //! ## Idempotency
 //!
 //! Gated externally by [`Config::schema_version`] — once the migration
 //! succeeds and the bump is persisted, future launches skip it.
-//! Internally self-idempotent too: a transcript without any
-//! `### PROFILE.md` block is detected and left unchanged.
+//! The import-time byte transform is idempotent.
 //!
 //! ## Fresh installs
 //!
@@ -50,9 +25,7 @@
 //! `schema_version` so future launches don't re-check.
 
 use anyhow::Result;
-use std::fs;
-use std::path::{Path, PathBuf};
-use tinyagents_session::transcript::SessionTranscript;
+use std::path::Path;
 
 /// Line that opens a `PROFILE.md` block in a system prompt. Matches the
 /// output of `inject_workspace_file_capped` in `agent/prompts/mod.rs`.
@@ -65,57 +38,23 @@ pub struct PhaseOutStats {
     pub cleaned: usize,
     pub skipped: usize,
     pub errors: usize,
-    /// True when the legacy `PROFILE.md` file at the workspace root was
-    /// deleted by this run. `false` when no file was present.
+    /// Retained for report compatibility. Source profile files are preserved,
+    /// so this is always false.
     pub profile_md_removed: bool,
-    /// Number of stale `.md` companions / legacy-format transcripts
-    /// under `sessions/**/*.md` that contained a `### PROFILE.md` block
-    /// and were rewritten in place with the block stripped (proofs
-    /// preserved).
+    /// Retained for migration report compatibility. Source companions are
+    /// never rewritten, so this is always zero.
     pub md_companions_altered: usize,
 }
 
 /// Run the migration over `workspace_dir`. Returns aggregate stats.
 ///
-/// Per-file failures are logged and counted in `stats.errors` but do
-/// not abort the walk — a single unreadable transcript shouldn't keep
-/// the rest of the fleet stuck on the old data.
-pub fn run(workspace_dir: &Path) -> Result<PhaseOutStats> {
-    let mut stats = PhaseOutStats::default();
+/// Legacy transcript files are handled by the read-only session importer.
+pub fn run(_workspace_dir: &Path) -> Result<PhaseOutStats> {
+    let stats = PhaseOutStats::default();
 
-    // Final piece of the consumer-side phase-out: delete the legacy
-    // `PROFILE.md` file at the workspace root. With the file gone the
-    // renderer's `inject_workspace_file_capped` short-circuits silently,
-    // so even the agents whose `omit_profile = false` still want it will
-    // produce a clean prompt. This is intentionally done *before* the
-    // transcript walk so that a partial run still removes the file.
-    stats.profile_md_removed = remove_workspace_profile_md(workspace_dir, &mut stats);
-
-    // The legacy JSONL transcripts are rewritten by TinyAgents' legacy
-    // maintenance walk, which owns that format and its layout (flat and
-    // `DDMMYYYY/` date-grouped). This runs before the boot-time import of
-    // the workspace, so what is imported is already clean.
-    let report = tinyagents_session::legacy::rewrite_legacy_transcripts(
-        workspace_dir,
-        strip_profile_md_in_first_system_message,
-    );
-    stats.scanned = report.scanned;
-    stats.cleaned = report.rewritten;
-    stats.skipped = report.unchanged;
-    stats.errors += report.errors;
-    if report.scanned == 0 {
-        log::info!(
-            "[migration:phase-out-profile-md] no legacy transcripts — continuing to .md sweep"
-        );
-    }
-
-    // Sweep stale `.md` companions and legacy-format transcripts that
-    // still carry a `### PROFILE.md` block. The JSONL above is the
-    // source of truth and was rewritten in-place where needed; these
-    // `.md` files are either derived views (regenerated on next
-    // session write) or legacy artifacts. Deletion is safe and lines
-    // up with the phase-out framing.
-    stats.md_companions_altered = sweep_tainted_md_companions(workspace_dir, &mut stats);
+    // Transcript JSONL and Markdown companions are immutable source
+    // evidence. The session importer applies the pure TinyAgents rewrite to
+    // transcript bytes in memory before importing them into the destination.
 
     log::info!(
         "[migration:phase-out-profile-md] complete scanned={} cleaned={} skipped={} errors={} \
@@ -129,133 +68,6 @@ pub fn run(workspace_dir: &Path) -> Result<PhaseOutStats> {
     );
 
     Ok(stats)
-}
-
-/// Walk `{workspace}/sessions/**/*.md` and rewrite any file whose body
-/// still contains a `### PROFILE.md` heading, stripping the block in
-/// place. Returns the number of files mutated. Preserves the rest of
-/// each transcript — conversations and proofs stay intact, only the
-/// PROFILE.md section is removed.
-///
-/// **Layout assumption (one level deep).** The walk descends exactly one
-/// level — into `sessions/<date>/*.md` — matching the layout produced
-/// by [`tinyagents_session::transcript`]
-/// (`sessions/YYYY_MM_DD/{stem}.md` for the new format, legacy
-/// `sessions/DDMMYYYY/{stem}.md` for the date-grouped fallback). The
-/// legacy JSONL walk makes the same assumption. If a future change starts
-/// producing deeper nesting (e.g. `sessions/YYYY/MM/DD/`), the walk will
-/// silently miss the inner files and this comment needs to be revisited.
-///
-/// Read/IO errors are folded into `stats.errors` and the walk continues.
-fn sweep_tainted_md_companions(workspace_dir: &Path, stats: &mut PhaseOutStats) -> usize {
-    let sessions_root = workspace_dir.join("sessions");
-    if !sessions_root.is_dir() {
-        return 0;
-    }
-
-    let mut altered = 0usize;
-    let Ok(entries) = fs::read_dir(&sessions_root) else {
-        return 0;
-    };
-    for entry in entries.flatten() {
-        let sub = entry.path();
-        if !sub.is_dir() {
-            continue;
-        }
-        for md_path in md_files_in_dir(&sub) {
-            match fs::read_to_string(&md_path) {
-                Ok(body) => {
-                    let Some(cleaned) = strip_profile_md_block(&body) else {
-                        log::debug!(
-                            "[migration:phase-out-profile-md] md clean, leaving path={}",
-                            md_path.display()
-                        );
-                        continue;
-                    };
-                    match fs::write(&md_path, cleaned.as_bytes()) {
-                        Ok(()) => {
-                            altered += 1;
-                            log::info!(
-                                "[migration:phase-out-profile-md] altered tainted md path={}",
-                                md_path.display()
-                            );
-                        }
-                        Err(err) => {
-                            stats.errors += 1;
-                            log::warn!(
-                                "[migration:phase-out-profile-md] failed to rewrite tainted md {}: {err:#}",
-                                md_path.display()
-                            );
-                        }
-                    }
-                }
-                Err(err) => {
-                    stats.errors += 1;
-                    log::warn!(
-                        "[migration:phase-out-profile-md] failed to read md {}: {err:#}",
-                        md_path.display()
-                    );
-                }
-            }
-        }
-    }
-    altered
-}
-
-fn md_files_in_dir(dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let Ok(entries) = fs::read_dir(dir) else {
-        return out;
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("md") {
-            out.push(p);
-        }
-    }
-    out
-}
-
-/// Delete `{workspace_dir}/PROFILE.md` if it exists. Errors are folded
-/// into `stats.errors`. Returns `true` when a file was removed.
-fn remove_workspace_profile_md(workspace_dir: &Path, stats: &mut PhaseOutStats) -> bool {
-    let path = workspace_dir.join("PROFILE.md");
-    if !path.exists() {
-        return false;
-    }
-    match fs::remove_file(&path) {
-        Ok(()) => {
-            log::info!(
-                "[migration:phase-out-profile-md] removed legacy file path={}",
-                path.display()
-            );
-            true
-        }
-        Err(err) => {
-            stats.errors += 1;
-            log::warn!(
-                "[migration:phase-out-profile-md] failed to remove {}: {err:#}",
-                path.display()
-            );
-            false
-        }
-    }
-}
-
-/// Strip a `### PROFILE.md` block from the first system message of a
-/// transcript. Returns `true` when the message was mutated.
-pub(super) fn strip_profile_md_in_first_system_message(session: &mut SessionTranscript) -> bool {
-    let Some(first) = session.messages.first_mut() else {
-        return false;
-    };
-    if first.role != "system" {
-        return false;
-    }
-    let Some(cleaned) = strip_profile_md_block(&first.content) else {
-        return false;
-    };
-    first.content = cleaned;
-    true
 }
 
 /// Strip a `### PROFILE.md` block from a string.
@@ -281,7 +93,7 @@ pub(super) fn strip_profile_md_in_first_system_message(session: &mut SessionTran
 /// following it are absorbed so we don't leave a runaway gap.
 ///
 /// Returns `Some(cleaned)` when the input was mutated, otherwise `None`.
-pub(super) fn strip_profile_md_block(prompt: &str) -> Option<String> {
+pub(crate) fn strip_profile_md_block(prompt: &str) -> Option<String> {
     let lines: Vec<&str> = prompt.split('\n').collect();
 
     let start = lines

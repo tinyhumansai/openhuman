@@ -2,12 +2,43 @@
 
 use std::sync::Arc;
 
+use tinyagents_session::port::{
+    AgentStorageFactory, ConditionedAgentStorageFactory, DriverSessionStores, SessionStoreProvider,
+};
 use tinyagents_session::transcript::{TranscriptLocator, TranscriptMessage, TranscriptMeta};
 
 /// A fresh transcript store over the driver ports on memory (the production
 /// store, minus the disk), shared by cloning the `Arc`.
 pub(crate) fn memory_locator() -> Arc<dyn TranscriptLocator> {
-    tinyagents_session::testkit::in_memory_transcript()
+    memory_session_provider().for_agent("fixture").transcripts
+}
+
+/// A real driver-backed session provider over the TSD memory testkit. All
+/// agent IDs share this fixture's isolated scope so legacy transcript grouping
+/// can be exercised without weakening production scope selection.
+pub(crate) fn memory_session_provider() -> Arc<dyn SessionStoreProvider> {
+    // The unfenced memory backend opens conditioned scopes too, which the
+    // lease-conditioned generation writes require.
+    let backend: Arc<dyn crate::storage::StorageBackend> =
+        Arc::new(crate::storage::test_support::UnfencedMemoryBackend::new());
+    let plain = Arc::clone(&backend);
+    let factory: AgentStorageFactory = Arc::new(move |_| {
+        let scope = tinystoragedrivers_types::Scope::new("transcript-fixture")
+            .expect("valid fixture scope");
+        let storage = plain.for_scope(&scope)?;
+        Ok(tinyagents_storage_kit::ScopedStorage::new(storage, scope))
+    });
+    let conditioned: ConditionedAgentStorageFactory = Arc::new(move |_, condition| {
+        let scope = tinystoragedrivers_types::Scope::new("transcript-fixture")
+            .expect("valid fixture scope");
+        let storage = backend.for_scope_conditioned(&scope, condition)?;
+        Ok(tinyagents_storage_kit::ScopedStorage::new(storage, scope))
+    });
+    Arc::new(
+        DriverSessionStores::new(factory)
+            .expect("driver session stores over testkit memory")
+            .with_conditioned_storage_factory(conditioned),
+    )
 }
 
 /// A thread's head transcript as the model reads it.
@@ -70,6 +101,7 @@ pub(crate) fn blank_meta() -> TranscriptMeta {
         updated: "2026-01-01T00:00:00Z".into(),
         turn_count: 0,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,

@@ -1,108 +1,107 @@
 use super::*;
+use crate::core::all::{
+    assert_schema_controller_parity, expect_schema_fields, expect_schema_identity,
+    expect_schema_required_inputs,
+};
 use serde_json::json;
 
 #[test]
-fn schema_names_are_stable() {
-    let s = voice_schemas("voice_status");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "status");
+fn legacy_voice_catalog_keeps_its_handlers_and_schema_fixtures() {
+    use super::handlers::*;
+    use crate::core::all::ControllerHandler;
 
-    let s = voice_schemas("voice_transcribe");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "transcribe");
+    let controllers: Vec<_> = all_voice_registered_controllers()
+        .into_iter()
+        .filter(|controller| !controller.schema.method_name().contains(".live_"))
+        .collect();
+    let expected: [(&str, ControllerHandler); 11] = [
+        ("voice.status", handle_voice_status),
+        ("voice.transcribe", handle_voice_transcribe),
+        ("voice.transcribe_bytes", handle_voice_transcribe_bytes),
+        ("voice.tts", handle_voice_tts),
+        ("voice.reply_synthesize", handle_voice_reply_synthesize),
+        ("voice.stt_dispatch", handle_voice_stt_dispatch),
+        ("voice.tts_dispatch", handle_voice_tts_dispatch),
+        ("voice.set_providers", handle_voice_set_providers),
+        (
+            "voice.update_provider_settings",
+            handle_voice_update_provider_settings,
+        ),
+        ("voice.list_models", handle_voice_list_models),
+        ("voice.test_provider", handle_voice_test_provider),
+    ];
+    assert_eq!(controllers.len(), expected.len());
+    for (controller, (method, handler)) in controllers.iter().zip(expected) {
+        assert_eq!(controller.schema.method_name(), method);
+        assert!(std::ptr::fn_addr_eq(controller.handler, handler));
+    }
 
-    let s = voice_schemas("voice_transcribe_bytes");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "transcribe_bytes");
-
-    let s = voice_schemas("voice_tts");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "tts");
-
-    let s = voice_schemas("voice_stt_dispatch");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "stt_dispatch");
-
-    let s = voice_schemas("voice_tts_dispatch");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "tts_dispatch");
-
-    let s = voice_schemas("voice_set_providers");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "set_providers");
-}
-
-#[test]
-fn factory_dispatch_schemas_are_wired_into_registry() {
-    // Both dispatch endpoints + the persistence endpoint must be reachable
-    // through the registered_controllers list; without them the JSON-RPC
-    // router will reject the new method names with "unknown method".
-    let registry = all_voice_registered_controllers();
-    let functions: Vec<&'static str> = registry.iter().map(|c| c.schema.function).collect();
-    assert!(
-        functions.contains(&"stt_dispatch"),
-        "voice.stt_dispatch must be registered (got {functions:?})"
-    );
-    assert!(
-        functions.contains(&"tts_dispatch"),
-        "voice.tts_dispatch must be registered"
-    );
-    assert!(
-        functions.contains(&"set_providers"),
-        "voice.set_providers must be registered"
-    );
-}
-
-#[test]
-fn controller_lists_match_lengths() {
-    assert_eq!(
-        all_voice_controller_schemas().len(),
-        all_voice_registered_controllers().len()
-    );
-}
-
-#[test]
-fn status_schema_has_no_inputs() {
-    let s = voice_schemas("voice_status");
-    assert!(s.inputs.is_empty());
-}
-
-#[test]
-fn transcribe_schema_requires_audio_path() {
-    let s = voice_schemas("voice_transcribe");
-    assert!(s
-        .inputs
+    let contracts = crate::voice::parameter_contracts();
+    for contract in contracts
         .iter()
-        .any(|i| i.name == "audio_path" && i.required));
+        .filter(|contract| !contract.method.contains(".live_"))
+    {
+        let controller = controllers
+            .iter()
+            .find(|controller| controller.schema.method_name() == contract.method)
+            .expect("each core voice schema fixture has a legacy row");
+        crate::core::all::verify_parameter_schema(&controller.schema, contract)
+            .expect("legacy core voice schema retains its independent fixture");
+    }
 }
 
 #[test]
-fn transcribe_bytes_schema_requires_audio_bytes() {
-    let s = voice_schemas("voice_transcribe_bytes");
-    assert!(s
-        .inputs
-        .iter()
-        .any(|i| i.name == "audio_bytes" && i.required));
-}
-
-#[test]
-fn transcribe_bytes_schema_has_optional_extension() {
-    let s = voice_schemas("voice_transcribe_bytes");
-    let ext = s.inputs.iter().find(|i| i.name == "extension").unwrap();
-    assert!(!ext.required);
-}
-
-#[test]
-fn tts_schema_requires_text() {
-    let s = voice_schemas("voice_tts");
-    assert!(s.inputs.iter().any(|i| i.name == "text" && i.required));
-}
-
-#[test]
-fn tts_schema_has_optional_output_path() {
-    let s = voice_schemas("voice_tts");
-    let output_path = s.inputs.iter().find(|i| i.name == "output_path").unwrap();
-    assert!(!output_path.required);
+fn voice_schema_wire_contracts_are_preserved() {
+    let identities = [
+        ("voice_status", "status"),
+        ("voice_transcribe", "transcribe"),
+        ("voice_transcribe_bytes", "transcribe_bytes"),
+        ("voice_tts", "tts"),
+        ("voice_stt_dispatch", "stt_dispatch"),
+        ("voice_tts_dispatch", "tts_dispatch"),
+        ("voice_set_providers", "set_providers"),
+        ("voice_update_provider_settings", "update_provider_settings"),
+        ("voice_list_models", "list_models"),
+        ("voice_test_provider", "test_provider"),
+    ];
+    for (key, function) in identities {
+        expect_schema_identity(&voice_schemas(key), "voice", function);
+    }
+    let fields: &[(&str, &[(&str, bool)])] = &[
+        ("voice_transcribe", &[("audio_path", true)]),
+        (
+            "voice_transcribe_bytes",
+            &[("audio_bytes", true), ("extension", false)],
+        ),
+        ("voice_tts", &[("text", true), ("output_path", false)]),
+        (
+            "voice_update_provider_settings",
+            &[
+                ("voice_providers", false),
+                ("stt_provider", false),
+                ("tts_provider", false),
+            ],
+        ),
+        ("voice_list_models", &[("provider_id", true)]),
+        (
+            "voice_test_provider",
+            &[("workload", true), ("provider", true)],
+        ),
+    ];
+    for (key, expected) in fields {
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|(name, required)| (*name, Some(*required)))
+            .collect();
+        expect_schema_fields(&voice_schemas(key), &expected);
+    }
+    assert!(voice_schemas("voice_status").inputs.is_empty());
+    expect_schema_required_inputs(&voice_schemas("voice_update_provider_settings"), &[]);
+    assert_schema_controller_parity(
+        &all_voice_controller_schemas(),
+        &all_voice_registered_controllers(),
+        "status",
+    );
 }
 
 #[test]
@@ -124,13 +123,6 @@ fn deserialize_params_rejects_wrong_type() {
     let err =
         deserialize_params::<TranscribeBytesParams>(params).expect_err("wrong type should fail");
     assert!(err.contains("invalid params"));
-}
-
-#[test]
-fn to_json_returns_inner_value() {
-    let json =
-        to_json(Outcome::single_log(json!({"ok": true}), "done")).expect("serialize outcome");
-    assert_eq!(json["ok"], true);
 }
 
 #[tokio::test]
@@ -191,36 +183,9 @@ fn deserialize_voice_tts_accepts_optional_output_path() {
     assert_eq!(parsed.output_path.as_deref(), Some("/tmp/out.wav"));
 }
 
-#[test]
-fn every_registered_function_has_non_empty_description() {
-    for handler in all_voice_registered_controllers() {
-        assert!(
-            !handler.schema.description.is_empty(),
-            "fn {} missing description",
-            handler.schema.function
-        );
-    }
-}
-
 // ---------------------------------------------------------------------------
 // New voice provider registry RPC tests
 // ---------------------------------------------------------------------------
-
-#[test]
-fn new_provider_schemas_are_named_correctly() {
-    let s = voice_schemas("voice_update_provider_settings");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "update_provider_settings");
-
-    let s = voice_schemas("voice_list_models");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "list_models");
-
-    let s = voice_schemas("voice_test_provider");
-    assert_eq!(s.namespace, "voice");
-    assert_eq!(s.function, "test_provider");
-}
-
 #[test]
 fn new_rpcs_are_in_registry() {
     let registry = all_voice_registered_controllers();
@@ -277,39 +242,6 @@ fn validate_tts_provider_accepts_slug_grammar() {
     assert!(validate_tts_provider("openai:alloy").is_ok());
     assert!(validate_tts_provider("elevenlabs:voice-id").is_ok());
     assert!(validate_tts_provider("custom").is_ok());
-}
-
-#[test]
-fn update_provider_settings_schema_has_correct_inputs() {
-    let s = voice_schemas("voice_update_provider_settings");
-    let names: Vec<&str> = s.inputs.iter().map(|i| i.name).collect();
-    assert!(names.contains(&"voice_providers"));
-    assert!(names.contains(&"stt_provider"));
-    assert!(names.contains(&"tts_provider"));
-    // All should be optional
-    for input in &s.inputs {
-        assert!(
-            !input.required,
-            "voice_update_provider_settings input `{}` should be optional",
-            input.name
-        );
-    }
-}
-
-#[test]
-fn list_models_schema_requires_provider_id() {
-    let s = voice_schemas("voice_list_models");
-    assert!(s
-        .inputs
-        .iter()
-        .any(|i| i.name == "provider_id" && i.required));
-}
-
-#[test]
-fn test_provider_schema_requires_workload_and_provider() {
-    let s = voice_schemas("voice_test_provider");
-    assert!(s.inputs.iter().any(|i| i.name == "workload" && i.required));
-    assert!(s.inputs.iter().any(|i| i.name == "provider" && i.required));
 }
 
 #[test]

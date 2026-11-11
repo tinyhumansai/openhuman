@@ -1,151 +1,138 @@
-//! Managed cloud embeddings: `POST /openai/v1/embeddings` on the hosted backend
-//! with the session JWT or stored API key, wrapped in the core's egress guard.
-//! Registered as the embedding factory for the managed provider id.
+//! Host policy for TinyInference's managed cloud embedding model.
+//!
+//! This module constructs the owning `CloudEmbeddingModel` with OpenHuman's
+//! live credential resolver and the per-request egress disclosure guard. It
+//! does not wrap or forward the embedding implementation.
 
 use std::sync::Arc;
 
-use openhuman_embed::__host::egress::{emit_external_transfer, enforce_egress, EgressDescriptor};
-use openhuman_embed::__host::inference_registry::EmbeddingRequest;
+use openhuman_embed::__host::egress::{emit_external_transfer, EgressDescriptor};
+use openhuman_embed::__host::inference_registry::{EmbeddingRequest, ProviderContext};
 use openhuman_embed::__host::security::approval::ApprovalChatContext;
-use openhuman_embed::__host::security::credentials::{AuthService, APP_SESSION_PROVIDER};
-use tinyinference_embeddings::{BearerResolver, CloudEmbeddingModel, EmbeddingModel};
+use tinyinference_embeddings::{BearerResolver, CloudEmbeddingModel, EmbeddingEgressGuard};
 
+use super::managed_session::resolve_session_bearer;
 use crate::backend::url::effective_api_url;
 use crate::client::endpoint::is_managed_endpoint_for_api_key;
 
-/// Host-owned credential resolution and egress disclosure around the
-/// crate-owned cloud transport.
-///
-/// The egress guard (policy check, then the `ExternalTransferPending`
-/// disclosure) runs before the batch reaches the transport, so it can carry the
-/// chat of the turn that made the call. One built without a chat (background
-/// sync, the embedding RPC) still discloses, unrouted.
-pub struct ManagedEmbeddingModel {
-    inner: Arc<CloudEmbeddingModel>,
-    model: String,
-    chat: Option<ApprovalChatContext>,
+/// Builds the owning cloud embedding implementation with the credential scope
+/// and turn context supplied by the inference registry.
+pub(super) fn from_request(request: EmbeddingRequest<ProviderContext>) -> CloudEmbeddingModel {
+    let context = request
+        .context
+        .embedding
+        .as_ref()
+        .expect("embedding host context");
+    build_cloud_model(
+        context
+            .config
+            .as_ref()
+            .and_then(|config| config.api_url.clone()),
+        context.state_dir.clone(),
+        context.secrets_encrypt,
+        &request.model,
+        request.dimensions,
+        context.chat.clone(),
+        None,
+    )
 }
 
-impl ManagedEmbeddingModel {
-    /// Builds the embedder for the credential scope `request` carries.
-    pub fn from_request(request: &EmbeddingRequest<'_>) -> Self {
-        Self::new(
-            request.config.and_then(|config| config.api_url.clone()),
-            request.state_dir.clone(),
-            request.secrets_encrypt,
-            request.model,
-            request.dimensions,
-            request.chat.clone(),
+pub(super) async fn from_request_for_inspection(
+    request: &EmbeddingRequest<ProviderContext>,
+) -> tinyinference_embeddings::Result<CloudEmbeddingModel> {
+    let context = request
+        .context
+        .embedding
+        .as_ref()
+        .expect("embedding host context");
+    let config = context.config.as_ref().ok_or_else(|| {
+        tinyinference_embeddings::Error::Validation(
+            "selected managed embedding config is unavailable".to_owned(),
         )
-    }
+    })?;
+    let bearer = super::managed_session::managed_bearer_for_inspection(config)
+        .await
+        .map_err(|_| {
+            tinyinference_embeddings::Error::Validation(
+                "selected managed embedding credential is unavailable".to_owned(),
+            )
+        })?;
+    Ok(build_cloud_model(
+        config.api_url.clone(),
+        context.state_dir.clone(),
+        context.secrets_encrypt,
+        &request.model,
+        request.dimensions,
+        None,
+        Some(bearer),
+    ))
+}
 
-    /// Builds the embedder against `api_url` (or the default backend) with
-    /// credentials read from `state_dir`.
-    pub fn new(
-        api_url: Option<String>,
-        state_dir: std::path::PathBuf,
-        secrets_encrypt: bool,
-        model: &str,
-        dimensions: usize,
-        chat: Option<ApprovalChatContext>,
-    ) -> Self {
-        let base_url = format!(
-            "{}/openai/v1",
-            effective_api_url(&api_url).trim_end_matches('/')
-        );
-        let key_endpoint = base_url.clone();
-        let bearer: BearerResolver = Arc::new(move || {
+fn build_cloud_model(
+    api_url: Option<String>,
+    state_dir: std::path::PathBuf,
+    secrets_encrypt: bool,
+    model: &str,
+    dimensions: usize,
+    chat: Option<ApprovalChatContext>,
+    frozen_bearer: Option<String>,
+) -> CloudEmbeddingModel {
+    let base_url = format!(
+        "{}/openai/v1",
+        effective_api_url(&api_url).trim_end_matches('/')
+    );
+    let key_endpoint = base_url.clone();
+    let bearer: BearerResolver = Arc::new(move || {
+        let frozen_bearer = frozen_bearer.clone();
+        let state_dir = state_dir.clone();
+        let key_endpoint = key_endpoint.clone();
+        Box::pin(async move {
+            if let Some(bearer) = frozen_bearer {
+                return Ok(bearer);
+            }
             // A stored TinyHumans API key is the bearer outright, with the
             // plaintext guard: never put the key on a non-HTTPS, non-loopback wire.
-            if let Some(key) =
-                openhuman_embed::__host::security::credentials::api_key::get_api_key_in(
-                    &state_dir,
-                    secrets_encrypt,
-                )
-                .map_err(|error| tinyinference_embeddings::Error::Embedding(error.to_string()))?
+            if let Some(key) = openhuman_embed::__host::credentials::api_key::get_api_key_in(
+                &state_dir,
+                secrets_encrypt,
+            )
+            .await
+            .map_err(|error| tinyinference_embeddings::Error::Embedding(error.to_string()))?
             {
                 if !is_managed_endpoint_for_api_key(&key_endpoint) {
                     return Err(tinyinference_embeddings::Error::Validation(format!(
                         "refusing to send the TinyHumans API key over a non-HTTPS, non-loopback \
-                         endpoint: {key_endpoint}"
+                         endpoint: {}",
+                        super::managed_model::endpoint_origin_for_log(&key_endpoint)
                     )));
                 }
                 log::debug!("[tinyhumans][embeddings] authenticating with api-key");
                 return Ok(key);
             }
-            let auth = AuthService::new(&state_dir, secrets_encrypt);
-            auth.get_provider_bearer_token(APP_SESSION_PROVIDER, None)
-                .map_err(|error| tinyinference_embeddings::Error::Embedding(error.to_string()))?
-                .filter(|token| !token.trim().is_empty())
-                .ok_or_else(|| {
-                    tinyinference_embeddings::Error::Validation(
-                        "No backend session for cloud embeddings: log in to OpenHuman or set a \
-                         TinyHumans API key"
-                            .into(),
-                    )
-                })
-        });
-        let model = model.to_string();
-        Self {
-            inner: Arc::new(CloudEmbeddingModel::new(
-                base_url,
-                model.clone(),
-                dimensions,
-                bearer,
-            )),
-            model,
-            chat,
-        }
-    }
+            resolve_session_bearer(
+                &key_endpoint,
+                &state_dir,
+                secrets_encrypt,
+                None,
+                "managed_embedding.resolve_bearer",
+            )
+            .await
+            .map_err(|error| tinyinference_embeddings::Error::Embedding(error.to_string()))
+        })
+    });
 
-    /// This embedder with its egress disclosures routed to `chat` (the turn's
-    /// thread and client); `None` leaves them unrouted. Shares the transport,
-    /// so it is cheap to do per turn.
-    #[cfg(test)]
-    #[must_use]
-    pub fn routed_to(&self, chat: Option<ApprovalChatContext>) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-            model: self.model.clone(),
-            chat,
-        }
-    }
-
-    fn guard(&self) -> tinyinference_embeddings::Result<()> {
-        let egress = EgressDescriptor::embedding("cloud", &self.model);
-        enforce_egress(&egress)
+    let guarded_model = model.to_owned();
+    let guarded_chat = chat;
+    let egress_guard: EmbeddingEgressGuard = Arc::new(move |_, _| {
+        let egress = EgressDescriptor::embedding("cloud", &guarded_model);
+        openhuman_embed::__host::egress::enforce_egress_blocking(&egress)
             .map_err(|error| tinyinference_embeddings::Error::Embedding(error.to_string()))?;
-        emit_external_transfer(self.chat.as_ref(), egress);
+        emit_external_transfer(guarded_chat.as_ref(), egress);
         Ok(())
-    }
-}
+    });
 
-#[async_trait::async_trait]
-impl EmbeddingModel for ManagedEmbeddingModel {
-    fn name(&self) -> &str {
-        self.inner.name()
-    }
-
-    fn model_id(&self) -> &str {
-        self.inner.model_id()
-    }
-
-    fn dimensions(&self) -> usize {
-        self.inner.dimensions()
-    }
-
-    fn signature(&self) -> String {
-        self.inner.signature()
-    }
-
-    async fn embed(&self, texts: &[String]) -> tinyinference_embeddings::Result<Vec<Vec<f32>>> {
-        // Only a batch that will actually leave is guarded: an empty one answers
-        // locally, and a blank input is refused by the transport.
-        if !texts.is_empty() && texts.iter().all(|text| !text.trim().is_empty()) {
-            self.guard()?;
-        }
-        self.inner.embed(texts).await
-    }
+    CloudEmbeddingModel::new(base_url, model.to_owned(), dimensions, bearer)
+        .with_egress_guard(egress_guard)
 }
 
 #[cfg(test)]

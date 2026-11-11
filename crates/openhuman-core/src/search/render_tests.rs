@@ -123,3 +123,38 @@ fn model_text_is_the_bus_rendering_byte_for_byte() {
         Some(tinysearch_bus::render::render_markdown(&r, "q", 5).as_str())
     );
 }
+
+#[test]
+fn compact_rendering_keeps_more_of_a_page_and_off_changes_nothing() {
+    let mut page = response(Some(Role::Contents));
+    page.results[0].snippet = Some("z".repeat(3_000));
+
+    let plain = render(&page, "q", 5, false);
+    let off = render_with(&page, "q", 5, false, &render_options(false));
+    assert_eq!(
+        off.output(),
+        plain.output(),
+        "compact off is the default rendering"
+    );
+    assert_eq!(render_options(false), RenderOptions::default());
+
+    let compact = render_with(&page, "q", 5, false, &render_options(true));
+    assert_eq!(render_options(true), RenderOptions::compact());
+    let kept = |text: &str| text.matches('z').count();
+    assert!(kept(&plain.output()) <= RenderOptions::default().contents_chars);
+    assert!(kept(&compact.output()) > kept(&plain.output()));
+    assert!(kept(&compact.output()) <= RenderOptions::compact().contents_chars);
+}
+
+#[test]
+fn compact_rendering_leaves_out_sources_that_repeat_a_listed_result() {
+    let mut repeated = response(Some(Role::Search));
+    repeated.citations = vec![Citation {
+        url: "https://tokio.rs/select".into(),
+        title: Some("Tokio select".into()),
+    }];
+    let plain = render(&repeated, "q", 5, false);
+    let compact = render_with(&repeated, "q", 5, false, &render_options(true));
+    assert!(plain.output().contains("Sources:"));
+    assert!(!compact.output().contains("Sources:"));
+}

@@ -53,16 +53,38 @@ fn migrated() -> &'static Mutex<HashSet<PathBuf>> {
     SET.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// Held across a migration pass and across `save`'s write plus its legacy-row
+/// drop, so a migration that read the file before a save cannot push its stale
+/// row over the value the save just stored.
+// ponytail: one process-wide lock; per-workspace if contention ever shows.
+static LEGACY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+// Test seam: make the migration of one toolkit's row fail, as a module error
+// would, so a deferred (partial) migration can be driven deterministically.
+#[cfg(test)]
+thread_local! {
+    static FAIL_MIGRATING: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Move rows still in the legacy workspace file into the module, then empty
 /// the file. A failure leaves the file untouched and is retried on the next
 /// call, so no stored preference is lost to a transient module error.
 async fn migrate_legacy(ctx: &crate::core::runtime::DispatchCtx, config: &Config) {
     let workspace = config.workspace_dir.clone();
-    if migrated()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .contains(&workspace)
-    {
+    let done = || {
+        migrated()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&workspace)
+    };
+    // Fast path: a migrated workspace never waits on the lock. Re-checked
+    // under it, since another pass may have finished while this one waited.
+    if done() {
+        return;
+    }
+    let _legacy = LEGACY.lock().await;
+    if done() {
         return;
     }
     let rows = match file_store::load::<LegacyScopeFile>(ctx, config, USER_SCOPES_FILE).await {
@@ -74,6 +96,11 @@ async fn migrate_legacy(ctx: &crate::core::runtime::DispatchCtx, config: &Config
         }
     };
     for (toolkit, pref) in &rows {
+        #[cfg(test)]
+        if FAIL_MIGRATING.with(|fail| fail.borrow().as_deref() == Some(toolkit.as_str())) {
+            tracing::warn!(%toolkit, "{LOG} legacy pref migration deferred (test seam)");
+            return;
+        }
         let request = ComposioSetUserScopesRequest {
             toolkit: toolkit.clone(),
             scopes: to_wire(*pref),
@@ -120,21 +147,24 @@ pub(crate) async fn ensure_migrated(ctx: &crate::core::runtime::DispatchCtx, con
     migrate_legacy(ctx, config).await;
 }
 
-/// The scope pref stored for `toolkit`, or the default when none is.
+/// The scope pref stored for `toolkit` (the module's default when none is).
 ///
-/// **This read fails open**: a module that cannot be reached lands on the
-/// same default (`read+write`, no `admin`) a user who never opened the toggle
-/// gets. A failed read is not evidence the user revoked anything, and refusing
-/// every integration on a transient error would break a working app. The
-/// failure is logged. The **write** below does not fail open.
-pub(crate) async fn load_or_default(
+/// **This read fails closed**: an unreachable module or a stored row that
+/// cannot be read is an `Err`, never the default. The default is `read+write`,
+/// so answering it for a user who turned `write` off would widen what the agent
+/// may run. Callers that gate on the pref treat an `Err` as "not allowed".
+///
+/// # Errors
+///
+/// An empty toolkit, or the module could not answer.
+pub(crate) async fn load(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     toolkit: &str,
-) -> UserScopePref {
+) -> Result<UserScopePref, String> {
     let key = UserScopePref::key(toolkit);
     if key.is_empty() {
-        return UserScopePref::default();
+        return Err("user_scopes: toolkit must not be empty".to_string());
     }
     migrate_legacy(ctx, config).await;
     let request = ComposioGetUserScopesRequest {
@@ -156,11 +186,11 @@ pub(crate) async fn load_or_default(
                 admin = pref.admin,
                 "{LOG} pref loaded"
             );
-            pref
+            Ok(pref)
         }
         Err(error) => {
-            tracing::warn!(toolkit = %key, %error, "{LOG} pref unavailable, using default");
-            UserScopePref::default()
+            tracing::warn!(toolkit = %key, %error, "{LOG} pref unavailable, failing closed");
+            Err(error)
         }
     }
 }
@@ -185,12 +215,66 @@ pub(crate) async fn save(
         return Err("user_scopes: toolkit must not be empty".to_string());
     }
     migrate_legacy(ctx, config).await;
+    let _legacy = LEGACY.lock().await;
+    // A migration still deferred would push this toolkit's legacy row again
+    // on the next read and undo the choice stored below, so that row is
+    // dropped after the write. Drop it only after the write succeeded:
+    // dropping it first and then failing the write would fall back to the
+    // permissive default.
+    let pending = !migrated()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .contains(&config.workspace_dir);
+    // The row the module enforces now, put back if the drop fails, so a save
+    // reported as failed leaves the module as the UI will show it.
+    let prior = if pending {
+        let request = ComposioGetUserScopesRequest {
+            toolkit: key.clone(),
+        };
+        Some(
+            connectors::call::<_, ComposioUserScopesResponse>(
+                config,
+                methods::GET_USER_SCOPES,
+                request,
+            )
+            .await?
+            .scopes,
+        )
+    } else {
+        None
+    };
     let request = ComposioSetUserScopesRequest {
         toolkit: key.clone(),
         scopes: to_wire(pref),
     };
     connectors::call::<_, ComposioUserScopesResponse>(config, methods::SET_USER_SCOPES, request)
         .await?;
+    if let Some(prior) = prior {
+        let row = key.clone();
+        let cleared = file_store::update(
+            ctx,
+            config,
+            USER_SCOPES_FILE,
+            move |prefs: &mut LegacyScopeFile| ((), prefs.remove(&row).is_some()),
+        )
+        .await;
+        if let Err(error) = cleared {
+            let request = ComposioSetUserScopesRequest {
+                toolkit: key.clone(),
+                scopes: prior,
+            };
+            if let Err(restore) = connectors::call::<_, ComposioUserScopesResponse>(
+                config,
+                methods::SET_USER_SCOPES,
+                request,
+            )
+            .await
+            {
+                tracing::error!(toolkit = %key, %restore, "{LOG} prior pref not restored");
+            }
+            return Err(format!("user_scopes: legacy row not cleared: {error}"));
+        }
+    }
     tracing::info!(
         toolkit = %key,
         read = pref.read,

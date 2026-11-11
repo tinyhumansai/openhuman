@@ -41,7 +41,7 @@ pub async fn auth_create_channel_link_token(
     channel: &str,
 ) -> Result<Outcome<Value>, String> {
     let channel = normalize_channel(channel)?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let payload = link_token_payload(&client, &channel).await?;
     Ok(Outcome::single_log(payload, "channel link token created"))
 }

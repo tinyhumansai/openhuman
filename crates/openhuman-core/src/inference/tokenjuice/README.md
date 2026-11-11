@@ -1,9 +1,10 @@
 # OpenHuman TokenJuice Adapter
 
-TinyJuice ships as a separately released TinyBus module. OpenHuman links only
-its `tinyjuice-bus` vocabulary and declarations. Compression, cached retrieval,
-queries and HTML extraction execute inside that module. This directory owns
-configuration, model callbacks, artifact authorization and savings attribution.
+TinyJuice ships as a separately released TinyBus module. OpenHuman depends on
+its `tinyjuice-bus` contracts and `tinyjuice-host` tool adapters. Compression,
+cached retrieval, queries and HTML extraction execute inside the module. This
+directory owns configuration, model callbacks, dispatch context, artifact
+authorization and savings attribution.
 
 Token compression is one of the ways OpenHuman keeps a turn cheap and fast
 (see [docs/gitbooks/en/developing/performance.md](../../../../../docs/gitbooks/en/developing/performance.md)):
@@ -19,9 +20,9 @@ OpenHuman-owned files:
 | [`mod.rs`](./mod.rs) | TinyBus calls (through `tinyjuice_bus::names::methods` constants), config installation, pass-through fallback, and savings wiring. |
 | [`schemas.rs`](./schemas.rs) | JSON-RPC controller schemas and handlers. |
 | [`config_patch.rs`](./config_patch.rs) | Partial update shape for the `[tokenjuice]` config block. |
-| [`generate.rs`](./generate.rs) | Turn-bound, single-use summary callbacks. The host registers the model call, sends its opaque ticket through the existing contract, and withdraws the callback when the ticket drops. |
-| [`repl_tools.rs`](./repl_tools.rs) | The three REPL tools (`juice_find`, `juice_extract`, `juice_summarize`) over a stored result. Declarations come from `tinyjuice-bus`; operations execute over `Query` inside the module CCR store. Registered by [`tools/ops.rs`](../../tools/ops.rs) only while `repl_handle_active(config)`. |
-| [`tools.rs`](./tools.rs) | OpenHuman agent tool implementation for the retrieve tool (`tinyjuice_bus::tools::RETRIEVE` (`"juice_retrieve"`); `"tokenjuice_retrieve"` is a recognized recovery-tool alias, not the tool's registered name, see `RECOVERY_TOOL_NAMES`). |
+| `tinyjuice-host::generate` | Shared turn-bound, single-use summary callback tickets; OpenHuman still registers the callback bound to its active model turn. |
+| `mod.rs::repl_tools_for*` | OpenHuman's query-source adapter, which binds TinyJuice's shared REPL tools to the active `DispatchCtx`, module configuration and artifact directory. Tool declarations, artifact path checks and execution are owned by `tinyjuice-host`. |
+| `tinyjuice-host::retrieve_tool` | Shared retrieval tool implementation and declaration; OpenHuman supplies the callback that reads from the module CCR store. |
 | Plain text | Compressed with TinyJuice's deterministic TextCrusher. |
 | [`savings.rs`](./savings.rs) | Thin adapter: attribution model and `agent::cost` price per input token; the module (`RecordSavings`, `SavingsStats`, `ResetSavings`) does the aggregate math and persists the `juice.savings` document in its storage (a legacy `state/tokenjuice_savings.json` is imported once). |
 
@@ -58,19 +59,21 @@ behavior. There is no linked implementation fallback.
   Builds without `modules` return an unavailable error.
 - Controllers are registered from `crate::inference::tokenjuice::all_tokenjuice_registered_controllers()`,
   called by [`core/all.rs`](../../core/all.rs).
-- `tools/ops.rs` registers `crate::inference::tokenjuice::TokenjuiceRetrieveTool::new()`
-  in the agent tool catalog (it is not re-exported through [`tools/mod.rs`](../../tools/mod.rs)) and
+- `tools/ops.rs` constructs TinyJuice's
+  `tinyjuice_host::retrieve_tool::RetrieveToolOutputTool` with the host's
+  module-CCR lookup callback in the agent tool catalog (it is not re-exported
+  through [`tools/mod.rs`](../../tools/mod.rs)) and
   treats every `RECOVERY_TOOL_NAMES` entry as a recovery tool. The registered
   tool name is `tinyjuice_bus::tools::RETRIEVE` (`"juice_retrieve"`);
-  `"tokenjuice_retrieve"` and `LEGACY_RETRIEVE_TOOL_NAME`
-  (`"retrieve_tool_output"`) are recognized aliases only. Only
+  `"tokenjuice_retrieve"` and `"retrieve_tool_output"` are recognized aliases
+  only. Only
   `RECOVERY_TOOL_VISIBLE` (the live tool) is force-added to a curated
   `ToolScope::Named` belt (`session_host/builder/mod.rs::ensure_recovery_tool_visible`);
   the aliases stay registered for transcript replay but off the wire. It is
   added when compaction is on or the agent's results can be summarized
   (`summarizes_tool_output`), since a summary's footer names it too.
-- Handle mode: `install_request` sets `CompressOptions.repl_handle` (and
-  `repl_save_dir` when `repl_save_enabled`) from `repl_handle_active(config)`,
+- Handle mode: `install_request` sets `CompressOptions.repl_handle` from
+  `repl_handle_active(config)`,
   which needs `context.compaction_enabled`, `router_enabled`, `ccr_enabled` and
   `repl_handle_enabled`. `tools/ops.rs` registers the REPL tools under the same
   test, `session_host/builder/mod.rs::ensure_repl_tools_visible` adds them to a
@@ -78,8 +81,16 @@ behavior. There is no linked implementation fallback.
   their answers from being stored behind a second handle (their own
   `max_result_size_chars` still caps them). The additive `Query` member carries the typed operation; existing `Repl`
   arity is unchanged.
+- Durable CCR uses the released `InstallRequest.ccr_durable` option; legacy
+  files are imported from the workspace before module installation.
 - Contract crate: `tinyjuice-bus` ([`vendor/tinyjuice/crates/tinyjuice-bus`](../../../../../vendor/tinyjuice/crates/tinyjuice-bus/),
   path dependency in [`crates/openhuman-core/Cargo.toml`](../../../Cargo.toml)).
+
+`ccr_disk_enabled` projects to the bus's `ccr_durable` flag. The module's
+durable CCR data uses the host-granted storage schema; the previous
+`.tokenjuice/ccr` directory is read only by the host's guarded legacy import
+before installation and is never sent over the bus. `ccr_ttl_secs` remains a
+separate module cache retention setting.
 
 ## Further reading
 

@@ -177,6 +177,7 @@ fn the_untouched_output_is_kept_only_when_it_could_spill_and_be_read_back() {
     assert!(plan_output_stages(&mw, "shell", 101, true).keep_full_output);
     assert!(!plan_output_stages(&mw, "shell", 101, false).keep_full_output);
     assert!(!plan_output_stages(&mw, "shell", 100, true).keep_full_output);
-    let too_big = tinytools_std::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES as usize + 1;
+    let too_big =
+        tinyagents_harness_tools::fs::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES as usize + 1;
     assert!(!plan_output_stages(&mw, "shell", too_big, true).keep_full_output);
 }

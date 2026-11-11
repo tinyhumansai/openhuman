@@ -363,6 +363,7 @@ async fn the_write_audit_probe_reads_the_store_the_writer_wrote_to() {
         ..Config::default()
     };
 
+    crate::mcp::install_test_module_port(&config);
     let before = diagnostics_for_config(&config)
         .await
         .value

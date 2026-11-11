@@ -27,7 +27,11 @@ pub fn embedding_tool_ranker_in(
     workspace_dir: &std::path::Path,
 ) -> EmbeddingToolRanker {
     let ranker = embedding_tool_ranker(provider);
-    match crate::storage::local::open("tool_search", workspace_dir).and_then(|o| o.scoped()) {
+    let opened = crate::storage::local::open("tool_search", workspace_dir).and_then(|o| {
+        crate::storage::documents::prepare_once(&o.backend, &o.scope)?;
+        o.scoped()
+    });
+    match opened {
         Ok(scoped) => ranker.with_cache(Arc::new(DriverEmbeddingCache::new(Arc::clone(
             scoped.documents(),
         )))),

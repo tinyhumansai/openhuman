@@ -65,6 +65,7 @@ test.describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
     await expect(page.getByTestId('chat-message-input')).toBeVisible();
   });
 
+  // No Rust owner test covers tunnel CRUD through the RPC router and backend.
   test('creates a tunnel, lists it, deletes it, and matches mock-backend traffic', async () => {
     const tunnelName = `e2e-tunnel-${Date.now()}`;
     const created = await callCoreRpc<unknown>('openhuman.webhooks_create_tunnel', {

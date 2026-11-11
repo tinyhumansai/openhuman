@@ -34,8 +34,6 @@
  */
 import { TaskCard, type TaskCardState } from '../../../components/assistant-ui/elements/task-card';
 import { formatElapsed } from '../../../components/assistant-ui/utils/task';
-import Badge from '../../../components/ui/Badge';
-import WorktreeActions from '../../../components/worktree/WorktreeActions';
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
   isActiveTimelineStatus,
@@ -43,7 +41,6 @@ import {
   type SubagentToolCallEntry,
   type SubagentTranscriptItem,
 } from '../../../store/chatRuntimeSlice';
-import { basename } from '../../../utils/pathUtils';
 import { stripToolCallEnvelopes } from '../../../utils/toolTimelineFormatting';
 import { BubbleMarkdown } from '../components/AgentMessageBubble';
 import { AssistantUiToolCallCard } from '../components/AssistantUiToolCall';
@@ -86,27 +83,6 @@ function stateOf(activity: SubagentActivity): TaskCardState {
   return 'done';
 }
 
-function WorktreeRow({ activity }: { activity: SubagentActivity }) {
-  const { t } = useT();
-  if (!activity.worktreePath) return null;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="font-medium text-content-secondary">{t('worktree.label')}</span>
-        <span
-          className="truncate font-mono text-[12px] text-content-muted"
-          title={activity.worktreePath}>
-          {basename(activity.worktreePath)}
-        </span>
-        <Badge variant={activity.isDirty ? 'warning' : 'success'}>
-          {activity.isDirty ? t('worktree.dirty') : t('worktree.clean')}
-        </Badge>
-      </div>
-      <WorktreeActions path={activity.worktreePath} isDirty={activity.isDirty} compact />
-    </div>
-  );
-}
-
 /** The nested activity: the child's interleaved transcript, or its flat `toolCalls` list. */
 function ActivityTranscript({ activity }: { activity: SubagentActivity }) {
   const transcript = activity.transcript ?? [];
@@ -145,7 +121,7 @@ export function SubagentActivityCard({ activity }: { activity: SubagentActivity 
   const hasTranscript = (activity.transcript?.length ?? 0) > 0 || activity.toolCalls.length > 0;
 
   const actions =
-    awaiting || incomplete || activity.worktreePath ? (
+    awaiting || incomplete ? (
       <div className="flex flex-col gap-2.5">
         {incomplete ? (
           <p
@@ -169,7 +145,6 @@ export function SubagentActivityCard({ activity }: { activity: SubagentActivity 
             ) : null}
           </div>
         ) : null}
-        <WorktreeRow activity={activity} />
       </div>
     ) : undefined;
 

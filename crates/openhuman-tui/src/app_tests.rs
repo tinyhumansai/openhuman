@@ -1,4 +1,9 @@
 use super::*;
+use openhuman_rpc::embed::chat_surface::WebChannelEvent;
+
+fn web_event(value: serde_json::Value) -> WebChannelEvent {
+    serde_json::from_value(value).expect("test event matches TinyChannels' web contract")
+}
 
 fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
     KeyEvent::new(code, modifiers)
@@ -80,14 +85,10 @@ fn inbound_approval_preserves_typed_overlay_input() {
     overlay.input = Some("draft title".into());
     ui.overlay = Some(overlay);
     handle_web_event(
-        &WebChannelEvent {
-            event: "approval_request".into(),
-            client_id: "client".into(),
-            thread_id: "thread".into(),
-            request_id: "approval-1".into(),
-            tool_name: Some("shell".into()),
-            ..Default::default()
-        },
+        &web_event(json!({
+            "event":"approval_request","client_id":"client","thread_id":"thread",
+            "request_id":"approval-1","tool_name":"shell"
+        })),
         &mut state,
         &mut ui,
     );
@@ -109,15 +110,11 @@ fn inbound_plan_review_waits_for_typed_overlay_to_close() {
     overlay.input = Some("draft title".into());
     ui.overlay = Some(overlay);
     handle_web_event(
-        &WebChannelEvent {
-            event: "plan_review_request".into(),
-            client_id: "client".into(),
-            thread_id: "thread".into(),
-            request_id: "review-1".into(),
-            message: Some("Review this plan".into()),
-            args: Some(json!({"steps": ["Inspect", "Implement"]})),
-            ..Default::default()
-        },
+        &web_event(json!({
+            "event":"plan_review_request","client_id":"client","thread_id":"thread",
+            "request_id":"review-1","message":"Review this plan",
+            "args":{"steps":["Inspect","Implement"]}
+        })),
         &mut state,
         &mut ui,
     );
@@ -151,24 +148,18 @@ fn failed_account_thread_replacement_rejects_old_and_unscoped_activity() {
     state.push_system("Could not create a new thread (see logs).");
     for thread in ["previous-account-thread", ""] {
         handle_web_event(
-            &WebChannelEvent {
-                event: "text_delta".into(),
-                client_id: "client".into(),
-                thread_id: thread.into(),
-                delta: Some("old secret".into()),
-                ..Default::default()
-            },
+            &web_event(json!({
+                "event":"text_delta","client_id":"client","thread_id":thread,
+                "request_id":"old-turn","delta":"old secret"
+            })),
             &mut state,
             &mut ui,
         );
         handle_web_event(
-            &WebChannelEvent {
-                event: "approval_request".into(),
-                client_id: "client".into(),
-                thread_id: thread.into(),
-                request_id: "old-approval".into(),
-                ..Default::default()
-            },
+            &web_event(json!({
+                "event":"approval_request","client_id":"client","thread_id":thread,
+                "request_id":"old-approval"
+            })),
             &mut state,
             &mut ui,
         );

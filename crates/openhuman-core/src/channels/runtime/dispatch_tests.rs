@@ -80,6 +80,8 @@ fn ack_reaction_is_deterministic_and_total_on_edge_inputs() {
 
 fn cm(channel: &str, reply_target: &str) -> traits::ChannelMessage {
     traits::ChannelMessage {
+        reply_to_id: None,
+        topic_id: None,
         channel: channel.into(),
         sender: "alice".into(),
         content: "hi".into(),

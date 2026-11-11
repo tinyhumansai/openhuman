@@ -74,7 +74,7 @@ None. The module has no `bus.rs` and no `DomainEvent` publishers/subscribers.
 ## Dependencies
 
 - `crate::config`: `CostConfig` / `Config` (legacy display target, dashboard currency/enabled, `workspace_dir`); `config::rpc::load_config_with_timeout` in schemas.
-- `crate::inference::provider::types::UsageInfo` (re-exported as `crate::inference::provider::UsageInfo`): provider usage payload translated into `TokenUsage` in [`global.rs`](./global.rs).
+- `tinyinference_llm::usage::BilledUsage`: provider usage payload translated into `TokenUsage` in [`global.rs`](./global.rs).
 - `crate::core::all`: `ControllerFuture`, `RegisteredController` for controller registration.
 - `crate::core`: `ControllerSchema`, `FieldSchema`, `TypeSchema`.
 - `crate::core::Outcome`: RPC return wrapper.

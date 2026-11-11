@@ -16,11 +16,15 @@
 //! | `pipeline_path` | a `pipeline.json` replacing the shipped one |
 //! | `queue_url` | where the queues live: `storage` (default) or a broker URL |
 //! | `triage_timeout_ms` | how long one delivered event's triage may take (at most 25 s) |
+//! | `sources.<name>` | an external source pushed over `inbound.offer`, batched and run on a pinned agent ([`InboundSourceConfig`]) |
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+pub use super::inbound_sources::InboundSourceConfig;
 
 /// The longest one delivered event's triage may take. The module waits 30 s
 /// for a host callback before it treats the delivery as failed and retries
@@ -51,6 +55,10 @@ pub struct InboundConfig {
     /// before the delivery is retried. Capped at [`MAX_TRIAGE_TIMEOUT_MS`];
     /// read when the host callbacks are served (the next core start).
     pub triage_timeout_ms: u64,
+    /// External sources pushed over `inbound.offer`, by source name
+    /// (`<kind>:<name>`, e.g. `x:mentions`): each is debounced into batches
+    /// and run on its pinned agent, without triage.
+    pub sources: BTreeMap<String, InboundSourceConfig>,
 }
 
 impl InboundConfig {
@@ -74,6 +82,7 @@ impl std::fmt::Debug for InboundConfig {
                 &self.queue_url.as_deref().map(super::storage::redact_url),
             )
             .field("triage_timeout_ms", &self.triage_timeout_ms)
+            .field("sources", &self.sources)
             .finish()
     }
 }
@@ -86,6 +95,7 @@ impl Default for InboundConfig {
             pipeline_path: None,
             queue_url: None,
             triage_timeout_ms: DEFAULT_TRIAGE_TIMEOUT_MS,
+            sources: BTreeMap::new(),
         }
     }
 }

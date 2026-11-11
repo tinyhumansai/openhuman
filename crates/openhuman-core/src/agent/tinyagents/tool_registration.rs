@@ -7,28 +7,23 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tinyagents_graph::goals::GoalToolKind;
-use tinyagents_harness::tool::packs::{PackSelection, UseSkillDispatch, USE_SKILL};
 use tinyagents_harness::tool::{
     CanonicalSharedToolAdapter, ToolDispatch, ToolExecScope, ToolExecution, ToolExecutionContext,
 };
+use tinyagents_harness_tools::goals::GoalToolKind;
+use tinyagents_harness_tools::skills::{PackSelection, UseSkillDispatch, USE_SKILL};
 use tinyagents_registry::{CapabilityRegistry, ComponentKind, RegistryDiagnostic};
 use tinyagents_runtime::turn_driver::{SharedToolSet, ToolSetBuilder};
-use tinyagents_runtime::{project_descriptors, ToolAdmission};
+use tinyagents_runtime::{project_descriptors, NestedSpawnDepth, ToolAdmission};
 use tinyinference_llm::model::ChatModel;
 use tinytools::{Tool, ToolCallOptions, ToolResult, ToolRunContext};
 
-use crate::agent::orchestration::tools::{
-    ContinueSubagentDispatch, DelegateGraphDispatch, DelegationDispatch,
-    SpawnAsyncSubagentDispatch, SpawnParallelAgentsDispatch, SpawnSubagentDispatch,
-};
+use crate::agent::orchestration::tools::SpawnSubagentDispatch;
 use crate::agent::tinyagents::host::run_context::HostOperationContext;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
-use crate::agent::tinyagents::turn_policy::is_subagent_spawn_or_delegate_tool;
+use crate::agent::tinyagents::turn_policy::is_subagent_spawn_tool;
 use crate::agent::tools::TodoToolDispatch;
 use crate::core::runtime::CoreContext;
-use crate::tools::delegate::DelegateToolDispatch;
-use crate::tools::implementations::threads::SpawnWorkerThreadDispatch;
 
 pub(crate) type RegisteredToolDispatch = Arc<dyn ToolDispatch<(), OpenHumanRunContext>>;
 
@@ -91,9 +86,6 @@ pub(crate) fn subagent_owner_key(
     )
 }
 
-#[path = "subagent_projection.rs"]
-mod subagent_projection;
-use subagent_projection::{ProjectedSubagentDispatch, SubagentResultProjection};
 type ToolDispatchSelectorFn =
     dyn Fn(&str, Arc<dyn tinytools::Tool>) -> Option<RegisteredToolDispatch> + Send + Sync;
 type ToolDispatchSelector = Arc<ToolDispatchSelectorFn>;
@@ -115,162 +107,27 @@ type ToolDispatchSelector = Arc<ToolDispatchSelectorFn>;
 pub(crate) fn typed_dispatch_for(
     name: &str,
     adapter: Arc<dyn tinytools::Tool>,
-    delegation_target: Option<String>,
 ) -> Option<Arc<dyn ToolDispatch<(), OpenHumanRunContext>>> {
     let dispatch: Arc<dyn ToolDispatch<(), OpenHumanRunContext>> = match name {
-        "spawn_parallel_agents" => Arc::new(SpawnParallelAgentsDispatch::new(adapter)),
-        "spawn_async_subagent" => Arc::new(SpawnAsyncSubagentDispatch::new(adapter)),
-        "spawn_worker_thread" => Arc::new(SpawnWorkerThreadDispatch::new(adapter)),
         "spawn_subagent" => Arc::new(SpawnSubagentDispatch::new(adapter)),
-        "continue_subagent" => Arc::new(ContinueSubagentDispatch::new(adapter)),
-        "delegate_graph" => Arc::new(DelegateGraphDispatch::new(adapter)),
-        "delegate" => Arc::new(DelegateToolDispatch::new(adapter)),
         "memory" => Arc::new(LiveToolContextDispatch::new(adapter)),
         "todo" => Arc::new(TodoToolDispatch::new(adapter)),
-        _ => {
-            return DelegationDispatch::for_tool(adapter, delegation_target).map(|dispatch| {
-                Arc::new(dispatch) as Arc<dyn ToolDispatch<(), OpenHumanRunContext>>
-            });
-        }
+        _ => return None,
     };
     Some(dispatch)
 }
 
-/// Resolves the Jobs/Message adapter from the actual harness execution
-/// context. Live voice harnesses build their tool set before a parent turn
-/// exists, so their controls cannot capture the per-turn owner at registration.
-struct LiveSubagentControlDispatch {
-    name: String,
-    adapter: Arc<dyn Tool>,
-    tool_sets: Vec<SharedToolSet>,
+fn live_dispatch_selector() -> DispatchSelector {
+    dispatch_selector()
 }
 
-/// Preserves the product control contract where a nonempty `task_id` wins
-/// over `subagent_session_id`, while routing the selected value through the
-/// generic MessageTool's durable-session lookup. The session port then binds
-/// it to the authenticated full lifecycle key.
-pub(crate) struct TaskFirstSessionMessageDispatch {
-    inner: RegisteredToolDispatch,
-    tool: Arc<dyn Tool>,
-}
-
-impl TaskFirstSessionMessageDispatch {
-    pub(crate) fn new(inner: RegisteredToolDispatch) -> Self {
-        Self {
-            tool: inner.tool(),
-            inner,
-        }
-    }
-}
-
-#[async_trait]
-impl ToolDispatch<(), OpenHumanRunContext> for TaskFirstSessionMessageDispatch {
-    fn tool(&self) -> Arc<dyn Tool> {
-        self.tool.clone()
-    }
-
-    fn output_origin(&self) -> tinyagents_harness::host::ContentOrigin {
-        self.inner.output_origin()
-    }
-
-    async fn execute(
-        &self,
-        state: &(),
-        call_id: tinyagents_harness::CallId,
-        mut arguments: serde_json::Value,
-        options: ToolCallOptions,
-        parent: &tinyagents_harness::context::RunContext<OpenHumanRunContext>,
-    ) -> anyhow::Result<ToolResult> {
-        if let Some(object) = arguments.as_object_mut() {
-            let Some(message) = object
-                .get("message")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|message| !message.is_empty())
-            else {
-                return Ok(ToolResult::error("steer_subagent: `message` is required"));
-            };
-            object.insert(
-                "message".into(),
-                serde_json::Value::String(message.to_owned()),
-            );
-            let selected = object
-                .get("task_id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .or_else(|| {
-                    object
-                        .get("subagent_session_id")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                });
-            if let Some(selected) = selected {
-                object.insert(
-                    "subagent_session_id".into(),
-                    serde_json::Value::String(selected.to_owned()),
-                );
-                object.remove("task_id");
-            }
-        }
-        self.inner
-            .execute(state, call_id, arguments, options, parent)
-            .await
-    }
-}
-
-#[async_trait]
-impl ToolDispatch<(), OpenHumanRunContext> for LiveSubagentControlDispatch {
-    fn tool(&self) -> Arc<dyn Tool> {
-        self.adapter.clone()
-    }
-
-    async fn execute(
-        &self,
-        state: &(),
-        call_id: tinyagents_harness::CallId,
-        arguments: serde_json::Value,
-        options: ToolCallOptions,
-        parent: &tinyagents_harness::context::RunContext<OpenHumanRunContext>,
-    ) -> anyhow::Result<ToolResult> {
-        let dispatches = subagent_control_dispatches(&self.tool_sets, &parent.data);
-        let Some(dispatch) = dispatches.get(&self.name) else {
-            return Ok(ToolResult::error(format!(
-                "{} requires an authenticated parent session",
-                self.name
-            )));
-        };
-        dispatch
-            .execute(state, call_id, arguments, options, parent)
-            .await
-    }
-}
-
-fn live_dispatch_selector(tool_sets: Vec<SharedToolSet>) -> DispatchSelector {
-    let fallback = dispatch_selector(tool_sets.clone());
-    Arc::new(move |name, adapter| {
-        if matches!(
-            name,
-            "list_subagents" | "wait_subagent" | "steer_subagent" | "close_subagent"
-        ) {
-            return Some(Arc::new(LiveSubagentControlDispatch {
-                name: name.to_owned(),
-                adapter,
-                tool_sets: tool_sets.clone(),
-            }));
-        }
-        fallback(name, adapter)
-    })
-}
-
-/// Names among the candidate tools that spawn or delegate to a sub-agent.
+/// Names among the candidate tools that spawn a sub-agent.
 fn candidate_spawn_tools(tool_sets: &[SharedToolSet]) -> HashSet<String> {
     tool_sets
         .iter()
         .flat_map(|set| set.iter())
         .map(|tool| tool.name().to_string())
-        .filter(|name| is_subagent_spawn_or_delegate_tool(name))
+        .filter(|name| is_subagent_spawn_tool(name))
         .collect()
 }
 
@@ -288,7 +145,7 @@ pub(crate) fn is_thread_goal_tool(name: &str) -> bool {
 /// `CoreContext` is re-scoped with it so a tool that asks "who is acting"
 /// answers for this turn and not for whichever turn last set a global.
 ///
-/// [`AgentTurnOrigin`]: crate::security::turn_origin::AgentTurnOrigin
+/// [`AgentTurnOrigin`]: crate::core::runtime::turn_origin::AgentTurnOrigin
 pub(crate) struct TurnOriginScope;
 
 impl ToolExecScope for TurnOriginScope {
@@ -341,19 +198,13 @@ type DispatchSelector = Arc<
 /// (it is the proxy every packed archetype delegation is reached through and
 /// must resolve the SAME live parent a natively advertised delegate tool does,
 /// regression R3), everything else goes through [`typed_dispatch_for`].
-fn dispatch_selector(tool_sets: Vec<SharedToolSet>) -> DispatchSelector {
+fn dispatch_selector() -> DispatchSelector {
     Arc::new(move |name, adapter| {
         if name != USE_SKILL {
-            let delegation_target = tool_sets
-                .iter()
-                .flat_map(|set| set.iter())
-                .find(|tool| tool.name() == name)
-                .and_then(|tool| crate::tools::host_extensions::delegation_target(tool.as_ref()))
-                .map(str::to_string);
-            return typed_dispatch_for(name, adapter, delegation_target);
+            return typed_dispatch_for(name, adapter);
         }
         let selector: Arc<
-            tinyagents_harness::tool::packs::PackDispatchSelector<(), OpenHumanRunContext>,
+            tinyagents_harness_tools::skills::PackDispatchSelector<(), OpenHumanRunContext>,
         > = Arc::new(select_packed_tool_dispatch);
         Some(Arc::new(UseSkillDispatch::new(adapter, selector)))
     })
@@ -365,182 +216,12 @@ fn dispatch_selector(tool_sets: Vec<SharedToolSet>) -> DispatchSelector {
 fn select_packed_tool_dispatch(selection: PackSelection) -> Option<RegisteredToolDispatch> {
     let name = selection.tool_name().to_owned();
     let registry = selection.registry();
-    let delegation_target = registry
-        .iter()
-        .find(|tool| tool.name() == name)
-        .and_then(|tool| crate::tools::host_extensions::delegation_target(tool.as_ref()))
-        .map(str::to_string);
     let adapter = shared_tool_adapter(vec![registry], &name)?;
-    typed_dispatch_for(&name, Arc::new(adapter), delegation_target)
+    typed_dispatch_for(&name, Arc::new(adapter))
 }
 
-fn subagent_control_dispatches(
-    tool_sets: &[SharedToolSet],
-    run_context: &OpenHumanRunContext,
-) -> std::collections::HashMap<String, RegisteredToolDispatch> {
-    use tinyagents_orchestration::subagent::{
-        SubAgentJobAction, SubAgentJobRegistry, SubAgentJobsTool, SubAgentMessageTool,
-    };
-
-    let Some(parent) = run_context.parent.as_ref() else {
-        return std::collections::HashMap::new();
-    };
-    let registry =
-        crate::core::runtime::slot_for::<SubAgentJobRegistry>(&run_context.dispatch_ctx());
-    let jobs = (*registry).clone();
-    let store: Arc<dyn tinyagents_orchestration::subagent::SubagentSessionStore> = Arc::new(
-        crate::agent::orchestration::subagent_sessions::OpenHumanTinySubagentSessionStore::new(
-            parent.workspace_dir.clone(),
-            parent.session_id.clone(),
-            run_context.thread_id.clone(),
-        )
-        .with_jobs(jobs.clone()),
-    );
-    let owner = subagent_owner_key(
-        &parent.workspace_dir,
-        &parent.session_id,
-        run_context.thread_id.as_deref(),
-    );
-    let parent_session = parent.session_id.clone();
-    let owner_scope: Arc<dyn Fn(u64) -> String + Send + Sync> = Arc::new(move |_| owner.clone());
-
-    let find_tool = |name: &str| -> Option<Arc<dyn tinytools::Tool>> {
-        shared_tool_adapter(tool_sets.to_vec(), name)
-            .map(|adapter| Arc::new(adapter) as Arc<dyn tinytools::Tool>)
-    };
-    let make_jobs_alias =
-        |name: &str, action: SubAgentJobAction| -> Option<RegisteredToolDispatch> {
-            let adapter = find_tool(name)?;
-            let parent_session = parent_session.clone();
-            let dispatch = SubAgentJobsTool::new(jobs.clone())
-                .recover_selector_errors()
-                .with_tool_name(name)
-                .with_description(adapter.description())
-                .with_parameters(adapter.parameters_schema())
-                .with_fixed_action(action)
-                .with_metadata(
-                    adapter.permission_level(),
-                    adapter.scope(),
-                    adapter.category(),
-                    tinytools::ToolTimeout::Inherit,
-                )
-                .with_owner_scope(owner_scope.clone())
-                .with_sessions(store.clone(), move |_| parent_session.clone());
-            Some(Arc::new(dispatch))
-        };
-    let mut dispatches = std::collections::HashMap::new();
-    if let Some(dispatch) = make_jobs_alias("list_subagents", SubAgentJobAction::Query) {
-        dispatches.insert(
-            "list_subagents".into(),
-            Arc::new(ProjectedSubagentDispatch {
-                tool: dispatch.tool(),
-                inner: dispatch,
-                projection: SubagentResultProjection::List,
-            }) as RegisteredToolDispatch,
-        );
-    }
-    if let Some(adapter) = find_tool("wait_subagent") {
-        let parent_session = parent_session.clone();
-        let task_parent_session = parent_session.clone();
-        let parent_thread_id = run_context.thread_id.clone();
-        let task_store = crate::agent::orchestration::running_subagents::task_store_for_workspace(
-            &parent.workspace_dir,
-        );
-        let wait_dispatch: RegisteredToolDispatch = Arc::new(
-            SubAgentJobsTool::new(jobs.clone())
-                .recover_selector_errors()
-                .with_tool_name("wait_subagent")
-                .with_description(adapter.description())
-                .with_parameters(adapter.parameters_schema())
-                .with_fixed_action(SubAgentJobAction::Await)
-                .with_identifier_fields("task_id", "subagent_session_id")
-                .with_await_timeout_field("timeout_secs", 120, 3600)
-                .with_required_identifier()
-                .with_metadata(
-                    adapter.permission_level(),
-                    adapter.scope(),
-                    adapter.category(),
-                    tinytools::ToolTimeout::Inherit,
-                )
-                .with_owner_scope(owner_scope.clone())
-                .with_sessions(store.clone(), move |_| parent_session.clone())
-                .with_task_store(task_store, move |_| {
-                    tinyagents_harness::ids::RunId::new(task_parent_session.clone())
-                })
-                .with_task_thread_scope(move |_| parent_thread_id.clone()),
-        );
-        dispatches.insert(
-            "wait_subagent".into(),
-            Arc::new(ProjectedSubagentDispatch {
-                tool: wait_dispatch.tool(),
-                inner: wait_dispatch,
-                projection: SubagentResultProjection::Wait,
-            }),
-        );
-    }
-    if let Some(adapter) = find_tool("close_subagent") {
-        let parent_session = parent_session.clone();
-        dispatches.insert(
-            "close_subagent".into(),
-            Arc::new(
-                SubAgentJobsTool::new(jobs.clone())
-                    .recover_selector_errors()
-                    .with_tool_name("close_subagent")
-                    .with_description(adapter.description())
-                    .with_parameters(adapter.parameters_schema())
-                    .with_fixed_action(SubAgentJobAction::Close)
-                    .with_identifier_field("subagent_session_id")
-                    .with_required_identifier()
-                    .with_metadata(
-                        adapter.permission_level(),
-                        adapter.scope(),
-                        adapter.category(),
-                        adapter.timeout_policy(&serde_json::Value::Null),
-                    )
-                    .with_owner_scope(owner_scope.clone())
-                    .with_sessions(store.clone(), move |_| parent_session.clone()),
-            ),
-        );
-    }
-    if let Some(adapter) = find_tool("steer_subagent") {
-        let parent_session = parent_session.clone();
-        let dispatch: RegisteredToolDispatch = Arc::new(
-            SubAgentMessageTool::new(jobs)
-                .recover_selector_errors()
-                .with_tool_name("steer_subagent")
-                .with_description(adapter.description())
-                .with_parameters(adapter.parameters_schema())
-                .with_argument_fields("task_id", "subagent_session_id", "message", "__request_id")
-                .with_lane_field("mode")
-                .with_metadata(
-                    adapter.permission_level(),
-                    adapter.scope(),
-                    adapter.category(),
-                    adapter.timeout_policy(&serde_json::Value::Null),
-                )
-                .with_owner_scope(owner_scope)
-                .with_sessions(store, move |_| parent_session.clone()),
-        );
-        dispatches.insert(
-            "steer_subagent".into(),
-            Arc::new(TaskFirstSessionMessageDispatch::new(dispatch)),
-        );
-    }
-    dispatches
-}
-
-fn turn_dispatch_selector(
-    tool_sets: Vec<SharedToolSet>,
-    run_context: &OpenHumanRunContext,
-) -> DispatchSelector {
-    let aliases = subagent_control_dispatches(&tool_sets, run_context);
-    let fallback = dispatch_selector(tool_sets);
-    Arc::new(move |name, adapter| {
-        aliases
-            .get(name)
-            .cloned()
-            .or_else(|| fallback(name, adapter))
-    })
+fn turn_dispatch_selector(_run_context: &OpenHumanRunContext) -> DispatchSelector {
+    dispatch_selector()
 }
 
 /// The admission rules for one turn.
@@ -554,6 +235,7 @@ pub(crate) fn turn_admission(
     tool_sets: &[SharedToolSet],
     allowed: &Option<HashSet<String>>,
     has_thread: bool,
+    nested_spawn_depth: Option<NestedSpawnDepth>,
 ) -> ToolAdmission {
     ToolAdmission {
         allowed: allowed.clone(),
@@ -565,6 +247,7 @@ pub(crate) fn turn_admission(
             .map(|kind| kind.name().to_string())
             .collect(),
         spawn_tools: candidate_spawn_tools(tool_sets),
+        nested_spawn_depth,
     }
 }
 
@@ -578,9 +261,9 @@ pub(crate) fn host_tool_set_builder(
 ) -> ToolSetBuilder<(), OpenHumanRunContext> {
     ToolSetBuilder::new()
         .sets(tool_sets.iter().cloned())
-        .admission(turn_admission(tool_sets, allowed, has_thread))
+        .admission(turn_admission(tool_sets, allowed, has_thread, None))
         .deferred(session_deferred.iter().cloned())
-        .dispatch(live_dispatch_selector(tool_sets.to_vec()))
+        .dispatch(live_dispatch_selector())
         .exec_scope(Arc::new(TurnOriginScope))
 }
 
@@ -590,12 +273,18 @@ pub(crate) fn host_tool_set_builder_for_turn(
     has_thread: bool,
     session_deferred: &HashSet<String>,
     run_context: &OpenHumanRunContext,
+    nested_spawn_depth: Option<NestedSpawnDepth>,
 ) -> ToolSetBuilder<(), OpenHumanRunContext> {
     ToolSetBuilder::new()
         .sets(tool_sets.iter().cloned())
-        .admission(turn_admission(tool_sets, allowed, has_thread))
+        .admission(turn_admission(
+            tool_sets,
+            allowed,
+            has_thread,
+            nested_spawn_depth,
+        ))
         .deferred(session_deferred.iter().cloned())
-        .dispatch(turn_dispatch_selector(tool_sets.to_vec(), run_context))
+        .dispatch(turn_dispatch_selector(run_context))
         .exec_scope(Arc::new(TurnOriginScope))
 }
 
@@ -621,13 +310,6 @@ pub(crate) fn capability_diagnostics(
             registry.replace_tool(Arc::new(adapter));
         }
     }
-    project_descriptors(
-        &mut registry,
-        ComponentKind::Graph,
-        tinyagents_orchestration::topology::all_graph_topologies()
-            .into_iter()
-            .map(|report| report.name),
-    );
 
     // The agents visible to this turn, as name-only `ComponentKind::Agent`
     // descriptors (issue #4249, Workstream 10.1): metadata only, no executable
@@ -658,9 +340,8 @@ pub(crate) fn capability_diagnostics(
 
     let diagnostics = registry.diagnostics();
     tracing::debug!(
-        models = registry.to_model_registry().names().len(),
+        models = registry.names(ComponentKind::Model).len(),
         tools = registry.names(ComponentKind::Tool).len(),
-        graphs = registry.names(ComponentKind::Graph).len(),
         agents = runtime_agent_count + builtin_supplement_count,
         diagnostics = diagnostics.len(),
         "[registry] per-turn capability projection summary"
@@ -671,7 +352,3 @@ pub(crate) fn capability_diagnostics(
 #[cfg(test)]
 #[path = "tool_registration_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "use_skill_dispatch_tests.rs"]
-mod use_skill_dispatch_tests;

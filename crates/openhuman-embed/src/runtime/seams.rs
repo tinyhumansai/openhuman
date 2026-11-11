@@ -34,6 +34,7 @@ use openhuman_core::agent::tinyagents::discovery::{
 };
 use openhuman_core::core::all::{register_controller_extension, ControllerExtension};
 use openhuman_core::core::server_launcher::{install_server_launcher, ServerLauncher};
+use openhuman_core::core::slots::Extensions;
 use openhuman_core::security::SecurityPolicy;
 use openhuman_core::storage::StorageBackend;
 use tinytools::ToolRanker;
@@ -47,7 +48,9 @@ pub enum StorageSource {
     /// A storage URL (`sqlite://…`, `memory`, `mongodb://…`), opened when the
     /// runtime is built. A URL that cannot be opened fails the build.
     Url(String),
-    /// A backend the host already opened.
+    /// A backend the host already opened. Pass a MongoDB backend as a
+    /// [`Url`](Self::Url) instead, so its connection pool runs on the core's
+    /// storage runtime rather than the host's.
     Backend(Arc<dyn StorageBackend>),
 }
 
@@ -56,7 +59,7 @@ impl std::fmt::Debug for StorageSource {
         // A URL can carry credentials: never print it.
         match self {
             Self::Url(_) => f.write_str("StorageSource::Url(<redacted>)"),
-            Self::Backend(backend) => write!(f, "StorageSource::Backend({})", backend.driver()),
+            Self::Backend(_) => f.write_str("StorageSource::Backend(<custom>)"),
         }
     }
 }
@@ -83,12 +86,16 @@ impl From<Arc<dyn StorageBackend>> for StorageSource {
 #[derive(Default)]
 pub(crate) struct HostSeams {
     pub(crate) controller_extensions: Vec<ControllerExtension>,
+    pub(crate) core_extensions: Extensions,
     pub(crate) tool_ranker: Option<Arc<dyn ToolRanker>>,
     pub(crate) post_turn_hooks: Vec<Arc<dyn LearningSink>>,
     pub(crate) tool_hooks: Vec<Arc<dyn ToolHook<OpenHumanRunContext>>>,
     pub(crate) server_launcher: Option<ServerLauncher>,
     pub(crate) live_policy: Option<Arc<SecurityPolicy>>,
     pub(crate) storage: Option<StorageSource>,
+    /// Driver metadata from a configured URL, retained after it is opened.
+    /// Custom backends have no inferred driver identity.
+    pub(crate) storage_driver: Option<String>,
 }
 
 impl HostSeams {
@@ -100,6 +107,12 @@ impl HostSeams {
     /// The URL could not be parsed or opened.
     pub(crate) async fn open_storage(&mut self) -> Result<(), String> {
         if let Some(StorageSource::Url(url)) = &self.storage {
+            self.storage_driver = Some(
+                openhuman_core::storage::StorageUrl::parse(url)
+                    .map_err(|_| String::from("invalid storage URL"))?
+                    .driver()
+                    .to_string(),
+            );
             let backend = openhuman_core::storage::open(url)
                 .await
                 .map_err(|error| format!("opening the storage backend: {error}"))?;
@@ -108,12 +121,18 @@ impl HostSeams {
         Ok(())
     }
 
-    /// [`open_storage`](Self::open_storage) from synchronous code, on the
-    /// core's dedicated storage runtime thread so the backend outlives the call.
+    /// [`open_storage`](Self::open_storage) from synchronous code. The backend
+    /// is opened on the core's storage runtime, so it outlives the call.
     pub(crate) fn open_storage_blocking(&mut self) -> Result<(), String> {
         let Some(StorageSource::Url(url)) = self.storage.take() else {
             return Ok(());
         };
+        self.storage_driver = Some(
+            openhuman_core::storage::StorageUrl::parse(&url)
+                .map_err(|_| String::from("invalid storage URL"))?
+                .driver()
+                .to_string(),
+        );
         let backend =
             openhuman_core::storage::block_on(
                 async move { openhuman_core::storage::open(&url).await },
@@ -203,13 +222,19 @@ impl HostSeams {
 
         let storage = match self.storage {
             Some(StorageSource::Backend(backend)) => {
-                let previous = openhuman_core::storage::install(Arc::clone(&backend));
+                let previous_driver = openhuman_core::storage::installed_driver();
+                let previous = match self.storage_driver.as_deref() {
+                    Some(driver) => {
+                        openhuman_core::storage::install_with_driver(driver, Arc::clone(&backend))
+                    }
+                    None => openhuman_core::storage::install(Arc::clone(&backend)),
+                };
                 log::debug!(
-                    "[embed][seams] storage backend installed driver={} replaced={}",
-                    backend.driver(),
+                    "[embed][seams] storage backend installed source_driver={:?} replaced={}",
+                    self.storage_driver,
                     previous.is_some()
                 );
-                Some((backend, previous))
+                Some((backend, previous, previous_driver))
             }
             Some(StorageSource::Url(_)) => {
                 return Err("storage url was not opened before install".to_string());
@@ -231,8 +256,13 @@ impl HostSeams {
 /// A ranker we installed, and what held the slot before it.
 type InstalledRanker = (Arc<dyn ToolRanker>, Option<Arc<dyn ToolRanker>>);
 
-/// A storage backend we installed, and what held the slot before it.
-type InstalledStorage = (Arc<dyn StorageBackend>, Option<Arc<dyn StorageBackend>>);
+/// A storage backend we installed, what held the slot before it, and the
+/// driver that predecessor was installed with.
+type InstalledStorage = (
+    Arc<dyn StorageBackend>,
+    Option<Arc<dyn StorageBackend>>,
+    Option<String>,
+);
 
 /// A hook we installed under `name`, and what held that name before it.
 struct InstalledHook<H: ?Sized> {
@@ -344,13 +374,18 @@ impl Drop for InstalledSeams {
         if !self.restore {
             return;
         }
-        if let Some((ours, previous)) = self.storage.take() {
+        if let Some((ours, previous, previous_driver)) = self.storage.take() {
             let still_ours =
                 openhuman_core::storage::installed().is_some_and(|now| Arc::ptr_eq(&now, &ours));
             if still_ours {
                 match previous {
                     Some(previous) => {
-                        openhuman_core::storage::install(previous);
+                        match previous_driver {
+                            Some(driver) => {
+                                openhuman_core::storage::install_with_driver(&driver, previous)
+                            }
+                            None => openhuman_core::storage::install(previous),
+                        };
                     }
                     None => {
                         openhuman_core::storage::clear();
@@ -407,6 +442,17 @@ impl Drop for InstalledSeams {
 }
 
 impl RuntimeBuilder {
+    /// Configure context-scoped core hooks before this runtime is built.
+    ///
+    /// The callback receives the same extension set that is attached to the
+    /// runtime's `CoreContext`; registrations remain isolated from other core
+    /// contexts in the process. This is intended for layered host crates.
+    #[doc(hidden)]
+    pub fn configure_core_extensions(self, configure: impl FnOnce(&Extensions)) -> Self {
+        configure(&self.seams.core_extensions);
+        self
+    }
+
     /// Contribute controllers to the core's registry, as the TinyHumans layer
     /// does for its hosted RPC proxies. May be called more than once.
     ///

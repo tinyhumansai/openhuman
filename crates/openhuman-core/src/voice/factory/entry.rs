@@ -39,7 +39,7 @@ pub const DEFAULT_PIPER_VOICE: &str = "en_US-lessac-medium";
 ///
 /// Returns an error for unrecognised provider names so configuration mistakes
 /// surface immediately rather than degrading quietly to a different provider.
-pub fn create_stt_provider(
+pub async fn create_stt_provider(
     provider: &str,
     model: &str,
     config: &Config,
@@ -62,7 +62,7 @@ pub fn create_stt_provider(
     } else {
         slug_model
     };
-    create_stt_provider_by_slug(slug, effective_model, config)
+    create_stt_provider_by_slug(slug, effective_model, config).await
 }
 
 /// Creates a text-to-speech provider based on the specified name and voice.
@@ -94,7 +94,7 @@ pub fn create_stt_provider(
 /// `handle_voice_tts_dispatch`) — each of those already
 /// guards the Piper default at its own level, and that guard is only effective
 /// if this function honours the empty string.
-pub fn create_tts_provider(
+pub async fn create_tts_provider(
     provider: &str,
     voice: &str,
     config: &Config,
@@ -119,7 +119,7 @@ pub fn create_tts_provider(
         ))),
         other => {
             let (slug, _) = split_slug_model(other);
-            create_tts_provider_by_slug(slug, resolved.unwrap_or(""), config)
+            create_tts_provider_by_slug(slug, resolved.unwrap_or(""), config).await
         }
     }
 }

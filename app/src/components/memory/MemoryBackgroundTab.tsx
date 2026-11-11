@@ -16,6 +16,7 @@ import {
   memoryErrorMessage,
   memoryJobsList,
   memoryJobsRun,
+  memoryStatusError,
 } from '../../services/api/memoryApi';
 import { Alert, AlertDescription, Badge, Button, Card } from '../ui';
 import { CenteredLoadingState } from '../ui/LoadingState';
@@ -162,7 +163,7 @@ export default function MemoryBackgroundTab() {
                       <p
                         className="text-xs text-coral-600 dark:text-coral-300"
                         data-testid={`memory-job-${job.id}-error`}>
-                        {job.last_error}
+                        {memoryStatusError(job.last_error, t)}
                       </p>
                     )}
                   </div>

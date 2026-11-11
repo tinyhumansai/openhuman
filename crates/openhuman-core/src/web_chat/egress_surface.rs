@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use tinybus::{EventHandler, SubscriptionHandle};
 
 use crate::core::events::DomainEvent;
+use crate::web_chat::event_context;
 use crate::web_chat::WebChannelEvent;
 
 use super::event_bus::publish_web_channel_event;
@@ -94,13 +95,13 @@ impl EventHandler<DomainEvent> for EgressSurfaceSubscriber {
             descriptor.reason,
             request_id,
         );
-        publish_web_channel_event(WebChannelEvent {
-            event: "external_transfer_pending".to_string(),
-            client_id: client_id.clone(),
-            thread_id: thread_id.clone(),
-            request_id: request_id.clone().unwrap_or_default(),
+        publish_web_channel_event(WebChannelEvent::ExternalTransferPending {
+            context: event_context(
+                client_id,
+                thread_id,
+                request_id.as_deref().unwrap_or_default(),
+            ),
             args: Some(args),
-            ..Default::default()
         });
     }
 }

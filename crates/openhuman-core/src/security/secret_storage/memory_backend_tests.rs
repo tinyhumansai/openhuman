@@ -1,21 +1,6 @@
 use super::*;
 
 #[test]
-fn memory_secrets_support_overwrite_and_idempotent_deletion() {
-    let backend = MemoryBackend::new();
-    assert_eq!(backend.get("user:token").unwrap(), None);
-    backend.set("user:token", "first").unwrap();
-    backend.set("user:token", "replacement").unwrap();
-    assert_eq!(
-        backend.get("user:token").unwrap().as_deref(),
-        Some("replacement")
-    );
-    backend.delete("user:token").unwrap();
-    backend.delete("user:token").unwrap();
-    assert_eq!(backend.get("user:token").unwrap(), None);
-}
-
-#[test]
 fn memory_instances_and_user_namespaces_are_independent() {
     let backend = MemoryBackend::new();
     backend.set("alice:token", "alice-secret").unwrap();

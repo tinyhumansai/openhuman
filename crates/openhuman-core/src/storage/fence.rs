@@ -57,7 +57,7 @@ use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError, Weak};
 
-use tinystoragedrivers::Fence;
+use tinystoragedrivers_types::WriteCondition;
 
 use super::lease::LeaseStore;
 use super::StorageError;
@@ -193,15 +193,15 @@ impl LeaseFence {
         &self.node
     }
 
-    /// The fence a storage driver enforces for this grant: the lease record
-    /// (where the lease store keeps it, [`LeaseStore::driver_fence`]) must
+    /// The condition a storage driver enforces for this grant: the lease record
+    /// (where the lease store keeps it, [`LeaseStore::write_condition`]) must
     /// still name this node at this epoch, unreleased. `None` when the lease
     /// store keeps no record in the storage ports (file leases) or is gone;
     /// then only [`Self::check`] guards the write.
-    pub fn driver_fence(&self) -> Option<Fence> {
+    pub fn write_condition(&self) -> Option<WriteCondition> {
         self.leases
             .upgrade()?
-            .driver_fence(&self.key, &self.node, self.epoch)
+            .write_condition(&self.key, &self.node, self.epoch)
     }
 
     /// The refusal for a write the storage driver fenced off
@@ -417,10 +417,18 @@ impl FenceRegistry {
     }
 
     /// Drops the fence on `key` at `epoch` (a clean release); a fence
-    /// registered since under another epoch stays.
+    /// registered since under another epoch stays. Cached handles retain the
+    /// old fence, so latch it before removing it from the registry.
     pub fn retire(&self, key: &str, epoch: u64) {
-        self.lock()
-            .retain(|held| !(held.key == key && held.epoch == epoch));
+        let mut fences = self.lock();
+        fences.retain(|held| {
+            if held.key == key && held.epoch == epoch {
+                held.fence();
+                false
+            } else {
+                true
+            }
+        });
     }
 
     /// The fence guarding `scope`, if any. A latched fence whose anchor is

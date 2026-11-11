@@ -9,7 +9,12 @@ async fn deferred_tool_is_discoverable_but_fails_closed_when_disabled() {
     let tool = DesktopTool::new(Arc::new(config), DesktopToolKind::Apps);
     assert_eq!(tool.exposure(), ToolExposure::Deferred);
     let result = tool.execute(json!({})).await.unwrap();
-    assert!(result.output().contains("disabled in Connections"));
+    let expected = if cfg!(target_os = "macos") {
+        "disabled in Connections"
+    } else {
+        "not available on this platform"
+    };
+    assert!(result.output().contains(expected), "{}", result.output());
 }
 
 #[test]

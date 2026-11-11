@@ -97,25 +97,6 @@ async fn one_profiles_stop_and_delete_never_reach_anothers_thread() {
     assert_eq!(resolved(&bob).as_deref(), Some(ws_b.path()));
 }
 
-#[test]
-fn a_saas_cancel_reaches_only_the_callers_workspace() {
-    use super::running_subagents::{caller_workspace_in, CallerWorkspace};
-    let ws = TestWorkspace::new();
-    let alice = profile("u-alice", ws.path());
-    assert!(matches!(
-        caller_workspace_in(false, None),
-        CallerWorkspace::All
-    ));
-    assert!(matches!(
-        caller_workspace_in(true, None),
-        CallerWorkspace::Nothing
-    ));
-    match caller_workspace_in(true, Some(&alice)) {
-        CallerWorkspace::Only(dir) => assert_eq!(dir, ws.path()),
-        _ => panic!("a scoped SaaS caller reaches its own workspace"),
-    }
-}
-
 /// The explicit context decides, with no ambient scope anywhere: two profiles
 /// recording and resolving the same thread id concurrently, across awaits and
 /// from spawned tasks, never see each other's state.
@@ -280,4 +261,57 @@ async fn an_unbound_single_user_caller_keeps_workspace_local_persistence() {
         ["local-thread"],
         "unbound single-user storage reopens from the workspace-local backend"
     );
+}
+
+/// A context with an agent but no profile: the embedded shape, whose storage
+/// scope is the agent's own but whose completion tables are the workspace's.
+fn embed_agent(name: &str, workspace: &std::path::Path) -> Arc<CoreContext> {
+    let config = crate::config::Config {
+        workspace_dir: workspace.to_path_buf(),
+        ..crate::config::Config::default()
+    };
+    CoreContext::for_test(DomainSet::full(), None).derive_with(
+        ContextOverlay::new(config, DomainSet::kernel(), ToolGroups::none()).session_agent(name),
+    )
+}
+
+/// An embed agent's completion lands in the store the profile-less router
+/// reopens, so delivery and boot recovery (which run under the host's default
+/// context, with no agent) still find it after a restart (#7687).
+#[tokio::test]
+async fn an_embed_agents_completion_survives_a_restart_for_the_host() {
+    let _guard = crate::config::TEST_ENV_LOCK.lock().await;
+    let ws = TestWorkspace::new();
+    let agent = DispatchCtx::new(embed_agent("embed-a", ws.path()));
+    let host = DispatchCtx::new(CoreContext::for_test(DomainSet::full(), None));
+
+    record_completion(
+        &agent,
+        ws.path(),
+        "embed-session",
+        "embed-task",
+        "researcher",
+        "done",
+        Some("embed-thread".into()),
+    )
+    .await;
+    assert_eq!(
+        router_scope_for(&agent, ws.path()),
+        router_scope_for(&host, ws.path()),
+        "agents of one profile share a router"
+    );
+
+    router_pool()
+        .remove(&router_scope_for(&host, ws.path()))
+        .expect("drop the router to model a restart");
+    assert_eq!(
+        recover_pending_threads(&host, ws.path()),
+        ["embed-thread"],
+        "the host reopens the store the agent wrote to"
+    );
+    let pending: Vec<_> = pending_for_ctx(&host, ws.path(), "embed-thread")
+        .into_iter()
+        .map(|record| record.task_id)
+        .collect();
+    assert_eq!(pending, ["embed-task"]);
 }

@@ -1,4 +1,38 @@
 use super::*;
+fn health_inputs() -> (ChannelsConfig, HttpProxyPolicy) {
+    (
+        ChannelsConfig {
+            telegram: Some(tinychannels_bus::config::TelegramConfig {
+                bot_token: "selected-b-test-token".into(),
+                chat_id: None,
+                allowed_users: Vec::new(),
+                stream_mode: Default::default(),
+                draft_update_interval_ms: 1_000,
+                silent_streaming: true,
+                mention_only: false,
+            }),
+            ..Default::default()
+        },
+        HttpProxyPolicy {
+            service_selectors: vec!["channel.telegram".into()],
+            ..Default::default()
+        },
+    )
+}
+
+#[cfg(feature = "modules")]
+#[test]
+fn existing_health_adapter_passes_only_the_selected_provider_and_policy() {
+    let (channels, policy) = health_inputs();
+    let (_, _, timeout) = health_check_args(
+        channels.clone(),
+        policy.clone(),
+        std::time::Duration::from_secs(5),
+    );
+    assert!(channels.telegram.is_some());
+    assert_eq!(policy.service_selectors, ["channel.telegram"]);
+    assert_eq!(timeout, 5_000);
+}
 
 #[cfg(feature = "modules")]
 #[tokio::test]

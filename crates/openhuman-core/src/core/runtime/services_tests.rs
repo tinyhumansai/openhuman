@@ -12,6 +12,7 @@ async fn flows_boot_reconcile_uses_the_runtime_captured_config() {
         config_path: tmp.path().join("runtime-config.toml"),
         ..Config::default()
     };
+    crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
     let core = crate::core::runtime::CoreContext::for_test_with_config(
         crate::core::runtime::DomainSet::full(),
         config,
@@ -45,7 +46,7 @@ async fn flows_boot_reconcile_uses_the_runtime_captured_config() {
         .with_writer(capture.clone())
         .with_ansi(false)
         .finish();
-    let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+    tracing::subscriber::set_global_default(subscriber).expect("install test tracing subscriber");
 
     let swept = reconcile_flows_on_boot(&dispatch)
         .await

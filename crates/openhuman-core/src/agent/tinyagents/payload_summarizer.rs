@@ -101,7 +101,7 @@ impl HarnessPayloadSummarizer<OpenHumanRunContext> for SubagentPayloadSummarizer
         let thread_id = parent_ctx.data.thread_id.clone();
         let max_output_tokens = definition
             .max_turn_output_tokens
-            .unwrap_or(crate::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS);
+            .unwrap_or(tinyagents_harness::turn_policy::AGENT_TURN_MAX_OUTPUT_TOKENS);
         let child_context = unary_child_context(
             parent_ctx,
             &definition.id,
@@ -129,17 +129,16 @@ impl HarnessPayloadSummarizer<OpenHumanRunContext> for SubagentPayloadSummarizer
                     false,
                     None,
                     definition.temperature,
-                );
+                )
+                .await;
                 let max_output_tokens = request.max_output_tokens.min(max_output_tokens).max(1);
                 let framing = subagent_framing(SubagentRole::Leaf, summary_depth, &request.prompt);
                 let system_prompt = format!("{}\n\n{framing}", request.system.trim_end());
 
                 let provider_model = tinyinference_llm::model::MaxTokensModel::new(
-                    source.build_summarizer(
-                        &model,
-                        definition.temperature,
-                        thread_id.as_deref(),
-                    )?,
+                    source
+                        .build_summarizer(&model, definition.temperature, thread_id.as_deref())
+                        .await?,
                     max_output_tokens,
                 );
                 let provider_model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
@@ -147,11 +146,18 @@ impl HarnessPayloadSummarizer<OpenHumanRunContext> for SubagentPayloadSummarizer
                 let provider_model = if child_context.data.model_budget.is_some()
                     || child_context.data.dispatch_admission.is_some()
                 {
-                    super::budget::ModelBudget::control(
+                    let monetary_budget = child_context.data.model_budget.as_ref().map(|budget| {
+                        tinyagents_harness::cost::ModelBudget::new(
+                            budget.ledger.clone(),
+                            budget.call,
+                        )
+                    });
+                    Arc::new(tinyagents_harness::cost::ControlledChatModel::new(
                         provider_model,
-                        child_context.data.model_budget.as_ref(),
-                        child_context.data.dispatch_admission.clone(),
-                    )
+                        tinyagents_harness::cost::DispatchModelOptions::new()
+                            .monetary_budget(monetary_budget)
+                            .admission(child_context.data.dispatch_admission.clone()),
+                    ))
                 } else {
                     provider_model
                 };

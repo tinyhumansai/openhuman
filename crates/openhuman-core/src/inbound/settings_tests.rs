@@ -110,10 +110,21 @@ async fn the_module_config_is_what_the_storage_grant_declares() {
     config.inbound.queues_path = Some(queues.path().to_path_buf());
 
     let blob = module_config(&config);
+    // Only the loader may issue the authenticated storage route.
+    assert!(blob.get("storage_callback").is_none());
+    assert!(blob.get("storage_address").is_none());
     assert_eq!(blob["queues"]["queues"][0]["max_attempts"], 4);
     assert_eq!(blob["pipeline"]["version"], 1);
     let grant = queue_grant().unwrap();
-    assert_eq!(grant.manifest.queues[0].max_attempts, 4);
+    assert_eq!(
+        grant
+            .manifest
+            .get("teq.ingress")
+            .unwrap()
+            .spec()
+            .max_attempts,
+        4
+    );
     assert_eq!(grant.backend, QueueConfig::Storage);
     assert_eq!(current().manifest, grant.manifest);
 
@@ -125,4 +136,49 @@ async fn the_module_config_is_what_the_storage_grant_declares() {
         serde_json::from_str::<Value>(SHIPPED_QUEUES_JSON).unwrap()
     );
     assert_eq!(queue_grant().unwrap().manifest, shipped().manifest);
+}
+
+fn with_mentions() -> Config {
+    let mut config = Config::default();
+    config.inbound.sources.insert(
+        "x:mentions".into(),
+        crate::config::schema::InboundSourceConfig {
+            agent_id: "teeny-mentions".into(),
+            debounce_ms: 30_000,
+            max_wait_ms: 300_000,
+            max_batch: 20,
+            ..Default::default()
+        },
+    );
+    // Unusable: left out of the pipeline.
+    config.inbound.sources.insert(
+        "composio:gmail".into(),
+        crate::config::schema::InboundSourceConfig {
+            agent_id: "a".into(),
+            ..Default::default()
+        },
+    );
+    config
+}
+
+#[test]
+fn configured_sources_lead_the_pipeline_sources() {
+    let resolved = resolve(&with_mentions()).unwrap();
+    let sources = resolved.pipeline_json["sources"].as_array().unwrap();
+    assert_eq!(
+        sources[0],
+        json!({
+            "match": "x:mentions",
+            "ack": "after_ingest",
+            "weight": 50,
+            "cadence": "instant",
+            "coalesce": {"debounce_ms": 30_000, "max_wait_ms": 300_000, "max_events": 20},
+        })
+    );
+    assert_eq!(sources.len(), shipped().pipeline.sources.len() + 1);
+    // The parsed pipeline agrees: the first match wins for the source.
+    let policy = resolved.pipeline.source_policy("x:mentions");
+    assert_eq!(policy.weight, 50);
+    assert_eq!(policy.cadence.as_deref(), Some("instant"));
+    assert_eq!(resolved.pipeline.source_policy("composio:gmail").weight, 0);
 }

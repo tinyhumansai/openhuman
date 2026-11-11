@@ -27,7 +27,8 @@ use std::sync::Arc;
 
 use tinyskills::{is_safe_segment, BoxFuture, CatalogStore, StoreError, StoredCatalog};
 use tinyskills_drivers::{DocumentCatalogStore, CATALOG_COLLECTION};
-use tinystoragedrivers::{DocumentStore, ErrorKind, Precondition};
+use tinystoragedrivers_api::DocumentStore;
+use tinystoragedrivers_types::{ErrorKind, Precondition};
 
 const DOMAIN: &str = "skill_registry";
 const LOG_PREFIX: &str = "[skill_registry][store]";

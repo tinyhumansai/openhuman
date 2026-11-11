@@ -1,5 +1,5 @@
 use super::*;
-use crate::inference::provider::BilledUsage;
+use tinyinference_llm::usage::BilledUsage;
 
 /// The flow `agent`/`llm` node result exposes usage under these exact keys;
 /// they are a contract with saved flows, so pin the literal JSON.

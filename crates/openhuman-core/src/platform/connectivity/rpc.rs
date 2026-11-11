@@ -14,7 +14,7 @@ use tokio::time::{sleep, Duration};
 use tracing::{debug, warn};
 
 use crate::core::Outcome;
-use crate::platform::socket::manager::global_socket_manager;
+use crate::platform::socket::global_socket_manager;
 
 use super::ops::is_port_in_use;
 
@@ -30,11 +30,11 @@ const DEFAULT_FALLBACK_END: u16 = 7798;
 pub struct ConnectivityDiagResponse {
     /// Backend Socket.IO state, lowercased (e.g. `"connected"`,
     /// `"disconnected"`, `"connecting"`, `"reconnecting"`, `"error"`). When
-    /// the SocketManager has not been bootstrapped yet (test runs, early
-    /// startup) we report `"uninitialized"`.
+    /// a host has not installed the socket port yet (test runs, early startup)
+    /// we report `"uninitialized"`.
     pub socket_state: String,
-    /// Last user-visible socket error surfaced via `SocketManager`'s
-    /// `SharedState.error` slot. `None` when no error pending.
+    /// Last user-visible socket error surfaced by the host-owned socket port.
+    /// `None` when no error is pending.
     pub last_ws_error: Option<String>,
     /// Whether the core's backend reconnect loop is running. `false` means
     /// nobody is retrying — never connected, signed out, a local session, or
@@ -42,7 +42,7 @@ pub struct ConnectivityDiagResponse {
     /// for it. `true` with any `socket_state` other than `connected` is a
     /// link that is down and being retried, or a live transport whose
     /// Socket.IO namespace the server closed (#6256). `false` when the
-    /// SocketManager is not bootstrapped.
+    /// The socket port is not installed.
     pub socket_loop_active: bool,
     /// Whether that loop exited on a terminal failure — no usable session
     /// token: the provider returned nothing or errored, or the backend
@@ -510,7 +510,7 @@ fn resolve_listen_port() -> u16 {
 
 /// Snapshot the backend socket state as `(status, last error, loop active,
 /// loop stopped on failure)`. Returns `("uninitialized", None, false, false)`
-/// when the SocketManager singleton hasn't been registered yet — typical
+/// when the SocketPort hasn't been registered yet — typical
 /// during early startup or in unit tests.
 fn snapshot_socket_state() -> (String, Option<String>, bool, bool) {
     match global_socket_manager() {
@@ -536,7 +536,7 @@ fn snapshot_socket_state() -> (String, Option<String>, bool, bool) {
 }
 
 /// Build a `ConnectivityDiagResponse` for the live process. Pure-ish: only
-/// sources are the env, the in-memory SocketManager state, and a TCP probe.
+/// sources are the env, in-memory socket-port state, and a TCP probe.
 pub fn snapshot() -> ConnectivityDiagResponse {
     let listen_port = resolve_listen_port();
     let listen_port_in_use = is_port_in_use(listen_port);

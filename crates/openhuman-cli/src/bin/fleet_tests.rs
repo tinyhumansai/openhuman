@@ -227,3 +227,85 @@ fn fleet_cors_headers_echo_allowed_origin_only() {
         .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
         .is_none());
 }
+
+/// Tenant isolation at the edge: alice's token on `/bob/rpc` is refused and
+/// never reaches bob's core, while bob's own token is forwarded to it with bob's
+/// core bearer. Bob's core is a local mock bound to the port the fleet assigns
+/// him, so the test needs no outside network and owns every port it dials.
+#[tokio::test]
+async fn rpc_proxy_refuses_one_tenants_token_on_another_tenants_core() {
+    use std::sync::Mutex;
+    let seen: Arc<Mutex<Vec<Option<String>>>> = Arc::default();
+    let seen_by_upstream = seen.clone();
+    let upstream = axum::Router::new().route(
+        "/rpc",
+        post(move |headers: HeaderMap| {
+            let seen = seen_by_upstream.clone();
+            async move {
+                seen.lock().unwrap().push(
+                    headers
+                        .get(header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_owned),
+                );
+                (StatusCode::OK, r#"{"jsonrpc":"2.0","id":1,"result":"bob"}"#)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let bob_port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+
+    // Bob is provisioned first, so his core gets the mock's port.
+    let users = vec!["bob".to_string(), "alice".to_string()];
+    let (instances, edge_auth, minted) =
+        provision(&users, &PathBuf::from("/tmp/ws"), bob_port).unwrap();
+    let bob_core_bearer = instances["bob"].core_bearer.as_str().to_owned();
+    let token = |user: &str| {
+        minted
+            .iter()
+            .find(|(id, _)| id == user)
+            .map(|(_, token)| token.as_str().to_owned())
+            .unwrap()
+    };
+    let fleet = Arc::new(RwLock::new(Fleet {
+        instances,
+        edge_auth,
+        http: reqwest::Client::new(),
+    }));
+    let call = |bearer: Option<String>, tenant: &str| {
+        let mut headers = HeaderMap::new();
+        if let Some(bearer) = bearer {
+            headers.insert(
+                header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {bearer}")).unwrap(),
+            );
+        }
+        rpc_proxy(
+            State(fleet.clone()),
+            AxumPath(tenant.to_owned()),
+            headers,
+            Bytes::from_static(b"{}"),
+        )
+    };
+
+    assert_eq!(
+        call(Some(token("alice")), "bob").await.status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(call(None, "bob").await.status(), StatusCode::UNAUTHORIZED);
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "a refused request must never reach bob's core"
+    );
+
+    assert_eq!(
+        call(Some(token("bob")), "bob").await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![Some(format!("Bearer {bob_core_bearer}"))],
+        "bob's request reaches his core with his core bearer, not the edge token"
+    );
+}

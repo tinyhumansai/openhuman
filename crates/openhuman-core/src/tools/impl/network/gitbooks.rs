@@ -1,7 +1,7 @@
 //! `gitbooks` — answer questions about OpenHuman through the TinyMCP module's
 //! confidential one-shot tool-call contract.
 
-use crate::{config::Config, inference::provider::factory::redact_endpoint};
+use crate::{config::Config, inference::provider::factory::redact_endpoint_origin};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -86,7 +86,7 @@ impl Tool for GitbooksSearchTool {
 
         tracing::debug!(
             target: "[gitbooks]",
-            endpoint = %redact_endpoint(&self.endpoint),
+            endpoint = %redact_endpoint_origin(&self.endpoint),
             tool = "searchDocumentation",
             "dispatching via shared MCP client"
         );
@@ -178,7 +178,7 @@ impl Tool for GitbooksGetPageTool {
 
         tracing::debug!(
             target: "[gitbooks]",
-            endpoint = %redact_endpoint(&self.endpoint),
+            endpoint = %redact_endpoint_origin(&self.endpoint),
             tool = "getPage",
             "dispatching via shared MCP client"
         );

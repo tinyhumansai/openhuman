@@ -8,6 +8,7 @@
 //! environment.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::access::Access;
 use super::error::HarnessError;
@@ -38,6 +39,7 @@ pub struct HarnessBuilder {
     host_kind: HostKind,
     config: Option<Config>,
     session: Option<Session>,
+    session_store: Option<Arc<dyn crate::SessionStoreProvider>>,
     backend_url: Option<String>,
 }
 
@@ -67,6 +69,7 @@ impl HarnessBuilder {
             host_kind: HostKind::Library,
             config: None,
             session: None,
+            session_store: None,
             backend_url: None,
         }
     }
@@ -131,8 +134,13 @@ impl HarnessBuilder {
         mut self,
         f: impl for<'a> Fn(
                 openhuman_core::agent::TurnContext<'a>,
-            ) -> openhuman_core::agent::HostTurnTools
-            + Send
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = openhuman_core::agent::HostTurnTools>
+                        + Send
+                        + 'a,
+                >,
+            > + Send
             + Sync
             + 'static,
     ) -> Self {
@@ -228,6 +236,16 @@ impl HarnessBuilder {
         self
     }
 
+    /// Keep the harness agent's conversation state in a host-owned store.
+    ///
+    /// The provider is asked for the stores of the fixed `harness` agent. Pair
+    /// this with [`Workspace::Stateless`] when the harness must leave no
+    /// durable session data on disk.
+    pub fn session_store(mut self, provider: Arc<dyn crate::SessionStoreProvider>) -> Self {
+        self.session_store = Some(provider);
+        self
+    }
+
     /// Start from a caller-supplied [`Config`] instead of the default.
     ///
     /// Every other builder method is applied **on top** of it, so this is the
@@ -301,6 +319,9 @@ impl HarnessBuilder {
         }
         if let Some(session) = self.session {
             runtime = runtime.session(session);
+        }
+        if let Some(session_store) = self.session_store {
+            runtime = runtime.session_store(session_store);
         }
         let runtime = runtime.build().await?;
 

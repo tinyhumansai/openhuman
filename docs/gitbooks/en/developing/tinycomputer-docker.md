@@ -154,7 +154,11 @@ turn** may take without that approval:
 - The tool reads the turn origin from the per-turn `CoreContext` that the
   cron, background-job and workflow entry points scope around their turn.
 - **Only** turns whose origin is `TrustedAutomation` with source `Cron`,
-  `Background`, or `Workflow { require_approval: false }` qualify.
+  `CronActions` (a cron job whose agent opted into `scheduled_actions`),
+  `Background`, or `Workflow { require_approval: false }` qualify. A cron
+  turn reaches this check with or without that opt-in: the `browser` tool
+  declares no external effect, so the read-only cron stage of the security
+  gate lets the call through, and the action itself is decided here.
 - WebChat, external channels (Telegram, Slack, …), CLI and direct chat,
   unlabelled turns, and workflows with `require_approval = true` keep the
   forced gate exactly as before, even for a listed action.

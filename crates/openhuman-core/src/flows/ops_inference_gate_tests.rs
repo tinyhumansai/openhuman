@@ -145,7 +145,7 @@ async fn inference_gate_surfaces_construction_error() {
     let _inference = crate::inference::inference_test_guard_async().await;
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
-    seed_app_session_for_gate_test(&tmp);
+    seed_app_session_for_gate_test(&tmp).await;
     config.memory_provider = Some("no_such_slug:some-model".to_string());
 
     let g = graph(json!({
@@ -231,6 +231,17 @@ async fn agent_node_role_prefers_custom_registry_entry_model_pin_over_default() 
 }
 
 #[tokio::test]
+async fn agent_node_role_uses_registered_provider_model_policy() {
+    crate::agent::session_host::test_support::install_model_fixture();
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    assert_eq!(
+        agent_node_role(&config, &json!({ "model": "fixture-reasoning" })).await,
+        "reasoning"
+    );
+}
+
+#[tokio::test]
 async fn inference_gate_probes_every_distinct_agent_node_role() {
     // A graph with TWO `agent` nodes, each pinned (via `config.model`) to a
     // DIFFERENT role — `chat` and `reasoning` — each wired to its own broken
@@ -244,7 +255,7 @@ async fn inference_gate_probes_every_distinct_agent_node_role() {
     let _inference = crate::inference::inference_test_guard_async().await;
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
-    seed_app_session_for_gate_test(&tmp);
+    seed_app_session_for_gate_test(&tmp).await;
     config.chat_provider = Some("no_such_chat_slug:some-model".to_string());
     config.reasoning_provider = Some("no_such_reasoning_slug:some-model".to_string());
 
@@ -252,9 +263,9 @@ async fn inference_gate_probes_every_distinct_agent_node_role() {
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
             { "id": "a", "kind": "agent", "name": "Chat step",
-              "config": { "prompt": "chat", "model": "chat-v1" } },
+              "config": { "prompt": "chat", "model": "hint:chat" } },
             { "id": "b", "kind": "agent", "name": "Reasoning step",
-              "config": { "prompt": "reason", "model": "reasoning-v1" } }
+              "config": { "prompt": "reason", "model": "hint:reasoning" } }
         ],
         "edges": [
             { "from_node": "t", "to_node": "a" },

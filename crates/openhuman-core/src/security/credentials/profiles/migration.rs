@@ -19,7 +19,7 @@ impl AuthProfilesStore {
     /// The returned `AuthProfilesData` reflects the in-memory cleanup either
     /// way, so the lock-free read path (`persist = false`) still returns a
     /// correct, fully-resolved view without touching disk.
-    pub(super) fn load_resolved(&self, persist: bool) -> Result<AuthProfilesData> {
+    pub(super) async fn load_resolved(&self, persist: bool) -> Result<AuthProfilesData> {
         let mut persisted = self.read_persisted_locked()?;
         // `migrated` tracks enc: → enc2: XOR-cipher upgrades (original behavior).
         let mut migrated = false;
@@ -72,14 +72,15 @@ impl AuthProfilesStore {
                     }
                     Ok(None) => {
                         // ── (b) No keychain entry yet — decrypt JSON fields and migrate ──
-                        let decrypted = (|| -> Result<_> {
+                        let decrypted: Result<_> = async {
                             let (access_token, access_mig) =
-                                self.decrypt_optional(p.access_token.as_deref())?;
+                                self.decrypt_optional(p.access_token.as_deref()).await?;
                             let (refresh_token, refresh_mig) =
-                                self.decrypt_optional(p.refresh_token.as_deref())?;
+                                self.decrypt_optional(p.refresh_token.as_deref()).await?;
                             let (id_token, id_mig) =
-                                self.decrypt_optional(p.id_token.as_deref())?;
-                            let (token, token_mig) = self.decrypt_optional(p.token.as_deref())?;
+                                self.decrypt_optional(p.id_token.as_deref()).await?;
+                            let (token, token_mig) =
+                                self.decrypt_optional(p.token.as_deref()).await?;
                             Ok((
                                 access_token,
                                 access_mig,
@@ -90,7 +91,8 @@ impl AuthProfilesStore {
                                 token,
                                 token_mig,
                             ))
-                        })();
+                        }
+                        .await;
                         let (at, at_mig, rt, rt_mig, it, it_mig, tok, tok_mig) = match decrypted {
                             Ok(v) => v,
                             Err(e) => {
@@ -169,40 +171,66 @@ impl AuthProfilesStore {
                         }
                         (at, rt, it, tok)
                     }
-                    Err(_e) => {
-                        // Keychain I/O error — fall through to JSON decrypt path.
+                    Err(e) => {
+                        // Keychain read error. JSON still holding this profile's
+                        // secrets can serve it; a keychain-only profile cannot,
+                        // and resolving it without secrets would drop it and
+                        // let the next write erase it (and its keychain entry).
+                        // The secret the profile kind needs must be in JSON:
+                        // an OAuth profile without its access token there
+                        // would still be dropped below.
+                        let has_json_secrets = match parse_profile_kind(&p.kind) {
+                            Ok(AuthProfileKind::OAuth) => p.access_token.is_some(),
+                            Ok(AuthProfileKind::Token) => p.token.is_some(),
+                            Err(_) => {
+                                p.access_token.is_some()
+                                    || p.refresh_token.is_some()
+                                    || p.id_token.is_some()
+                                    || p.token.is_some()
+                            }
+                        };
+                        if !has_json_secrets {
+                            log::warn!(
+                                "[auth] keychain read failed for keychain-only profile_id={id}; \
+                                 refusing to load a partial view"
+                            );
+                            return Err(e);
+                        }
                         log::warn!(
                             "[auth] keychain error for profile_id={id}; falling back to JSON"
                         );
-                        let decrypted = (|| -> Result<_> {
-                            let (at, _) = self.decrypt_optional(p.access_token.as_deref())?;
-                            let (rt, _) = self.decrypt_optional(p.refresh_token.as_deref())?;
-                            let (it, _) = self.decrypt_optional(p.id_token.as_deref())?;
-                            let (tok, _) = self.decrypt_optional(p.token.as_deref())?;
+                        let decrypted: Result<_> = async {
+                            let (at, _) = self.decrypt_optional(p.access_token.as_deref()).await?;
+                            let (rt, _) = self.decrypt_optional(p.refresh_token.as_deref()).await?;
+                            let (it, _) = self.decrypt_optional(p.id_token.as_deref()).await?;
+                            let (tok, _) = self.decrypt_optional(p.token.as_deref()).await?;
                             Ok((at, rt, it, tok))
-                        })();
+                        }
+                        .await;
                         match decrypted {
                             Ok(v) => v,
-                            Err(e) => {
+                            Err(decrypt_error) => {
+                                // The keychain may still hold this profile's
+                                // secrets: fail the load rather than drop it.
                                 log::warn!(
-                                    "[auth] dropping unrecoverable profile provider={}: {e}",
-                                    p.provider
+                                    "[auth] JSON fallback undecryptable for profile_id={id}: \
+                                     {decrypt_error}; refusing to load a partial view"
                                 );
-                                dropped_ids.push(id.clone());
-                                continue;
+                                return Err(e);
                             }
                         }
                     }
                 }
             } else {
                 // ── (b/c) No keychain — use existing JSON decrypt path ────────
-                let decrypted = (|| -> Result<_> {
+                let decrypted: Result<_> = async {
                     let (access_token, access_migrated) =
-                        self.decrypt_optional(p.access_token.as_deref())?;
+                        self.decrypt_optional(p.access_token.as_deref()).await?;
                     let (refresh_token, refresh_migrated) =
-                        self.decrypt_optional(p.refresh_token.as_deref())?;
-                    let (id_token, id_migrated) = self.decrypt_optional(p.id_token.as_deref())?;
-                    let (token, token_migrated) = self.decrypt_optional(p.token.as_deref())?;
+                        self.decrypt_optional(p.refresh_token.as_deref()).await?;
+                    let (id_token, id_migrated) =
+                        self.decrypt_optional(p.id_token.as_deref()).await?;
+                    let (token, token_migrated) = self.decrypt_optional(p.token.as_deref()).await?;
                     Ok((
                         access_token,
                         access_migrated,
@@ -213,7 +241,8 @@ impl AuthProfilesStore {
                         token,
                         token_migrated,
                     ))
-                })();
+                }
+                .await;
 
                 let (
                     access_token,
@@ -283,6 +312,15 @@ impl AuthProfilesStore {
                 AuthProfileKind::OAuth => {
                     let access = match access_token {
                         Some(a) => a,
+                        None if !self.use_keychain && keychain_held_oauth(p) => {
+                            log::warn!(
+                                "[auth] keeping OAuth profile whose secrets are only in the \
+                                 unavailable OS keychain: provider={}. It resolves once the \
+                                 keychain reads again.",
+                                p.provider
+                            );
+                            continue;
+                        }
                         None => {
                             log::warn!(
                                 "[auth] dropping OAuth profile with missing access_token: \
@@ -451,6 +489,10 @@ impl AuthProfilesStore {
                     new_profiles.insert(final_id.clone(), ap);
                     new_persisted_profiles.insert(final_id, p);
                 }
+            } else {
+                // Neither resolved nor dropped: carried untouched because its
+                // secrets are only in the unavailable keychain.
+                new_persisted_profiles.insert(id, p);
             }
         }
         for profile_id in persisted.active_profiles.values_mut() {
@@ -488,4 +530,15 @@ impl AuthProfilesStore {
             profiles,
         })
     }
+}
+
+/// An OAuth entry whose secrets are only in the OS keychain: its JSON holds
+/// none of them. While the keychain is unavailable it cannot be resolved, so
+/// it is carried untouched (neither handed out nor purged) until it reads again.
+pub(super) fn keychain_held_oauth(p: &PersistedAuthProfile) -> bool {
+    p.access_token.is_none()
+        && p.refresh_token.is_none()
+        && p.id_token.is_none()
+        && p.token.is_none()
+        && matches!(parse_profile_kind(&p.kind), Ok(AuthProfileKind::OAuth))
 }

@@ -79,13 +79,15 @@ const AMBIENT_CONTEXT_EXEMPT_PREFIX = "crates/openhuman-core/src/core/runtime/";
 /** Findings `rel` is exempt from. */
 export function exempt(rel, finding) {
   if (finding.rule === "bare-spawn") return BARE_SPAWN_EXEMPT.has(rel);
-  if (finding.rule === "ambient-context") return rel.startsWith(AMBIENT_CONTEXT_EXEMPT_PREFIX);
+  if (finding.rule === "ambient-context")
+    return rel.startsWith(AMBIENT_CONTEXT_EXEMPT_PREFIX);
   return false;
 }
 
 function isTestFile(rel) {
   return (
     rel.endsWith("_tests.rs") ||
+    rel.endsWith("_test_support.rs") ||
     rel.includes(`${sep}test_support${sep}`) ||
     rel.includes("/test_support/")
   );
@@ -174,7 +176,9 @@ async function main() {
   try {
     baseline = JSON.parse(await readFile(baselinePath, "utf8"));
   } catch (error) {
-    console.error(`Unable to read ${relative(repoRoot, baselinePath)}: ${error.message}`);
+    console.error(
+      `Unable to read ${relative(repoRoot, baselinePath)}: ${error.message}`,
+    );
     return 1;
   }
 
@@ -189,13 +193,20 @@ async function main() {
     console.error(`New SaaS ambient-state sites (${added.length}):`);
     for (const f of added) {
       const hint = RULES.find((r) => r.rule === f.rule)?.hint ?? "";
-      console.error(`  ${f.rule}: ${f.path}:${f.line}: ${f.text}\n    -> ${hint}`);
+      console.error(
+        `  ${f.rule}: ${f.path}:${f.line}: ${f.text}\n    -> ${hint}`,
+      );
     }
   }
   if (stale.length) {
-    console.error(`\nFixed sites still in the baseline (${stale.length}); remove them:`);
-    for (const f of stale) console.error(`  ${f.rule}: ${f.path}: ${f.text} [${f.occurrence}]`);
-    console.error("\nTighten the baseline with --write-baseline once nothing new was added.");
+    console.error(
+      `\nFixed sites still in the baseline (${stale.length}); remove them:`,
+    );
+    for (const f of stale)
+      console.error(`  ${f.rule}: ${f.path}: ${f.text} [${f.occurrence}]`);
+    console.error(
+      "\nTighten the baseline with --write-baseline once nothing new was added.",
+    );
   }
   return 1;
 }

@@ -265,3 +265,65 @@ async fn forget_drops_the_positive_entry() {
         .unwrap();
     assert_eq!(backend.me_calls(), 2);
 }
+
+/// Intended behaviour, pinned: a rejection is authoritative only inside its
+/// backoff window. Once the window has passed, the positive entry from before
+/// the rejection is served stale while exactly one background refresh asks the
+/// backend again, and that refresh's rejection is what the next read returns.
+/// Sign-out can be one poll late; the backend is never asked twice per window.
+#[tokio::test]
+async fn a_lapsed_rejection_window_re_asks_the_backend_once_before_rejecting_again() {
+    let backend = Backend::start(vec![
+        MeAnswer::Ok(me_user()),
+        MeAnswer::Status(401),
+        MeAnswer::Status(401),
+    ])
+    .await;
+    let cache = CurrentUserCache::new();
+    let cred = Credential::session(LIVE_JWT.as_str());
+    let c = client(&backend);
+    cache.get_or_refresh(&c, &cred, false).await.unwrap();
+    assert!(matches!(
+        cache.get_or_refresh(&c, &cred, true).await,
+        Err(FetchMeError::Rejected(_))
+    ));
+    assert!(matches!(
+        cache.get_or_refresh(&c, &cred, false).await,
+        Err(FetchMeError::Rejected(_))
+    ));
+    assert_eq!(backend.me_calls(), 2);
+
+    // Let the window lapse (the positive entry, older still, is past its TTL).
+    {
+        let mut state = cache.lock();
+        let failure = state.failure.as_mut().expect("recorded rejection");
+        let lapse = backoff_for(failure.consecutive, fetch_timeout());
+        failure.failed_at -= lapse;
+        state.positive.as_mut().expect("positive entry").fetched_at -= lapse;
+    }
+
+    let served = cache.get_or_refresh(&c, &cred, false).await.unwrap();
+    assert!(served.user.is_some());
+    assert!(served.stale);
+    for _ in 0..200 {
+        if backend.me_calls() == 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(backend.me_calls(), 3);
+    for _ in 0..200 {
+        if cache
+            .suppressed(&CurrentUserCache::key(&c, &cred))
+            .is_some()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(matches!(
+        cache.get_or_refresh(&c, &cred, false).await,
+        Err(FetchMeError::Rejected(_))
+    ));
+    assert_eq!(backend.me_calls(), 3);
+}

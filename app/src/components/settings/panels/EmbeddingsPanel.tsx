@@ -471,7 +471,7 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
               variant="secondary"
               size="xs"
               className="shrink-0"
-              onClick={() => void clearSession()}>
+              onClick={() => void clearSession().catch(() => undefined)}>
               {isLocalSession
                 ? t('settings.exitLocalSession')
                 : t('settings.embeddings.signInAgain')}

@@ -43,7 +43,7 @@ const SECOND_PROMPT = 'Second long answer please';
 
 /** A long reply, so the transcript overflows and there is somewhere to scroll. */
 const LONG_REPLY = Array.from(
-  { length: 40 },
+  { length: 120 },
   (_, i) => `Line ${i + 1}: the transcript needs enough height to actually overflow the viewport. `
 ).join('\n\n');
 
@@ -207,7 +207,8 @@ async function completeTurn(page: Page, prompt: string, marker: string): Promise
 test.describe.configure({ timeout: 120_000 });
 
 test.describe('Chat transcript stick-to-bottom', () => {
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
     await resetMock();
     await setMockBehavior('llmStreamChunkDelayMs', '5');
   });
@@ -225,10 +226,7 @@ test.describe('Chat transcript stick-to-bottom', () => {
     await completeTurn(page, FIRST_PROMPT, 'FIRST-REPLY-END');
 
     const overflowing = await scrollState(page);
-    test.skip(
-      overflowing.scrollHeight <= overflowing.clientHeight + 200,
-      'transcript did not overflow enough to scroll — viewport too tall for this fixture'
-    );
+    expect(overflowing.scrollHeight).toBeGreaterThan(overflowing.clientHeight + 200);
 
     // Park the reader well above the bottom, past the 80px stick threshold.
     const parkedTop = Math.max(0, overflowing.scrollHeight - overflowing.clientHeight - 600);
@@ -291,10 +289,7 @@ test.describe('Chat transcript stick-to-bottom', () => {
     await completeTurn(page, FIRST_PROMPT, 'FIRST-REPLY-END');
 
     const first = await scrollState(page);
-    test.skip(
-      first.scrollHeight <= first.clientHeight + 200,
-      'transcript did not overflow enough to scroll — viewport too tall for this fixture'
-    );
+    expect(first.scrollHeight).toBeGreaterThan(first.clientHeight + 200);
 
     await scrollTo(page, first.scrollHeight);
     expect((await scrollState(page)).distanceFromBottom).toBeLessThanOrEqual(80);
@@ -326,8 +321,8 @@ test.describe('Chat transcript stick-to-bottom', () => {
     // keeps the newest content on screen thereafter. For a reply TALLER than
     // the viewport the two are mutually exclusive — the question is pushed off
     // the top by the answer it is waiting for. This fixture deliberately uses
-    // an overflowing reply (`test.skip` above requires the transcript to
-    // overflow), so the prompt is expected to leave the viewport here.
+    // an overflowing reply (asserted above), so the prompt is expected to
+    // leave the viewport here.
     //
     // Keeping the old assertion would have pinned the defect in place: it is
     // satisfied by the pin alone, so it stayed green for a reader who could not
@@ -384,10 +379,7 @@ test.describe('Chat transcript stick-to-bottom', () => {
     expect(threadA, 'thread A must have an id').not.toBeNull();
 
     const overflowing = await scrollState(page);
-    test.skip(
-      overflowing.scrollHeight <= overflowing.clientHeight + 200,
-      'transcript did not overflow enough to scroll — viewport too tall for this fixture'
-    );
+    expect(overflowing.scrollHeight).toBeGreaterThan(overflowing.clientHeight + 200);
 
     // Thread B. Leaving A is what puts A's messages in the cache.
     await startNewThread(page);

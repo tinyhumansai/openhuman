@@ -1,13 +1,17 @@
 //! Schema definitions and controller registry for the voice domain.
 
-use crate::core::all::RegisteredController;
+use crate::core::all::{ControllerEntry, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use super::handlers::{
     handle_voice_list_models, handle_voice_reply_synthesize, handle_voice_set_providers,
     handle_voice_status, handle_voice_stt_dispatch, handle_voice_test_provider,
     handle_voice_transcribe, handle_voice_transcribe_bytes, handle_voice_tts,
-    handle_voice_tts_dispatch, handle_voice_update_provider_settings,
+    handle_voice_tts_dispatch, handle_voice_update_provider_settings, voice_list_models_controller,
+    voice_reply_synthesize_controller, voice_set_providers_controller, voice_status_controller,
+    voice_stt_dispatch_controller, voice_test_provider_controller,
+    voice_transcribe_bytes_controller, voice_transcribe_controller, voice_tts_controller,
+    voice_tts_dispatch_controller, voice_update_provider_settings_controller,
 };
 use super::helpers::{json_output, optional_bool, optional_string, required_string};
 
@@ -79,6 +83,26 @@ pub fn all_voice_registered_controllers() -> Vec<RegisteredController> {
     ]
     .into_iter()
     .chain(crate::voice::live::live_registered_controllers())
+    .collect()
+}
+
+pub(crate) fn all_voice_controller_entries() -> Vec<ControllerEntry> {
+    vec![
+        voice_status_controller(),
+        voice_transcribe_controller(),
+        voice_transcribe_bytes_controller(),
+        voice_tts_controller(),
+        voice_reply_synthesize_controller(),
+        voice_stt_dispatch_controller(),
+        voice_tts_dispatch_controller(),
+        voice_set_providers_controller(),
+        voice_update_provider_settings_controller(),
+        voice_list_models_controller(),
+        voice_test_provider_controller(),
+    ]
+    .into_iter()
+    .map(ControllerEntry::bound)
+    .chain(crate::voice::live::schemas::bound_live_controller_entries())
     .collect()
 }
 

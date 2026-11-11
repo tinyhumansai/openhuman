@@ -1,12 +1,30 @@
+#![cfg(feature = "storage-sqlite")]
+
 use super::*;
 use crate::storage::rusqlite;
-use crate::storage::{MemoryStorage, Scope};
-use std::collections::BTreeMap;
-use tempfile::TempDir;
-use tinystoragedrivers::{DocumentStoreExt, Query};
+use crate::storage::test_support::{sqlite_backend, SqliteBackend};
 
-fn backend() -> Arc<dyn StorageBackend> {
-    Arc::new(MemoryStorage::new())
+#[path = "profile_fixture_tests.rs"]
+mod profile_fixture_tests;
+use crate::storage::DocumentStoreExt as _;
+use crate::storage::Scope;
+use std::collections::BTreeMap;
+use std::ops::Deref;
+use tempfile::TempDir;
+use tinystoragedrivers::Query;
+
+struct TestBackend(SqliteBackend);
+
+impl Deref for TestBackend {
+    type Target = Arc<dyn StorageBackend>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.backend
+    }
+}
+
+fn backend() -> TestBackend {
+    TestBackend(sqlite_backend().unwrap())
 }
 
 fn workspace() -> (TempDir, Config) {
@@ -166,11 +184,17 @@ fn an_import_claimed_by_another_process_waits_for_it_and_does_not_repeat_it() {
     let finisher = {
         let (markers, step) = (markers.clone(), step.clone());
         std::thread::spawn(move || {
-            crate::storage::import_state::with_claim(&markers, MARKER_OWNER, &step.clone(), || {
-                held_tx.send(()).unwrap();
-                std::thread::sleep(std::time::Duration::from_millis(400));
-                crate::storage::import_state::set_done(&markers, MARKER_OWNER, &step)
-            })
+            crate::storage::import_state::with_claim(
+                &markers,
+                MARKER_OWNER,
+                &step.clone(),
+                |condition| {
+                    held_tx.send(()).unwrap();
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                    let claimed_markers = markers.conditioned(condition)?;
+                    crate::storage::import_state::set_done(&claimed_markers, MARKER_OWNER, &step)
+                },
+            )
             .unwrap()
             .expect("the first claimant runs");
         })
@@ -224,6 +248,81 @@ fn a_marker_row_an_older_build_wrote_counts_as_a_finished_import() {
         Outcome::AlreadyDone
     );
     assert!(dump(&backend, &source, "devices.paired").is_empty());
+}
+
+#[cfg(feature = "storage-sqlite")]
+#[tokio::test(flavor = "multi_thread")]
+async fn historical_profile_fixture_conversation_survives_layout_copy_and_owner_migration() {
+    use crate::storage::layout::{db, Target};
+    use crate::storage::{self, Scope};
+    use tinyagents_session::threads::{ConversationPersistence, DriverConversationStore};
+    use tinyagents_storage_kit::{MigrateOptions, Registry, ScopedStorage};
+
+    let root = TempDir::new().unwrap();
+    let target = Target::new(root.path(), "u1");
+    std::fs::create_dir_all(target.workspace()).unwrap();
+    std::fs::create_dir_all(&target.profile_dir).unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/storage/import/fixtures/legacy-v1-profile/storage.db");
+    let source_db = crate::storage::layout::legacy::v1_db(&target);
+    std::fs::create_dir_all(source_db.parent().unwrap()).unwrap();
+    std::fs::copy(&fixture, &source_db).unwrap();
+
+    // Exercise the same physical database copy used by profile layout
+    // migration, then run the conversation owner's normal registered schema.
+    db::copy(&source_db, &target.storage_db()).unwrap();
+    let destination_url = format!("sqlite:{}", target.storage_db().display());
+    let destination =
+        crate::storage::test_support::sqlite_backend_in(root, destination_url.clone()).unwrap();
+    let backend = Arc::clone(&destination.backend);
+    let _installed =
+        crate::storage::test_support::install_for_test(&destination_url, Arc::clone(&backend));
+    let raw_scope = backend.for_scope(&Scope::local()).unwrap();
+    let owner_scope = ScopedStorage::new(
+        raw_scope.clone(),
+        tinyagents_storage_kit::Scope::new(Scope::local().as_str()).unwrap(),
+    );
+    let lease_scope = owner_scope.clone();
+    let migrate_storage = owner_scope.clone();
+    storage::block_on(async move {
+        tinyagents_storage_kit::with_migration_lease(&lease_scope, "conversations", move |_| {
+            let migration_storage = migrate_storage.clone();
+            async move {
+                let docs = Arc::clone(migration_storage.documents());
+                DriverConversationStore::prepare_schema(docs.as_ref()).await?;
+                DriverConversationStore::prepare_append_schema(docs.as_ref()).await?;
+                for spec in tinyagents_storage_kit::primitives::collection_specs() {
+                    docs.ensure_collection(&spec).await?;
+                }
+                Registry::compose([tinyagents_session::threads::conversations_storage_schema()])?
+                    .migrate(&migration_storage, &MigrateOptions::new())
+                    .await
+            }
+        })
+        .await
+    })
+    .unwrap();
+
+    let conversations = DriverConversationStore::new(owner_scope);
+    let (threads, messages) = storage::block_on_anyhow(async move {
+        let threads = conversations
+            .list_threads()
+            .await
+            .map_err(anyhow::Error::from)?;
+        let messages = conversations
+            .get_messages("fixture-thread")
+            .await
+            .map_err(anyhow::Error::from)?;
+        Ok((threads, messages))
+    })
+    .unwrap();
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].id, "fixture-thread");
+    assert_eq!(threads[0].title, "Fixture thread");
+    assert_eq!(threads[0].message_count, 1);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].id, "fixture-message");
+    assert_eq!(messages[0].content, "historical profile message");
 }
 
 #[test]
@@ -343,8 +442,9 @@ fn records_the_previous_release_wrote_as_documents_are_imported_and_win_over_leg
     let source = devices();
     let db = dir.path().join(source.db);
     {
-        use tinystoragedrivers::StorageBackend as _;
-        let storage = tinystoragedrivers::sqlite::SqliteStorage::open(&db).unwrap();
+        let url = format!("sqlite:{}", db.display());
+        let storage =
+            crate::storage::block_on(async move { crate::storage::open(&url).await }).unwrap();
         let docs = Arc::clone(storage.for_scope(&Scope::local()).unwrap().documents());
         crate::storage::block_on(async move {
             docs.ensure_collection(&(source.collections)().remove(0))

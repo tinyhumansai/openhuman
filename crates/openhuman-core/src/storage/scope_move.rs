@@ -8,44 +8,23 @@
 //! `local`, `u:<id>` and a principal under either (`/agent:<id>`,
 //! `/module:<id>`), see [`super::scope`].
 //!
-//! Owner migration steps run inside one scope, so they cannot move a record
-//! between scopes. The host does it first, here: for each v1 scope found by
-//! `StorageBackend::scopes`, copy every document (with its schema, creation
-//! time and expiry), stream (and its sealed state) and blob into the v2 scope
-//! it maps to, then remove the v1 copy. The owners' steps then rewrite names
-//! and shapes inside the new scope.
-//!
-//! * **Resumable.** A document is written only when absent and removed from
-//!   the source after its collection is copied, a stream continues from the
-//!   target's length, a blob is skipped when the target already holds it, and
-//!   the source scope is deleted last. A crash re-runs the same copy to the same
-//!   result. Completion is recorded in the target scope's `tsd.migrations`
-//!   (owner `host`, step `scope_move:<source scope>`).
-//! * **Merging.** Several v1 scopes can map to one v2 scope (the
-//!   `module:<id>@<base>` of each acting agent all become the tenant's
-//!   `module:<id>`). A record already present in the target wins.
-//! * **Hashed scopes.** A `sha256:` / `profile-sha256:` / `module-sha256:` v1
-//!   scope cannot be inverted. It maps only when a known agent, profile or
-//!   module id hashes to it (the recorded agents, the profile registry and the
-//!   module registry); any other is left in place and logged.
+//! A v2 backend does not enumerate legacy scopes. The host therefore reads an
+//! explicit SQLite source through [`crate::storage::import::scope_move`] and
+//! copies its typed inventory into mapped v2 scopes. The source is retained
+//! unchanged for operator verification; unknown scope names are reported and
+//! unsupported fidelity cases fail explicitly.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use anyhow::Context;
+
 use sha2::Digest;
-use tinystoragedrivers::schema::Migrations;
-use tinystoragedrivers::{
-    Capability, DocumentStore, DocumentStoreExt, ErrorKind, Filter, Precondition, Query, Scope,
-    ScopedStorage, StorageBackend, StorageError, WriteOptions,
-};
+use tinystoragedrivers_types::{Capability, CollectionSpec, ErrorKind, WriteOptions};
 
 use super::scope::{scope_for_agent, scope_for_profile, tenant_scope};
-
-/// The `tsd.migrations` owner the move records under.
-pub const MIGRATION_OWNER: &str = "host";
-
-const PAGE: usize = 200;
-const STREAM_PAGE: usize = 500;
+use crate::storage::import::Record;
+use crate::storage::{Precondition, Scope, StorageBackend, StorageError};
 
 /// The ids a hashed v1 scope can be matched against.
 #[derive(Debug, Default, Clone)]
@@ -165,180 +144,102 @@ pub struct MoveReport {
     pub entries: u64,
     /// Blobs copied.
     pub blobs: u64,
+    /// Source documents whose `updated_ms` is kept only in the immutable
+    /// inventory because the target `WriteOptions` cannot restore it.
+    pub updated_times_not_restored: u64,
 }
 
-/// Reads the ids hashed scopes are matched against.
-pub async fn known_ids(backend: &Arc<dyn StorageBackend>) -> Known {
-    let mut known = Known::default();
-    if let Ok(local) = backend.for_scope(&Scope::local()) {
-        if let Ok(found) = ids_of(local.documents(), super::agents::AGENTS).await {
-            known.agents = found;
-        }
-    }
-    if let Ok(cluster) = backend.for_scope(&Scope::cluster()) {
-        if let Ok(found) = ids_of(cluster.documents(), "profiles").await {
-            known.profiles = found;
-        }
-    }
-    #[cfg(feature = "modules")]
-    {
-        known.modules = crate::modules::registry::ALL
-            .iter()
-            .map(|record| record.id.to_string())
-            .collect();
-    }
-    known
-}
+#[path = "scope_move_boot.rs"]
+mod boot;
+pub use boot::run_from_config;
+#[cfg(test)]
+pub(crate) use boot::IMPORT_DOMAIN;
 
-async fn ids_of(
-    docs: &Arc<dyn DocumentStore>,
-    collection: &str,
-) -> Result<Vec<String>, StorageError> {
-    // Absent collections read as empty; only names that exist are listed.
-    match docs.collections(collection).await {
-        Ok(found) if !found.iter().any(|name| name == collection) => return Ok(Vec::new()),
-        Ok(_) | Err(_) => {}
-    }
-    Ok(docs
-        .query_all(collection, &Query::all())
-        .await?
-        .into_iter()
-        .map(|doc| doc.id)
-        .collect())
-}
-
-/// Moves every v1 scope of `backend` to its v2 scope. See the module docs.
+/// Copies the rows in a source inventory to their mapped v2 scopes.
+///
+/// The source is deliberately not deleted. Physical inventory readers are
+/// read-only, and source cleanup belongs to the operator after verifying the
+/// target. Unknown scope names are returned for explicit operator handling.
 ///
 /// # Errors
 ///
-/// The first storage error. Nothing is lost: re-running resumes.
-pub async fn run(backend: &Arc<dyn StorageBackend>) -> Result<MoveReport, StorageError> {
-    let mut report = MoveReport::default();
-    if !backend
-        .capabilities()
-        .contains(Capability::ScopeEnumeration)
-    {
-        tracing::debug!(
-            target: "openhuman::storage",
-            driver = backend.driver(),
-            "[storage][scope-move] backend cannot enumerate scopes; nothing to move"
-        );
-        return Ok(report);
-    }
-    let sources = backend.scopes("").await?;
-    let candidates: Vec<&Scope> = sources
-        .iter()
-        .filter(|scope| scope.parsed().is_err())
-        .collect();
-    if candidates.is_empty() {
-        return Ok(report);
-    }
-    let known = known_ids(backend).await;
-    for src in candidates {
-        match map_scope(src.as_str(), &known) {
-            Mapping::V2 => {}
-            Mapping::Unknown => {
-                tracing::warn!(
-                    target: "openhuman::storage",
-                    scope = src.as_str(),
-                    "[storage][scope-move] no known id maps this v1 scope; left in place"
-                );
-                report.unknown.push(src.as_str().to_owned());
-            }
-            Mapping::Move(target) => {
-                if move_scope(backend, src, &target, &mut report).await? {
-                    report.moved += 1;
-                } else {
-                    report.already_done += 1;
-                }
-            }
-        }
-    }
-    tracing::info!(
-        target: "openhuman::storage",
-        moved = report.moved,
-        documents = report.documents,
-        entries = report.entries,
-        blobs = report.blobs,
-        unknown = report.unknown.len(),
-        "[storage][scope-move] finished"
-    );
-    Ok(report)
-}
-
-fn step_id(src: &Scope) -> String {
-    format!("scope_move:{}", src.as_str())
-}
-
-/// Moves one scope. `false` when it was already recorded as moved.
-async fn move_scope(
+/// Fails closed on non-zero stream bases, timestamped seals, expiring blobs
+/// (the target ports cannot preserve those source metadata fields), malformed
+/// source data, or a target write error. Re-running is idempotent for
+/// documents/blobs and verifies stream prefixes before appending missing
+/// entries.
+#[cfg(feature = "legacy-import")]
+pub async fn copy_inventory(
     backend: &Arc<dyn StorageBackend>,
-    src: &Scope,
-    target: &Scope,
-    report: &mut MoveReport,
-) -> Result<bool, StorageError> {
-    let to = backend.for_scope(target)?;
-    let migrations = Migrations::new(&to);
-    let step = step_id(src);
-    to.documents()
-        .ensure_collection(&tinystoragedrivers::CollectionSpec::new(
-            tinystoragedrivers::MIGRATIONS_COLLECTION,
-        ))
-        .await?;
-    if migrations.done(MIGRATION_OWNER, &step).await? {
-        // The copy finished earlier; make sure no source records remain.
-        let from = backend.for_scope(src)?;
-        purge(&from).await?;
-        return Ok(false);
-    }
-    tracing::info!(
-        target: "openhuman::storage",
-        from = src.as_str(),
-        to = target.as_str(),
-        "[storage][scope-move] moving a v1 scope"
-    );
-    let from = backend.for_scope(src)?;
-    copy_documents(&from, &to, report).await?;
-    copy_streams(&from, &to, report).await?;
-    copy_blobs(&from, &to, report).await?;
-    migrations.mark_done(MIGRATION_OWNER, &step).await?;
-    purge(&from).await?;
-    Ok(true)
-}
+    known: &Known,
+    inventory: &crate::storage::import::scope_move::LegacyScopeInventory,
+) -> anyhow::Result<MoveReport> {
+    use anyhow::bail;
 
-async fn copy_documents(
-    from: &ScopedStorage,
-    to: &ScopedStorage,
-    report: &mut MoveReport,
-) -> Result<(), StorageError> {
-    let source = from.documents();
-    let target = to.documents();
-    let metadata = source.capabilities().contains(Capability::RecordMetadata)
-        && target.capabilities().contains(Capability::RecordMetadata);
-    for collection in source.collections("").await? {
-        target
-            .ensure_collection(&tinystoragedrivers::CollectionSpec::new(&collection))
-            .await?;
-        let mut cursor = None;
-        loop {
-            let mut query = Query::filter(Filter::default())
-                .sort(tinystoragedrivers::Sort::asc(tinystoragedrivers::ID_FIELD))
-                .limit(PAGE);
-            if let Some(after) = cursor.take() {
-                query = query.after(after);
+    let mut report = MoveReport::default();
+    let mut source_scopes: Vec<&str> = inventory.scopes.iter().map(String::as_str).collect();
+    for row in &inventory.documents {
+        source_scopes.push(&row.scope);
+    }
+    for row in &inventory.streams {
+        source_scopes.push(&row.scope);
+    }
+    for row in &inventory.blobs {
+        source_scopes.push(&row.scope);
+    }
+    source_scopes.sort_unstable();
+    source_scopes.dedup();
+    for source in source_scopes {
+        let target_scope = match map_scope(source, known) {
+            // `inventory` is read from a separate legacy database. A scope
+            // already in the v2 grammar keeps its identity, but its rows still
+            // need copying (and owner conversion) into the configured target.
+            Mapping::V2 => Scope::new(source)?,
+            Mapping::Unknown => {
+                report.unknown.push(source.to_owned());
+                continue;
             }
-            let page = source.query(&collection, &query).await?;
-            for doc in page.items {
-                let options = if metadata {
-                    let mut options = WriteOptions::new().created_ms(doc.meta.created_ms);
-                    options.schema = doc.meta.schema;
-                    options.expires_ms = doc.meta.expires_ms;
-                    options
-                } else {
-                    WriteOptions::new()
-                };
-                match target
-                    .put_with(&collection, &doc.id, doc.doc, Precondition::Absent, options)
+            Mapping::Move(scope) => scope,
+        };
+        let target = backend.for_scope(&target_scope)?;
+        let docs = target.documents();
+        for row in inventory.documents.iter().filter(|row| row.scope == source) {
+            if row.meta.updated_ms != 0 {
+                report.updated_times_not_restored += 1;
+            }
+            let source_record = Record {
+                collection: row.collection.clone(),
+                id: row.id.clone(),
+                doc: row.body.clone(),
+                created_ms: Some(row.meta.created_ms),
+                schema: Some(row.meta.schema),
+                expires_ms: row.meta.expires_ms,
+                updated_ms: Some(row.meta.updated_ms),
+            };
+            let (records, specs) = upgrade_legacy_scope_document(source_record)?;
+            for record in records {
+                let spec = specs
+                    .iter()
+                    .find(|spec| spec.name == record.collection)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "owner conversion emitted undeclared collection `{}`",
+                            record.collection
+                        )
+                    })?;
+                docs.ensure_collection(spec).await?;
+                let mut options = WriteOptions::new();
+                options.schema = record.schema.unwrap_or_default();
+                options.created_ms = record.created_ms;
+                options.expires_ms = record.expires_ms;
+                match docs
+                    .put_with(
+                        &record.collection,
+                        &record.id,
+                        record.doc,
+                        Precondition::Absent,
+                        options,
+                    )
                     .await
                 {
                     Ok(_) => report.documents += 1,
@@ -347,88 +248,171 @@ async fn copy_documents(
                             error.kind(),
                             ErrorKind::Conflict | ErrorKind::AlreadyExists
                         ) => {}
-                    Err(error) => return Err(error),
+                    Err(error) => return Err(error.into()),
                 }
             }
-            match page.next {
-                Some(next) => cursor = Some(next),
-                None => break,
+        }
+        let streams = target.streams();
+        for row in inventory.streams.iter().filter(|row| row.scope == source) {
+            if row.base != 0 {
+                bail!(
+                    "cannot preserve non-zero base {} for legacy stream {source}/{} with the v2 append port",
+                    row.base,
+                    row.name
+                );
+            }
+            if row.sealed_ms.is_some() {
+                bail!(
+                    "target stream port cannot preserve the seal timestamp for legacy stream {source}/{}",
+                    row.name
+                );
+            }
+            let existing = streams.len(&row.name).await?;
+            if existing > row.entries.len() as u64 {
+                bail!(
+                    "target stream {source}/{} is longer than the legacy source",
+                    row.name
+                );
+            }
+            if existing > 0 {
+                let prefix = streams.read_window(&row.name, 0, existing as usize).await?;
+                if prefix.len() != existing as usize
+                    || prefix
+                        .iter()
+                        .zip(&row.entries)
+                        .any(|(old, (seq, value))| old.offset != *seq || old.value != *value)
+                {
+                    bail!(
+                        "target stream {source}/{} conflicts with the legacy prefix",
+                        row.name
+                    );
+                }
+            }
+            let tail = &row.entries[existing as usize..];
+            if !tail.is_empty() {
+                streams
+                    .append_batch(
+                        &row.name,
+                        tail.iter().map(|(_, value)| value.clone()).collect(),
+                    )
+                    .await?;
+                report.entries += tail.len() as u64;
+            }
+            if row.sealed {
+                match streams.seal(&row.name).await {
+                    Ok(_) => {}
+                    Err(error) if matches!(error.kind(), ErrorKind::Unsupported(_)) => bail!(
+                        "target cannot preserve sealed state for legacy stream {source}/{}",
+                        row.name
+                    ),
+                    Err(error) => return Err(error.into()),
+                }
             }
         }
-    }
-    Ok(())
-}
-
-async fn copy_streams(
-    from: &ScopedStorage,
-    to: &ScopedStorage,
-    report: &mut MoveReport,
-) -> Result<(), StorageError> {
-    let source = from.streams();
-    let target = to.streams();
-    for name in source.streams("").await? {
-        let info = source.info(&name).await?;
-        let base = info.as_ref().map_or(0, |info| info.base);
-        let mut offset = base + target.len(&name).await?;
-        loop {
-            let window = source.read_window(&name, offset, STREAM_PAGE).await?;
-            if window.is_empty() {
-                break;
+        let blobs = target.blobs();
+        for row in inventory.blobs.iter().filter(|row| row.scope == source) {
+            if row.expires_ms.is_some() {
+                bail!(
+                    "target blob port cannot preserve absolute expiry for legacy blob {source}/{}",
+                    row.key
+                );
             }
-            offset = window.last().map_or(offset, |entry| entry.offset + 1);
-            let count = window.len() as u64;
-            target
-                .append_batch(&name, window.into_iter().map(|entry| entry.value).collect())
-                .await?;
-            report.entries += count;
-        }
-        if info.is_some_and(|info| info.sealed_ms.is_some()) {
-            match target.seal(&name).await {
-                Ok(_) => {}
-                Err(error) if matches!(error.kind(), ErrorKind::Unsupported(_)) => {}
-                Err(error) => return Err(error),
+            if blobs.head(&row.key).await?.is_none() {
+                blobs
+                    .put(&row.key, row.bytes.clone(), row.content_type.as_deref())
+                    .await
+                    .with_context(|| format!("copy legacy blob {source}/{}", row.key))?;
+                report.blobs += 1;
             }
         }
+        report.moved += 1;
     }
-    Ok(())
+    Ok(report)
 }
 
-async fn copy_blobs(
-    from: &ScopedStorage,
-    to: &ScopedStorage,
-    report: &mut MoveReport,
-) -> Result<(), StorageError> {
-    let source = from.blobs();
-    let target = to.blobs();
-    for meta in source.list("").await? {
-        if target.head(&meta.key).await?.is_none() {
-            let Some(blob) = source.get(&meta.key).await? else {
-                continue;
-            };
-            target
-                .put(&meta.key, blob.bytes, meta.content_type.as_deref())
-                .await?;
-            report.blobs += 1;
+/// Applies the owning domain's pure schema conversion before a legacy row is
+/// written into the target backend. Unrecognized collections retain their
+/// original body and metadata.
+#[cfg(feature = "legacy-import")]
+fn upgrade_legacy_scope_document(
+    record: crate::storage::import::Record,
+) -> anyhow::Result<(Vec<crate::storage::import::Record>, Vec<CollectionSpec>)> {
+    let collection = record.collection.as_str();
+    let (records, specs) = match collection {
+        "artifacts" | "artifact_args" | "artifact_versions" => (
+            crate::artifacts::upgrade_records(vec![record])?,
+            crate::artifacts::collection_specs(),
+        ),
+        "config" => (
+            crate::config::schema::upgrade_config_records(vec![record])?,
+            crate::config::schema::config_storage_collections(),
+        ),
+        "cost_records" => (
+            crate::platform::cost::upgrade_records(vec![record])?,
+            crate::platform::cost::collection_specs(),
+        ),
+        "profiles" => (
+            crate::profiles::upgrade_records(vec![record])?,
+            crate::profiles::collection_specs(),
+        ),
+        "leases" => (
+            crate::profiles::upgrade_lease_records(vec![record])?,
+            vec![CollectionSpec::new(crate::storage::lease::LEASE_COLLECTION)],
+        ),
+        "threads_transcript_keys" => (
+            crate::threads::store::upgrade_records(vec![record])?,
+            crate::threads::store::collection_specs(),
+        ),
+        "approvals" | "approval_flow_trust" => (
+            crate::security::approval::upgrade_records(vec![record])?,
+            crate::security::approval::collection_specs(),
+        ),
+        "subagent_sessions" => (
+            crate::agent::orchestration::subagent_sessions::upgrade_records(vec![record])?,
+            crate::agent::orchestration::subagent_sessions::collection_specs(),
+        ),
+        _ => {
+            let spec = CollectionSpec::new(&record.collection);
+            (vec![record], vec![spec])
         }
-    }
-    Ok(())
+    };
+    Ok((records, specs))
 }
 
-/// Removes every record of a moved scope.
-async fn purge(from: &ScopedStorage) -> Result<(), StorageError> {
-    let docs = from.documents();
-    for collection in docs.collections("").await? {
-        docs.drop_collection(&collection).await?;
-    }
-    let streams = from.streams();
-    for name in streams.streams("").await? {
-        streams.delete_stream(&name).await?;
-    }
-    let blobs = from.blobs();
-    for meta in blobs.list("").await? {
-        blobs.delete(&meta.key).await?;
-    }
-    Ok(())
+/// Reads an explicit SQLite source and copies its known legacy scopes.
+///
+/// The synchronous inventory read runs on a blocking worker. MongoDB and
+/// other non-SQLite legacy sources need their own read-only inventory adapter;
+/// they are not enumerated from the v2 target backend.
+#[cfg(feature = "legacy-import")]
+pub async fn run_from_source(
+    backend: &Arc<dyn StorageBackend>,
+    source_db: &std::path::Path,
+    known: &Known,
+) -> anyhow::Result<MoveReport> {
+    use anyhow::Context;
+
+    let path = source_db.to_owned();
+    // Inventory reads only the explicit legacy file; `copy_inventory` uses
+    // the supplied backend and `Known` scopes for tenant data.
+    let inventory = tokio::task::spawn_blocking(move || {
+        crate::storage::import::scope_move::LegacyScopeInventory::read(&path)
+    })
+    .await
+    .context("join the legacy scope inventory reader")??;
+    copy_inventory(backend, known, &inventory).await
+}
+
+/// Legacy compatibility entry point retained to produce an actionable error.
+/// v2 backends cannot enumerate old scopes; callers must supply the old SQLite
+/// path to [`crate::storage::import::scope_move::LegacyScopeInventory::read`]
+/// and then pass that inventory to [`copy_inventory`].
+#[deprecated(note = "use an explicit read-only legacy scope inventory")]
+pub async fn run(_backend: &Arc<dyn StorageBackend>) -> Result<MoveReport, StorageError> {
+    Err(StorageError::unsupported(
+        Capability::CollectionEnumeration,
+        "v2 backends do not enumerate legacy scopes; supply an explicit legacy database inventory",
+    ))
 }
 
 /// The scopes of `scopes` that are not in the v2 grammar (for tests and the
