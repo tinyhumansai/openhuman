@@ -594,7 +594,8 @@ pub(crate) async fn checkin_session_agent(
         agent.diagstorm_strip(&|| {
             ctx.core()
                 .map(|c| std::sync::Arc::strong_count(c) * 1000 + c.diagstorm_counts().0)
-        });
+        })
+        .await;
         log::warn!(
             "DIAGSTORM checkin dropped agent ctx_count before={before:?} after={:?}",
             ctx.core().map(std::sync::Arc::strong_count)
