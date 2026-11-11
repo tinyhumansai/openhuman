@@ -66,6 +66,10 @@ tokio::task_local! {
 pub struct BusBoxDriver {
     /// The most recent call's configuration, for work outside any call.
     latest: RwLock<Arc<Config>>,
+    /// The configuration each box was created under, by resource id. Its
+    /// cleanup reaches the module with that configuration, not with whichever
+    /// call replaced `latest` since.
+    created_with: Mutex<HashMap<String, Arc<Config>>>,
     backend: BoxBackend,
 }
 
@@ -75,8 +79,29 @@ impl BusBoxDriver {
     pub fn new(config: Config, backend: BoxBackend) -> Self {
         Self {
             latest: RwLock::new(Arc::new(config)),
+            created_with: Mutex::new(HashMap::new()),
             backend,
         }
+    }
+
+    /// Record that `resource` was created under the configuration of the
+    /// current step.
+    fn remember(&self, resource: &str) {
+        self.created_with
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(resource.to_owned(), self.config());
+    }
+
+    /// The configuration a step on `resource` reaches the module with: the
+    /// one it was created under, or the current one for a box not recorded.
+    fn config_of(&self, resource: &str) -> Arc<Config> {
+        self.created_with
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(resource)
+            .cloned()
+            .unwrap_or_else(|| self.config())
     }
 
     /// Run `call` with every step of this driver inside it reaching the
