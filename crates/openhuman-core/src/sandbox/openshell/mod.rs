@@ -170,7 +170,7 @@ pub async fn write_file(
     path: &str,
     bytes: &[u8],
 ) -> Result<(), BoxError> {
-    let tenant = Ok(tenant_for_box(tenant)?);
+    let tenant: Result<Tenant, NoTenant> = Ok(tenant_for_box(tenant)?);
     #[cfg(feature = "modules")]
     {
         write_file_in(
@@ -204,7 +204,7 @@ pub async fn read_file(
     path: &str,
     max_bytes: u64,
 ) -> Result<Vec<u8>, BoxError> {
-    let tenant = Ok(tenant_for_box(tenant)?);
+    let tenant: Result<Tenant, NoTenant> = Ok(tenant_for_box(tenant)?);
     #[cfg(feature = "modules")]
     {
         read_file_in(

@@ -62,7 +62,6 @@ export const HOSTED_GROUPS = [
 
 const CORE_PRODUCT = '"$(bash scripts/ci/product-features.sh --core)"';
 
-
 /**
  * Build the lane plan.
  *
@@ -419,13 +418,17 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           ],
           // Doctests run on pushes to main instead (see above); the tui suite
           // runs here (OH_COV_TUI=1).
-          // ex63: the core's unit tests run under cargo-nextest, one process
-          // per test and in parallel (the guest image ships cargo-nextest).
+          // The core's unit tests run under cargo-nextest on every profile, one
+          // process per test. They rely on that isolation: TinySecurity keeps
+          // the secret scope it was admitted with for the life of the process,
+          // so tests sharing one cargo-test process fail with "security secret
+          // scope changed after module admission" or "AlreadyRunning". (ex63's
+          // guest image ships cargo-nextest; hosted installs it in ci-lanes.)
           env: {
             OUT: "ci-out/lcov/lcov-core.info",
             OH_COV_DOCTESTS: "0",
             OH_COV_TUI: "1",
-            ...(ex63 ? { OH_COV_RUNNER: "nextest" } : {}),
+            OH_COV_RUNNER: "nextest",
           },
           run: withModules("bash scripts/ci/rust-coverage.sh"),
         },
@@ -583,21 +586,37 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: "cargo clippy --manifest-path crates/openhuman-app/Cargo.toml -- -D warnings",
         },
         {
-          // Hosted keeps ci-lite's wrapper-free RUSTFLAGS instrumentation.
+          // The app's artifact tests ask TinySecurity whether a path is
+          // protected, which fails closed ("file is in a protected location")
+          // when no real module is loadable, so the coverage run needs the
+          // registry-installed test modules, as rust-cov does.
+          name: "test-modules",
+          when: !ex63 && areas.rustTauri,
+          run: `bash scripts/ci/self-hosted/install-test-modules.sh "${modulesDir}" ${modulesEnvFile}`,
+        },
+        {
+          // Hosted keeps ci-lite's wrapper-free RUSTFLAGS instrumentation (nextest).
           // The private plan below uses the Cargo target linker and nextest.
           name: "tauri-coverage",
           when: areas.rustTauri,
           env: { ...covEnv },
-          run:
+          needs: ex63 ? [] : ["test-modules"],
+          run: withModules(
             "unset RUSTFLAGS RUSTC_WRAPPER" +
-            " && cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml" +
-            " && cargo llvm-cov --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
-            " --lcov --output-path ci-out/lcov/lcov-tauri.info",
+              " && cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml" +
+              // No repo nextest config: the app is its own workspace, so the root
+              // `.config/nextest.toml` has no `ci` profile for it and its binary
+              // filters do not parse here; the built-in default applies.
+              // One process per test (nextest): the app tests reach the
+              // TinySecurity module, which keeps its first secret scope for the
+              // life of a process, so tests sharing one process fail closed.
+              " && cargo llvm-cov nextest --no-fail-fast --no-tests=fail --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
+              " --lcov --output-path ci-out/lcov/lcov-tauri.info",
+          ),
         },
       ],
     },
     {
-
       name: "pester",
       checks: [
         {

@@ -187,6 +187,7 @@
     "providers",
     "routing",
     "run_from_args",
+    "sandbox",
     "schema_for_rpc_method",
     "seams",
     "secret_storage",

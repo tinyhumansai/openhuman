@@ -603,7 +603,7 @@
     "file": "crates/openhuman-core/src/core/observability_reporting.rs",
     "scope": "",
     "name": "LAST_FS_LIMIT_REPORT",
-    "type": "std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(String,String,String),std::time::Instant>>, >",
+    "type": "std::sync::LazyLock<FsLimitReports>",
     "count": 1,
     "category": "A",
     "reason": "A process-wide rate limiter keyed by the content-free error kind, domain and operation names prevents repeated filesystem-limit reports from flooding observability. Entries older than the five-minute cooldown are pruned on every access, and the map stores no tenant or user data.",

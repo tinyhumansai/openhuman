@@ -57,6 +57,7 @@ threads/store/mod.rs
 agent/session_host/transcript_compat_tests.rs
 channels/mod.rs
 mcp/host.rs
+mcp/registry/mod.rs
 modules/registry_contract_tests.rs
 modules/registry.rs
 credentials/core.rs
