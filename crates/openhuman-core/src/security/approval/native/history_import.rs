@@ -6,7 +6,11 @@
 //!
 //! - each decided request becomes inert history through `ImportApprovalHistory2`
 //!   (the module keeps a sanitized copy in a denied row and never revives it as a
-//!   grant), at most [`HISTORY_LIMIT`] of the most recent; and
+//!   grant), at most [`HISTORY_LIMIT`] of the most recent;
+//! - each request still undecided and unexpired becomes a pending orphan through
+//!   the same call (contract 2.2): the module stores it with its redacted tool
+//!   name, summary and arguments so it can be listed, binds it to a synthetic call
+//!   no real call can match, and accepts only a denial for it; and
 //! - each "approve always for this flow" grant becomes durable flow trust through
 //!   `GrantFlowTool2`.
 //!
@@ -92,6 +96,11 @@ pub(super) async fn ensure(engine: &NativeEngine, proxy: &SecurityProxy) {
 
 /// The module state an imported legacy row maps to.
 pub(super) fn state_of(row: &LegacyApproval) -> ApprovalState {
+    state_at(row, chrono::Utc::now())
+}
+
+/// [`state_of`] at `now`.
+pub(super) fn state_at(row: &LegacyApproval, now: chrono::DateTime<chrono::Utc>) -> ApprovalState {
     match row.decision.as_deref() {
         Some(decision) if decision.starts_with("approve") => {
             if row.executed {
@@ -101,9 +110,18 @@ pub(super) fn state_of(row: &LegacyApproval) -> ApprovalState {
             }
         }
         Some(_) => ApprovalState::Denied,
-        // An undecided request of an earlier launch can never be resumed.
+        // An undecided request of an earlier launch can never be resumed, but one
+        // still inside its window stays visible until a person dismisses it.
+        None if expiry(row) > now => ApprovalState::Pending,
         None => ApprovalState::Expired,
     }
+}
+
+/// When the legacy request's window closes.
+fn expiry(row: &LegacyApproval) -> chrono::DateTime<chrono::Utc> {
+    row.expires_at.unwrap_or_else(|| {
+        row.created_at + chrono::Duration::milliseconds(DEFAULT_WINDOW_MS as i64)
+    })
 }
 
 fn millis(at: chrono::DateTime<chrono::Utc>) -> u64 {
@@ -124,6 +142,8 @@ pub(super) fn legacy_record(row: &LegacyApproval) -> ApprovalRecord {
             .as_bytes()
         )
     );
+    let state = state_of(row);
+    let pending = state == ApprovalState::Pending;
     ApprovalRecord {
         request_id: row.request_id.clone(),
         fingerprint,
@@ -138,7 +158,12 @@ pub(super) fn legacy_record(row: &LegacyApproval) -> ApprovalRecord {
         expires_at_ms: row
             .expires_at
             .map_or_else(|| millis(row.created_at) + DEFAULT_WINDOW_MS, millis),
-        state: state_of(row),
+        state,
+        // Only a pending orphan is rendered, so only it carries what a person
+        // needs to recognize it; the module redacts each again before storing.
+        tool_name: pending.then(|| row.tool_name.clone()),
+        summary: pending.then(|| row.summary.clone()).flatten(),
+        args_redacted: pending.then(|| row.args_redacted.clone()).flatten(),
     }
 }
 
@@ -152,6 +177,18 @@ pub(super) fn recent_decided(history: &LegacyHistory) -> Vec<&LegacyApproval> {
     decided.sort_by_key(|row| row.decided_at.unwrap_or(row.created_at));
     let skip = decided.len().saturating_sub(HISTORY_LIMIT);
     decided.split_off(skip)
+}
+
+/// The undecided rows still inside their window, oldest first.
+pub(super) fn open_requests(history: &LegacyHistory) -> Vec<&LegacyApproval> {
+    let mut open: Vec<&LegacyApproval> = history
+        .approvals
+        .iter()
+        .filter(|row| state_of(row) == ApprovalState::Pending)
+        .collect();
+    open.sort_by_key(|row| row.created_at);
+    open.truncate(HISTORY_LIMIT);
+    open
 }
 
 async fn read(config: Config) -> Result<Option<LegacyHistory>, EngineError> {
@@ -175,7 +212,10 @@ pub(super) async fn run(
     let mut report = Report::default();
     if !history.approvals.is_empty() {
         let scope = engine.history_scope(proxy, &tenant).await?;
-        for row in recent_decided(&history) {
+        for row in recent_decided(&history)
+            .into_iter()
+            .chain(open_requests(&history))
+        {
             match import_row(proxy, &scope, row).await {
                 Ok(()) => report.history += 1,
                 Err(error @ EngineError::Unavailable(_)) => return Err(error),
