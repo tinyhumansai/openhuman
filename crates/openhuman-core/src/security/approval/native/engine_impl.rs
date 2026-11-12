@@ -413,6 +413,11 @@ impl ApprovalEngine for NativeEngine {
             .map_err(|error| unavailable(error.to_string()))
     }
 
+    #[cfg(feature = "legacy-import")]
+    async fn dismiss_orphan(&self, request_id: &str, label: &str) -> Result<(), EngineError> {
+        self.dismiss(request_id, label).await
+    }
+
     async fn history(&self, limit: usize) -> Result<Vec<ApprovalAuditEntry>, EngineError> {
         super::super::view::decided_history(&self.config, limit)
             .await
