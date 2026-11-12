@@ -105,13 +105,71 @@ fn install_installed_and_clear() {
     let slot = Slot::default();
     assert!(slot.installed().is_none());
     let backend = test_support::memory_backend();
-    assert!(slot.install(Arc::clone(&backend)).is_none());
+    assert!(slot
+        .install_described(Arc::clone(&backend), None, None)
+        .is_none());
     assert!(slot
         .installed()
         .is_some_and(|got| Arc::ptr_eq(&got, &backend)));
-    assert!(slot.install(test_support::memory_backend()).is_some());
+    assert!(slot
+        .install_described(test_support::memory_backend(), None, None)
+        .is_some());
     assert!(slot.clear());
     assert!(!slot.clear());
+}
+
+/// The URL and driver are part of the installed state: replacing the backend
+/// replaces them, and clearing it forgets them.
+#[test]
+fn a_slot_keeps_the_url_and_driver_with_their_backend() {
+    let slot = Slot::default();
+    assert_eq!(slot.installed_url(), None);
+    slot.install_described(
+        test_support::memory_backend(),
+        Some("memory".into()),
+        Some("memory".into()),
+    );
+    assert_eq!(slot.installed_url().as_deref(), Some("memory"));
+    assert_eq!(slot.installed_driver().as_deref(), Some("memory"));
+
+    slot.install_described(test_support::memory_backend(), None, Some("sqlite".into()));
+    assert_eq!(slot.installed_url(), None, "the new backend has no URL");
+    assert_eq!(slot.installed_driver().as_deref(), Some("sqlite"));
+
+    assert!(slot.clear());
+    assert_eq!(slot.installed_url(), None);
+    assert_eq!(slot.installed_driver(), None);
+}
+
+/// A rebind racing a reinstall by URL always finds the URL: while backends
+/// installed by URL replace each other, no reader sees a backend without one.
+#[test]
+fn a_reinstall_by_url_never_shows_a_backend_without_its_url() {
+    let _guard = test_support::install_backend_for_test(test_support::memory_backend());
+    install_for_url("memory", test_support::memory_backend());
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Unnamed, so it sees the slot this test installed (see `slot_visible_here`).
+    let reader = {
+        let stop = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let mut torn = 0_usize;
+            while !stop.load(std::sync::atomic::Ordering::Acquire) {
+                if installed_url().is_none() && installed().is_some() {
+                    torn += 1;
+                }
+            }
+            torn
+        })
+    };
+    for _ in 0..2_000 {
+        install_for_url("memory", test_support::memory_backend());
+    }
+    stop.store(true, std::sync::atomic::Ordering::Release);
+    let torn = reader.join().unwrap();
+    assert_eq!(
+        torn, 0,
+        "a reader saw an installed backend with no URL {torn} times"
+    );
 }
 
 #[test]
