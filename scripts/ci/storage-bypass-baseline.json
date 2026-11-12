@@ -197,9 +197,9 @@
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/platform/update/core.rs",
-    "line": 516,
-    "text": "let mut file = std::fs::File::create(&tmp_path)",
+    "path": "crates/openhuman-core/src/platform/update/download.rs",
+    "line": 103,
+    "text": "let mut file = std::fs::File::create(path)",
     "occurrence": 1
   },
   {
