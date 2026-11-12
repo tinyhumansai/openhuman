@@ -404,7 +404,7 @@ impl ApprovalGate {
             route.tenant.profile == tenant.profile
                 && (tenant.profile.is_some() || route.tenant.agent == tenant.agent)
         });
-        if tenant == super::gate::RouteTenant::default() {
+        if tenant == crate::core::runtime::Tenant::default() {
             let orphans = self
                 .run_engine(|engine| async move { engine.orphans().await })?
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
