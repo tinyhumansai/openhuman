@@ -11,7 +11,7 @@ impl NativeEngine {
     /// Deny the pending orphan `request_id` as a person's decision.
     /// `Err(NotPending)` when it is not a pending orphan of this workspace: a
     /// request of this process, one already decided or expired, or no row.
-    pub(super) async fn dismiss_orphan(
+    pub(super) async fn dismiss(
         &self,
         request_id: &str,
         label: &str,
