@@ -543,7 +543,7 @@ async fn only_the_choices_the_host_offers_are_verified() {
 /// is ever verified for one.
 #[tokio::test]
 async fn an_orphan_under_review_verifies_only_a_denial_of_the_listed_row() {
-    let orphan = row("verify-orphan", "a", "abcd000a", "shell");
+    let orphan = row("verify-orphan", "0b", "abcd000a", "shell");
     for (ticket, choice) in [
         ("ticket-orphan-deny", ApprovalChoice2::Deny),
         ("ticket-orphan-once", ApprovalChoice2::Once),
