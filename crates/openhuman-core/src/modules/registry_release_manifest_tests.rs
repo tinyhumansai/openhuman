@@ -2,10 +2,10 @@ use super::*;
 
 #[cfg(feature = "security-module")]
 #[test]
-fn tinysecurity_registry_matches_the_verified_v0190_release_manifest() {
+fn tinysecurity_registry_matches_the_published_release_manifest() {
     let security = find("tinysecurity").expect("compiled TinySecurity module");
     assert_eq!(security.version, "0.21.0");
-    assert_eq!(tinysecurity_bus::CONTRACT_VERSION, (2, 1));
+    assert_eq!(tinysecurity_bus::CONTRACT_VERSION, (2, 2));
     assert_eq!(
         security.release_url,
         "https://github.com/tinyhumansai/tinysecurity/releases/tag/v0.21.0"
