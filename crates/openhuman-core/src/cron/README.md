@@ -254,6 +254,18 @@ core's credential stores (`credentials::credential_files`, or the
 `OPENHUMAN_KEYRING_MASTER_KEY_FILE`). It is authored in the definition, never
 taken from a job's prompt.
 
+**A files-only jail.** Where the host has no kernel jail (a container without
+user namespaces leaves only Landlock), TinySecurity refuses every sandboxed
+plan: Landlock enforces the file grants but no network rule and no process
+isolation. A definition whose shell already gets the host network may set
+`sandbox_filesystem_only = true`. Its shell then asks for a files-only plan
+(`SandboxPlanOptions2::filesystem_only`, TinySecurity contract 2.2;
+`sandbox::spawn_plan::files_only`): files jailed to the run's root, the host's
+network. The host sends it only for the operator's own agent spawn with the
+host network, and the module admits it only for a trusted operator source
+outside SaaS. Sub-agents, channel turns, and text the host did not author keep
+the full requirements. Off unless the definition names it.
+
 ### After the run
 
 The module calls the host `Deliver` callback (`deliver_run`) first, records the
