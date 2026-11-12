@@ -11,7 +11,7 @@ fn settings() -> BoxSettings {
         memory_bytes: 256 * 1024 * 1024,
         workdir: "/sandbox".into(),
         owner_scope: OwnerScope::default(),
-        call: None,
+        module: ModuleConfig::default(),
     }
 }
 
@@ -110,7 +110,7 @@ fn an_exec_carries_argv_workdir_and_only_the_given_env() {
         cwd: "/sandbox".into(),
         env: env.clone(),
         deadline: Duration::from_secs(40),
-        call: None,
+        module: ModuleConfig::default(),
     };
 
     let request = exec_request("r-1", &exec);
@@ -194,35 +194,44 @@ fn config_in(workspace: &str) -> Config {
 #[test]
 fn each_call_reaches_the_module_with_its_own_configuration() {
     let driver = BusBoxDriver::new(config_in("/first"), BoxBackend::Agent37);
+    let none = ModuleConfig::default();
     assert_eq!(
-        driver.config().workspace_dir,
+        driver.config(&none).workspace_dir,
         config_in("/first").workspace_dir
     );
 
-    let second = driver.serve(&config_in("/second"), settings());
+    // Two calls interleaved each keep their own, whatever ran last.
+    let a = ModuleConfig::new(&config_in("/a"));
+    let b = ModuleConfig::new(&config_in("/b"));
     assert_eq!(
-        driver.config_for(second.call.as_ref()).workspace_dir,
-        config_in("/second").workspace_dir
-    );
-
-    // Two calls in flight at once each keep their own.
-    let a = driver.serve(&config_in("/a"), settings());
-    let b = driver.serve(&config_in("/b"), settings());
-    assert_eq!(
-        driver.config_for(a.call.as_ref()).workspace_dir,
+        driver.config(&a).workspace_dir,
         config_in("/a").workspace_dir
     );
     assert_eq!(
-        driver.config_for(b.call.as_ref()).workspace_dir,
+        driver.config(&b).workspace_dir,
         config_in("/b").workspace_dir
+    );
+    assert_eq!(
+        driver.config(&a).workspace_dir,
+        config_in("/a").workspace_dir
     );
 
     // Work outside any call (the reaper) uses the most recent call's.
-    assert_eq!(driver.config().workspace_dir, config_in("/b").workspace_dir);
     assert_eq!(
-        driver.config_for(None).workspace_dir,
-        config_in("/b").workspace_dir
+        driver.config(&none).workspace_dir,
+        config_in("/a").workspace_dir
     );
+}
+
+#[test]
+fn module_config_compares_by_identity_and_never_prints_the_configuration() {
+    let one = ModuleConfig::new(&config_in("/secret-path"));
+    assert_eq!(one, one.clone());
+    assert_ne!(one, ModuleConfig::new(&config_in("/secret-path")));
+    assert_ne!(one, ModuleConfig::default());
+    assert_eq!(ModuleConfig::default(), ModuleConfig::default());
+    assert!(!format!("{one:?}").contains("secret-path"));
+    assert!(ModuleConfig::default().get().is_none());
 }
 
 #[tokio::test(start_paused = true)]
@@ -261,18 +270,16 @@ fn a_call_with_modules_disabled_keeps_the_configuration_cleanups_use() {
 
     let mut disabled = config_in("/disabled");
     disabled.modules.enabled = false;
-    let call = driver.serve(&disabled, settings());
-
-    // The call itself still reaches the module with its own configuration.
+    let own = driver.config(&ModuleConfig::new(&disabled));
     assert_eq!(
-        driver.config_for(call.call.as_ref()).workspace_dir,
-        config_in("/disabled").workspace_dir
+        own.workspace_dir, disabled.workspace_dir,
+        "the call itself keeps its own"
     );
 
     // A later cleanup, outside any call, must still reach the module with
     // the configuration that has it enabled.
     assert_eq!(
-        driver.config().workspace_dir,
+        driver.config(&ModuleConfig::default()).workspace_dir,
         config_in("/enabled").workspace_dir
     );
 }
@@ -304,11 +311,11 @@ fn a_created_box_keeps_its_reservation_and_is_returned() {
 #[test]
 fn a_box_is_cleaned_up_with_the_configuration_it_was_created_under() {
     let driver = BusBoxDriver::new(config_in("/created"), BoxBackend::Agent37);
-    let created_under = driver.config();
+    let created_under = driver.config(&ModuleConfig::default());
     driver.remember("box-0", &created_under);
 
     // A later call replaces the most recent configuration.
-    let _later = driver.serve(&config_in("/later"), settings());
+    driver.config(&ModuleConfig::new(&config_in("/later")));
 
     assert_eq!(
         driver.config_of("box-0").workspace_dir,

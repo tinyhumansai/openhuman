@@ -74,40 +74,49 @@ impl std::fmt::Debug for OwnerScope {
     }
 }
 
-/// The host call a driver step serves: the configuration that call reaches
-/// its backend with. It travels with the call's [`BoxSettings`] and each
-/// [`BoxExec`] made for it, so concurrent calls never see each other's.
+/// The host configuration one box call reaches the TinyBox module with.
 ///
-/// Compared by identity (two calls are the same call only if they share it),
-/// and shown without the configuration, which can hold credentials.
-#[derive(Clone)]
-pub struct BoxCall(Arc<Config>);
+/// It travels with the call's [`BoxSettings`] and [`BoxExec`] rather than in
+/// ambient task state, so each step of a call, and concurrent calls, use the
+/// configuration of the call they belong to and not that of whichever call
+/// first built the process's registry. Empty means "the driver's latest".
+#[derive(Clone, Default)]
+pub struct ModuleConfig(Option<Arc<Config>>);
 
-impl BoxCall {
-    /// The call `config` is for.
-    pub fn new(config: Config) -> Self {
-        Self(Arc::new(config))
+impl ModuleConfig {
+    /// The module configuration of a call made with `config`.
+    pub fn new(config: &Config) -> Self {
+        Self(Some(Arc::new(config.clone())))
     }
 
-    /// The configuration the call reaches its backend with.
-    pub fn config(&self) -> &Arc<Config> {
-        &self.0
-    }
-}
-
-impl PartialEq for BoxCall {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+    /// The call's configuration, if it brought one.
+    pub fn get(&self) -> Option<&Arc<Config>> {
+        self.0.as_ref()
     }
 }
 
-impl Eq for BoxCall {}
-
-impl std::fmt::Debug for BoxCall {
+impl std::fmt::Debug for ModuleConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("BoxCall(..)")
+        // The configuration holds credentials; never print it.
+        f.write_str(if self.0.is_some() {
+            "ModuleConfig(..)"
+        } else {
+            "ModuleConfig(none)"
+        })
     }
 }
+
+impl PartialEq for ModuleConfig {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ModuleConfig {}
 
 /// What a new box is created with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,9 +132,8 @@ pub struct BoxSettings {
     /// The scope the calling tenant's box belongs to; the registry keeps one
     /// box per scope and tenant.
     pub owner_scope: OwnerScope,
-    /// The host call these settings serve; `None` outside one (a driver
-    /// then uses its own most recent configuration).
-    pub call: Option<BoxCall>,
+    /// The configuration the call reaches the TinyBox module with.
+    pub module: ModuleConfig,
 }
 
 impl BoxSettings {
@@ -156,7 +164,7 @@ impl BoxSettings {
             memory_bytes,
             workdir: OPENSHELL_WORKDIR.to_owned(),
             owner_scope: OwnerScope::default(),
-            call: None,
+            module: ModuleConfig::default(),
         })
     }
 
@@ -189,7 +197,7 @@ impl BoxSettings {
             memory_bytes: config.memory_bytes().unwrap_or(u64::MAX),
             workdir: AGENT37_WORKDIR.to_owned(),
             owner_scope: OwnerScope::default(),
-            call: None,
+            module: ModuleConfig::default(),
         })
     }
 }
@@ -292,8 +300,8 @@ pub struct BoxExec {
     /// When the registry gives up on the reply; a driver's own transport
     /// deadline must not fire before it.
     pub deadline: Duration,
-    /// The host call the command serves, from its [`BoxSettings`].
-    pub call: Option<BoxCall>,
+    /// The configuration the call reaches the TinyBox module with.
+    pub module: ModuleConfig,
 }
 
 /// What a command left behind.

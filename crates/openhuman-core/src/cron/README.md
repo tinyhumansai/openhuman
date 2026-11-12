@@ -225,6 +225,47 @@ otherwise the command is a flow id and the sink calls
 `flows::bus::FlowTriggerSubscriber::dispatch_schedule_tick` directly, with no
 event in between.
 
+### Scheduled workspace
+
+A cron agent run works in the process-wide `action_dir` unless its agent
+definition names a root of its own:
+
+```toml
+scheduled_actions = true
+sandbox_mode = "sandboxed"
+# Relative to action_dir; resolved (symlinks followed) at every run.
+scheduled_workspace = "state/workbench"
+```
+
+`build_cron_agent` resolves it with `scheduler/workspace_root.rs` and sets it as
+the run's workspace descriptor (`set_workspace_descriptor`, the mechanism
+`agent.chat`'s `cwd` and sub-agent worktrees use). The shell and file tools then
+resolve relative paths there and grant it read-write
+(`security_for_tool_context`), and a sandboxed shell asks TinySecurity for that
+root instead of `action_dir`. This is what lets a deployment whose action dir
+holds the core workspace (a checkout with the brain inside it) run a sandboxed
+shell from cron at all: TinySecurity refuses any grant that overlaps
+`workspace_dir`, and then the plan fails with
+`PlanError::RootOverlapsWorkspace`, which names both paths.
+
+The run refuses to start, with an error naming the agent, when the root does
+not exist, is not a directory, overlaps the core workspace, or holds one of the
+core's credential stores (`credentials::credential_files`, or the
+`OPENHUMAN_KEYRING_MASTER_KEY_FILE`). It is authored in the definition, never
+taken from a job's prompt.
+
+**A files-only jail.** Where the host has no kernel jail (a container without
+user namespaces leaves only Landlock), TinySecurity refuses every sandboxed
+plan: Landlock enforces the file grants but no network rule and no process
+isolation. A definition whose shell already gets the host network may set
+`sandbox_filesystem_only = true`. Its shell then asks for a files-only plan
+(`SandboxPlanOptions2::filesystem_only`, TinySecurity contract 2.2;
+`sandbox::spawn_plan::files_only`): files jailed to the run's root, the host's
+network. The host sends it only for the operator's own agent spawn with the
+host network, and the module admits it only for a trusted operator source
+outside SaaS. Sub-agents, channel turns, and text the host did not author keep
+the full requirements. Off unless the definition names it.
+
 ### After the run
 
 The module calls the host `Deliver` callback (`deliver_run`) first, records the

@@ -3,6 +3,7 @@
 //! lifecycle itself is the shared registry's, tested in `boxes`.
 
 use super::*;
+use crate::sandbox::boxes::ModuleConfig;
 use crate::sandbox::boxes::{
     BoxError, BoxSettings, OwnerScope, RegistryLimits, RetainPolicy, AGENT37_WORKDIR,
 };
@@ -64,8 +65,17 @@ fn box_settings_come_from_the_agent37_runtime_config() {
             memory_bytes: 16_384 * 1024 * 1024,
             workdir: AGENT37_WORKDIR.into(),
             owner_scope: BoxBackend::Agent37.owner_scope(&config),
-            call: None,
+            module: settings.module.clone(),
         }
+    );
+    // The call's own configuration rides with its settings.
+    assert_eq!(
+        settings
+            .module
+            .get()
+            .expect("the call's configuration")
+            .workspace_dir,
+        config.workspace_dir
     );
     assert_eq!(BoxBackend::Agent37.workdir(), "/home/node");
 }

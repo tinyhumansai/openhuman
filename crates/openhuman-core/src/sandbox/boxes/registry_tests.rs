@@ -1,5 +1,6 @@
 use super::*;
 use crate::sandbox::boxes::scripted_driver::{ok_output, Call, ExecStep, ScriptedDriver};
+use crate::sandbox::boxes::ModuleConfig;
 use std::collections::BTreeMap;
 use tokio::sync::Notify;
 
@@ -20,7 +21,7 @@ fn settings() -> BoxSettings {
         memory_bytes: 256 * 1024 * 1024,
         workdir: "/sandbox".into(),
         owner_scope: OwnerScope::default(),
-        call: None,
+        module: ModuleConfig::default(),
     }
 }
 
@@ -89,16 +90,23 @@ async fn the_box_enforces_the_deadline_from_its_own_workspace() {
     assert_eq!(driver.calls()[0], Call::Create(settings(), None));
 }
 
-/// The call a command serves reaches every driver step made for it, its
-/// create and its exec, so a driver reaches its backend with that call's
-/// configuration rather than whichever call came last.
+#[test]
+fn deadlines_round_up_to_whole_seconds_of_at_least_one() {
+    assert_eq!(whole_seconds(Duration::from_millis(1_500)), 2);
+    assert_eq!(whole_seconds(Duration::from_secs(30)), 30);
+    assert_eq!(whole_seconds(Duration::ZERO), 1);
+}
+
+/// The configuration a command's call brought reaches every driver step made
+/// for it, its create and its exec, so a driver reaches its backend with that
+/// call's configuration rather than whichever call came last.
 #[tokio::test(start_paused = true)]
 async fn every_driver_step_gets_the_call_it_serves() {
     let driver = ScriptedDriver::new();
     let boxes = registry(&driver, 10);
-    let call = crate::sandbox::boxes::BoxCall::new(crate::config::Config::default());
+    let module = ModuleConfig::new(&crate::config::Config::default());
     let served = BoxSettings {
-        call: Some(call.clone()),
+        module: module.clone(),
         ..settings()
     };
 
@@ -108,14 +116,7 @@ async fn every_driver_step_gets_the_call_it_serves() {
         .unwrap();
 
     assert_eq!(driver.calls()[0], Call::Create(served, None));
-    assert_eq!(driver.last_exec().unwrap().call, Some(call));
-}
-
-#[test]
-fn deadlines_round_up_to_whole_seconds_of_at_least_one() {
-    assert_eq!(whole_seconds(Duration::from_millis(1_500)), 2);
-    assert_eq!(whole_seconds(Duration::from_secs(30)), 30);
-    assert_eq!(whole_seconds(Duration::ZERO), 1);
+    assert_eq!(driver.last_exec().unwrap().module, module);
 }
 
 #[tokio::test(start_paused = true)]

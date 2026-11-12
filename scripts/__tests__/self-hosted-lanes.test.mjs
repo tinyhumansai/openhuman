@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   AREA_ENV,
   HOSTED_GROUPS,
+  INBOUND_MODULE_E2E,
   RUST_COV_SHARDS,
   areasFromEnv,
   buildPlan,
@@ -1240,4 +1241,94 @@ test("the ex63 profile logs where the scratch disk's space goes at each lane end
     null,
   );
   assert.equal(diskUsageReport({ profile: "ex63", scratch: "", run }), null);
+});
+
+test("the inbound area runs the inbound module E2E against the staged modules, and only then (#8155)", () => {
+  for (const profile of ["hosted", "ex63"]) {
+    const env = profile === "ex63" ? EX63_ENV : {};
+    const armed = buildPlan({ profile, areas: { ...NONE, inbound: true }, env });
+    assert.deepEqual(validatePlan(armed), [], profile);
+    const lane = armed.lanes.find((l) => l.name === "inbound-e2e");
+    assert.equal(lane.active, true, profile);
+    const run = lane.checks.find((c) => c.name === "inbound-module-e2e");
+    assert.equal(run.when, true);
+    assert.deepEqual(run.needs, ["install-test-modules"]);
+    // The staged release paths come from the installer's env file.
+    assert.match(run.run, /^set -a && \. ci-out\/test-modules\.env && set \+a && /);
+    assert.ok(run.run.endsWith(INBOUND_MODULE_E2E));
+    assert.match(
+      lane.checks.find((c) => c.name === "install-test-modules").run,
+      /install-test-modules\.sh/,
+    );
+
+    const rustOnly = buildPlan({ profile, areas: { ...NONE, rustCore: true }, env });
+    assert.equal(
+      rustOnly.lanes.find((l) => l.name === "inbound-e2e").active,
+      false,
+      `${profile}: a core change outside the inbound paths does not pay for the build`,
+    );
+  }
+  const hosted = (areas) =>
+    hostedMatrix(buildPlan({ profile: "hosted", areas })).map((g) => g.group);
+  assert.ok(hosted({ ...NONE, inbound: true }).includes("inbound-e2e"));
+  assert.ok(!hosted({ ...NONE, rustCore: true }).includes("inbound-e2e"));
+});
+
+test("the inbound module E2E names exactly the gates its target requires", () => {
+  const manifest = fs.readFileSync(
+    path.join(repoRoot, "crates/openhuman-cli/Cargo.toml"),
+    "utf8",
+  );
+  const block = manifest
+    .split("[[test]]")
+    .find((b) => /^name = "inbound_module_e2e"$/m.test(b));
+  assert.ok(block, "crates/openhuman-cli declares the inbound_module_e2e target");
+  const required = JSON.parse(block.match(/^required-features = (\[.*\])$/m)[1]);
+  const features = INBOUND_MODULE_E2E.match(/--features (\S+)/)[1].split(",");
+  assert.deepEqual([...features].sort(), [...required].sort());
+  assert.match(INBOUND_MODULE_E2E, /-p openhuman-cli .*--test inbound_module_e2e$/);
+});
+
+test("the inbound path filter arms its lane for the inbound host, the module host and the module pin", () => {
+  const filters = fs.readFileSync(
+    path.join(repoRoot, ".github/ci-paths-filter.yml"),
+    "utf8",
+  );
+  const block = filters.split(/^inbound:\s*$/m)[1].split(/^\S[^\n]*:/m)[0];
+  for (const entry of [
+    ".github/ci-paths-filter.yml",
+    "scripts/ci/self-hosted/**",
+    "crates/openhuman-core/src/inbound/**",
+    "crates/openhuman-core/src/modules/**",
+    "tests/inbound_module_e2e.rs",
+    "vendor/tinyeventqueues",
+  ]) {
+    assert.ok(block.includes(`'${entry}'`), `${entry} must arm the inbound area`);
+  }
+  assert.match(ciLanes, /CI_AREA_INBOUND: \$\{\{ steps\.filter\.outputs\.inbound \}\}/);
+  // The plan job schedules the group; the lane job rebuilds the plan from
+  // its own environment, so the flag must reach it too or the lane runs
+  // nothing and passes.
+  assert.match(ciLanes, /^ {6}inbound: \$\{\{ steps\.filter\.outputs\.inbound \}\}$/m);
+  assert.match(ciLanes, /CI_AREA_INBOUND: \$\{\{ needs\.plan\.outputs\.inbound \}\}/);
+});
+
+test("every lane has a step in ci-lanes.yml that waits on it", () => {
+  const plan = buildPlan({ profile: "hosted", areas: ALL });
+  for (const lane of plan.lanes) {
+    assert.ok(
+      ciLanes.includes(`lanes.mjs --wait ${lane.name}\n`),
+      `ci-lanes.yml has no \`Lane:\` step for ${lane.name}`,
+    );
+  }
+});
+
+test("every area flag the plan job reads reaches the lane job", () => {
+  for (const name of Object.values(AREA_ENV)) {
+    assert.match(
+      ciLanes,
+      new RegExp(`${name}: \\$\\{\\{ needs\\.plan\\.outputs`),
+      `${name} is not forwarded to the lane job`,
+    );
+  }
 });

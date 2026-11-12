@@ -180,7 +180,7 @@ async fn native_fixture_exercises_the_pinned_release_contracts() {
         .await
         .expect("the loaded module should answer its typed policy-info contract");
 
-    assert_eq!(info.contract_version, (2, 0));
+    assert_eq!(info.contract_version, (2, 2));
 
     reinitialize(&config)
         .await
@@ -189,7 +189,7 @@ async fn native_fixture_exercises_the_pinned_release_contracts() {
         .policy_info()
         .await
         .expect("the reinitialized module should continue answering policy info");
-    assert_eq!(reinitialized_info.contract_version, (2, 0));
+    assert_eq!(reinitialized_info.contract_version, (2, 2));
 
     let redacted = client
         .redact(RedactMode::Text, "token=sk-ant-example-secret-value")
@@ -419,6 +419,7 @@ async fn run_sandboxed(
         mount_workspace: true,
         env_passthrough: vec![],
         docker_overrides: None,
+        filesystem_only: false,
     };
     turn_origin::with_origin(
         AgentTurnOrigin::Cli,

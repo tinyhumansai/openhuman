@@ -232,8 +232,8 @@ else
   # Shell command analysis and the storage URL E2E suites load TinyBox through
   # the native module path; the ignored MCP registry cases need TinyMCP. Both
   # come from the registry-pinned release, digest-verified before any
-  # subprocess starts.
-  for released_id in tinyconnectors tinyflows tinysearch tinybox tinymcp; do
+  # subprocess starts. inbound_module_e2e loads the TinyEventQueues release.
+  for released_id in tinyconnectors tinyflows tinysearch tinybox tinymcp tinyeventqueues; do
     released_dir="$(stage_release_module "$released_id" "$module_platform" "$module_ext")"
     export OPENHUMAN_MODULE_PATH="$released_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
   done
@@ -260,6 +260,10 @@ fi
 if [ "${#e2e_source_ids[@]}" -gt 0 ]; then
   echo "[rust-e2e] Building pinned local test modules: ${e2e_source_ids[*]} ..."
   stage_source_modules "${e2e_source_ids[@]}"
+  # inbound_module_e2e loads the TinyEventQueues release in either mode; it is
+  # not among the modules built from source.
+  released_dir="$(stage_release_module tinyeventqueues "$module_platform" "$module_ext")"
+  export OPENHUMAN_MODULE_PATH="$released_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
 fi
 for source_id in ${e2e_source_ids[@]+"${e2e_source_ids[@]}"}; do
   export OPENHUMAN_MODULE_PATH="$REPO_ROOT/target/module-sources/$source_id${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
@@ -384,6 +388,16 @@ for suite in "${SUITES[@]}"; do
     bash "$SCRIPT_DIR/ci-cancel-aware.sh" "$CARGO_BIN" test \
       --manifest-path Cargo.toml --features "$PRODUCT_FEATURES,e2e-test-support" \
       --test "$suite" -- --test-threads=1 ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
+    continue
+  fi
+  if [ "$suite" = "inbound_module_e2e" ]; then
+    # The staged TinyEventQueues release under the host's production Deliver
+    # (#8155). Its e2e-test-support gate is outside the product set, so name
+    # it here instead of failing Cargo's required-features check.
+    echo "[rust-e2e]   $CARGO_BIN test --manifest-path Cargo.toml --test $suite (e2e-test-support)"
+    bash "$SCRIPT_DIR/ci-cancel-aware.sh" "$CARGO_BIN" test \
+      --manifest-path Cargo.toml --features "$PRODUCT_FEATURES,e2e-test-support" \
+      --test "$suite" -- ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
     continue
   fi
   if [ "$suite" = "tinydocs_linked_e2e" ]; then

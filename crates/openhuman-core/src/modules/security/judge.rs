@@ -86,6 +86,7 @@ fn build(config: &Config, route: SecurityJudgeRoute) -> Option<JudgeConfig> {
         return None;
     }
     Some(JudgeConfig {
+        // Supplied at init, so the module never needs `JudgeCredentialHost2`.
         credential: Some(Secret(route.api_key)),
         endpoint: route.endpoint,
         provider: match route.dialect {

@@ -21,6 +21,7 @@ Record shapes and migrations stay with their owners.
 | `config.documents` |  |  |  |
 | `cost.records` | `by_time` (`ts_ms`) |  |  |
 | `devices.paired` | `by_active` (`revoked`, `created_ms`) |  |  |
+| `inbound.direct` |  |  |  |
 | `inbound.results` | `by_source` (`source`, `created_ms`)<br>`by_status` (`status`, `created_ms`) |  |  |
 | `notifications.core` | `by_read` (`workspace`, `read`, `timestamp_ms`) |  |  |
 | `notifications.dedup` |  |  |  |

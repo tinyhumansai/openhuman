@@ -27,6 +27,7 @@ mod origin_context;
 mod origin_delivery;
 pub(crate) mod run_delivery;
 pub(crate) mod shell_job;
+mod workspace_root;
 
 #[cfg(test)]
 #[path = "scheduler_tests.rs"]

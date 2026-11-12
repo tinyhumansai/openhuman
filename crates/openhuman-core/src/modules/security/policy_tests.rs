@@ -411,10 +411,11 @@ fn enabled_policy_rejects_commands_the_module_cannot_represent() {
 
 #[test]
 fn module_contract_requires_the_exact_host_wire_version() {
-    assert!(supports_contract((2, 1)));
+    assert!(supports_contract((2, 2)));
     assert!(!supports_contract((1, 35)));
     assert!(!supports_contract((2, 0)));
-    assert!(!supports_contract((2, 2)));
+    assert!(!supports_contract((2, 1)));
+    assert!(!supports_contract((2, 3)));
     assert!(!supports_contract((3, 0)));
     assert!(!supports_contract((1, 34)));
     assert!(!supports_contract((1, 27)));

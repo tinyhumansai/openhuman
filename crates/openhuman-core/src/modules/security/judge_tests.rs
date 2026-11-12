@@ -15,7 +15,7 @@ fn a_route_turns_the_judge_on_by_default() {
     let judge = build(&Config::default(), route()).expect("on by default");
 
     assert_eq!(
-        judge.credential.as_ref().map(|key| key.0.as_str()),
+        judge.credential.as_ref().map(|secret| secret.0.as_str()),
         Some("a-working-key")
     );
     assert_eq!(judge.endpoint, "https://openrouter.ai/api/v1/systemone");
@@ -122,7 +122,7 @@ fn only_the_hosts_own_route_turns_the_judge_on() {
     };
     let judge = resolve(&hosted).expect("the host supplied a route");
     assert_eq!(
-        judge.credential.as_ref().map(|key| key.0.as_str()),
+        judge.credential.as_ref().map(|secret| secret.0.as_str()),
         Some("a-hosts-key")
     );
     assert_eq!(judge.provider, JudgeProvider::OpenJev);

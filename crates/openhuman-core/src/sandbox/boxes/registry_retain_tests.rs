@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::sandbox::boxes::scripted_driver::{ExecStep, ScriptedDriver};
+use crate::sandbox::boxes::ModuleConfig;
 use crate::sandbox::boxes::{RetainPolicy, Retention};
 use std::collections::BTreeMap;
 
@@ -34,7 +35,7 @@ fn settings() -> BoxSettings {
         memory_bytes: 4 * 1024 * 1024 * 1024,
         workdir: "/home/node".into(),
         owner_scope: OwnerScope::default(),
-        call: None,
+        module: ModuleConfig::default(),
     }
 }
 
@@ -491,4 +492,53 @@ async fn shutdown_waits_for_a_cleanup_already_in_flight() {
     gate.notify_one();
     shutting_down.await.unwrap();
     reaping.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_command_waiting_on_a_cleanup_creates_nothing_once_the_slot_is_retired() {
+    let driver = ScriptedDriver::new();
+    let boxes = retaining(&driver, 10);
+    boxes
+        .exec(&user("u1"), &settings(), &request("pwd"))
+        .await
+        .unwrap();
+    let gate = Arc::new(tokio::sync::Notify::new());
+    driver.hold_next_forget(Arc::clone(&gate));
+    let reaping = {
+        let boxes = Arc::clone(&boxes);
+        tokio::spawn(async move { boxes.reap(Instant::now() + TTL).await })
+    };
+    while driver.forgotten().is_empty() {
+        tokio::task::yield_now().await;
+    }
+
+    // The owner's next command waits for the old forget to finish.
+    let waiting = {
+        let boxes = Arc::clone(&boxes);
+        tokio::spawn(async move { boxes.exec(&user("u1"), &settings(), &request("pwd")).await })
+    };
+    // Under paused time the clock only advances once every other task is
+    // blocked, so this returns exactly when the spawned task has run as far
+    // as it can; no yield count to guess.
+    tokio::time::sleep(Duration::from_millis(1)).await;
+
+    // Shutdown retires the waiter's empty slot while it waits.
+    let shutting_down = {
+        let boxes = Arc::clone(&boxes);
+        tokio::spawn(async move { boxes.shutdown().await })
+    };
+    // Under paused time the clock only advances once every other task is
+    // blocked, so this returns exactly when the spawned task has run as far
+    // as it can; no yield count to guess.
+    tokio::time::sleep(Duration::from_millis(1)).await;
+    gate.notify_one();
+
+    assert!(matches!(waiting.await.unwrap(), Err(BoxError::Released)));
+    shutting_down.await.unwrap();
+    reaping.await.unwrap();
+    assert_eq!(
+        driver.created(),
+        1,
+        "a retired waiter must not start a create"
+    );
 }
