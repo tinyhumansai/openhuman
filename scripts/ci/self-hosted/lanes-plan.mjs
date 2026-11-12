@@ -571,6 +571,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             " core::all:: core::cli:: core::invoke:: core::session_expiry:: core::legacy_aliases:: core::runtime::" +
             " agent_registry::agents::loader:: commands::ops::tests:: memory::people::contacts_gate_tests::" +
             " memory::layout_migration::" +
+            " mcp::registry::tests::" +
             " doctor::checks::" +
             " core::schema_test_support::" +
             " openhuman::config:: openhuman::platform::socket::event_handlers:: tools::schemas:: tools::ops::tests::",
