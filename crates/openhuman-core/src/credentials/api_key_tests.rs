@@ -139,3 +139,58 @@ async fn encrypted_api_key_retains_the_admitted_host_configuration() {
     })
     .await;
 }
+
+/// Managed chat and embeddings look the key up by `(state_dir, encrypt)`. With
+/// no ambient embedder config owning that directory, the model's own config
+/// must bind the store, or a config-encrypted key reads as absent and an
+/// API-key-only runtime cannot authenticate.
+#[cfg(feature = "security-module")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_encrypted_api_key_is_read_through_the_owning_config() {
+    let dir = tempfile::tempdir().expect("isolated credentials");
+    let mut config = config_in(dir.path());
+    config.secrets.encrypt = true;
+    let worker_config = config.clone();
+    crate::credentials::test_support::with_native_cipher_approval(&config, async move {
+        assert!(
+            crate::core::runtime::CoreContext::current_embedder_config().is_none(),
+            "no ambient config owns the directory"
+        );
+        store_api_key(&worker_config, "fixture-owned-api-key")
+            .await
+            .expect("store with admitted host configuration");
+        let state_dir = crate::credentials::state_dir_from_config(&worker_config);
+        let read = get_api_key_in(&state_dir, true, Some(&worker_config)).await;
+        let cleared = clear_api_key(&worker_config).await;
+        assert_eq!(
+            read.expect("read through the owning config").as_deref(),
+            Some("fixture-owned-api-key")
+        );
+        assert!(cleared.expect("remove encrypted key"));
+    })
+    .await;
+}
+
+/// A config for another credential directory never lends its authority: the
+/// lookup stays bound to the directory it was asked about.
+#[tokio::test]
+async fn a_config_for_another_directory_does_not_supply_the_api_key() {
+    let owner = tempfile::tempdir().expect("owner credentials");
+    let other = tempfile::tempdir().expect("other credentials");
+    let config = config_in(owner.path());
+    store_api_key(&config, "th_owner").await.expect("store");
+    assert_eq!(
+        get_api_key_in(other.path(), false, Some(&config))
+            .await
+            .expect("read"),
+        None
+    );
+    let owner_dir = crate::credentials::state_dir_from_config(&config);
+    assert_eq!(
+        get_api_key_in(&owner_dir, false, Some(&config))
+            .await
+            .expect("read")
+            .as_deref(),
+        Some("th_owner")
+    );
+}

@@ -38,6 +38,7 @@ impl CoreContext {
             user_skill_roots: self.user_skill_roots,
             extensions: self.extensions.clone(),
             turn_origin: self.turn_origin.clone(),
+            host_secret_grant: self.host_secret_grant.clone(),
             channel_thread: self.channel_thread.clone(),
             session_agent: Some(agent.to_string()),
             profile: self.profile.clone(),

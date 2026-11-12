@@ -169,6 +169,20 @@ const _: () = assert!(KEYRING_CONSENT_TIMEOUT_MS <= 300_000);
 
 const AUDIT_CALLBACK_TIMEOUT_MS: u32 = 20_000;
 
+/// Secret work (pending master grants, cipher operations) TinySecurity admits
+/// at once. Every tenant's runtime registration draws on this one process-wide
+/// budget, so the single-scope default of four refused a fifth tenant's grant
+/// while four others were mid-approval. TinySecurity accepts 1..=32 and still
+/// refuses, without queueing, beyond it.
+const SECRET_MAX_IN_FLIGHT: u32 = 32;
+
+/// Secret cipher operations one registration may run per minute. Every read
+/// of an encrypted credential document is one, and every agent of a runtime
+/// shares its config directory's registration, so the default of 120 refused
+/// a busy runtime's credential reads within a second. TinySecurity accepts
+/// 1..=4096 and refuses, without queueing, beyond it.
+const SECRET_OPERATIONS_PER_MINUTE: u32 = 4096;
+
 /// Init-time subject is deliberately separate from every registered user
 /// subject. Real audit rows are sent through `RecordAudit2` to the per-subject
 /// stream registered by `security::approval::native`.
@@ -262,7 +276,11 @@ pub(crate) fn module_config_for_secret_authority(
     }
     result.secret = Some(SecretConfig2 {
         registrations: Vec::new(),
-        limits: SecretLimits2::default(),
+        limits: SecretLimits2 {
+            max_in_flight: SECRET_MAX_IN_FLIGHT,
+            operations_per_minute: SECRET_OPERATIONS_PER_MINUTE,
+            ..SecretLimits2::default()
+        },
         callback_timeout_ms: AUDIT_CALLBACK_TIMEOUT_MS,
     });
     result.secret_cipher = None;
