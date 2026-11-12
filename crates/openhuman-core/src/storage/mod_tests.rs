@@ -147,42 +147,36 @@ fn a_slot_keeps_the_url_and_driver_with_their_backend() {
 fn a_reinstall_by_url_never_shows_a_backend_without_its_url() {
     let _guard = test_support::install_backend_for_test(test_support::memory_backend());
     install_for_url("memory", test_support::memory_backend());
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let ready = Arc::new(std::sync::Barrier::new(2));
+    let checkpoint = Arc::new(std::sync::Barrier::new(2));
+    let observed = Arc::new(std::sync::Barrier::new(2));
     // Unnamed, so it sees the slot this test installed (see `slot_visible_here`).
     let reader = {
         let stop = Arc::clone(&stop);
-        let ready = Arc::clone(&ready);
+        let checkpoint = Arc::clone(&checkpoint);
+        let observed = Arc::clone(&observed);
         std::thread::spawn(move || {
             let mut torn = 0_usize;
             let mut observations = 0_usize;
-            loop {
+            for _ in 0..2_000 {
+                checkpoint.wait();
                 let url = installed_url();
                 let backend = installed();
                 observations += 1;
                 if url.is_none() && backend.is_some() {
                     torn += 1;
                 }
-                if observations == 1 {
-                    ready.wait();
-                }
-                if stop.load(std::sync::atomic::Ordering::Acquire) {
-                    break;
-                }
+                observed.wait();
             }
             (torn, observations)
         })
     };
-    ready.wait();
     for _ in 0..2_000 {
         install_for_url("memory", test_support::memory_backend());
+        checkpoint.wait();
+        observed.wait();
     }
-    stop.store(true, std::sync::atomic::Ordering::Release);
     let (torn, observations) = reader.join().unwrap();
-    assert!(
-        observations > 0,
-        "the reader must sample the installed slot"
-    );
+    assert_eq!(observations, 2_000, "every install must be sampled");
     assert_eq!(
         torn, 0,
         "a reader saw an installed backend with no URL {torn} times"
