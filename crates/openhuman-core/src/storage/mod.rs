@@ -247,7 +247,8 @@ impl Slot {
         driver: Option<String>,
         checkpoint: impl FnOnce(),
     ) -> Option<Arc<dyn StorageBackend>> {
-        let mut installed = self.0
+        let mut installed = self
+            .0
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         checkpoint();
