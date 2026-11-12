@@ -168,6 +168,10 @@ pub(crate) async fn run_yielding(
     }
 }
 
+/// The longest one TinyBox call runs a command before handing it back.
+#[cfg(feature = "modules")]
+const HOST_POLL: Duration = Duration::from_millis(50);
+
 #[cfg(feature = "modules")]
 async fn run_owned(
     config: &Config,
@@ -175,11 +179,20 @@ async fn run_owned(
     mut abandoned: tokio::sync::oneshot::Receiver<std::convert::Infallible>,
     meter: Option<super::shell_progress::ShellOutputMeter>,
 ) -> anyhow::Result<ShellRunOutcome> {
-    let caller_wants_yield = run.yield_after.is_some();
-    let yield_after_ms = run
+    // The module call always hands the process back within `HOST_POLL`; this
+    // worker owns the caller's own yield point. A bus call cannot be cancelled
+    // and awaited, so a long one would leave an abandoned command stopping
+    // after the turn's cleanup was acknowledged.
+    let caller_yield_at = run
         .yield_after
-        .or_else(|| meter.as_ref().map(|_| Duration::from_millis(50)))
-        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
+        .map(|after| tokio::time::Instant::now() + after);
+    let yield_after_ms = Some(
+        run.yield_after
+            .map_or(HOST_POLL, |after| after.min(HOST_POLL))
+            .as_millis()
+            .min(u64::MAX as u128) as u64,
+    );
+    let yield_due = || caller_yield_at.is_some_and(|at| tokio::time::Instant::now() >= at);
     let workspace = path_string(&run.workspace, "command workspace")?;
     let request = contract::RunNativeShellRequest {
         create: contract::CreateRequest {
@@ -204,17 +217,35 @@ async fn run_owned(
         )?,
         yield_after_ms,
     };
-    let outcome = tokio::select! {
+    let call = tinybox::run_native_shell(config, request);
+    tokio::pin!(call);
+    let started = tokio::select! {
         biased;
-        _ = &mut abandoned => anyhow::bail!("TinyBox native shell invocation was abandoned"),
-        result = tinybox::run_native_shell(config, request) => result
-            .map_err(|error| {
-                tracing::warn!(%error, "[sandbox:shell] TinyBox native shell lifecycle failed");
-                anyhow::anyhow!("TinyBox native shell execution failed")
-            })?,
+        _ = &mut abandoned => None,
+        result = &mut call => Some(result),
     };
+    // Abandoned while starting: dropping the call would leave the module to
+    // stop the command unawaited, so let it reach its (short) yield point and
+    // stop the process here, inside the turn's cleanup hold.
+    let gave_up = started.is_none();
+    let started = match started {
+        Some(result) => result,
+        None => {
+            tracing::debug!(
+                "[sandbox:shell] abandoned while starting; stopping the command before release"
+            );
+            call.await
+        }
+    };
+    let outcome = started.map_err(|error| {
+        tracing::warn!(%error, "[sandbox:shell] TinyBox native shell lifecycle failed");
+        anyhow::anyhow!("TinyBox native shell execution failed")
+    })?;
 
     match outcome {
+        contract::RunNativeShellResult::Finished { .. } if gave_up => {
+            anyhow::bail!("TinyBox native shell invocation was abandoned")
+        }
         contract::RunNativeShellResult::Finished {
             exit_code,
             stdout,
@@ -246,25 +277,29 @@ async fn run_owned(
             let mut live = super::shell_live::LiveHandle::TinyBox(
                 super::shell_live::TinyBoxLive::new(config.clone(), resource, process, cursor),
             );
-            if caller_wants_yield {
-                tracing::debug!("[sandbox:shell] command still running at its yield point");
-                return Ok(ShellRunOutcome::Running(LiveShell {
-                    stdout: String::from_utf8_lossy(&stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&stderr).into_owned(),
-                    handle: live,
-                }));
+            if gave_up {
+                let _ = live.kill().await;
+                anyhow::bail!("TinyBox native shell invocation was abandoned")
             }
 
             let mut collected_stdout = stdout;
             let mut collected_stderr = stderr;
             loop {
+                if yield_due() {
+                    tracing::debug!("[sandbox:shell] command still running at its yield point");
+                    return Ok(ShellRunOutcome::Running(LiveShell {
+                        stdout: String::from_utf8_lossy(&collected_stdout).into_owned(),
+                        stderr: String::from_utf8_lossy(&collected_stderr).into_owned(),
+                        handle: live,
+                    }));
+                }
                 let read = tokio::select! {
                     biased;
                     _ = &mut abandoned => {
                         let _ = live.kill().await;
                         anyhow::bail!("TinyBox native shell invocation was abandoned")
                     }
-                    result = live.read(Duration::from_millis(50)) => result?,
+                    result = live.read(HOST_POLL) => result?,
                 };
                 if let Some(meter) = &meter {
                     meter.record(read.stdout.as_bytes());

@@ -366,3 +366,39 @@ async fn injected_turn_without_profile_keeps_conservative_capabilities() {
     assert_eq!(models.context_window(), None);
     assert!(models.primary.profile().is_none());
 }
+
+/// A `local-openai` endpoint can front a hosted gateway whose model calls
+/// tools natively (Teeny's builder: `glm-5.3-flash` on Surplus). Driven with
+/// the JSON-in-tag text protocol there, the gateway read each `<tool_call>`
+/// body as the tool's *name*, so every call after the first failed with
+/// ``unknown tool `{"arguments": …, "name": "shell"}` ``. Session assembly
+/// must report native tools for a local runtime once the operator opts in,
+/// and only then.
+#[test]
+fn a_local_runtime_reports_native_tools_only_when_opted_in() {
+    let ctx = crate::core::runtime::DispatchCtx::unbound();
+    let mut config = crate::config::Config::default();
+    let source = |config: &crate::config::Config| {
+        TurnModelSource::new_crate_native_from_string(
+            &ctx,
+            "chat",
+            "local-openai:glm-5.3-flash",
+            Arc::new(config.clone()),
+        )
+    };
+    assert!(
+        !source(&config).supports_native_tool_calling(),
+        "local runtimes stay on the text protocol by default"
+    );
+    // A cloud provider calls tools natively whatever the local flag says.
+    let cloud = TurnModelSource::new_crate_native_from_string(
+        &ctx,
+        "chat",
+        "openai:gpt-4o",
+        Arc::new(config.clone()),
+    );
+    assert!(cloud.supports_native_tool_calling());
+
+    config.local_ai.native_tool_calling = true;
+    assert!(source(&config).supports_native_tool_calling());
+}

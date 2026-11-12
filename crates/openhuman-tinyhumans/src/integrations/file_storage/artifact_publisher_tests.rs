@@ -13,6 +13,7 @@ use openhuman_embed::__host::artifact_publisher::versioned_store;
 use openhuman_embed::__host::security::AutonomyLevel;
 
 fn publisher(server_uri: String, autonomy: AutonomyLevel) -> StorageArtifactPublisher {
+    crate::test_workspace::isolate();
     StorageArtifactPublisher::new(
         Arc::new(IntegrationClient::new(server_uri, "tok".to_string())),
         Arc::new(SecurityPolicy {
@@ -53,6 +54,29 @@ async fn mount_link(server: &MockServer, expect: u64) {
         .expect(expect)
         .mount(server)
         .await;
+}
+
+/// Every test here is its own process under nextest, and each reaches
+/// TinySecurity through the ambient configuration. Resolved from the runner's
+/// home, that is one store every parallel process appends its audited
+/// permissions to, so their audit sequences collide and the module refuses
+/// the check. The suite must resolve a workspace of its own instead.
+#[tokio::test]
+async fn the_ambient_config_these_tests_audit_through_is_not_the_runners_home() {
+    let _ = publisher("http://127.0.0.1:9".into(), AutonomyLevel::Full);
+    let config = openhuman_embed::__host::core::runtime::DispatchCtx::ambient()
+        .load_config()
+        .await
+        .unwrap();
+    let home = directories::UserDirs::new()
+        .expect("a home directory")
+        .home_dir()
+        .to_path_buf();
+    assert!(
+        !config.workspace_dir.starts_with(&home) && !config.config_path.starts_with(&home),
+        "ambient config resolved under the runner's home: {}",
+        config.config_path.display()
+    );
 }
 
 #[tokio::test]

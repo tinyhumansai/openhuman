@@ -77,7 +77,12 @@ async fn file_keyring_backend_stores_profile_secrets_without_asking_the_keyring(
 #[tokio::test]
 async fn unavailable_keyring_keeps_keyring_only_oauth_metadata_in_place() {
     let tmp = TempDir::new().unwrap();
-    let config = crate::config::Config::default();
+    // Make the keyring unavailable on every host: with modules disabled
+    // TinySecurity cannot load, a non-consent failure. Left to the host, a
+    // machine with a working session keyring answers a miss instead, and a
+    // miss rightly purges the record this test needs to keep.
+    let mut config = crate::config::Config::default();
+    config.modules.enabled = false;
     let store = AuthProfilesStore::new_with_config(tmp.path(), true, &config);
     let profile = AuthProfile::new_oauth(
         "openai-codex",

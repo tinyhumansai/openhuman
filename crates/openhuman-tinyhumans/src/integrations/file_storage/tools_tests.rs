@@ -13,6 +13,8 @@ use tinytools::{PermissionLevel, Tool, ToolCategory};
 
 fn dummy_client() -> Arc<IntegrationClient> {
     // No requests are made in these tests; the URL/token are placeholders.
+    // The tools still ask TinySecurity (autonomy budget) before refusing.
+    crate::test_workspace::isolate();
     Arc::new(IntegrationClient::new(
         "http://127.0.0.1:0".to_string(),
         "test-token".to_string(),
@@ -251,6 +253,7 @@ use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn client_for(server: &MockServer) -> Arc<IntegrationClient> {
+    crate::test_workspace::isolate();
     Arc::new(IntegrationClient::new(server.uri(), "tok".to_string()))
 }
 
