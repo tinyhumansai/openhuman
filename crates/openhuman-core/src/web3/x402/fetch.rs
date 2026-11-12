@@ -33,8 +33,13 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const PROXY_SERVICE: &str = "rpc.x402_fetch";
 const USER_AGENT: &str = concat!("OpenHuman/", env!("CARGO_PKG_VERSION"));
-/// Headers that carry an x402 payment; only the module may produce them.
-const PAYMENT_HEADERS: [&str; 2] = ["PAYMENT-SIGNATURE", "X-PAYMENT"];
+/// Headers that carry an x402 payment or sign-in; only the module may
+/// produce them.
+const PAYMENT_HEADERS: [&str; 3] = ["PAYMENT-SIGNATURE", "X-PAYMENT", SIGN_IN_HEADER];
+/// The Sign-In-With-X (CAIP-122) credential header of x402's sign-in extension.
+const SIGN_IN_HEADER: &str = "SIGN-IN-WITH-X";
+/// Longest accepted `network` pin: a CAIP-2 id is at most 41 characters.
+const MAX_NETWORK_LEN: usize = 64;
 
 #[derive(Debug)]
 pub(super) struct FetchParams {
@@ -43,6 +48,12 @@ pub(super) struct FetchParams {
     pub(super) headers: Vec<(String, String)>,
     pub(super) body: Option<String>,
     pub(super) max_amount_atomic: u64,
+    /// Restricts the payment to one CAIP-2 network (`eip155:8453`) or a
+    /// family (`eip155`, `solana`); TinyWallet refuses a challenge with no
+    /// matching option.
+    pub(super) network: Option<String>,
+    /// Answer a 402 with a Sign-In-With-X credential instead of a payment.
+    pub(super) sign_in: bool,
 }
 
 #[derive(Deserialize)]
@@ -56,6 +67,23 @@ struct RawFetchParams {
     #[serde(default)]
     body: Option<String>,
     max_amount_atomic: u64,
+    #[serde(default)]
+    network: Option<String>,
+    #[serde(default)]
+    sign_in: bool,
+}
+
+/// A `network` pin is a CAIP-2 id or a bare namespace: ASCII letters,
+/// digits, `-`, `_` and at most one `:`.
+fn valid_network(network: &str) -> bool {
+    !network.is_empty()
+        && network.len() <= MAX_NETWORK_LEN
+        && network.matches(':').count() <= 1
+        && !network.starts_with(':')
+        && !network.ends_with(':')
+        && network
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '-' | '_'))
 }
 
 /// Validate the caller's request before anything leaves the device.
@@ -112,12 +140,25 @@ pub(super) fn parse_params(params: Map<String, Value>) -> Result<FetchParams, St
         return Err("x402_fetch params: maxAmountAtomic must be greater than zero".into());
     }
 
+    let network = match raw.network.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(network) if valid_network(network) => Some(network.to_owned()),
+        Some(_) => {
+            return Err(
+                "x402_fetch params: network must be a CAIP-2 id (eip155:8453) or a namespace (eip155, solana)"
+                    .into(),
+            )
+        }
+    };
+
     Ok(FetchParams {
         url: raw.url.trim().to_owned(),
         method,
         headers,
         body: raw.body,
         max_amount_atomic: raw.max_amount_atomic,
+        network,
+        sign_in: raw.sign_in,
     })
 }
 
@@ -209,7 +250,7 @@ pub(super) fn response_value(
 async fn send(
     target: &ValidatedUrl,
     params: &FetchParams,
-    payment_header: Option<&str>,
+    credential: Option<(&str, &str)>,
 ) -> Result<reqwest::Response, String> {
     let builder = reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
@@ -225,8 +266,8 @@ async fn send(
     for (name, value) in &params.headers {
         request = request.header(name, value);
     }
-    if let Some(payment_header) = payment_header {
-        request = request.header("PAYMENT-SIGNATURE", payment_header);
+    if let Some((name, value)) = credential {
+        request = request.header(name, value);
     }
     if let Some(body) = &params.body {
         request = request.body(body.clone());
@@ -335,12 +376,17 @@ pub(super) async fn fetch(ctx: DispatchCtx, params: Map<String, Value>) -> Resul
         ));
     }
 
+    if params.sign_in {
+        return sign_in_and_retry(&ctx, &config, &target, &params, challenge).await;
+    }
+
     let (prepared, outcome) = x402_service::prepare_capped_payment(
         &ctx,
         &config,
         target.url.clone(),
         challenge,
         params.max_amount_atomic,
+        params.network.clone(),
     )
     .await;
     let (service, payment) = prepared.map_err(|error| prepare_error(outcome, error))?;
@@ -375,7 +421,13 @@ pub(super) async fn fetch(ctx: DispatchCtx, params: Map<String, Value>) -> Resul
         payment.amount_atomic,
         payment.asset
     );
-    let retry = match send(&target, &params, Some(&payment.payment_header)).await {
+    let retry = match send(
+        &target,
+        &params,
+        Some(("PAYMENT-SIGNATURE", payment.payment_header.as_str())),
+    )
+    .await
+    {
         Ok(retry) => retry,
         Err(error) => {
             // No response: the module cannot tell whether the proof settled.
@@ -409,6 +461,33 @@ pub(super) async fn fetch(ctx: DispatchCtx, params: Map<String, Value>) -> Resul
         }),
     )
     .await
+}
+
+/// `signIn`: answer the 402 with a Sign-In-With-X credential and retry once.
+/// Nothing is paid: a challenge that asks for payment rather than sign-in is
+/// refused by TinyWallet, and the response is returned with `payment: null`
+/// and `signedInAs` naming the account.
+async fn sign_in_and_retry(
+    ctx: &DispatchCtx,
+    config: &crate::config::Config,
+    target: &ValidatedUrl,
+    params: &FetchParams,
+    challenge: String,
+) -> Result<Value, String> {
+    let signed = x402_service::sign_in(ctx, config, target.url.clone(), challenge)
+        .await
+        .map_err(|error| format!("x402_fetch: sign-in failed: {error}"))?;
+    log::debug!(
+        "[x402_fetch] retrying with sign-in host={} chain={}",
+        target.host,
+        signed.chain_id
+    );
+    let retry = send(target, params, Some((SIGN_IN_HEADER, signed.header.as_str()))).await?;
+    let mut value = into_value(retry, None).await?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("signedInAs".into(), Value::String(signed.address));
+    }
+    Ok(value)
 }
 
 #[cfg(test)]

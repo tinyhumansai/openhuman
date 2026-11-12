@@ -30,7 +30,7 @@ pub(crate) async fn prepare_payment(
     payment_required: String,
     owner: Option<tinywallet_bus::wire::QuoteOwner>,
 ) -> Result<(X402ServiceHandle, X402PreparePaymentResponse), WalletCallError> {
-    prepare(ctx, config, url, payment_required, owner, None)
+    prepare(ctx, config, url, payment_required, owner, None, None)
         .await
         .0
 }
