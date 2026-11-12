@@ -126,14 +126,14 @@ fn body_text_truncates_at_the_cap_and_flags_it() {
 #[test]
 fn a_refused_authorization_is_reported_with_the_refusal_prefix() {
     let refused = prepare_error(
-        crate::modules::wallet_host::X402RpcPermitOutcome::Refused("over cap"),
+        crate::modules::x402_service::X402RpcPermitOutcome::Refused("over cap"),
         "module said no",
     );
     assert!(refused.starts_with(REFUSED_PREFIX), "{refused}");
     assert!(refused.contains("over cap"), "{refused}");
 
     let failed = prepare_error(
-        crate::modules::wallet_host::X402RpcPermitOutcome::Unused,
+        crate::modules::x402_service::X402RpcPermitOutcome::Unused,
         "challenge invalid",
     );
     assert!(!failed.starts_with(REFUSED_PREFIX), "{failed}");
