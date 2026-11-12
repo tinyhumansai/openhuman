@@ -6,6 +6,8 @@
 //! custody; payment material crosses only the confidential module call.
 
 #[cfg(feature = "web3")]
+mod fetch;
+#[cfg(feature = "web3")]
 mod schemas;
 
 #[cfg(feature = "web3")]

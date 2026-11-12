@@ -91,3 +91,23 @@ fn payment_list_preserves_legacy_rpc_shape_and_rfc3339_values() {
         })
     );
 }
+
+#[test]
+fn fetch_controller_is_registered_with_its_schema() {
+    assert!(all_controller_schemas()
+        .iter()
+        .any(|schema| schema.namespace == "x402" && schema.function == "fetch"));
+    let registered = all_registered_controllers();
+    let fetch = registered
+        .iter()
+        .find(|controller| controller.schema.function == "fetch")
+        .expect("x402 fetch controller is registered");
+    let required: Vec<&str> = fetch
+        .schema
+        .inputs
+        .iter()
+        .filter(|field| field.required)
+        .map(|field| field.name)
+        .collect();
+    assert_eq!(required, vec!["url", "maxAmountAtomic"]);
+}
