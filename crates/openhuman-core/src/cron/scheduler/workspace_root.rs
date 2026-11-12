@@ -27,11 +27,13 @@ pub(super) fn scheduled_workspace(
     let Some(raw) = definition.extensions.scheduled_workspace.as_deref() else {
         return Ok(None);
     };
+    let agent = &definition.id;
     let raw = raw.trim();
     if raw.is_empty() {
-        return Ok(None);
+        return Err(format!(
+            "agent `{agent}`: scheduled_workspace is blank; remove the field to use action_dir"
+        ));
     }
-    let agent = &definition.id;
     let named = Path::new(raw);
     let path = if named.is_absolute() {
         named.to_path_buf()
@@ -46,7 +48,7 @@ pub(super) fn scheduled_workspace(
             "agent `{agent}`: scheduled_workspace '{raw}' is not a directory"
         ));
     }
-    let workspace = canonical_or_original(&config.workspace_dir);
+    let workspace = resolved(&config.workspace_dir);
     if root.starts_with(&workspace) || workspace.starts_with(&root) {
         return Err(format!(
             "agent `{agent}`: scheduled_workspace {} overlaps the core workspace {}; \
@@ -76,34 +78,77 @@ pub(super) fn scheduled_workspace(
 /// Every file holding the core's credentials, resolved where it exists: the
 /// stores the sandbox already denies to a jail, plus the operator's keyring
 /// master key file when one is configured.
-/// `config` scoped to a scheduled run's `root`: stub for the red step.
+/// `config` scoped to a scheduled run's `root`: the root is its action dir
+/// and a read-write trusted root, so everything built from it (the security
+/// policy, the tool registry, project instructions, artifact file roots)
+/// agrees with the workspace descriptor the run carries. `agent.chat`'s `cwd`
+/// scopes a turn the same way. Idempotent; an operator's own entry for the
+/// root is left as configured.
 pub(super) fn rooted_config(config: &Config, root: &Path) -> Config {
-    let _ = root;
-    config.clone()
+    let mut rooted = config.clone();
+    rooted.action_dir = root.to_path_buf();
+    let path = root.to_string_lossy().to_string();
+    if !rooted.autonomy.trusted_roots.iter().any(|trusted| trusted.path == path) {
+        rooted
+            .autonomy
+            .trusted_roots
+            .push(crate::security::TrustedRoot {
+                path,
+                access: crate::security::TrustedAccess::ReadWrite,
+            });
+    }
+    rooted
 }
 
-fn credential_stores_with(config: &Config, master_key: Option<std::ffi::OsString>) -> Vec<PathBuf> {
-    let _ = master_key;
-    credential_stores(config)
-}
-
+/// Every file holding the core's credentials, resolved as far as it exists:
+/// the stores the sandbox already denies to a jail, plus the operator's
+/// keyring master key file when one is configured.
 fn credential_stores(config: &Config) -> Vec<PathBuf> {
-    let mut stores = crate::credentials::credential_files(config);
-    if let Some(master_key) = std::env::var_os(
-        crate::security::secret_storage::encrypted_file_backend::MASTER_KEY_FILE_ENV,
+    credential_stores_with(
+        config,
+        std::env::var_os(crate::security::secret_storage::encrypted_file_backend::MASTER_KEY_FILE_ENV),
     )
-    .filter(|value| !value.is_empty())
+}
+
+/// [`credential_stores`] with the master key file setting given. It is read
+/// as the key loader reads it: trimmed, and ignored when blank.
+fn credential_stores_with(
+    config: &Config,
+    master_key: Option<std::ffi::OsString>,
+) -> Vec<PathBuf> {
+    let mut stores = crate::credentials::credential_files(config);
+    if let Some(master_key) = master_key
+        .as_deref()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
     {
         stores.push(PathBuf::from(master_key));
     }
-    stores
-        .iter()
-        .map(|store| canonical_or_original(store))
-        .collect()
+    stores.iter().map(|store| resolved(store)).collect()
 }
 
-fn canonical_or_original(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+/// `path` with its longest existing ancestor canonicalized and the rest
+/// appended, so a store not written yet still compares by where it will be
+/// written (through any symlink above it), not by the name it was given.
+fn resolved(path: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut existing = path;
+    loop {
+        if let Ok(canonical) = std::fs::canonicalize(existing) {
+            return rest
+                .iter()
+                .rev()
+                .fold(canonical, |path: PathBuf, part| path.join(part));
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                existing = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
 }
 
 #[cfg(test)]

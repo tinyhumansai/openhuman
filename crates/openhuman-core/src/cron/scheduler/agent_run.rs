@@ -443,6 +443,9 @@ async fn build_cron_agent(
         }
         let root = super::workspace_root::scheduled_workspace(&effective, &host.definition)
             .map_err(anyhow::Error::msg)?;
+        if let Some(root) = root.as_deref() {
+            effective = super::workspace_root::rooted_config(&effective, root);
+        }
         let mut agent = host.session_host(&effective, None).await?;
         root_cron_agent(&mut agent, job, root);
         tracing::debug!(
@@ -464,6 +467,10 @@ async fn build_cron_agent(
             .map_err(anyhow::Error::msg)?,
         None => None,
     };
+    let rooted = root
+        .as_deref()
+        .map(|root| super::workspace_root::rooted_config(config, root));
+    let config = rooted.as_ref().unwrap_or(config);
     let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, config, agent_id)
         .await
         .inspect_err(|e| {
