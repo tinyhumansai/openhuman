@@ -238,11 +238,11 @@ fn payments_value(payments: Vec<tinywallet_bus::wire::X402PaymentRecord>) -> Val
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateBudgetParams {
-    #[serde(default, alias = "per_request_max")]
+    #[serde(default)]
     per_request_max: Option<u64>,
-    #[serde(default, alias = "daily_max")]
+    #[serde(default)]
     daily_max: Option<u64>,
-    #[serde(default, alias = "monthly_max")]
+    #[serde(default)]
     monthly_max: Option<u64>,
 }
 
