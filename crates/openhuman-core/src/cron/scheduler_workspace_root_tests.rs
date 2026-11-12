@@ -68,7 +68,7 @@ async fn checkout(tmp: &TempDir) -> Config {
     config
 }
 
-async fn build(config: &Config, root: &'static str) -> anyhow::Result<super::agent_run::BuiltCronAgent> {
+async fn build(config: &Config, root: &'static str) -> anyhow::Result<crate::cron::scheduler::agent_run::BuiltCronAgent> {
     let installed: Arc<dyn HostAgentResolver> = Arc::new(Rooted {
         config: config.clone(),
         root,
