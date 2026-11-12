@@ -482,7 +482,12 @@ async fn sign_in_and_retry(
         target.host,
         signed.chain_id
     );
-    let retry = send(target, params, Some((SIGN_IN_HEADER, signed.header.as_str()))).await?;
+    let retry = send(
+        target,
+        params,
+        Some((SIGN_IN_HEADER, signed.header.as_str())),
+    )
+    .await?;
     let mut value = into_value(retry, None).await?;
     if let Some(object) = value.as_object_mut() {
         object.insert("signedInAs".into(), Value::String(signed.address));
