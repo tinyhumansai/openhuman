@@ -1,6 +1,17 @@
 use super::*;
 use crate::config::test_env::EnvVarGuard;
 
+#[tokio::test]
+async fn hallucination_screen_timeout_fails_open() {
+    let result = screen_with_timeout(
+        std::future::pending::<Result<bool, &'static str>>(),
+        std::time::Duration::from_millis(1),
+    )
+    .await;
+
+    assert!(!result, "a timed-out screen must pass the transcript through");
+}
+
 #[test]
 fn normalize_extension_defaults_to_webm() {
     assert_eq!(normalize_extension(None).unwrap(), "webm");

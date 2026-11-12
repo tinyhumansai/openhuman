@@ -19,6 +19,7 @@ use super::types::{VoiceSpeechResult, VoiceStatus, VoiceTtsResult};
 use crate::modules::voice::{is_hallucinated, HallucinationMode};
 
 const LOG_PREFIX: &str = "[voice]";
+const HALLUCINATION_SCREEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Decides whether a raw transcript is a hallucination rather than speech.
 ///
@@ -38,16 +39,32 @@ fn screen_with_tinyvoice<'a>(
     text: &'a str,
 ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
     Box::pin(async move {
-        match is_hallucinated(config, text, HallucinationMode::Conversation).await {
-            Ok(verdict) => verdict,
-            Err(error) => {
+        screen_with_timeout(
+            is_hallucinated(config, text, HallucinationMode::Conversation),
+            HALLUCINATION_SCREEN_TIMEOUT,
+        )
+        .await
+    })
+}
+
+async fn screen_with_timeout<F, E>(screen: F, timeout: std::time::Duration) -> bool
+where
+    F: Future<Output = Result<bool, E>>,
+    E: std::fmt::Display,
+{
+    match tokio::time::timeout(timeout, screen).await {
+        Ok(Ok(verdict)) => verdict,
+        Ok(Err(error)) => {
                 warn!(
                     "{LOG_PREFIX} hallucination filter unavailable ({error}); passing text through"
                 );
                 false
-            }
         }
-    })
+        Err(_) => {
+            warn!("{LOG_PREFIX} hallucination filter timed out; passing text through");
+            false
+        }
+    }
 }
 
 /// Check availability of the STT engine and the TTS binary/model without
