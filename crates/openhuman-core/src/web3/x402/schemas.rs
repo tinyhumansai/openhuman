@@ -238,18 +238,22 @@ fn payments_value(payments: Vec<tinywallet_bus::wire::X402PaymentRecord>) -> Val
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateBudgetParams {
-    #[serde(default)]
+    #[serde(default, alias = "per_request_max")]
     per_request_max: Option<u64>,
-    #[serde(default)]
+    #[serde(default, alias = "daily_max")]
     daily_max: Option<u64>,
-    #[serde(default)]
+    #[serde(default, alias = "monthly_max")]
     monthly_max: Option<u64>,
+}
+
+fn parse_update_budget(params: Map<String, Value>) -> Result<UpdateBudgetParams, String> {
+    serde_json::from_value(Value::Object(params))
+        .map_err(|e| format!("x402 update_budget params: {e}"))
 }
 
 fn handle_update_budget(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let p: UpdateBudgetParams = serde_json::from_value(Value::Object(params))
-            .map_err(|e| format!("x402 update_budget params: {e}"))?;
+        let p = parse_update_budget(params)?;
 
         let config = ctx
             .load_config()
