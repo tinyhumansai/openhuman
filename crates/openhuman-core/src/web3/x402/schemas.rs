@@ -85,19 +85,19 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Update x402 spending budget limits (atomic USDC units: 1 USDC = 1_000_000).",
             inputs: vec![
                 FieldSchema {
-                    name: "per_request_max",
+                    name: "perRequestMax",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
                     comment: "Max atomic USDC per single request.",
                     required: false,
                 },
                 FieldSchema {
-                    name: "daily_max",
+                    name: "dailyMax",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
                     comment: "Max atomic USDC per day.",
                     required: false,
                 },
                 FieldSchema {
-                    name: "monthly_max",
+                    name: "monthlyMax",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
                     comment: "Max atomic USDC per month.",
                     required: false,
