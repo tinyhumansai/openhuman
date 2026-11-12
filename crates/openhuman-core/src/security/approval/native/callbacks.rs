@@ -169,7 +169,9 @@ pub(crate) async fn verify_human(
                 .orphan_review(&request.row.request_id)
                 .ok_or("human verification: the request is not pending in this process")?;
             if choice != ApprovalChoice2::Deny {
-                return Err("human verification: an earlier launch's request can only be denied".into());
+                return Err(
+                    "human verification: an earlier launch's request can only be denied".into(),
+                );
             }
             Some(listed)
         }

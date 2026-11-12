@@ -11,11 +11,7 @@ impl NativeEngine {
     /// Deny the pending orphan `request_id` as a person's decision.
     /// `Err(NotPending)` when it is not a pending orphan of this workspace: a
     /// request of this process, one already decided or expired, or no row.
-    pub(super) async fn dismiss(
-        &self,
-        request_id: &str,
-        label: &str,
-    ) -> Result<(), EngineError> {
+    pub(super) async fn dismiss(&self, request_id: &str, label: &str) -> Result<(), EngineError> {
         if host().request(request_id).is_some() {
             return Err(EngineError::NotPending);
         }
@@ -36,12 +32,18 @@ impl NativeEngine {
             })
             .ok_or(EngineError::NotPending)?;
         if !host().begin_orphan_review(row) {
-            return Err(unavailable("the earlier request is already being dismissed"));
+            return Err(unavailable(
+                "the earlier request is already being dismissed",
+            ));
         }
         let ticket = opaque();
         host().issue(
             ticket.clone(),
-            Ticket::new(request_id.to_owned(), ApprovalChoice2::Deny, ACTOR.to_owned()),
+            Ticket::new(
+                request_id.to_owned(),
+                ApprovalChoice2::Deny,
+                ACTOR.to_owned(),
+            ),
         );
         let decided = async {
             let _guard = scope.stream.lock().await;
