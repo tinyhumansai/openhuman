@@ -23,13 +23,21 @@ use crate::modules::documents;
 
 /// Generate the `.docx` bytes for `input`, giving up after `deadline`.
 ///
+/// `config` is the host config the tool was built with. `None` only for a
+/// tool constructed without one ([`super::DocumentTool::new`]), which falls
+/// back to `load_or_init` — the same contract as the presentation engine.
+///
 /// The `deadline` covers the entire blocking call, including `spawn_blocking`
 /// thread acquisition. Hitting it surfaces as
 /// [`DocumentError::GenerationTimeout`].
 pub(super) async fn generate(
     input: &GenerateDocumentInput,
     deadline: Duration,
+    config: Option<&crate::config::Config>,
 ) -> Result<Vec<u8>, DocumentError> {
+    if let Some(config) = config {
+        return generate_with(config, input, deadline).await;
+    }
     let config = match crate::config::Config::load_or_init().await {
         Ok(config) => config,
         Err(error) => {
@@ -45,10 +53,10 @@ pub(super) async fn generate(
 
 /// [`generate`], against a caller-supplied config.
 ///
-/// Split out so a test can drive the whole path without `load_or_init`, which
-/// reads — and on a fresh machine writes — the real user config directory. A
-/// unit test that touches it depends on whatever is on the developer's box and
-/// can leave a config file behind.
+/// The path every configured tool takes. Split out so neither it nor a test
+/// goes through `load_or_init`, which reads — and on a fresh machine writes —
+/// the real user config directory. A unit test that touches it depends on
+/// whatever is on the developer's box and can leave a config file behind.
 async fn generate_with(
     config: &crate::config::Config,
     input: &GenerateDocumentInput,

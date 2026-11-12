@@ -75,3 +75,29 @@ fn metadata_projection_omits_prompt_and_paths() {
     assert!(json.get("system_prompt").is_none());
     assert!(json.get("prompt").is_none());
 }
+
+#[test]
+fn glob_denylist_removes_matching_direct_tools() {
+    let mut def = definition();
+    def.sandbox_mode = SandboxMode::None;
+    def.tools = ToolScope::Named(vec![
+        "web_search".to_string(),
+        "file_read".to_string(),
+        "file_write".to_string(),
+    ]);
+    def.extra_tools = vec!["file_edit".to_string()];
+    def.disallowed_tools = vec!["file_*".to_string()];
+
+    let display = metadata_from_definition(&def);
+
+    assert_eq!(
+        display.direct_tool_names,
+        vec!["web_search"],
+        "a `file_*` denylist must hide every `file_` tool, as the runtime does"
+    );
+    assert_eq!(display.direct_tool_count, 1);
+    assert!(
+        !display.write_capable,
+        "only denied tools were write-capable, so the agent is not"
+    );
+}

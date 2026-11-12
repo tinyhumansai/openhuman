@@ -120,6 +120,9 @@ async fn expansion_tools_for(tmp: &TempDir) -> Vec<Box<dyn Tool>> {
 // ── Theme: Task & workflow productivity ─────────────────────────────────────
 
 const PRODUCTIVITY_TOOLS: &[&str] = &[
+    // The `task_source_*` family is absent while no provider can fetch
+    // (senamakel/openhuman#324); see
+    // `task_source_tools_are_not_offered_while_no_provider_can_fetch`.
     // NOTE: the old `agent_workflow_*` tools were removed when the
     // `agent_workflows` domain was dissolved into `workflows`; workflow
     // discovery/run tools now live under the Knowledge theme
@@ -129,31 +132,15 @@ const PRODUCTIVITY_TOOLS: &[&str] = &[
     "update_artifact",
     "list_artifacts",
     "delete_artifact",
-    "task_source_list",
-    "task_source_get",
-    "task_source_fetch",
-    "task_source_list_tasks",
-    "task_source_preview_filter",
-    "task_source_status",
-    "task_source_add",
-    "task_source_update",
-    "task_source_remove",
 ];
 
-const PRODUCTIVITY_DEFAULT_OFF: &[&str] = &[
-    "delete_artifact",
-    "task_source_add",
-    "task_source_update",
-    "task_source_remove",
-];
+const PRODUCTIVITY_DEFAULT_OFF: &[&str] = &["delete_artifact"];
 
 const PRODUCTIVITY_ALWAYS_ON: &[&str] = &[
     "create_artifact",
     "read_artifact",
     "update_artifact",
     "list_artifacts",
-    "task_source_fetch",
-    "task_source_status",
 ];
 
 // ── Theme: Knowledge & memory ───────────────────────────────────────────────

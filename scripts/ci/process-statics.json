@@ -440,6 +440,16 @@
     "verification": "modules/wallet_backend_tests.rs: a_registered_handler_answers_the_call"
   },
   {
+    "file": "crates/openhuman-core/src/modules/wallet_host.rs",
+    "scope": "",
+    "name": "X402_RPC_PERMITS",
+    "type": "OnceLock<Mutex<HashMap<u64,X402RpcPermitEntry>>>",
+    "count": 1,
+    "category": "D",
+    "reason": "Routing handle: short-lived one-shot permits for in-flight direct x402_fetch RPC calls, keyed by a process-unique id and matched on the exact request URL. Each permit lives only while its call's future runs (removed on drop), holds only the URL and the caller's cap, and the wallet budget enforces the ownership boundary when the payment is authorized.",
+    "verification": "modules/wallet_host_tests.rs: x402_rpc_permit_is_active_only_while_its_future_runs"
+  },
+  {
     "file": "crates/openhuman-core/src/prompts/section_renderers.rs",
     "scope": "",
     "name": "EMPTY_INTEGRATIONS",

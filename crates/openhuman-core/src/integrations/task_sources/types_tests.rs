@@ -45,3 +45,19 @@ fn provider_types_are_the_connector_contracts() {
     assert_eq!(SourceTarget::default(), SourceTarget::AgentTodoProactive);
     assert_eq!(FetchReason::Manual.as_str(), "manual");
 }
+
+/// The domain-wide gate is exactly "some provider can fetch": false today,
+/// because every provider's fetch path is gone (senamakel/openhuman#324).
+#[test]
+fn any_provider_can_fetch_follows_the_per_provider_answer() {
+    let per_provider = [
+        ProviderSlug::Github,
+        ProviderSlug::Notion,
+        ProviderSlug::Linear,
+        ProviderSlug::Clickup,
+    ]
+    .into_iter()
+    .any(provider_can_fetch);
+    assert_eq!(any_provider_can_fetch(), per_provider);
+    assert!(!any_provider_can_fetch());
+}
