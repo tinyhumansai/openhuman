@@ -27,6 +27,7 @@ unused `ex63` profile.
 | `rust-gates-off`  | gates-off checks and gate-contract tests, kernel floor, dep-sim calibration                                                                                                                                                                                               |
 | `tauri`           | Tauri clippy and coverage                                                                                                                                                                                                                                                 |
 | `pester`          | `install.ps1` tests                                                                                                                                                                                                                                                       |
+| `inbound-e2e`     | test modules from the registry, then `tests/inbound_module_e2e.rs` against the verified TinyEventQueues release (its `e2e-test-support` gate keeps it out of `rust-cov`); armed by the `inbound` area only                                                              |
 
 How lanes behave:
 
@@ -90,7 +91,7 @@ Lanes are grouped into jobs sized for 4-core, ~14 GB runners: `checks`,
 `rust-lint` (lint and gates-off in turn), `rust-cov-core`, `rust-cov-product`,
 `rust-cov-facades` and `rust-cov-tui` (the `rust-cov` lane in four jobs, each a whole
 section of `scripts/ci/rust-coverage.sh`, picked by `OH_COV_SHARD`; the gate merges their
-lcov files and fails if any is missing), `tauri` and `pester`.
+lcov files and fails if any is missing), `tauri`, `pester` and `inbound-e2e`.
 Groups whose areas are untouched don't start.
 
 ## Measuring
