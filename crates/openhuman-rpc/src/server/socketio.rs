@@ -303,8 +303,8 @@ pub(crate) fn attach_socketio_with_preflight(
             // would otherwise have no idea which workspace is active and
             // could not scope anything.
             //
-            // Spawned so the event handlers below are registered without
-            // waiting on the resolve. Emitting to `socket` rather than
+            // Spawned so `ready` goes out without waiting on the resolve.
+            // Emitting to `socket` rather than
             // broadcasting keeps a late-joining client from re-announcing a
             // workspace every other client already knows about.
             {
@@ -342,8 +342,6 @@ pub(crate) fn attach_socketio_with_preflight(
             log::debug!("[socketio] emit event=ready to_client={}", socket.id);
             let _ = socket.emit("ready", &ready_payload);
             std::future::ready(())
-        },
-            std::future::ready(())
         })
         .with(move |socket: SocketRef, TryData(handshake): TryData<HandshakeAuth>| {
             let gate = preflight_gate.clone();
@@ -354,6 +352,7 @@ pub(crate) fn attach_socketio_with_preflight(
             }
         }),
     );
+
     (layer, io)
 }
 
