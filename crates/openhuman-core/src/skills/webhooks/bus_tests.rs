@@ -148,7 +148,7 @@ mod inbound {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use super::super::{route_agent_trigger, triage_agent_directly};
+    use super::super::{route_agent_trigger, triage_agent_directly, AgentRoute};
     use crate::core::runtime::DispatchCtx;
     use crate::inbound::fixture::{active_config, decision, deferred, Rig, ScriptedTriage};
     use crate::triage::{TriageAction, TriggerEnvelope};
@@ -166,14 +166,15 @@ mod inbound {
 
     async fn route(rig: &Rig, config: Option<crate::config::Config>, correlation_id: &str) {
         let envelope = request();
-        let queued =
+        let routed =
             route_agent_trigger(config, &envelope, correlation_id, Some(rig.client.clone())).await;
-        if !queued {
+        if let AgentRoute::Direct(on_handled) = routed {
             triage_agent_directly(
                 DispatchCtx::host_default(),
                 envelope,
                 correlation_id.to_owned(),
                 rig.triage.clone() as Arc<dyn crate::triage::TriageRunner>,
+                on_handled,
             )
             .await
             .unwrap();
@@ -231,5 +232,29 @@ mod inbound {
         route(&rig, Some(config), "corr-direct").await;
 
         assert_eq!(triage.applied(), vec![LABEL.to_owned()]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_deferred_direct_webhook_is_reported_as_not_handled() {
+        // So a copy the queues hold is delivered, not dropped as handled.
+        for (step, expected) in [
+            (deferred(400), false),
+            (decision(TriageAction::React), true),
+        ] {
+            let triage = ScriptedTriage::new([step]);
+            let (sender, handled) = tokio::sync::oneshot::channel();
+            triage_agent_directly(
+                DispatchCtx::host_default(),
+                request(),
+                "corr-reported".to_owned(),
+                triage.clone() as Arc<dyn crate::triage::TriageRunner>,
+                Some(Box::new(move |handled| {
+                    let _ = sender.send(handled);
+                })),
+            )
+            .await
+            .unwrap();
+            assert_eq!(handled.await.unwrap(), expected);
+        }
     }
 }

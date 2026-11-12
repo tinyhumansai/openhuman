@@ -108,6 +108,8 @@ fn host_collections() -> Vec<CollectionSpec> {
     collections.extend(super::journal_maintenance::collection_specs());
     #[cfg(feature = "inbound-queues")]
     collections.extend(crate::inbound::results::collection_specs());
+    #[cfg(feature = "inbound-queues")]
+    collections.extend(crate::inbound::claims::collection_specs());
     collections
 }
 
