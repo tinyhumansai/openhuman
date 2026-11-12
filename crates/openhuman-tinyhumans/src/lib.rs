@@ -93,6 +93,8 @@ mod register;
 mod runtime;
 pub mod session;
 pub(crate) mod socket;
+#[cfg(test)]
+pub(crate) mod test_workspace;
 pub mod transport;
 #[cfg(feature = "voice")]
 pub mod voice;

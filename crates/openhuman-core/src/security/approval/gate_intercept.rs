@@ -93,16 +93,26 @@ impl ApprovalGate {
         let dispatch = crate::core::runtime::DispatchCtx::ambient();
         let saas = crate::core::runtime::is_saas();
         let saas_human_approval = saas_prompt_needed(&dispatch, saas, &origin, tool_name, forced);
+        // A SaaS tenant's own secret master grant with nobody to ask
+        // (`gate_saas_grant.rs`).
+        if let Some(decided) = self
+            .saas_host_grant_outcome(
+                &dispatch,
+                saas,
+                saas_human_approval,
+                forced,
+                tool_name,
+                action_summary,
+                &args_redacted,
+            )
+            .await
+        {
+            return decided;
+        }
         // Deployment-allowlisted tools retain their audited automatic path.
         // A rejected tool can reach the normal approval engine only when this
         // exact SaaS WebChat turn has an authenticated, routable user surface.
-        match saas_outcome_with(
-            &dispatch,
-            saas,
-            &origin,
-            forced,
-            tool_name,
-        ) {
+        match saas_outcome_with(&dispatch, saas, &origin, forced, tool_name) {
             Some(GateOutcome::Allow) => {
                 return self
                     .saas_approved(
@@ -407,12 +417,9 @@ impl ApprovalGate {
                     error = %error,
                     "[approval::gate] the approval engine could not decide — failing closed"
                 );
-                return (
-                    GateOutcome::Deny {
-                        reason: engine_denial(&origin, tool_name, &error),
-                    },
-                    None,
-                );
+                let reason = super::ApprovalScope::closed_denial(scope.as_deref(), tool_name)
+                    .unwrap_or_else(|| engine_denial(&origin, tool_name, &error));
+                return (GateOutcome::Deny { reason }, None);
             }
         };
         match checked {

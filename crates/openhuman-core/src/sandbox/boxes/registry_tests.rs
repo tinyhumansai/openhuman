@@ -97,6 +97,28 @@ fn deadlines_round_up_to_whole_seconds_of_at_least_one() {
     assert_eq!(whole_seconds(Duration::ZERO), 1);
 }
 
+/// The configuration a command's call brought reaches every driver step made
+/// for it, its create and its exec, so a driver reaches its backend with that
+/// call's configuration rather than whichever call came last.
+#[tokio::test(start_paused = true)]
+async fn every_driver_step_gets_the_call_it_serves() {
+    let driver = ScriptedDriver::new();
+    let boxes = registry(&driver, 10);
+    let module = ModuleConfig::new(&crate::config::Config::default());
+    let served = BoxSettings {
+        module: module.clone(),
+        ..settings()
+    };
+
+    boxes
+        .exec(&user("u1"), &served, &request("true"))
+        .await
+        .unwrap();
+
+    assert_eq!(driver.calls()[0], Call::Create(served, None));
+    assert_eq!(driver.last_exec().unwrap().module, module);
+}
+
 #[tokio::test(start_paused = true)]
 async fn embedded_users_of_one_host_get_separate_boxes() {
     let driver = ScriptedDriver::new();

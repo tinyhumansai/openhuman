@@ -55,13 +55,16 @@ const VIDEO_DESCRIPTION: &str = "Generate a short video clip via OpenRouter (def
 /// reference-file policy, the files roots and the video wait come from
 /// `root_config`; `allowed_references` is the session's shared allowlist of
 /// artifact paths. The generators come from the host that owns the media
-/// service (the core has none of its own).
-pub fn media_tools_for_config(
+/// service (the core has none of its own). TinySecurity's protected-path
+/// floor is reached here, through `root_config`'s module, for the sync
+/// reference policy.
+pub async fn media_tools_for_config(
     generators: MediaGenerators,
     root_config: &Config,
     action_dir: &Path,
     allowed_references: MediaReferenceAllowlist,
 ) -> Vec<Box<dyn Tool>> {
+    let floor = ReferenceFloor::fetch(Some(root_config)).await;
     media_tools_from_with_allowlist(
         generators,
         action_dir,
@@ -72,12 +75,15 @@ pub fn media_tools_for_config(
         // multi-minute wait is not silent.
         WaitPolicy::new(VIDEO_POLL_INTERVAL, VIDEO_WAIT_BUDGET),
         allowed_references,
+        floor,
     )
 }
 
 /// Builds the tool set over any generators (the managed ones in production,
 /// mocks in tests), writing under `action_dir`; `video_wait` bounds each
-/// video job.
+/// video job. It has no async context to fetch TinySecurity's protected-path
+/// floor, so it fails closed: local reference files are refused and URL
+/// references still work.
 pub fn media_tools_from(
     generators: MediaGenerators,
     action_dir: &Path,
@@ -92,6 +98,7 @@ pub fn media_tools_from(
         files_dir,
         video_wait,
         Arc::new(Mutex::new(HashSet::new())),
+        ReferenceFloor::Unavailable("media_tools_from does not fetch TinySecurity's floor".into()),
     )
 }
 
@@ -102,6 +109,7 @@ fn media_tools_from_with_allowlist(
     files_dir: impl Into<crate::artifacts::FileRoots>,
     video_wait: WaitPolicy,
     allowed_artifacts: MediaReferenceAllowlist,
+    floor: ReferenceFloor,
 ) -> Vec<Box<dyn Tool>> {
     let files = files_dir.into();
     let generators = Arc::new(generators);
@@ -113,6 +121,7 @@ fn media_tools_from_with_allowlist(
         action_dir,
         workspace_dir,
         Arc::clone(&allowed_artifacts),
+        floor,
     ));
     let output_blobs = Arc::clone(&output.blobs);
     let image_tool = |image: &Arc<dyn ImageGenerator>| {
@@ -208,33 +217,192 @@ fn video_tool(
         .with_wait_policy(wait)
 }
 
+/// A synchronous TinySecurity floor decision for one path: `Ok(true)` when
+/// `ProtectedPath2` reports it protected.
+pub(crate) type ProtectedPathCheck = Arc<dyn Fn(&Path) -> Result<bool, String> + Send + Sync>;
+
+/// TinySecurity's protected-path floor for local reference files. The
+/// reference policy is a sync callback, so it asks the module through the
+/// bounded sync bridge (`modules::security::text::protected_path_check`): the
+/// decision is TinySecurity's own `ProtectedPath2`, not a host copy of it.
+#[derive(Clone)]
+pub(crate) enum ReferenceFloor {
+    /// Security is disabled, so no floor applies; the same switch as
+    /// `SecurityPolicy::is_always_forbidden_async` for the other file tools.
+    Disabled,
+    /// TinySecurity answers for each path. A failed answer refuses the path.
+    Enforced(ProtectedPathCheck),
+    /// The floor could not be reached: every local reference is refused.
+    Unavailable(String),
+}
+
+impl std::fmt::Debug for ReferenceFloor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Disabled => f.write_str("Disabled"),
+            Self::Enforced(_) => f.write_str("Enforced(..)"),
+            Self::Unavailable(why) => f.debug_tuple("Unavailable").field(why).finish(),
+        }
+    }
+}
+
+/// Why a reference was refused, for the log: never the path itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refusal {
+    Traversal,
+    FloorUnavailable,
+    Protected,
+    OutsideRoots,
+}
+
+impl Refusal {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Traversal => "parent_traversal",
+            Self::FloorUnavailable => "floor_unavailable",
+            Self::Protected => "protected_floor",
+            Self::OutsideRoots => "outside_roots",
+        }
+    }
+}
+
+impl ReferenceFloor {
+    /// Asks TinySecurity, through `config`'s module, for its floor unless
+    /// security is disabled for `config` (or the process). With no `config`
+    /// the current dispatch's is used. A module that cannot answer fails
+    /// closed.
+    pub(crate) async fn fetch(config: Option<&Config>) -> Self {
+        if let Some(reason) = crate::security::switch::disabled_for(config) {
+            log::debug!(
+                "[media][reference] security disabled ({}); no protected floor",
+                reason.describe()
+            );
+            return Self::Disabled;
+        }
+        #[cfg(feature = "security-module")]
+        {
+            match crate::modules::security::text::protected_path_check(config).await {
+                Ok(check) => Self::Enforced(check),
+                Err(error) => {
+                    log::debug!(
+                        "[media][reference] protected floor unavailable; local references refused: {error}"
+                    );
+                    Self::Unavailable(error)
+                }
+            }
+        }
+        #[cfg(not(feature = "security-module"))]
+        {
+            Self::Unavailable("TinySecurity is not built into this host".into())
+        }
+    }
+
+    /// Why `paths` (the path as named and as resolved) may not be read as a
+    /// reference, when the floor covers any of them or cannot answer.
+    fn refusal(&self, named: &Path, paths: &[&Path]) -> Option<(Refusal, String)> {
+        let unavailable = || {
+            (
+                Refusal::FloorUnavailable,
+                format!(
+                    "reference path {} refused: TinySecurity's protected-path floor is unavailable, \
+                     so local reference files cannot be checked; use a URL instead",
+                    named.display()
+                ),
+            )
+        };
+        match self {
+            Self::Disabled => None,
+            Self::Unavailable(_) => Some(unavailable()),
+            Self::Enforced(check) => {
+                for path in paths {
+                    match check(path) {
+                        Ok(false) => {}
+                        Ok(true) => {
+                            return Some((
+                                Refusal::Protected,
+                                format!(
+                                    "reference path {} is in a protected location (a credential \
+                                     store or system directory); use a URL or a file inside the \
+                                     workspace",
+                                    named.display()
+                                ),
+                            ))
+                        }
+                        Err(_) => return Some(unavailable()),
+                    }
+                }
+                None
+            }
+        }
+    }
+}
+
+/// `path` with its `.` segments and symlinks resolved. A path that cannot be
+/// resolved (missing, or unreadable to this process) is only normalized
+/// lexically: nothing can be read from it, and `..` is refused before this
+/// runs.
+fn resolve(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| {
+        path.components()
+            .filter(|component| !matches!(component, Component::CurDir))
+            .collect()
+    })
+}
+
 /// Local reference files may be read and uploaded only from the action
 /// directory or the workspace directory, never through `..`, and never from
-/// an always-forbidden location (credential stores, system roots).
+/// a location TinySecurity's protected floor covers (credential stores,
+/// system roots) — session-filed artifacts included. The path is resolved
+/// (`.` segments, symlinks) first; the floor is asked about the path as named
+/// and as resolved, the roots are matched against the resolved path, and the
+/// resolved path is what is returned for reading.
 pub(crate) fn reference_policy(
     action_dir: &Path,
     workspace_dir: &Path,
     allowed_artifacts: MediaReferenceAllowlist,
+    floor: ReferenceFloor,
 ) -> tinyagents_harness::media::ReferencePathPolicy {
-    let roots: Vec<PathBuf> = vec![action_dir.to_path_buf(), workspace_dir.to_path_buf()];
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for root in [action_dir, workspace_dir] {
+        roots.push(root.to_path_buf());
+        if let Ok(resolved) = root.canonicalize() {
+            roots.push(resolved);
+        }
+    }
     Arc::new(move |path: &Path| {
+        let refuse = |refusal: Refusal, message: String| {
+            tracing::debug!(
+                category = refusal.as_str(),
+                "[media][reference] refused local reference"
+            );
+            Err(message)
+        };
         if path.components().any(|c| matches!(c, Component::ParentDir)) {
-            return Err(format!(
-                "reference path {} may not contain '..'",
-                path.display()
-            ));
+            return refuse(
+                Refusal::Traversal,
+                format!("reference path {} may not contain '..'", path.display()),
+            );
         }
-        let is_filed_artifact = allowed_artifacts
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(path);
-        if !is_filed_artifact && !roots.iter().any(|root| path.starts_with(root)) {
-            return Err(format!(
-                "reference path {} is outside the workspace; use a URL or a file inside the workspace",
-                path.display()
-            ));
+        let resolved = resolve(path);
+        if let Some((refusal, message)) = floor.refusal(path, &[path, &resolved]) {
+            return refuse(refusal, message);
         }
-        Ok(path.to_path_buf())
+        let is_filed_artifact = {
+            let allowed = allowed_artifacts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            allowed.contains(path) || allowed.contains(&resolved)
+        };
+        if !is_filed_artifact && !roots.iter().any(|root| resolved.starts_with(root)) {
+            return refuse(
+                Refusal::OutsideRoots,
+                format!(
+                    "reference path {} is outside the workspace; use a URL or a file inside the workspace",
+                    path.display()
+                ),
+            );
+        }
+        Ok(resolved)
     })
 }
 

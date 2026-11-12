@@ -878,5 +878,15 @@
     "category": "B",
     "reason": "The process's agent37 box registry holds one box per owner, keyed on the authenticated Tenant (profile and agent) together with an OwnerScope hashed from the active workspace and [runtime.agent37] retention_namespace; a call with no tenant is refused before the registry is touched, so no two tenants or signed-in users share a box. Deployments share a box only when they share an agent37 key, tenant and workspace path with a blank retention_namespace; distinct nonblank namespaces keep them apart.",
     "verification": "sandbox/boxes/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/boxes/registry_retain_tests.rs: equal_tenants_in_two_scopes_never_share_a_retained_box; sandbox/boxes/mod_tests.rs: an_unscoped_command_creates_no_box"
+  },
+  {
+    "file": "crates/openhuman-core/src/credentials/profiles/backend.rs",
+    "scope": "",
+    "name": "HELD",
+    "type": "std::sync::OnceLock<Arc<(Mutex<HashSet<String>>,Condvar)>>",
+    "count": 1,
+    "category": "B",
+    "reason": "An in-process write exclusion for backend-stored auth-profile documents, keyed by the authenticated profile id; it holds only which tenant documents have a read-modify-write in flight (no credential data) and serialises writers of the same tenant only, while the backend's compare-and-swap remains the cross-process guard.",
+    "verification": "credentials/profiles_storage_tests.rs: a_tenant_store_keeps_its_document_and_lock_in_the_configured_backend; credentials/profiles/backend_tests.rs: a_tenant_store_outside_its_own_scope_is_refused_in_saas"
   }
 ]
