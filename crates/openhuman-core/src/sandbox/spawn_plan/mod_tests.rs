@@ -249,7 +249,12 @@ fn only_an_opted_in_agent_spawn_with_the_host_network_asks_for_a_files_only_plan
     // Text the host did not author never asks, whatever the policy says.
     assert!(!files_only(&opted, false, SpawnSource::Untrusted, &host));
     // A files-only plan cannot promise less network than the host's own.
-    assert!(!files_only(&opted, false, SpawnSource::Agent, &NetworkPolicy::None));
+    assert!(!files_only(
+        &opted,
+        false,
+        SpawnSource::Agent,
+        &NetworkPolicy::None
+    ));
     // A run on the host confines nothing, so it is never files-only.
     assert!(!files_only(&opted, true, SpawnSource::Agent, &host));
 }

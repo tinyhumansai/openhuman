@@ -421,9 +421,9 @@ pub(crate) struct HarnessHostPolicy {
 pub use super::operation_context::{approval_for_tool, OpenHumanRunExt};
 pub(crate) use super::operation_context::{
     command_environment_for_tool, dispatch_ctx_for_tool, memory_identity_for_tool,
-    memory_in_prompt_for_tool, parent_agent_id_for_tool, sandbox_filesystem_only_for_tool, sandbox_mode_for_tool,
-    shell_processes_for_tool, task_recency_window_for_tool, turn_origin_for_tool,
-    HostOperationContext,
+    memory_in_prompt_for_tool, parent_agent_id_for_tool, sandbox_filesystem_only_for_tool,
+    sandbox_mode_for_tool, shell_processes_for_tool, task_recency_window_for_tool,
+    turn_origin_for_tool, HostOperationContext,
 };
 #[cfg(test)]
 pub(crate) use super::operation_context::{test_turn_run, tool_context_with_approval};
