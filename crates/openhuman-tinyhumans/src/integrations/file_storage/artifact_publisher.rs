@@ -82,11 +82,7 @@ pub async fn artifact_publisher(
     config: &Config,
 ) -> Option<openhuman_embed::__host::artifact_publisher::ArtifactPublisherBinder> {
     let client = crate::integrations::build_client(config).await?;
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(config));
     Some(Arc::new(move |file_store| {
         Arc::new(
             StorageArtifactPublisher::new(client.clone(), Arc::clone(&security))

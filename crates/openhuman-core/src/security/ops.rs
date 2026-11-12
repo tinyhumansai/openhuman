@@ -19,8 +19,7 @@ fn policy_info_payload(policy: SecurityPolicy) -> serde_json::Value {
 }
 
 pub fn security_policy_info_for_config(config: &Config) -> Outcome<serde_json::Value> {
-    let policy =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let policy = SecurityPolicy::for_config(config);
     let payload = policy_info_payload(policy);
     Outcome::single_log(payload, "security_policy_info computed from active config")
 }

@@ -128,9 +128,37 @@ pub(super) const WORKSPACE_INTERNAL_PREFIXES: &[&str] =
 /// internal state (reserved by TinySecurity); only
 /// [`ARTIFACT_TOOL_RESULTS_DIR`] inside it stays agent-readable.
 pub(super) const ARTIFACTS_DIR: &str = "artifacts";
-/// The account config file, stored beside `workspace_dir` (see
-/// the TinySecurity path policy).
+/// The account config, the one name the workspace-parent fallback has always
+/// refused (#5505). Kept separate from the rest of
+/// [`ACCOUNT_INTERNAL_FILES`] because a configured account root and the
+/// workspace's parent are not always the same directory, and only this name
+/// applies to the latter once they diverge.
 pub(super) const ACCOUNT_CONFIG_FILE: &str = "config.toml";
+/// Files in the account dir ([`SecurityPolicy::account_dir`]) that are core
+/// state rather than agent surface. That directory is reachable by design — a
+/// trusted root over it grants its files (#5505) — so this is a carve-out
+/// list, not a containment boundary.
+///
+/// Each entry carries secrets or privilege that the protected-path floor does
+/// not cover: `.secret_key` is the keyring's on-disk encryption key and
+/// `auth-profiles.json` the credential profiles it decrypts (the floor covers
+/// `~/.ssh` and friends, not these); `config.toml.bak` is the config one save
+/// behind, written by `config::schema::load::atomic_commit`; and
+/// `claude_code_settings.json` switches the Claude Code provider to
+/// `--permission-mode bypassPermissions` with its full native toolset, whose
+/// calls never reach the approval gate because that provider runs its tools
+/// internally and never returns them to the harness.
+///
+/// Enforced as TinySecurity path reservations (`native_paths.rs`), so the
+/// module's canonicalisation and its case/Unicode folding on normalising
+/// filesystems apply — the host does not re-implement either.
+pub(super) const ACCOUNT_INTERNAL_FILES: &[&str] = &[
+    ACCOUNT_CONFIG_FILE,
+    "config.toml.bak",
+    ".secret_key",
+    "auth-profiles.json",
+    "claude_code_settings.json",
+];
 /// Where oversized tool outputs are persisted for the agent to read back.
 pub(super) const ARTIFACT_TOOL_RESULTS_DIR: &str = "tool-results";
 
@@ -202,6 +230,17 @@ pub struct SecurityPolicy {
     /// intentionally NOT implemented in S1 (#4435).
     pub privacy_mode: PrivacyMode,
     pub workspace_dir: PathBuf,
+    /// The account / credential root — `config_path`'s parent — when the host
+    /// supplied it. `None` falls back to `workspace_dir`'s parent, which is the
+    /// same directory in the default layout.
+    ///
+    /// Needed as its own field because the two can be split deliberately:
+    /// `RuntimeBuilder::workspace_dir` moves internal state while leaving the
+    /// credential root where the `Workspace` put it, and the legacy
+    /// `<proj>/workspace` layout keeps config in a sibling `<proj>/.openhuman`
+    /// (`config::schema::load::dirs`). Inferring the account dir from the
+    /// workspace guards the wrong directory in both.
+    pub account_dir: Option<PathBuf>,
     /// Agent action sandbox root — tools resolve relative paths and default
     /// their cwd here instead of `workspace_dir`. Kept separate so internal
     /// state (memory DBs, sessions, tokens) under `workspace_dir` is not
@@ -266,6 +305,7 @@ impl Default for SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
             privacy_mode: PrivacyMode::Standard,
             workspace_dir: PathBuf::from("."),
+            account_dir: None,
             action_dir: PathBuf::from("."),
             workspace_only: true,
             // When adding a new entry to this allowlist, re-audit

@@ -65,12 +65,8 @@ async fn admit_command_hooks(ctx: &DispatchCtx, loaded: &mut HookConfig) {
             // The configured privacy mode, not only the live one: hooks load
             // before the live policy is installed, and with security off the
             // local-only refusal of network commands reads the policy's mode.
-            crate::security::SecurityPolicy::from_config(
-                &config.autonomy,
-                &config.workspace_dir,
-                &config.action_dir,
-            )
-            .with_privacy_mode(config.privacy.mode)
+            crate::security::SecurityPolicy::for_config(&config)
+                .with_privacy_mode(config.privacy.mode)
         })
         .map_err(|error| error.to_string());
     let mut refused = Vec::new();

@@ -126,11 +126,7 @@ impl ApprovalCallbacks {
                 use crate::security::SecurityPolicy;
                 use tinyflows_bus::catalog::{ManifestCandidate, ManifestClass};
 
-                let security = SecurityPolicy::from_config(
-                    &config.autonomy,
-                    &config.workspace_dir,
-                    &config.action_dir,
-                );
+                let security = SecurityPolicy::for_config(&config);
                 async fn gated(
                     security: &SecurityPolicy,
                     class: CommandClass,

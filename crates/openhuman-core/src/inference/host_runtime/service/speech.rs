@@ -197,11 +197,7 @@ async fn validated_tts_output_path(
     let candidate_string = candidate
         .to_str()
         .ok_or_else(|| "invalid output_path".to_string())?;
-    let mut policy = crate::security::SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    );
+    let mut policy = crate::security::SecurityPolicy::for_config(config);
     policy.trusted_roots.push(crate::security::TrustedRoot {
         path: config.workspace_dir.display().to_string(),
         access: crate::security::TrustedAccess::ReadWrite,

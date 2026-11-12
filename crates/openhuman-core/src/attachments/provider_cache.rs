@@ -72,11 +72,7 @@ impl AttachmentModel {
             .parent()?
             .join(".openhuman-derived")
             .join("readout.txt");
-        let policy = crate::security::SecurityPolicy::from_config(
-            &self.config.autonomy,
-            &self.config.workspace_dir,
-            &root,
-        );
+        let policy = crate::security::SecurityPolicy::for_config_in(&self.config, &root);
         if !policy
             .path_allowed(crate::security::policy::PathKind::ResolvedWrite, &cache)
             .await
@@ -132,11 +128,7 @@ impl AttachmentModel {
         };
         let parent = cache.parent().expect("derivative parent");
         let root = super::super::action_root(&self.config, scope);
-        let policy = crate::security::SecurityPolicy::from_config(
-            &self.config.autonomy,
-            &self.config.workspace_dir,
-            &root,
-        );
+        let policy = crate::security::SecurityPolicy::for_config_in(&self.config, &root);
         if policy
             .validate_parent_path(&cache.to_string_lossy())
             .await
