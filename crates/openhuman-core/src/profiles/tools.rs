@@ -298,6 +298,7 @@ pub fn sandbox_policy_with(
         return Err("the sandbox cannot use the host network".to_string());
     }
     Ok(SandboxPolicy {
+        filesystem_only: false,
         backend: SandboxBackendKind::Docker,
         workspace_root: resolved,
         state_dir: state_dir.to_path_buf(),

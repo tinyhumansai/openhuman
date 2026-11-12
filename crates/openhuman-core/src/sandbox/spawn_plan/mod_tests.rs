@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 fn policy(backend: SandboxBackendKind) -> SandboxPolicy {
     SandboxPolicy {
+        filesystem_only: false,
         backend,
         workspace_root: PathBuf::from("/work/action"),
         state_dir: PathBuf::from("/state"),

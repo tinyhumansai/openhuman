@@ -35,6 +35,7 @@ fn sandbox_backend_kind_default_is_none() {
 #[test]
 fn sandbox_policy_serializes_roundtrip() {
     let policy = SandboxPolicy {
+        filesystem_only: false,
         backend: SandboxBackendKind::Docker,
         workspace_root: PathBuf::from("/workspace"),
         state_dir: PathBuf::from("/tmp/state"),
