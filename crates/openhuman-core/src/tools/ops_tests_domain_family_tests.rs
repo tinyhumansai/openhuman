@@ -355,3 +355,20 @@ async fn desktop_default_off_tools_retained_when_opted_in() {
         );
     }
 }
+
+/// No provider can fetch tasks today (senamakel/openhuman#324), so the full
+/// registry must not offer the model a `task_source_*` tool: a source added
+/// through one would never ingest anything.
+#[tokio::test]
+async fn task_source_tools_are_not_offered_while_no_provider_can_fetch() {
+    let tmp = TempDir::new().unwrap();
+    let names = tool_names(&expansion_tools_for(&tmp).await);
+    let offered: Vec<&String> = names
+        .iter()
+        .filter(|n| n.starts_with("task_source_"))
+        .collect();
+    assert!(
+        offered.is_empty(),
+        "task_source tools offered with no fetch-capable provider: {offered:?}"
+    );
+}
