@@ -97,7 +97,7 @@ pub(super) fn check_declared_length(
 /// caller creates the file and removes it on error.
 pub(super) async fn stream_to_file(
     mut response: reqwest::Response,
-    mut file: std::fs::File,
+    file: &mut std::fs::File,
     max_bytes: u64,
 ) -> Result<(u64, [u8; 32]), String> {
     let mut hasher = Sha256::new();

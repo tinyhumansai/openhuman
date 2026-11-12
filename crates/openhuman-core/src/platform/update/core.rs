@@ -526,9 +526,7 @@ pub async fn download_and_stage_with_version(
     let tmp_path = dir.join(format!(".{asset_name}.tmp"));
     let mut file = std::fs::File::create(&tmp_path)
         .map_err(|e| format!("failed to create temp file: {e}"))?;
-    file.flush()
-        .map_err(|e| format!("failed to create temp file: {e}"))?;
-    let streamed = download::stream_to_file(response, file, max_bytes).await;
+    let streamed = download::stream_to_file(response, &mut file, max_bytes).await;
     let refusal = match streamed {
         Ok((written, digest)) => {
             log::info!("[update] downloaded {written} bytes");
