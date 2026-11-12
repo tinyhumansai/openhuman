@@ -19,7 +19,7 @@ fn trusted_turn(session_key: &str) -> Arc<super::super::turn_host::TrustedAgentT
         channel: "telegram".into(),
         session_key: session_key.into(),
         event_session_id: "event-scope".into(),
-        origin: crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+        origin: crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
             channel: "telegram".into(),
             sender: Some("sender-a".into()),
             sender_name: Some("Alice".into()),
@@ -135,7 +135,7 @@ fn requeued_placeholder_adopts_trusted_agent_and_channel_identity() {
     assert_eq!(adopted.channel, "telegram");
     assert!(matches!(
         &adopted.origin,
-        crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+        crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
             sender: Some(sender), ..
         } if sender == "sender-a"
     ));

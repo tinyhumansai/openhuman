@@ -4,12 +4,12 @@ use serde::{de::DeserializeOwned, Serialize};
 use tinysecurity_bus::{
     BudgetDecision2, BudgetRequest2, CheckRequest, CheckResponse, CommandDecision, CommandPolicy,
     CommandPolicyId, CommandRequest, CredentialRootsRequest2, CredentialRootsResponse2, Decision,
-    HostActionClassRequest2, HostActionClassResponse2, KeyringRequest2, KeyringResponse2,
-    PathBatchRequest2, PathBatchResponse2, PathPolicy, PathPolicyId, PathValidationRequest,
-    PathValidationResult, PolicyInfo, PrivacyCheckRequest2, PrivacyCheckResponse2, ProtectedFloor2,
-    ProtectedPathRequest2, ProtectedPathResponse2, RedactMode, RedactRequest, RedactResponse,
-    RedactWithRequest, ScanPromptScoredRequest2, ScanPromptScoredResponse2, ScanResponse,
-    ScanToolDefinitionRequest, Secret,
+    HostActionClassRequest2, HostActionClassResponse2, PathBatchRequest2, PathBatchResponse2,
+    PathPolicy, PathPolicyId, PathValidationRequest, PathValidationResult, PolicyInfo,
+    PrivacyCheckRequest2, PrivacyCheckResponse2, ProtectedFloor2, ProtectedPathRequest2,
+    ProtectedPathResponse2, RedactMode, RedactRequest, RedactResponse, RedactWithRequest,
+    ScanPromptScoredRequest2, ScanPromptScoredResponse2, ScanResponse, ScanToolDefinitionRequest,
+    Secret,
 };
 
 use super::MODULE_ID;
@@ -20,12 +20,16 @@ use crate::config::Config;
 pub enum SecurityError {
     /// The module is absent, disabled, faulted, or failed to answer.
     Unavailable(String),
+    /// A person's approval the operation needs was denied or went unanswered;
+    /// the message says which, in words the Settings UI can show as is.
+    ApprovalRefused(String),
 }
 
 impl std::fmt::Display for SecurityError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unavailable(reason) => write!(f, "security module unavailable: {reason}"),
+            Self::ApprovalRefused(reason) => f.write_str(reason),
         }
     }
 }
@@ -36,6 +40,7 @@ impl std::error::Error for SecurityError {}
 #[derive(Clone)]
 pub struct Client {
     object: SecurityProxy,
+    audit_scope: Option<crate::security::approval::native::PermissionAudit>,
 }
 
 /// One admitted security API connection. Production calls travel through the
@@ -67,11 +72,11 @@ impl SecurityProxy {
             Self::Callback(proxy) => proxy
                 .call_confidential(member, args)
                 .await
-                .map_err(|_| "security module call failed".to_owned()),
+                .map_err(call_failed),
             Self::Module(proxy) => proxy
                 .call_confidential(member, args)
                 .await
-                .map_err(|_| "security module call failed".to_owned()),
+                .map_err(call_failed),
         }
     }
 
@@ -81,16 +86,34 @@ impl SecurityProxy {
         args: impl Serialize,
     ) -> Result<R, String> {
         match self {
-            Self::Callback(proxy) => proxy
-                .call(member, args)
-                .await
-                .map_err(|_| "security module call failed".to_owned()),
-            Self::Module(proxy) => proxy
-                .call(member, args)
-                .await
-                .map_err(|_| "security module call failed".to_owned()),
+            Self::Callback(proxy) => proxy.call(member, args).await.map_err(call_failed),
+            Self::Module(proxy) => proxy.call(member, args).await.map_err(call_failed),
         }
     }
+}
+
+/// What a caller sees when the module *answered no* (its `approval denied`
+/// failure: a policy denial no person can override), as opposed to failing to
+/// answer. Both fail closed; the approval engine keeps them apart so a refused
+/// scheduled job or unlabelled call is explained as such.
+pub(crate) const MODULE_REFUSED: &str = "security module refused the call";
+
+/// The module's own text for a refusal (`tinysecurity-module` `adapter.rs`).
+const MODULE_REFUSAL_MESSAGE: &str = "approval denied";
+
+/// Callers see one generic refusal; the log keeps the module's redacted reason.
+/// The one distinction kept is a policy denial ([`MODULE_REFUSED`]) from any
+/// other failure.
+fn call_failed<E: std::fmt::Display>(error: E) -> String {
+    let text = error.to_string();
+    tracing::debug!(
+        "[security] module call failed: {}",
+        tinybus::error::redact_values(&text)
+    );
+    if text == tinybus::Error::failed(MODULE_REFUSAL_MESSAGE).to_string() {
+        return MODULE_REFUSED.to_owned();
+    }
+    "security module call failed".to_owned()
 }
 
 impl Client {
@@ -109,86 +132,72 @@ impl Client {
             )
             .map_err(|_| "pinned security module proxy unavailable".to_owned())?;
         let object = SecurityProxy::callback(proxy);
-        Ok(Self { object })
+        // Audited permissions land on the module's init audit stream; the
+        // host keeps the calling tenant's share of it in the tenant's store.
+        let tenant = super::super::ops::security_tenant(config)
+            .map(|tenant| tenant.scope.clone())
+            .ok_or_else(|| "security audit scope unavailable".to_owned())?;
+        let (subject, stream_id) = super::policy::init_audit_identity();
+        let audit_scope =
+            crate::security::approval::native::permission_audit(&tenant, subject, &stream_id);
+        Ok(Self {
+            object,
+            audit_scope: Some(audit_scope),
+        })
     }
 
     #[cfg(test)]
     fn from_object(object: tinybus::module::ModuleObjectClient) -> Self {
         Self {
             object: SecurityProxy::Module(object),
+            audit_scope: None,
         }
     }
 
-    /// Run a paired-device lifecycle operation inside TinySecurity.
-    ///
-    /// The operation is confidential because it may carry a handshake frame,
-    /// an opaque pairing capability, or a host event identifier.
-    pub async fn device_pairing2(
+    async fn audited_permission(
         &self,
-        request: tinysecurity_bus::DevicePairingRequest2,
-    ) -> Result<tinysecurity_bus::DevicePairingResponse2, SecurityError> {
-        self.object
-            .call_confidential(
-                tinysecurity_bus::names::methods::DEVICE_PAIRING2,
-                (request,),
-            )
-            .await
-            .map_err(|error| SecurityError::Unavailable(error.to_string()))
+        request: tinysecurity_bus::PermissionRequest2,
+    ) -> Result<tinysecurity_bus::PermissionResult2, SecurityError> {
+        self.audited::<_, Option<tinysecurity_bus::PermissionResult2>>(
+            tinysecurity_bus::names::methods::CHECK_PERMISSION_AUDITED2,
+            request,
+        )
+        .await?
+        .ok_or_else(|| SecurityError::Unavailable("native permission result unavailable".into()))
     }
 
-    /// Admit the exact native approval scope into TinySecurity's paired-device
-    /// owner. The module derives its secret and persistence bindings from the
-    /// scope already registered at initialization.
-    pub async fn register_device_pairing_scope2(
-        &self,
-        request: tinysecurity_bus::RegisterDevicePairingScopeRequest2,
-    ) -> Result<tinysecurity_bus::DevicePairingScopeReceipt2, SecurityError> {
-        self.object
+    /// Call an audited member; its decision counts only with a committed receipt.
+    async fn audited<T, D>(&self, member: &str, request: T) -> Result<D, SecurityError>
+    where
+        T: Serialize + Send,
+        D: DeserializeOwned + Send,
+    {
+        let scope = self
+            .audit_scope
+            .as_ref()
+            .ok_or_else(|| SecurityError::Unavailable("security audit scope unavailable".into()))?;
+        let _ordered = scope.lock().await;
+        let generation = self.policy_info().await?.generation;
+        let audit = scope
+            .correlation(generation)
+            .await
+            .map_err(SecurityError::Unavailable)?;
+        let event_id = audit.event_id.clone();
+        let response: Result<tinysecurity_bus::AuditedResponse2<D>, String> = self
+            .object
             .call_confidential(
-                tinysecurity_bus::names::methods::REGISTER_DEVICE_PAIRING_SCOPE2,
-                (request,),
+                member,
+                (tinysecurity_bus::AuditedRequest2 { request, audit },),
             )
-            .await
-            .map_err(|error| SecurityError::Unavailable(error.to_string()))
-    }
-
-    /// Start an audited HumanOnce review for one native device operation.
-    pub async fn evaluate_device2(
-        &self,
-        request: tinysecurity_bus::EvaluateDeviceRequest2,
-    ) -> Result<tinysecurity_bus::ApprovalRow2, SecurityError> {
-        self.object
-            .call_confidential(
-                tinysecurity_bus::names::methods::EVALUATE_DEVICE2,
-                (request,),
-            )
-            .await
-            .map_err(|error| SecurityError::Unavailable(error.to_string()))
-    }
-
-    /// Execute only the exact native device operation reviewed by TinySecurity.
-    pub async fn execute_device2(
-        &self,
-        request: tinysecurity_bus::ExecuteDeviceRequest2,
-    ) -> Result<tinysecurity_bus::DeviceResponse2, SecurityError> {
-        self.object
-            .call_confidential(
-                tinysecurity_bus::names::methods::EXECUTE_DEVICE2,
-                (request,),
-            )
-            .await
-            .map_err(|error| SecurityError::Unavailable(error.to_string()))
-    }
-
-    /// Seal or open one live tunnel frame using TinySecurity's opaque session.
-    pub async fn device_frame2(
-        &self,
-        request: tinysecurity_bus::DeviceFrameRequest2,
-    ) -> Result<tinysecurity_bus::DeviceFrameResponse2, SecurityError> {
-        self.object
-            .call_confidential(tinysecurity_bus::names::methods::DEVICE_FRAME2, (request,))
-            .await
-            .map_err(|error| SecurityError::Unavailable(error.to_string()))
+            .await;
+        scope.settle(&event_id);
+        let response = response.map_err(SecurityError::Unavailable)?;
+        if !response.audit.permitted || !response.audit.committed {
+            return Err(SecurityError::Unavailable(
+                "native permission audit was not committed".into(),
+            ));
+        }
+        Ok(response.decision)
     }
 
     /// Read effective settings and advertised capabilities from the module.
@@ -297,6 +306,18 @@ impl Client {
         &self,
         request: PathBatchRequest2,
     ) -> Result<PathBatchResponse2, SecurityError> {
+        if self.audit_scope.is_some() {
+            return match self
+                .audited_permission(tinysecurity_bus::PermissionRequest2::CheckPaths(request))
+                .await?
+            {
+                tinysecurity_bus::PermissionResult2::Paths(result) => Ok(result),
+                _ => Err(SecurityError::Unavailable(
+                    "native permission reply does not match request".into(),
+                )),
+            };
+        }
+
         self.object
             .call_confidential(tinysecurity_bus::names::methods::CHECK_PATHS2, (request,))
             .await
@@ -308,6 +329,18 @@ impl Client {
         &self,
         request: PathValidationRequest,
     ) -> Result<PathValidationResult, SecurityError> {
+        if self.audit_scope.is_some() {
+            return match self
+                .audited_permission(tinysecurity_bus::PermissionRequest2::ValidatePath(request))
+                .await?
+            {
+                tinysecurity_bus::PermissionResult2::Path(result) => Ok(result),
+                _ => Err(SecurityError::Unavailable(
+                    "native permission reply does not match request".into(),
+                )),
+            };
+        }
+
         self.object
             .call_confidential(tinysecurity_bus::names::methods::VALIDATE_PATH, (request,))
             .await
@@ -319,6 +352,20 @@ impl Client {
         &self,
         request: PathValidationRequest,
     ) -> Result<PathValidationResult, SecurityError> {
+        if self.audit_scope.is_some() {
+            return match self
+                .audited_permission(tinysecurity_bus::PermissionRequest2::ValidateParent(
+                    request,
+                ))
+                .await?
+            {
+                tinysecurity_bus::PermissionResult2::Path(result) => Ok(result),
+                _ => Err(SecurityError::Unavailable(
+                    "native permission reply does not match request".into(),
+                )),
+            };
+        }
+
         self.object
             .call_confidential(
                 tinysecurity_bus::names::methods::VALIDATE_PARENT,
@@ -383,6 +430,18 @@ impl Client {
         &self,
         request: PrivacyCheckRequest2,
     ) -> Result<Decision, SecurityError> {
+        if self.audit_scope.is_some() {
+            return match self
+                .audited_permission(tinysecurity_bus::PermissionRequest2::PrivacyCheck(request))
+                .await?
+            {
+                tinysecurity_bus::PermissionResult2::Privacy(result) => Ok(result.decision),
+                _ => Err(SecurityError::Unavailable(
+                    "native permission reply does not match request".into(),
+                )),
+            };
+        }
+
         let response: PrivacyCheckResponse2 = self
             .object
             .call_confidential(tinysecurity_bus::names::methods::PRIVACY_CHECK2, (request,))
@@ -439,21 +498,6 @@ impl Client {
         self.object
             .call_confidential(
                 tinysecurity_bus::names::methods::CONSUME_BROWSER_DIAL,
-                (request,),
-            )
-            .await
-            .map_err(|error| SecurityError::Unavailable(error.to_string()))
-    }
-
-    /// Perform one OS keyring operation through TinySecurity. The module
-    /// obtains fresh, operation-scoped consent before touching the backend.
-    pub async fn keyring_access2(
-        &self,
-        request: KeyringRequest2,
-    ) -> Result<KeyringResponse2, SecurityError> {
-        self.object
-            .call_confidential(
-                tinysecurity_bus::names::methods::KEYRING_ACCESS2,
                 (request,),
             )
             .await
@@ -577,6 +621,15 @@ impl Client {
         &self,
         request: CommandRequest,
     ) -> Result<CommandDecision, SecurityError> {
+        if self.audit_scope.is_some() {
+            return self
+                .audited::<_, Option<CommandDecision>>(
+                    tinysecurity_bus::names::methods::CHECK_COMMAND_AUDITED2,
+                    request,
+                )
+                .await?
+                .ok_or_else(|| SecurityError::Unavailable("command decision unavailable".into()));
+        }
         self.object
             .call_confidential(tinysecurity_bus::names::methods::CHECK_COMMAND, (request,))
             .await
@@ -588,6 +641,14 @@ impl Client {
         &self,
         request: BudgetRequest2,
     ) -> Result<BudgetDecision2, SecurityError> {
+        if self.audit_scope.is_some() {
+            return self
+                .audited(
+                    tinysecurity_bus::names::methods::RESERVE_ACTION_BUDGET_AUDITED2,
+                    request,
+                )
+                .await;
+        }
         self.object
             .call_confidential(tinysecurity_bus::names::methods::SPEND_ACTION2, (request,))
             .await
@@ -599,12 +660,30 @@ impl Client {
         &self,
         request: BudgetRequest2,
     ) -> Result<BudgetDecision2, SecurityError> {
+        if self.audit_scope.is_some() {
+            return match self
+                .audited_permission(tinysecurity_bus::PermissionRequest2::PeekBudget(request))
+                .await?
+            {
+                tinysecurity_bus::PermissionResult2::Budget(result) => Ok(result),
+                _ => Err(SecurityError::Unavailable(
+                    "native permission reply does not match request".into(),
+                )),
+            };
+        }
+
         self.object
             .call_confidential(tinysecurity_bus::names::methods::PEEK_BUDGET2, (request,))
             .await
             .map_err(|error| SecurityError::Unavailable(error.to_string()))
     }
 }
+
+#[path = "client_device.rs"]
+mod device;
+
+#[path = "client_keyring.rs"]
+mod keyring;
 
 #[cfg(test)]
 #[path = "client_tests.rs"]

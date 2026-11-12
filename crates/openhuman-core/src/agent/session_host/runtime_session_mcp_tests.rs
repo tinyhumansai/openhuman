@@ -6,12 +6,13 @@ async fn connected_mcp_actions_enter_search_and_leave_on_disconnect() {
     crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin definitions");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let config = crate::config::Config {
+    let mut config = crate::config::Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Default::default()
     };
+    config.secrets.encrypt = false;
     crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
         &crate::core::runtime::DispatchCtx::ambient(),
@@ -77,12 +78,13 @@ async fn resumed_mcp_snapshot_survives_a_cold_catalog_and_keeps_its_frozen_spec(
     crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin definitions");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let config = crate::config::Config {
+    let mut config = crate::config::Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Default::default()
     };
+    config.secrets.encrypt = false;
     crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
         &crate::core::runtime::DispatchCtx::ambient(),

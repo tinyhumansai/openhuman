@@ -14,6 +14,7 @@ pub fn all_keyring_consent_controller_schemas() -> Vec<ControllerSchema> {
         keyring_consent_schema("decide"),
         keyring_consent_schema("retry_probe"),
         keyring_consent_schema("respond_operation"),
+        keyring_consent_schema("list_pending_operations"),
     ]
 }
 
@@ -35,6 +36,10 @@ pub fn all_keyring_consent_registered_controllers() -> Vec<RegisteredController>
             schema: keyring_consent_schema("respond_operation"),
             handler: handle_respond_operation,
         },
+        RegisteredController {
+            schema: keyring_consent_schema("list_pending_operations"),
+            handler: handle_list_pending_operations,
+        },
     ]
 }
 
@@ -44,6 +49,7 @@ pub(crate) fn all_keyring_consent_controller_entries() -> Vec<ControllerEntry> {
         ControllerEntry::bound(decide_controller()),
         ControllerEntry::bound(retry_probe_controller()),
         ControllerEntry::bound(respond_operation_controller()),
+        ControllerEntry::bound(list_pending_operations_controller()),
     ]
 }
 
@@ -121,6 +127,18 @@ fn keyring_consent_schema(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "list_pending_operations" => ControllerSchema {
+            namespace: "keyring_consent",
+            function: "list_pending_operations",
+            description: "List the TinySecurity keyring operations waiting for approval, for a renderer that has no socket yet (before sign-in).",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Array of pending operations, oldest expiry first, each shaped like the keyring access approval event: { request_id, caller_agent, origin, purpose, access, name, expires_at_ms }. Never includes a secret value.",
+                required: true,
+            }],
+        },
         _ => ControllerSchema {
             namespace: "keyring_consent",
             function: "unknown",
@@ -152,6 +170,13 @@ fn handle_respond_operation(ctx: DispatchCtx, params: Map<String, Value>) -> Con
     respond_operation_controller().invoke(ctx, params)
 }
 
+fn handle_list_pending_operations(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    list_pending_operations_controller().invoke(ctx, params)
+}
+
 fn status_controller() -> BoundRegisteredController {
     BoundRegisteredController::typed(keyring_consent_schema("status"), parse_status, run_status)
 }
@@ -173,6 +198,14 @@ fn respond_operation_controller() -> BoundRegisteredController {
         keyring_consent_schema("respond_operation"),
         parse_respond_operation,
         run_respond_operation,
+    )
+}
+
+fn list_pending_operations_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(
+        keyring_consent_schema("list_pending_operations"),
+        parse_status,
+        run_list_pending_operations,
     )
 }
 
@@ -236,6 +269,13 @@ fn run_respond_operation(
         Ok(serde_json::json!(
             super::operation_approval::resolve_approval(&request_id, approved,)
         ))
+    })
+}
+
+fn run_list_pending_operations(_ctx: DispatchCtx, (): ()) -> ControllerFuture {
+    Box::pin(async move {
+        serde_json::to_value(super::operation_approval::pending_requests())
+            .map_err(|error| error.to_string())
     })
 }
 

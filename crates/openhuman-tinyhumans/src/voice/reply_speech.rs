@@ -30,6 +30,79 @@ const LOG_PREFIX: &str = "[voice_reply]";
 /// The route this module posts to.
 const SPEECH_PATH: &str = "/openai/v1/audio/speech";
 
+/// Lives with the backend-error classifier, which is not gated on `voice`.
+pub use crate::inference::HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE;
+
+/// The backend's wrappings of an upstream ElevenLabs failure
+/// (`elevenlabsService` in the backend: TTS, streaming TTS, transcription).
+/// The backend always calls ElevenLabs with its own key, so a refusal there
+/// (TAURI-RUST-15BM / -15CT) is TinyHumans' account, not the user's.
+const HOSTED_ELEVENLABS_FAILURE_MARKERS: &[&str] = &[
+    "elevenlabs request failed (",
+    "elevenlabs streaming tts failed (",
+    "elevenlabs transcription failed (",
+];
+
+/// ElevenLabs `detail.status` codes meaning the backend's own account is out
+/// of money or quota, whatever HTTP status they arrive under.
+const HOSTED_BILLING_CODES: &[&str] =
+    &["payment_required", "insufficient_credits", "quota_exceeded"];
+
+/// Allowlisted category of a hosted upstream failure on the backend's own
+/// ElevenLabs account or service: logged in place of the raw body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HostedUpstreamFailure {
+    Billing,
+    Account,
+    RateLimited,
+    Service,
+}
+
+/// Classify a flattened hosted error as a failure of the backend's own
+/// ElevenLabs account or service, returning the category and the upstream
+/// status. Request errors the caller can fix (`voice_not_found`, text too
+/// long, other 4xx) return `None` so their message reaches the user.
+pub(crate) fn hosted_upstream_failure(raw: &str) -> Option<(HostedUpstreamFailure, u16)> {
+    let lower = raw.to_ascii_lowercase();
+    let (start, marker) = HOSTED_ELEVENLABS_FAILURE_MARKERS
+        .iter()
+        .find_map(|marker| lower.find(marker).map(|idx| (idx, *marker)))?;
+    let digits: String = lower[start + marker.len()..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    let status = digits.parse::<u16>().ok()?;
+    let category = if status == 402 || HOSTED_BILLING_CODES.iter().any(|code| lower.contains(code))
+    {
+        HostedUpstreamFailure::Billing
+    } else if matches!(status, 401 | 403 | 412) {
+        HostedUpstreamFailure::Account
+    } else if status == 429 {
+        HostedUpstreamFailure::RateLimited
+    } else if status >= 500 {
+        HostedUpstreamFailure::Service
+    } else {
+        return None;
+    };
+    Some((category, status))
+}
+
+/// Replace a hosted voice error caused by the backend's own upstream account
+/// or service with [`HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE`], logging only the
+/// allowlisted category and upstream status. Request errors and anything else
+/// pass through unchanged.
+pub(crate) fn map_hosted_voice_error(raw: String) -> String {
+    match hosted_upstream_failure(&raw) {
+        Some((category, status)) => {
+            warn!(
+                "{LOG_PREFIX} hosted upstream provider failure mapped to user message: category={category:?} upstream_status={status}"
+            );
+            HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE.to_string()
+        }
+        None => raw,
+    }
+}
+
 /// Env var that activates the [`test_seam`] short-circuit at runtime. When
 /// set to `1` / `true`, [`synthesize_reply`] records the requested text
 /// into [`test_seam::OBSERVED_CALLS`] and returns a stub
@@ -192,7 +265,11 @@ pub async fn synthesize_reply(
             Some(Value::Object(body)),
         )
         .await
-        .map_err(flatten_authed_error)?;
+        .map_err(flatten_authed_error)
+        // The backend's own ElevenLabs account refused (TAURI-RUST-15BM):
+        // `authed_json` already reported the raw failure, so the user gets a
+        // neutral "unavailable" message instead of a backend error line.
+        .map_err(map_hosted_voice_error)?;
 
     let result = normalize_response(&raw);
     debug!(

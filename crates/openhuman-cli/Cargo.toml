@@ -88,6 +88,52 @@ path = "../../tests/security_native_fixture.rs"
 required-features = ["security-module"]
 
 [[test]]
+# TinyComputer end to end with its staged release (TS-E2E-010); each test runs
+# by exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_tinycomputer"
+path = "../../tests/ts_e2e_tinycomputer.rs"
+required-features = ["security-module"]
+
+[[test]]
+# TinyComputer under LocalOnly with its staged release (TS-E2E-011); runs by
+# exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_computer_privacy"
+path = "../../tests/ts_e2e_computer_privacy.rs"
+required-features = ["security-module"]
+
+[[test]]
+# Which command hooks the host runs, with the staged TinySecurity release
+# (TS-E2E-019); runs by exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_hooks"
+path = "../../tests/ts_e2e_hooks.rs"
+required-features = ["security-module"]
+
+[[test]]
+# Host callbacks called by a peer that is not their module (TS-E2E-012); runs
+# by exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_callback_owner"
+path = "../../tests/ts_e2e_callback_owner.rs"
+required-features = ["inbound-queues", "security-module", "web3"]
+
+[[test]]
+# TinySecurity from a pinned release (no local-file source) serves later loads.
+name = "security_release_reuse_fixture"
+path = "../../tests/security_release_reuse_fixture.rs"
+required-features = ["security-module"]
+
+[[test]]
+# Callback-bound modules from a pinned release (no local-file source) load and reload.
+name = "callback_module_release_fixture"
+path = "../../tests/callback_module_release_fixture.rs"
+required-features = ["security-module"]
+
+[[test]]
+# Desktop sign-in stores its token through TinySecurity's OS keyring after approval.
+name = "desktop_sign_in_fixture"
+path = "../../tests/desktop_sign_in_fixture.rs"
+required-features = ["security-module"]
+
+[[test]]
 # Loads tinydocs from the linked executable and calls GenerateDocx end to end.
 # `scripts/test-rust-e2e.sh --suite tinydocs_linked_e2e` enables its local-only
 # `linked-modules,documents` feature requirements explicitly.
@@ -178,6 +224,11 @@ name = "storage_agent_scopes_e2e"
 path = "../../tests/storage_agent_scopes_e2e.rs"
 
 [[test]]
+# Its own binary: one live agent's pass leaves the others' due jobs alone.
+name = "cron_agent_pass_e2e"
+path = "../../tests/cron_agent_pass_e2e.rs"
+
+[[test]]
 # Its own binary: it boots a core with `[components]` switches off.
 name = "components_e2e"
 path = "../../tests/components_e2e.rs"
@@ -192,6 +243,11 @@ required-features = ["storage-sqlite", "modules", "flows", "linked-modules"]
 [[test]]
 name = "embedded_server_shutdown_e2e"
 path = "../../tests/embedded_server_shutdown_e2e.rs"
+
+[[test]]
+# Its own binary: it boots a core and owns the process event bus.
+name = "socketio_bridge_e2e"
+path = "../../tests/socketio_bridge_e2e.rs"
 
 [[test]]
 name = "observability_smoke"
@@ -308,6 +364,10 @@ name = "security_keyring_fixture"
 path = "../../tests/security_keyring_fixture.rs"
 
 [[test]]
+name = "prompt_screen_live_scope_e2e"
+path = "../../tests/prompt_screen_live_scope_e2e.rs"
+
+[[test]]
 name = "raw_coverage_all"
 path = "../../tests/raw_coverage_all.rs"
 # The merged raw-coverage target spans ~76 former files, so it reaches the
@@ -342,6 +402,13 @@ path = "../../tests/cli_agent_chat_headless_e2e.rs"
 [[test]]
 name = "cli_storage_url_e2e"
 path = "../../tests/cli_storage_url_e2e.rs"
+
+[[test]]
+# Spawns the real binary with its native TinySecurity cipher and no keyring
+# consent responder, as a product build runs.
+name = "settings_secret_grant_e2e"
+path = "../../tests/settings_secret_grant_e2e.rs"
+required-features = ["security-module"]
 
 [[test]]
 # Boots `openhuman-core serve` on a workspace with legacy approval rows.
@@ -473,7 +540,9 @@ uuid = { version = "1", features = ["v4"] }
 # the library crates' own manifests (`default-features = false`; the gates come
 # from this crate's features through `openhuman-rpc`), so the dev graphs unify
 # and `cargo test -p` reuses one core build.
-openhuman-core = { path = "../openhuman-core", package = "openhuman", default-features = false }
+# `test-keyring-consent` answers the credential store's keyring prompts in the
+# in-process tests; dev-dependency features never reach the shipped binary.
+openhuman-core = { path = "../openhuman-core", package = "openhuman", default-features = false, features = ["test-keyring-consent"] }
 openhuman-embed = { workspace = true }
 openhuman-tinyhumans = { workspace = true }
 tinymemory-tools = { path = "../../vendor/tinymemory/crates/tinymemory-tools" }
@@ -520,7 +589,7 @@ tinydocs-bus = { path = "../../vendor/tinydocs/crates/tinydocs-bus" }
 tinyeventqueues-bus = { path = "../../vendor/tinyeventqueues/crates/tinyeventqueues-bus" }
 tinysearch-bus = { path = "../../vendor/tinysearch/crates/tinysearch-bus" }
 tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false, features = ["macros", "uds"] }
-tinychannels = { version = "0.1", features = ["email"] }
+tinychannels = { version = "0.2", features = ["email"] }
 tinyinference-core = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-core" }
 tinyinference-local = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-local" }
 tinyinference-voice = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-voice" }

@@ -12,8 +12,33 @@ fn profile(tmp: &tempfile::TempDir, user: &str) -> Config {
     )
     .unwrap();
     let layout = ProfileLayout::new(tmp.path(), &id);
-    std::fs::create_dir_all(&layout.workspace_dir).unwrap();
-    profile_config(&layout, &id)
+    // Both directories, as the host opens a profile: the profile's policy is
+    // enabled, and TinySecurity refuses to initialise over a missing
+    // `action_dir`. If this suite admits the module first in the process, that
+    // refusal is terminal and every later secret operation in the test binary
+    // fails as "security module unavailable".
+    crate::profiles::host::create_dirs(&layout).unwrap();
+    let mut config = profile_config(&layout, &id);
+    // This suite verifies tenant isolation with synthetic credentials. The
+    // profile document remains encrypted at rest; native cipher consent has
+    // dedicated coverage in the credential suite.
+    config.secrets.encrypt = false;
+    config
+}
+
+/// The fixture is a profile as the host opens it: an enabled policy over
+/// directories that exist, so whichever test admits TinySecurity first in the
+/// process does not fault it for the whole test binary.
+#[test]
+fn the_profile_fixture_has_the_directories_its_enabled_policy_names() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = profile(&tmp, "fixture");
+    assert!(config.autonomy.enabled);
+    assert!(config.workspace_dir.is_dir());
+    assert!(
+        config.action_dir.is_dir(),
+        "TinySecurity requires action_dir"
+    );
 }
 
 #[tokio::test]

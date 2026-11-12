@@ -37,6 +37,12 @@ pub(crate) fn parameter_contracts() -> Vec<ControllerParamContract> {
             optional: &[],
             examples: vec![json!({ "request_id": "approval-1", "approved": true })],
         },
+        ControllerParamContract {
+            method: "keyring_consent.list_pending_operations",
+            required: &[],
+            optional: &[],
+            examples: vec![json!({})],
+        },
     ]
 }
 

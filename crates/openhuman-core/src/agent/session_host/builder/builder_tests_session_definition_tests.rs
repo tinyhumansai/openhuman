@@ -221,3 +221,23 @@ async fn a_padded_name_is_stored_as_the_definitions_own_id() {
         .expect("resolution never errors")
         .is_some());
 }
+
+/// TS-E2E-027: a caller that already built the session's policy hands it to
+/// the hosted base, so `build` makes no stand-in from a default config. That
+/// stand-in logged "autonomy policy DISABLED" on every turn, whatever the
+/// user's config said.
+#[tokio::test]
+async fn the_hosted_base_carries_the_policy_the_caller_built() {
+    let policy = Arc::new(crate::security::SecurityPolicy::default());
+    let agent = bare()
+        .agent_definition_name(SEAT)
+        .security_policy(Arc::clone(&policy))
+        .build()
+        .expect("a session with its own policy is a legal build");
+
+    let base = agent.hosted_base.as_ref().expect("a hosted base");
+    assert!(
+        Arc::ptr_eq(&base.security_policy, &policy),
+        "the hosted base must carry the caller's policy, not a stand-in"
+    );
+}

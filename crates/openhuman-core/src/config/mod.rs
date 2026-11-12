@@ -45,35 +45,35 @@ pub(crate) use schema::set_cli_inference_overrides;
 pub use schema::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, device_time_zone, normalize_time_zone,
-    output_language_directive, runtime_proxy_config, set_runtime_proxy_config, AgentConfig,
-    AuditConfig, AutonomyConfig, BrowserComputerUseConfig, BrowserConfig, BudgetAction,
-    BudgetPeriod, BudgetPolicy, BudgetScope, CapabilityProviderConfig,
+    output_language_directive, runtime_proxy_config, set_runtime_proxy_config,
+    Agent37RuntimeConfig, AgentConfig, AuditConfig, AutonomyConfig, BrowserComputerUseConfig,
+    BrowserConfig, BudgetAction, BudgetPeriod, BudgetPolicy, BudgetScope, CapabilityProviderConfig,
     CapabilityProviderTrustState, ChannelVoiceConfig, ChannelVoiceOverride, ChannelsConfig,
     CompactionSettings, CompactionStrategy, ComposioConfig, ComposioDirectBaseUrls,
     ComposioHostCredential, ComputerConfig, Config, ContextConfig, ContextSettings, CostConfig,
     CronConfig, CurlConfig, DashboardConfig, DecisionModel, DiagramViewerConfig, DiscordConfig,
     DockerRuntimeConfig, EmailConfig, EmbeddingRouteConfig, GitbooksConfig, HttpHeader,
     HttpRequestConfig, IMessageConfig, IntegrationToggle, IntegrationsConfig, LarkConfig,
-    LegacySearchInputs, LinqConfig, LocalAiConfig, LocalJailConfig, MatrixConfig, McpAuthConfig,
-    McpClientConfig, McpClientIdentityConfig, McpServerConfig, McpToolExposure, MemoryConfig,
-    MemoryLayoutMode, ModelRouteConfig, MultimodalConfig, MultimodalFileConfig,
-    ObservabilityConfig, OpenShellRuntimeConfig, OrchestratorModelConfig, PresentationMode,
-    PrivacyConfig, PrivacyMode, ProviderRoute, ProxyConfig, ProxyScope, ReliabilityConfig,
-    ResourceLimitsConfig, RuntimeConfig, SandboxBackend, SandboxConfig, SchedulerConfig,
-    SchedulerGateConfig, SchedulerGateMode, SearchConfig, SearchEngineCredentials,
-    SearchHostCredential, SearchProviderSettings, SearxngConfig, SecretsConfig, SecurityConfig,
-    ShellConfig, SlackConfig, StreamMode, SttEngine, TeamModelConfig, TelegramConfig,
-    TokenjuiceConfig, UnknownKeyedSearchProvider, UpdateConfig, UpdateRestartStrategy,
-    VoiceServerConfig, WebSearchConfig, WebhookConfig, YuanbaoConfig, MANAGED_SEARCH_PROVIDERS,
-    SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED,
-    SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY, SEARCH_PROVIDERS,
-    SEARCH_ROLES, SEARCH_ROLE_ANSWER, SEARCH_ROLE_CONTENTS, SEARCH_ROLE_SEARCH,
+    LegacySearchInputs, LinqConfig, LocalAiConfig, LocalJailConfig, McpAuthConfig, McpClientConfig,
+    McpClientIdentityConfig, McpServerConfig, McpToolExposure, MemoryConfig, MemoryLayoutMode,
+    ModelRouteConfig, MultimodalConfig, MultimodalFileConfig, ObservabilityConfig,
+    OpenShellRuntimeConfig, OrchestratorModelConfig, PresentationMode, PrivacyConfig, PrivacyMode,
+    ProviderRoute, ProxyConfig, ProxyScope, ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig,
+    SandboxBackend, SandboxConfig, SchedulerConfig, SchedulerGateConfig, SchedulerGateMode,
+    SearchConfig, SearchEngineCredentials, SearchHostCredential, SearchProviderSettings,
+    SearxngConfig, SecretsConfig, SecurityConfig, ShellConfig, SlackConfig, StreamMode, SttEngine,
+    TeamModelConfig, TelegramConfig, TokenjuiceConfig, UnknownKeyedSearchProvider, UpdateConfig,
+    UpdateRestartStrategy, VoiceServerConfig, WebSearchConfig, YuanbaoConfig,
+    MANAGED_SEARCH_PROVIDERS, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA,
+    SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY,
+    SEARCH_PROVIDERS, SEARCH_ROLES, SEARCH_ROLE_ANSWER, SEARCH_ROLE_CONTENTS, SEARCH_ROLE_SEARCH,
 };
 // Kept as a separate re-export (issue #4117) so the large alphabetized group
 // above stays byte-identical and rustfmt-stable.
 pub use schema::RequiredOutputContract;
-pub use schema::SummarizerSettings;
+pub use schema::{ContextOverrides, ReasoningReplay, SummarizerSettings};
 pub use schema::{InboundDebounceConfig, InboundDebounceOverride};
+pub use schema::{SecurityMode, SecurityModeConfig};
 pub use schemas::{
     all_controller_schemas as all_config_controller_schemas,
     all_registered_controllers as all_config_registered_controllers,

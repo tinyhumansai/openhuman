@@ -90,7 +90,7 @@ pub(crate) async fn admit_runtime_message(
                 }
             } else {
                 ChannelInboundSource::Legacy {
-                    message,
+                    message: Box::new(message),
                     envelope: inbound_envelope,
                 }
             };

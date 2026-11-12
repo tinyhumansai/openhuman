@@ -37,17 +37,16 @@ use super::web_errors::{
 };
 use crate::agent::queued_turn::QueuedPayload;
 use crate::core::events::DomainEvent;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::core::runtime::DispatchCtx;
-use crate::security::turn_origin::AgentTurnOrigin;
 use tinyagents_harness::progress::AgentProgress;
 
 #[path = "turn_host_progress.rs"]
 mod progress_helpers;
 #[cfg(test)]
 use progress_helpers::spawn_heartbeat_with_interval;
-use progress_helpers::{
-    settle_turn_snapshot, spawn_heartbeat, tap_progress, AbortOnDrop, LateSubagentSink,
-};
+pub(crate) use progress_helpers::LateSubagentSink;
+use progress_helpers::{settle_turn_snapshot, spawn_heartbeat, tap_progress, AbortOnDrop};
 
 /// How long a finished turn waits for its progress tap to forward every event
 /// the turn queued before the terminal `chat_done`/`chat_error` is published.
@@ -156,6 +155,7 @@ impl WebHost {
         // tools are all built on the thread's folder.
         let thread_dir = crate::threads::ops::thread_working_dir(
             &ctx,
+            &config,
             config.workspace_dir.clone(),
             &request.thread_id,
         )

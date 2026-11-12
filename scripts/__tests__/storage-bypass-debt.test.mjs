@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   mkdtempSync,
+  readFileSync,
   rmSync,
   mkdirSync,
   writeFileSync,
@@ -14,6 +15,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   validateCoverageDebt,
   validateAllowances,
+  validateRelocations,
   historicalFindings,
 } from "../ci/storage-bypass-debt.mjs";
 import {
@@ -32,6 +34,52 @@ const row = {
   issue: "https://github.com/tinyhumansai/openhuman/issues/7428",
 };
 const history = { baseline: [], extension: null, findings: [row] };
+test("only credential sites with pinned historical source proof relocate", () => {
+  const relocations = JSON.parse(
+    readFileSync(new URL("../ci/storage-bypass-relocations.json", import.meta.url)),
+  );
+  const current = relocations.map(({ source, trackedBefore, issue, ...site }) => site);
+  const trackedBefore = new Set(
+    relocations
+      .filter((record) => record.trackedBefore)
+      .map((record) =>
+        JSON.stringify([
+          record.trackedBefore.rule,
+          record.trackedBefore.path,
+          record.trackedBefore.text,
+          record.trackedBefore.occurrence,
+        ]),
+      ),
+  );
+  const proof = {
+    sourceCommit: relocations[0].source.commit,
+    findings: relocations.map((record) => record.source),
+    trackedBefore,
+  };
+  assert.deepEqual(validateRelocations(current, relocations, proof), []);
+
+  const droppedDebtProof = relocations.map((record, index) =>
+    index === 0 ? (({ trackedBefore, ...rest }) => rest)(record) : record,
+  );
+  assert.match(
+    validateRelocations(current, droppedDebtProof, proof).join("\n"),
+    /exact pre-refresh debt proof/,
+  );
+
+  const arbitrary = {
+    ...relocations[0],
+    path: "crates/openhuman-core/src/new_store.rs",
+    text: "fs::write(path, bytes)",
+  };
+  assert.match(
+    validateRelocations([...current, arbitrary], [...relocations, arbitrary], proof).join("\n"),
+    /no matching historical source proof/,
+  );
+  assert.match(
+    validateRelocations(current, relocations, { findings: [] }).join("\n"),
+    /no matching historical source proof/,
+  );
+});
 test("initial extension admits only exact existing canonical coverage", () => {
   assert.deepEqual(validateCoverageDebt([row], [], [row], history), []);
   const added = { ...row, path: "crates/openhuman-embed/src/new.rs" };

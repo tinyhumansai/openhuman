@@ -220,6 +220,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agen & Otonomi',
   'settings.devGroups.automationIntegrations': 'Otomasi & Integrasi',
   'settings.tokenUsage.title': 'Penghematan token',
+  'settings.secretGrant.title': 'Izinkan OpenHuman membuka rahasia tersimpan Anda?',
+  'settings.secretGrant.subtitle':
+    'Menyimpan pengaturan ini memerlukan persetujuan satu kali dari Anda untuk mengenkripsinya. Tolak untuk membatalkan penyimpanan.',
   'settings.tokenUsage.menuDesc':
     'Pengaturan kompresi dan berapa banyak token dan dolar yang telah dihemat',
   'settings.tokenUsage.saving': 'Menyimpan…',
@@ -3904,6 +3907,10 @@ const messages: TranslationMap = {
     'Agen sudah menjalankan jumlah langkah alat maksimum dalam satu giliran tanpa selesai. Biasanya ini berarti sebuah alat terus gagal (sering karena batas laju pada pengambilan web). Anda dapat mengulang pertanyaan yang sama di utas ini setelah batasnya pulih.',
   'chat_error.turn_timeout':
     'Giliran ini melewati batas waktunya tanpa selesai dan dihentikan agar tidak menggantung. Biasanya ini berarti panggilan alat atau sub-agen yang didelegasikan macet. Anda dapat mengulang pertanyaan Anda di utas ini.',
+  'chat_error.disk_full':
+    'Disk Anda penuh, sehingga percakapan ini tidak dapat disimpan. Kosongkan sebagian ruang disk, lalu kirim ulang pesan Anda di utas ini.',
+  'chat_error.prompt_screened':
+    'Pemeriksaan keamanan OpenHuman menahan pesan ini, jadi pesan tidak dikirim ke model. Jika pesan mengutip instruksi yang ditujukan untuk asisten (misalnya dari halaman web atau email), hapus instruksi itu lalu coba lagi. Jika pesan biasa juga ditahan, modul keamanan mungkin tidak tersedia: mulai ulang OpenHuman lalu coba lagi.',
   'chat_error.empty_response':
     'Model mengembalikan respons kosong. Silakan coba lagi. Jika terus terjadi, coba model lain atau periksa pengaturannya di Koneksi → Kunci API → LLM.',
   'chat_error.chat_template_rejected':
@@ -4395,6 +4402,10 @@ const messages: TranslationMap = {
     'Akses mikrofon ditolak. Izinkan di pengaturan sistem lalu coba lagi.',
   'voice.live.error.micUnavailable': 'Tidak ada mikrofon yang tersedia.',
   'voice.live.error.connection': 'Tidak dapat terhubung ke agen suara.',
+  'voice.live.error.insufficientCredits':
+    'Suara langsung memerlukan lebih banyak kredit. Tambahkan kredit untuk melanjutkan.',
+  'voice.live.error.paidPlanRequired':
+    'Suara langsung memerlukan paket berbayar. Tingkatkan paket untuk melanjutkan.',
   'voice.live.toolRunning': 'Menjalankan {name}',
   'voice.live.toolOk': '{name} selesai',
   'voice.live.toolFailed': '{name} gagal',
@@ -4648,11 +4659,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'Penjara proses penamaan',
   'settings.sandbox.backendHint.bubblewrap': 'Namespace pengguna ringan',
   'settings.sandbox.backendHint.none': 'Jalankan alat secara langsung, tidak terisolasi',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Inventaris alat',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Jumlah alat',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Alat aktif',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'Alat MCP stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'Alat JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Postur kebijakan',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Tingkat otonomi',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Hanya ruang kerja',

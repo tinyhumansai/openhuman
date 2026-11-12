@@ -2,6 +2,7 @@
 //! construction, workspace resolution, cancellation-safe execution, and the
 //! store-type <-> wire-type conversions every handler needs.
 
+use super::title_generation::is_replaceable_title;
 use crate::config::Config;
 use crate::core::runtime::context::CoreContext;
 use crate::core::runtime::DispatchCtx;
@@ -223,13 +224,50 @@ pub(super) async fn update_thread_with_fallback_title(
     let Some(title) = fallback_title_from_user_message(&thread.id, user_message) else {
         return Ok(thread);
     };
-    if title == thread.title {
-        return Ok(thread);
+    update_title_unless_renamed(ctx, dir, thread, title, user_message).await
+}
+
+/// Writes a system-chosen `title` over `observed` unless the thread was renamed
+/// after `observed` was read, and returns the thread as it now stands.
+///
+/// Title generation reads the thread and then waits seconds on the model; a
+/// rename the user makes in that window is theirs and must win (#8134). A
+/// placeholder or interim title written meanwhile by a concurrent titling call
+/// is not a rename and is still replaced. This re-reads just before writing
+/// rather than compare-and-set, since the store has no conditional title
+/// write; the window left is that read-to-write gap.
+pub(super) async fn update_title_unless_renamed(
+    ctx: &DispatchCtx,
+    dir: PathBuf,
+    observed: ConversationThread,
+    title: String,
+    first_user_message: &str,
+) -> Result<ConversationThread, String> {
+    let current = conversations::blocking::list_threads(ctx.clone(), dir.clone())
+        .await?
+        .into_iter()
+        .find(|thread| thread.id == observed.id);
+    if let Some(current) = current {
+        if current.title == title {
+            return Ok(current);
+        }
+        // `observed` already passed the caller's reply-count check, so only the
+        // title's shape matters here.
+        if current.title != observed.title
+            && !is_replaceable_title(&current.title, Some(first_user_message), 0)
+        {
+            tracing::debug!(
+                thread_id = %observed.id,
+                title_hash = %title_log_fingerprint(&current.title),
+                "{THREAD_TITLE_LOG_PREFIX} thread renamed while titling; keeping the new title"
+            );
+            return Ok(current);
+        }
     }
     conversations::blocking::update_thread_title(
         ctx.clone(),
         dir,
-        thread.id.clone(),
+        observed.id.clone(),
         title,
         chrono::Utc::now().to_rfc3339(),
     )

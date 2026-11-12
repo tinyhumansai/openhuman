@@ -16,9 +16,7 @@ fn entry(slug: &str, endpoint: &str, auth_style: AuthStyle) -> CloudProviderCred
 }
 
 fn config(tmp: &TempDir, providers: Vec<CloudProviderCreds>) -> Config {
-    let mut config = Config::default();
-    config.workspace_dir = tmp.path().join("workspace");
-    config.config_path = tmp.path().join("config.toml");
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(tmp.path());
     config.cloud_providers = providers;
     config
 }

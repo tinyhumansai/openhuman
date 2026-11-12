@@ -181,12 +181,16 @@ impl Blocking {
             ));
         }
         let (reply, result) = mpsc::sync_channel(1);
+        // Spawn rather than `block_on` on the owner thread: a request may
+        // await work on another runtime (a module's) that itself makes a
+        // bridge call from a thread outside this runtime. Serialising requests
+        // on the owner thread would queue that call behind the request waiting
+        // for it and deadlock. Workers carry the re-entrancy guard.
         self.tasks
             .send(Box::new(move |runtime| {
-                ON_STORAGE_RUNTIME.with(|active| active.set(true));
-                let outcome = runtime.block_on(future);
-                ON_STORAGE_RUNTIME.with(|active| active.set(false));
-                let _ = reply.send(outcome);
+                runtime.spawn(async move {
+                    let _ = reply.send(future.await);
+                });
             }))
             .map_err(|error| StorageError::backend(format!("storage bridge stopped: {error}")))?;
         result
@@ -302,6 +306,31 @@ pub fn installed_url() -> Option<String> {
         .clone()
 }
 
+/// The driver of the installed backend, however it was installed. Unlike
+/// [`INSTALLED_URL`] it is also known for a backend a host opened from a URL
+/// and installed with [`install`], and it never makes [`rebind`] manage the
+/// backend.
+static INSTALLED_DRIVER: Mutex<Option<String>> = Mutex::new(None);
+
+fn set_installed_driver(driver: Option<String>) {
+    *INSTALLED_DRIVER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = driver;
+}
+
+/// The driver name of the installed backend (`mongodb`, `sqlite`, `memory`,
+/// `file`), when the host said which one it installed.
+pub fn installed_driver() -> Option<String> {
+    #[cfg(test)]
+    if !slot_visible_here() {
+        return None;
+    }
+    INSTALLED_DRIVER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
 /// The storage URL a host opens at startup: [`STORAGE_URL_VAR`], else
 /// `config`'s `[storage] url`, else the default for `config`'s workspace
 /// ([`config::default_url`]). `None` only in SaaS mode with nothing
@@ -403,6 +432,7 @@ pub fn install(backend: Arc<dyn StorageBackend>) -> Option<Arc<dyn StorageBacken
     #[cfg(test)]
     set_slot_owner(std::thread::current().name().map(str::to_owned));
     set_installed_url(None);
+    set_installed_driver(None);
     let previous = BACKEND.install(backend);
     // What was recorded described the previous backend.
     agents::reset_recorded();
@@ -419,6 +449,20 @@ pub fn install_for_url(
 ) -> Option<Arc<dyn StorageBackend>> {
     let previous = install(backend);
     set_installed_url(Some(url.to_string()));
+    set_installed_driver(StorageUrl::parse(url).ok().map(|u| u.driver().to_string()));
+    previous
+}
+
+/// [`install`] for a backend `driver` opened, remembering the driver name so
+/// [`installed_is_shared`] can tell whether other processes may write to it.
+/// Use it when the backend was opened from a URL the host does not want
+/// [`rebind`] to manage; [`install_for_url`] records the driver from its URL.
+pub fn install_with_driver(
+    driver: &str,
+    backend: Arc<dyn StorageBackend>,
+) -> Option<Arc<dyn StorageBackend>> {
+    let previous = install(backend);
+    set_installed_driver(Some(driver.to_string()));
     previous
 }
 
@@ -434,6 +478,7 @@ pub fn installed() -> Option<Arc<dyn StorageBackend>> {
 /// Removes the installed backend; returns whether there was one.
 pub fn clear() -> bool {
     set_installed_url(None);
+    set_installed_driver(None);
     agents::reset_recorded();
     let cleared = BACKEND.clear();
     // Only after the backend is gone, so other tests never see it in between.
@@ -575,12 +620,11 @@ pub fn driver_has_cross_process_cas(driver: &str) -> bool {
 }
 
 /// Whether the installed backend may be shared with other processes; `false`
-/// when none is installed. See [`driver_is_shared`].
+/// when none is installed or its driver is unknown. Judged by the driver the
+/// host recorded at install ([`install_for_url`], [`install_with_driver`]), so
+/// it holds however the backend was opened. See [`driver_is_shared`].
 pub fn installed_is_shared() -> bool {
-    installed_url()
-        .as_deref()
-        .and_then(|url| StorageUrl::parse(url).ok())
-        .is_some_and(|config| driver_is_shared(config.driver()))
+    installed_driver().as_deref().is_some_and(driver_is_shared)
 }
 
 /// A stable key for a legacy import source (a workspace directory), for the

@@ -47,6 +47,33 @@ pub(crate) fn sandbox_component_off(ctx: &DispatchCtx) -> bool {
     off
 }
 
+/// Whether a command on this call runs in a box the tenant keeps between
+/// commands ([`SandboxBackendKind::keeps_boxes`]), the way the shell would
+/// route it: not under SaaS (profiles run in containers), and not when the
+/// host or the config turns the sandbox off.
+pub(crate) fn sandbox_keeps_boxes(ctx: &DispatchCtx, config: &crate::config::Config) -> bool {
+    !crate::core::runtime::is_saas() && !sandbox_disabled_by_host(ctx) && config_keeps_boxes(config)
+}
+
+/// The work folder of the box a command on this call runs in, when
+/// [`sandbox_keeps_boxes`]: `/sandbox` on OpenShell, `/home/node` on agent37.
+pub(crate) fn sandbox_box_workdir(
+    ctx: &DispatchCtx,
+    config: &crate::config::Config,
+) -> Option<&'static str> {
+    if !sandbox_keeps_boxes(ctx, config) {
+        return None;
+    }
+    crate::sandbox::boxes::BoxBackend::configured(config).map(|backend| backend.workdir())
+}
+
+/// [`sandbox_keeps_boxes`] for what the config alone says.
+pub(crate) fn config_keeps_boxes(config: &crate::config::Config) -> bool {
+    !config_disables_sandbox(config)
+        && crate::sandbox::policy::named_backend(&config.sandbox, &config.runtime, false)
+            .keeps_boxes()
+}
+
 /// The saved config says no isolation: the legacy `enabled = false` flag or
 /// `[components] sandbox = false`.
 pub(crate) fn config_disables_sandbox(config: &crate::config::Config) -> bool {
@@ -134,6 +161,14 @@ pub async fn create_sandbox_backend_with_config(
         // to probe or name yet; the gateway's availability shows on that call.
         SandboxBackendKind::OpenShell => Ok(SandboxBackendHandle {
             kind: SandboxBackendKind::OpenShell,
+            status: SandboxStatus::Ready,
+            backend_id: None,
+            isolation: None,
+        }),
+        // A box is created per command on the hosted service; nothing to probe
+        // or name until that call.
+        SandboxBackendKind::Agent37 => Ok(SandboxBackendHandle {
+            kind: SandboxBackendKind::Agent37,
             status: SandboxStatus::Ready,
             backend_id: None,
             isolation: None,

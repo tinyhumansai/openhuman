@@ -205,6 +205,22 @@ pub fn user_id_from_jwt_claims(token: &str) -> Option<String> {
 }
 
 pub async fn build_session_state(config: &Config) -> Result<AuthStateResponse, String> {
+    // A profile this process's TinySecurity was not admitted for cannot read
+    // or write its credentials; report the restart it is waiting for instead.
+    if profile_restart_pending(config).await {
+        return Ok(AuthStateResponse {
+            is_authenticated: false,
+            user_id: crate::config::default_root_openhuman_dir()
+                .ok()
+                .and_then(|root| crate::config::read_active_user_id(&root)),
+            user: None,
+            profile_id: None,
+            credential: None,
+            expires_at: None,
+            issuing_backend: None,
+            restart_required: true,
+        });
+    }
     // The API key wins whenever both are present — same precedence as
     // `resolve_backend_credential`, which every backend request actually
     // authenticates with. Checked before the session profile loads: a host
@@ -223,10 +239,22 @@ pub async fn build_session_state(config: &Config) -> Result<AuthStateResponse, S
             credential: Some(super::responses::CREDENTIAL_API_KEY.to_string()),
             expires_at: None,
             issuing_backend: None,
+            restart_required: false,
         });
     }
     let profile = load_app_session_profile(config).await?;
     Ok(session_state_from_profile(profile.as_ref()))
+}
+
+/// Binds the signed-in user the stored session names: the Sentry scope
+/// (#3135) and the identity slot prompt composition reads.
+pub async fn bind_session_user(config: &Config) -> Result<(), String> {
+    let state = build_session_state(config).await?;
+    if let Some(uid) = state.user_id.as_deref() {
+        crate::core::observability::sentry_scope::bind(uid);
+    }
+    super::identity::set_current_user(state.user);
+    Ok(())
 }
 
 pub async fn get_session_token(config: &Config) -> Result<Option<String>, String> {
@@ -393,6 +421,7 @@ pub fn session_state_from_profile(profile: Option<&AuthProfile>) -> AuthStateRes
             credential: None,
             expires_at: None,
             issuing_backend: None,
+            restart_required: false,
         };
     };
 
@@ -413,6 +442,7 @@ pub fn session_state_from_profile(profile: Option<&AuthProfile>) -> AuthStateRes
             .metadata
             .get(SESSION_ISSUING_BACKEND_META)
             .and_then(|backend| normalize_session_backend(backend).ok()),
+        restart_required: false,
     }
 }
 
@@ -426,6 +456,44 @@ pub fn session_token_from_profile(profile: Option<&AuthProfile>) -> Option<Strin
         .map(str::trim)
         .filter(|token| !token.is_empty())
         .map(str::to_string)
+}
+
+/// Whether `config`'s profile is not the one this process's TinySecurity was
+/// admitted for. TinySecurity's secret, approval and audit identity is fixed
+/// for the life of the process, so switching profiles needs a restart.
+pub(crate) async fn profile_restart_pending(config: &Config) -> bool {
+    #[cfg(feature = "security-module")]
+    {
+        let Some(admitted) = crate::modules::ops::security_admitted_key_path().await else {
+            return false;
+        };
+        is_profile_switch(&admitted, &profile_key_path(&config.config_path))
+    }
+    #[cfg(not(feature = "security-module"))]
+    {
+        let _ = config;
+        false
+    }
+}
+
+/// Whether TinySecurity admitted for `admitted` cannot serve `target`, another
+/// profile of this installation. Both must sit under the installation's root:
+/// a key path outside it (an explicit workspace, another process's scratch
+/// home) is not a profile a restart switches to.
+pub(crate) fn is_profile_switch(admitted: &std::path::Path, target: &std::path::Path) -> bool {
+    let Ok(root) = crate::config::default_root_openhuman_dir() else {
+        return false;
+    };
+    admitted != target && admitted.starts_with(&root) && target.starts_with(&root)
+}
+
+/// The secret key path TinySecurity is admitted for when a profile's config
+/// lives at `config_path` (see `modules::security::host_callbacks`).
+pub(crate) fn profile_key_path(config_path: &std::path::Path) -> std::path::PathBuf {
+    config_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(".secret_key")
 }
 
 #[cfg(test)]

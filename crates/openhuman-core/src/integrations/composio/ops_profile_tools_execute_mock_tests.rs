@@ -189,9 +189,12 @@ async fn composio_execute_via_mock_succeeds_and_logs_elapsed() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base).await;
-    let outcome = composio_execute(&config, "GMAIL_SEND", Some(json!({"to": "a"})), None)
-        .await
-        .unwrap();
+    let outcome = crate::integrations::composio::module_client::test_support::scoped(
+        &config,
+        composio_execute(&config, "GMAIL_SEND", Some(json!({"to": "a"})), None),
+    )
+    .await
+    .unwrap();
     assert!(outcome.value.successful);
     assert!(outcome
         .logs
@@ -209,9 +212,12 @@ async fn composio_execute_via_mock_propagates_backend_error() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base).await;
-    let err = composio_execute(&config, "ANY_TOOL", None, None)
-        .await
-        .unwrap_err();
+    let err = crate::integrations::composio::module_client::test_support::scoped(
+        &config,
+        composio_execute(&config, "ANY_TOOL", None, None),
+    )
+    .await
+    .unwrap_err();
     // The dispatcher (`execute_composio_action`) classifies transport
     // failures and prefixes them with `[composio:error:<class>] …`; ops.rs
     // preserves that prefix so the frontend formatter can parse the class.

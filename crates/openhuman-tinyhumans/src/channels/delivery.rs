@@ -30,9 +30,11 @@ pub(super) fn map_backend_error(error: anyhow::Error) -> ProgressiveTransportRes
 fn request_channel(request: &ProgressiveTransportRequest) -> &str {
     match request {
         ProgressiveTransportRequest::Send { channel, .. }
+        | ProgressiveTransportRequest::SendTyped { channel, .. }
         | ProgressiveTransportRequest::Edit { channel, .. }
         | ProgressiveTransportRequest::Delete { channel, .. }
-        | ProgressiveTransportRequest::Typing { channel, .. } => channel,
+        | ProgressiveTransportRequest::Typing { channel, .. }
+        | ProgressiveTransportRequest::OutputEvent { channel, .. } => channel,
     }
 }
 
@@ -81,21 +83,84 @@ pub(super) async fn execute(
     }
 }
 
+/// The body of a typed send.
+///
+/// The `tinychannels-bus` `SendTyped` contract skips every absent context field
+/// (`skip_serializing_if = "Option::is_none"`), so the wire body does too: a
+/// `null` key is not "absent" to a backend that validates the field, and a
+/// text-only turn carries an empty `parts` list rather than none.
+#[allow(clippy::too_many_arguments)]
+fn typed_send_body(
+    text: String,
+    parts: Vec<tinychannels_bus::channel::OutboundContentPart>,
+    turn_id: Option<String>,
+    channel_ref: Option<tinychannels_bus::channel::ChannelRef>,
+    conversation: Option<tinychannels_bus::channel::ConversationRef>,
+    sequence: Option<u64>,
+    segment_index: Option<u32>,
+    idempotency_key: Option<String>,
+) -> serde_json::Value {
+    let mut context = serde_json::Map::new();
+    let mut put = |key: &str, value: Option<serde_json::Value>| {
+        if let Some(value) = value {
+            context.insert(key.to_owned(), value);
+        }
+    };
+    put("turnId", turn_id.map(Into::into));
+    put("channelRef", channel_ref.map(|v| json!(v)));
+    put("conversation", conversation.map(|v| json!(v)));
+    put("sequence", sequence.map(Into::into));
+    put("segmentIndex", segment_index.map(Into::into));
+    put("idempotencyKey", idempotency_key.map(Into::into));
+    json!({"text": text, "parts": parts, "transportContext": context})
+}
+
 async fn send(
     client: &BackendClient,
     credential: &BackendCredential,
     request: ProgressiveTransportRequest,
 ) -> ProgressiveTransportResult {
     let result = match request {
-        ProgressiveTransportRequest::Send { channel, message } => {
+        ProgressiveTransportRequest::Send {
+            channel, message, ..
+        } => {
             client
                 .send_channel_message(&channel, credential.clone(), message)
+                .await
+        }
+        ProgressiveTransportRequest::SendTyped {
+            channel,
+            turn_id,
+            channel_ref,
+            conversation,
+            sequence,
+            segment_index,
+            idempotency_key,
+            parts,
+            text,
+        } => {
+            client
+                .send_channel_message(
+                    &channel,
+                    credential.clone(),
+                    typed_send_body(
+                        text,
+                        parts,
+                        turn_id,
+                        channel_ref,
+                        conversation,
+                        sequence,
+                        segment_index,
+                        idempotency_key,
+                    ),
+                )
                 .await
         }
         ProgressiveTransportRequest::Edit {
             channel,
             message_id,
             text,
+            ..
         } => {
             client
                 .send_channel_edit(
@@ -109,15 +174,19 @@ async fn send(
         ProgressiveTransportRequest::Delete {
             channel,
             message_id,
+            ..
         } => {
             client
                 .send_channel_delete(&channel, &message_id, credential.clone(), None)
                 .await
         }
-        ProgressiveTransportRequest::Typing { channel } => {
+        ProgressiveTransportRequest::Typing { channel, .. } => {
             client
                 .send_channel_typing(&channel, credential.clone(), json!({}))
                 .await
+        }
+        ProgressiveTransportRequest::OutputEvent { .. } => {
+            return ProgressiveTransportResult::Failed;
         }
     };
     match result {

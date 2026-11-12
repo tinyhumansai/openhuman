@@ -1,5 +1,5 @@
 // Self-test for the CI lane flow: scripts/ci/self-hosted/{lanes-plan,lanes}.mjs
-// (run by ci-fast.yml / ci-fast-hosted.yml through ci-lanes.yml).
+// (run by ci-fast-hosted.yml through ci-lanes.yml).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 import {
   AREA_ENV,
   HOSTED_GROUPS,
+  INBOUND_MODULE_E2E,
+  RUST_COV_SHARDS,
   areasFromEnv,
   buildPlan,
   hostedMatrix,
@@ -46,21 +48,6 @@ const ALL = Object.fromEntries(Object.keys(AREA_ENV).map((k) => [k, true]));
 const NONE = Object.fromEntries(Object.keys(AREA_ENV).map((k) => [k, false]));
 const EX63_ENV = { CI_SCRATCH_DIR: "/scratch" };
 
-test("EX63 verifies preinstalled tools before cache setup and validation", () => {
-  const privateJob = ciLanes.slice(
-    ciLanes.indexOf("  ex63:"),
-    ciLanes.indexOf("  plan:"),
-  );
-  const verify = privateJob.indexOf("- name: Verify private runner contract");
-  const cache = privateJob.indexOf("- name: Setup Tinymold");
-  const detect = privateJob.indexOf("- name: Detect changed areas");
-  const start = privateJob.indexOf("- name: Start lanes");
-  assert.ok(verify >= 0 && cache > verify && detect > cache && start > detect);
-  assert.match(privateJob, /bash scripts\/ci\/self-hosted\/verify-runner\.sh/);
-  assert.doesNotMatch(privateJob, /setup-python|apt-get|JQ_SHA256|sccache/);
-  assert.match(privateJob, /Save Tinymold cache[\s\S]*continue-on-error: true/);
-});
-
 const plans = () => [
   buildPlan({ profile: "ex63", areas: ALL, env: EX63_ENV }),
   buildPlan({ profile: "hosted", areas: ALL }),
@@ -81,8 +68,15 @@ test("every hosted group resolves on its own, and every hosted lane has exactly 
     assert.deepEqual(validatePlan(sub), [], g.group);
     assert.deepEqual(orderProblems(sub), [], g.group);
   }
-  const grouped = HOSTED_GROUPS.flatMap((g) => g.lanes).sort();
+  // rust-cov is the one lane hosted CI shards: one group per shard.
+  const grouped = [
+    ...new Set(HOSTED_GROUPS.flatMap((g) => g.lanes)),
+  ].sort();
   assert.deepEqual(grouped, plan.lanes.map((l) => l.name).sort());
+  const counts = HOSTED_GROUPS.flatMap((g) => g.lanes).filter(
+    (n) => n !== "rust-cov",
+  );
+  assert.equal(new Set(counts).size, counts.length);
 });
 
 test("Rust coverage installs the mock backend dependencies without a frontend area", () => {
@@ -123,15 +117,12 @@ test("commands are static: no suite is ever narrowed to the diff", () => {
   }
 });
 
-test("ex63 runs the core's unit tests under nextest; hosted keeps cargo's runner", () => {
+test("every profile runs the core's unit tests under nextest (one process per test)", () => {
   for (const plan of plans()) {
     const cov = plan.lanes
       .find((l) => l.name === "rust-cov")
       .checks.find((c) => c.name === "rust-core-coverage");
-    assert.equal(
-      cov.env.OH_COV_RUNNER,
-      plan.profile === "ex63" ? "nextest" : undefined,
-    );
+    assert.equal(cov.env.OH_COV_RUNNER, "nextest", plan.profile);
   }
   assert.match(
     fs.readFileSync(path.join(repoRoot, ".config/nextest.toml"), "utf8"),
@@ -301,7 +292,7 @@ test("the storage area arms the core coverage lane, which covers every storage d
     if (profile === "hosted") {
       assert.deepEqual(
         hostedMatrix(plan).map((g) => g.group),
-        ["checks", "rust-cov"],
+        ["checks", ...RUST_COV_SHARDS.map((s) => `rust-cov-${s}`)],
       );
     }
   }
@@ -339,7 +330,11 @@ test("hosted matrix only spins up groups with active lanes", () => {
   );
   assert.deepEqual(
     core.map((g) => g.group),
-    ["checks", "rust-lint", "rust-cov"],
+    [
+      "checks",
+      "rust-lint",
+      ...RUST_COV_SHARDS.map((s) => `rust-cov-${s}`),
+    ],
   );
   const pester = hostedMatrix(
     buildPlan({ profile: "hosted", areas: { ...NONE, installPs1: true } }),
@@ -1117,6 +1112,30 @@ test("offline embed examples install staged modules in their own rust-lint job",
   }
 });
 
+test("the tauri lane stages the test modules its coverage run loads", () => {
+  // The shell's artifact commands ask TinySecurity whether a file is in a
+  // protected location and the module fails closed when absent, so
+  // `resolve_source_*` and `save_as_*` are refused unless the lane stages it.
+  for (const plan of plans()) {
+    const tauri = plan.lanes.find((lane) => lane.name === "tauri");
+    const install = tauri.checks.find((c) => c.name === "install-test-modules");
+    const coverage = tauri.checks.find((c) => c.name === "tauri-coverage");
+    assert.ok(install, `${plan.profile} tauri must provision its module artifacts`);
+    assert.match(install.run, /install-test-modules\.sh/);
+    assert.equal(install.when, coverage.when, plan.profile);
+    assert.deepEqual(coverage.needs, ["install-test-modules"], plan.profile);
+    assert.match(
+      coverage.run,
+      /^set -a && \. ci-out\/test-modules\.env && set \+a && /,
+      `${plan.profile} tauri-coverage sources the staged module env`,
+    );
+    assert.ok(
+      tauri.checks.indexOf(install) < tauri.checks.indexOf(coverage),
+      plan.profile,
+    );
+  }
+});
+
 test("private ordinary Rust builds keep line tables while coverage and hosted profiles remain unchanged", () => {
   for (const plan of plans()) {
     for (const lane of plan.lanes.filter((lane) => lane.heavy != null)) {
@@ -1222,4 +1241,94 @@ test("the ex63 profile logs where the scratch disk's space goes at each lane end
     null,
   );
   assert.equal(diskUsageReport({ profile: "ex63", scratch: "", run }), null);
+});
+
+test("the inbound area runs the inbound module E2E against the staged modules, and only then (#8155)", () => {
+  for (const profile of ["hosted", "ex63"]) {
+    const env = profile === "ex63" ? EX63_ENV : {};
+    const armed = buildPlan({ profile, areas: { ...NONE, inbound: true }, env });
+    assert.deepEqual(validatePlan(armed), [], profile);
+    const lane = armed.lanes.find((l) => l.name === "inbound-e2e");
+    assert.equal(lane.active, true, profile);
+    const run = lane.checks.find((c) => c.name === "inbound-module-e2e");
+    assert.equal(run.when, true);
+    assert.deepEqual(run.needs, ["install-test-modules"]);
+    // The staged release paths come from the installer's env file.
+    assert.match(run.run, /^set -a && \. ci-out\/test-modules\.env && set \+a && /);
+    assert.ok(run.run.endsWith(INBOUND_MODULE_E2E));
+    assert.match(
+      lane.checks.find((c) => c.name === "install-test-modules").run,
+      /install-test-modules\.sh/,
+    );
+
+    const rustOnly = buildPlan({ profile, areas: { ...NONE, rustCore: true }, env });
+    assert.equal(
+      rustOnly.lanes.find((l) => l.name === "inbound-e2e").active,
+      false,
+      `${profile}: a core change outside the inbound paths does not pay for the build`,
+    );
+  }
+  const hosted = (areas) =>
+    hostedMatrix(buildPlan({ profile: "hosted", areas })).map((g) => g.group);
+  assert.ok(hosted({ ...NONE, inbound: true }).includes("inbound-e2e"));
+  assert.ok(!hosted({ ...NONE, rustCore: true }).includes("inbound-e2e"));
+});
+
+test("the inbound module E2E names exactly the gates its target requires", () => {
+  const manifest = fs.readFileSync(
+    path.join(repoRoot, "crates/openhuman-cli/Cargo.toml"),
+    "utf8",
+  );
+  const block = manifest
+    .split("[[test]]")
+    .find((b) => /^name = "inbound_module_e2e"$/m.test(b));
+  assert.ok(block, "crates/openhuman-cli declares the inbound_module_e2e target");
+  const required = JSON.parse(block.match(/^required-features = (\[.*\])$/m)[1]);
+  const features = INBOUND_MODULE_E2E.match(/--features (\S+)/)[1].split(",");
+  assert.deepEqual([...features].sort(), [...required].sort());
+  assert.match(INBOUND_MODULE_E2E, /-p openhuman-cli .*--test inbound_module_e2e$/);
+});
+
+test("the inbound path filter arms its lane for the inbound host, the module host and the module pin", () => {
+  const filters = fs.readFileSync(
+    path.join(repoRoot, ".github/ci-paths-filter.yml"),
+    "utf8",
+  );
+  const block = filters.split(/^inbound:\s*$/m)[1].split(/^\S[^\n]*:/m)[0];
+  for (const entry of [
+    ".github/ci-paths-filter.yml",
+    "scripts/ci/self-hosted/**",
+    "crates/openhuman-core/src/inbound/**",
+    "crates/openhuman-core/src/modules/**",
+    "tests/inbound_module_e2e.rs",
+    "vendor/tinyeventqueues",
+  ]) {
+    assert.ok(block.includes(`'${entry}'`), `${entry} must arm the inbound area`);
+  }
+  assert.match(ciLanes, /CI_AREA_INBOUND: \$\{\{ steps\.filter\.outputs\.inbound \}\}/);
+  // The plan job schedules the group; the lane job rebuilds the plan from
+  // its own environment, so the flag must reach it too or the lane runs
+  // nothing and passes.
+  assert.match(ciLanes, /^ {6}inbound: \$\{\{ steps\.filter\.outputs\.inbound \}\}$/m);
+  assert.match(ciLanes, /CI_AREA_INBOUND: \$\{\{ needs\.plan\.outputs\.inbound \}\}/);
+});
+
+test("every lane has a step in ci-lanes.yml that waits on it", () => {
+  const plan = buildPlan({ profile: "hosted", areas: ALL });
+  for (const lane of plan.lanes) {
+    assert.ok(
+      ciLanes.includes(`lanes.mjs --wait ${lane.name}\n`),
+      `ci-lanes.yml has no \`Lane:\` step for ${lane.name}`,
+    );
+  }
+});
+
+test("every area flag the plan job reads reaches the lane job", () => {
+  for (const name of Object.values(AREA_ENV)) {
+    assert.match(
+      ciLanes,
+      new RegExp(`${name}: \\$\\{\\{ needs\\.plan\\.outputs`),
+      `${name} is not forwarded to the lane job`,
+    );
+  }
 });

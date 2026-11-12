@@ -65,6 +65,7 @@ fn backend_name(backend: &crate::config::SandboxBackend) -> &'static str {
         SandboxBackend::Bubblewrap => "bubblewrap",
         SandboxBackend::Docker => "docker",
         SandboxBackend::OpenShell => "openshell",
+        SandboxBackend::Agent37 => "agent37",
         SandboxBackend::None => "none",
     }
 }
@@ -79,16 +80,17 @@ fn parse_backend(name: &str) -> Result<crate::config::SandboxBackend, String> {
         "landlock" => SandboxBackend::Landlock,
         "firejail" | "bubblewrap" => {
             return Err(format!(
-                "unsupported sandbox backend '{name}': this build uses TinyBox for native sandboxing; valid: auto, landlock, docker, openshell, none"
+                "unsupported sandbox backend '{name}': this build uses TinyBox for native sandboxing; valid: auto, landlock, docker, openshell, agent37, none"
             ));
         }
         "docker" => SandboxBackend::Docker,
         "openshell" => SandboxBackend::OpenShell,
+        "agent37" => SandboxBackend::Agent37,
         "none" => SandboxBackend::None,
         other => {
             log::warn!("[config][sandbox] rejected unknown backend: {other}");
             return Err(format!(
-                "unknown sandbox backend '{other}'; valid: auto, landlock, docker, openshell, none"
+                "unknown sandbox backend '{other}'; valid: auto, landlock, docker, openshell, agent37, none"
             ));
         }
     })

@@ -43,6 +43,20 @@ async fn disabled_encryption_preserves_plaintext() {
     assert_eq!(store.decrypt_via_security("plain").await.unwrap(), "plain");
 }
 
+#[tokio::test]
+async fn disabled_encryption_keeps_legacy_migration_as_a_plaintext_noop() {
+    let temp = TempDir::new().unwrap();
+    let store = SecretStore::new(&temp.path(), false);
+
+    let (plaintext, replacement) = store
+        .decrypt_and_migrate_via_security("legacy plaintext")
+        .await
+        .unwrap();
+
+    assert_eq!(plaintext, "legacy plaintext");
+    assert_eq!(replacement, None);
+}
+
 #[test]
 fn encrypted_prefixes_remain_compatible() {
     assert!(SecretStore::is_encrypted("enc2:ciphertext"));
@@ -58,4 +72,24 @@ fn keyring_user_id_uses_directory_name_or_stable_hash() {
     let first = keyring_user_id_from_dir(Path::new("/"));
     assert_eq!(first, keyring_user_id_from_dir(Path::new("/")));
     assert!(first.starts_with("secretstore-path-"));
+}
+
+/// The first cipher call in a process must admit the module itself. Reading the
+/// secret scope first reported an unavailable scope on every embedder that had
+/// not loaded TinySecurity some other way (`--example profiles`).
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn the_first_cipher_call_admits_the_module_before_it_reads_the_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = crate::credentials::test_support::plaintext_fixture_config(dir.path());
+    let store = SecretStore::new_with_config(dir.path(), true, &config);
+
+    let outcome = store.encrypt_via_security("first-call").await;
+
+    if let Err(error) = outcome {
+        assert!(
+            !error.to_string().contains("secret scope is unavailable"),
+            "{error}"
+        );
+    }
 }

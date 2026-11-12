@@ -354,3 +354,7 @@ pub(crate) async fn module_lock_guard() -> tokio::sync::MutexGuard<'static, ()> 
 #[cfg(test)]
 #[path = "module_client_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "module_client_test_support.rs"]
+pub(crate) mod test_support;

@@ -245,6 +245,25 @@ pub struct Config {
     #[serde(default)]
     pub privacy: PrivacyConfig,
 
+    /// Whether untrusted input is screened for prompt injection
+    /// (`[prompt_screen]`). Missing block → enforced, failing closed when
+    /// TinySecurity gives no verdict.
+    #[serde(default)]
+    pub prompt_screen: PromptScreenConfig,
+
+    /// Whether the checks OpenHuman delegates to TinySecurity run
+    /// (`[security]`). Missing block → enforced, failing closed when the
+    /// module cannot answer. `off` allows every delegated check and implies
+    /// the prompt screen is off.
+    #[serde(default)]
+    pub security: SecurityModeConfig,
+
+    /// The Jev judge's route when the host supplies its own credential.
+    /// Absent from the user wire format: it holds a secret.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub security_judge: Option<SecurityJudgeRoute>,
+
     #[serde(default)]
     pub sandbox: SandboxConfig,
 
@@ -500,6 +519,11 @@ pub struct Config {
     /// Hosting provider credentials and switch (`hosting` feature).
     #[serde(default)]
     pub hosting: HostingConfig,
+
+    /// Native-wallet spend policy for executes without a per-transfer human
+    /// confirmation (`[wallet_policy]`); read by `web3::wallet::policy`.
+    #[serde(default)]
+    pub wallet_policy: WalletPolicyConfig,
 
     /// Storage backend for state on the `tinystoragedrivers` ports
     /// (`[storage]`). Empty uses the default, `sqlite:<workspace>/storage`.

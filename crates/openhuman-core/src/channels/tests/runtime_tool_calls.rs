@@ -130,7 +130,8 @@ async fn process_channel_message_handles_models_command_without_llm_call() {
     let _core = crate::channels::runtime::test_support::bind_test_core_context(
         &mut runtime_ctx,
         linked.config(),
-    );
+    )
+    .await;
     // `/models` offers the configured cloud providers; register the managed
     // backend so the command can switch to it.
     crate::channels::register_hosted_route_test_policy();

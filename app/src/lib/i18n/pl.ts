@@ -223,6 +223,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agenci i autonomia',
   'settings.devGroups.automationIntegrations': 'Automatyzacja i integracje',
   'settings.tokenUsage.title': 'Oszczędność tokenów',
+  'settings.secretGrant.title': 'Zezwolić OpenHuman na odblokowanie zapisanych sekretów?',
+  'settings.secretGrant.subtitle':
+    'Zapisanie tego ustawienia wymaga jednorazowej zgody na jego zaszyfrowanie. Odmów, aby anulować zapis.',
   'settings.tokenUsage.menuDesc': 'Ustawienia kompresji oraz ile tokenów i dolarów zaoszczędziły',
   'settings.tokenUsage.saving': 'Zapisywanie…',
   'settings.tokenUsage.saved': 'Zapisano',
@@ -3929,6 +3932,10 @@ const messages: TranslationMap = {
     'Agent wykonał maksymalną liczbę kroków z narzędziami w jednej turze i nie zakończył jej. Zwykle oznacza to, że narzędzie wciąż zawodziło (często z powodu limitu zapytań przy pobieraniu strony). Gdy limit ustąpi, możesz ponowić to samo pytanie w tym wątku.',
   'chat_error.turn_timeout':
     'Ta tura przekroczyła limit czasu bez zakończenia i została zatrzymana, aby się nie zawiesić. Zwykle oznacza to, że zawiesiło się wywołanie narzędzia lub delegowany podagent. Możesz ponowić pytanie w tym wątku.',
+  'chat_error.disk_full':
+    'Dysk jest pełny, więc nie udało się zapisać tej rozmowy. Zwolnij trochę miejsca na dysku, a potem wyślij wiadomość ponownie w tym wątku.',
+  'chat_error.prompt_screened':
+    'Kontrola bezpieczeństwa OpenHuman wstrzymała tę wiadomość, więc nie została wysłana do modelu. Jeśli cytuje ona instrukcje przeznaczone dla asystenta (na przykład ze strony internetowej lub e-maila), usuń je i spróbuj ponownie. Jeśli wstrzymywane są też zwykłe wiadomości, moduł bezpieczeństwa może być niedostępny: uruchom ponownie OpenHuman i spróbuj jeszcze raz.',
   'chat_error.empty_response':
     'Model zwrócił pustą odpowiedź. Spróbuj ponownie. Jeśli to się powtarza, wypróbuj inny model lub sprawdź jego konfigurację w Połączenia → Klucze API → LLM.',
   'chat_error.chat_template_rejected':
@@ -4417,6 +4424,10 @@ const messages: TranslationMap = {
     'Odmówiono dostępu do mikrofonu. Zezwól na niego w ustawieniach systemu i spróbuj ponownie.',
   'voice.live.error.micUnavailable': 'Brak dostępnego mikrofonu.',
   'voice.live.error.connection': 'Nie udało się połączyć z agentem głosowym.',
+  'voice.live.error.insufficientCredits':
+    'Głos na żywo wymaga więcej środków. Doładuj środki, aby kontynuować.',
+  'voice.live.error.paidPlanRequired':
+    'Głos na żywo wymaga płatnego planu. Przejdź na wyższy plan, aby kontynuować.',
   'voice.live.toolRunning': 'Trwa {name}',
   'voice.live.toolOk': 'Ukończono {name}',
   'voice.live.toolFailed': 'Błąd: {name}',
@@ -4671,11 +4682,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'Namespaced procesu więzienia',
   'settings.sandbox.backendHint.bubblewrap': 'Lekkie paczki nazw użytkowników',
   'settings.sandbox.backendHint.none': 'Uruchom narzędzia bezpośrednio, nieizolowane',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Lista narzędzi',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Łączna liczba narzędzi',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Włączone narzędzia',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'Narzędzia MCP stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'Narzędzia JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Stan zasad',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Poziom autonomii',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Tylko obszar roboczy',

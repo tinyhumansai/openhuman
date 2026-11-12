@@ -16,7 +16,6 @@ mod schemas;
 pub mod session_state;
 pub mod tools;
 
-#[cfg(feature = "security-module")]
 pub(crate) use core::credential_files;
 pub use core::{
     channel_credential_provider, default_profile_id, normalize_provider, select_profile_id,
@@ -41,3 +40,6 @@ pub use schemas::{
     all_controller_schemas as all_credentials_controller_schemas,
     all_registered_controllers as all_credentials_registered_controllers,
 };
+
+#[cfg(test)]
+pub(crate) mod test_support;

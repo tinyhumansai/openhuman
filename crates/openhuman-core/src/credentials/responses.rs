@@ -22,6 +22,12 @@ pub struct AuthStateResponse {
     /// Backend that issued this session. Legacy sessions have no association.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issuing_backend: Option<String>,
+    /// The active profile is not the one this process's TinySecurity serves:
+    /// a sign-in, sign-out or account switch completes only after the host
+    /// restarts the process. `user_id` names the profile it restarts into
+    /// (absent for the signed-out profile).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restart_required: bool,
 }
 
 /// `AuthStateResponse::credential` value for an app-session JWT.

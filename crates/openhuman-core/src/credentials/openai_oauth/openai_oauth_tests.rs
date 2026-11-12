@@ -77,10 +77,7 @@ impl ProviderCredentialSource for RotatingTokenSource {
 async fn concurrent_refresh_persists_rotated_token_and_stable_metadata_once() {
     let _env = OAUTH_TEST_LOCK.lock().await;
     let tmp = TempDir::new().unwrap();
-    let config = crate::config::Config {
-        config_path: tmp.path().join("config.toml"),
-        ..crate::config::Config::default()
-    };
+    let config = crate::credentials::test_support::plaintext_fixture_config(tmp.path());
     let profiles = AuthProfilesStore::new(tmp.path(), false);
     profiles
         .upsert_profile(
@@ -116,7 +113,10 @@ async fn concurrent_refresh_persists_rotated_token_and_stable_metadata_once() {
     assert_eq!(second.unwrap().unwrap().access_token, "fresh-access");
     assert_eq!(source.refresh_count.load(Ordering::SeqCst), 1);
 
-    let profile = profiles
+    // Read back through the config-bound store the refresh writes with: under
+    // `security-module` it keeps the rotated secrets in the keyring, and a
+    // document-only store never surfaces a keyring-owned profile.
+    let profile = AuthProfilesStore::new_with_config(tmp.path(), false, &config)
         .load()
         .await
         .unwrap()

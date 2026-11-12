@@ -8,7 +8,7 @@ async fn a_binding_no_agent_answers_is_refused_not_sent_to_the_orchestrator() {
     let channel = Arc::new(crate::channels::runtime::TestChannel::new("telegram"));
     let ctx = context(
         Arc::clone(&channel),
-        config(&tmp, Some("nobody-registered")),
+        config(&tmp, Some("nobody-registered")).await,
     );
 
     process_channel_message(ctx, message("hello")).await;
@@ -41,7 +41,7 @@ async fn an_unbound_channel_runs_the_orchestrator() {
         .mount(&provider)
         .await;
     let tmp = tempfile::tempdir().unwrap();
-    let mut config = config(&tmp, None);
+    let mut config = config(&tmp, None).await;
     config.default_model = Some("fixture".into());
     let route = crate::config::schema::EphemeralRoute::from_params(
         Some(format!("{}/v1", provider.uri())),

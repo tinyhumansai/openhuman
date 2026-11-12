@@ -141,8 +141,8 @@ impl Rows {
     ///
     /// When the scope cannot be resolved (SaaS mode with no acting profile), so
     /// the call fails instead of reading a shared bucket.
-    pub(super) fn current(config: &Config) -> anyhow::Result<Self> {
-        let opened = local::open(DOMAIN, &config.workspace_dir)?;
+    pub(super) async fn current(config: &Config) -> anyhow::Result<Self> {
+        let opened = local::open_async(DOMAIN, &config.workspace_dir).await?;
         let scoped = opened.scoped()?;
         Ok(Self::over(Arc::clone(scoped.documents())))
     }
@@ -343,6 +343,18 @@ impl Rows {
         let query = Query::filter(Filter::eq("pending", false))
             .sort(Sort::desc("decided_ts"))
             .limit(limit);
+        let page = self.docs.query(ROWS, &query).await.map_err(storage)?;
+        page.items.iter().map(decode_row).collect()
+    }
+
+    /// Pending rows whose window is still open, oldest first.
+    pub(super) async fn open(&self, now: u64, limit: usize) -> Result<Vec<StoredRow>, String> {
+        self.ready().await?;
+        let cutoff = i64::try_from(now).unwrap_or(i64::MAX);
+        let query =
+            Query::filter(Filter::eq("pending", true).and(Filter::gt("expires_ts", cutoff)))
+                .sort(Sort::asc("expires_ts"))
+                .limit(limit);
         let page = self.docs.query(ROWS, &query).await.map_err(storage)?;
         page.items.iter().map(decode_row).collect()
     }

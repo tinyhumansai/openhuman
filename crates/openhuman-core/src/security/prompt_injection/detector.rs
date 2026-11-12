@@ -124,26 +124,49 @@ fn held_decision(
     decision
 }
 
-/// Screen user or untrusted text through TinySecurity. Missing configuration,
-/// module failure, timeout, and oversized inputs all fail closed as Review.
-pub async fn enforce_prompt_input(
+/// The decision for input that is not screened: security is disabled
+/// (`crate::security::switch`) or the host turned the screen off
+/// (`[prompt_screen] mode = "off"`). Nothing is logged per input: the runtime
+/// says once at boot that screening is off.
+fn unscreened_decision(input: &str) -> PromptEnforcementDecision {
+    PromptEnforcementDecision {
+        verdict: PromptInjectionVerdict::Allow,
+        score: 0.0,
+        reasons: Vec::new(),
+        action: PromptEnforcementAction::Allow,
+        prompt_hash: prompt_hash(input),
+        prompt_chars: input.chars().count(),
+    }
+}
+
+/// A unit test's scripted scan answer ([`super::scan_port`]); test-support
+/// builds outside unit tests always scan through TinySecurity.
+#[cfg(all(
+    feature = "security-module",
+    any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+))]
+async fn scripted_scan(
+    _input: &str,
+) -> Option<Result<tinysecurity_bus::ScanPromptScoredResponse2, String>> {
+    #[cfg(test)]
+    {
+        super::scan_port::scripted_scan(_input).await
+    }
+    #[cfg(not(test))]
+    {
+        None
+    }
+}
+
+/// One bounded `ScanPrompt2`; the outer error is the budget running out.
+#[cfg(feature = "security-module")]
+async fn scan_within_budget(
+    config: &crate::config::Config,
     input: &str,
-    context: PromptEnforcementContext<'_>,
-) -> PromptEnforcementDecision {
-    if input.len() > MAX_PROMPT_BYTES {
-        return held_decision(input, context, "input.oversized");
-    }
-    #[cfg(feature = "security-module")]
-    let Some(config) = crate::core::runtime::CoreContext::current_embedder_config() else {
-        return held_decision(input, context, "screen.unavailable");
-    };
-    #[cfg(not(feature = "security-module"))]
-    if crate::core::runtime::CoreContext::current_embedder_config().is_none() {
-        return held_decision(input, context, "screen.unavailable");
-    }
-    #[cfg(feature = "security-module")]
-    let scanned = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        let client = crate::modules::security::client(&config)
+) -> Result<Result<tinysecurity_bus::ScanPromptScoredResponse2, String>, tokio::time::error::Elapsed>
+{
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let client = crate::modules::security::client(config)
             .await
             .map_err(|error| error.to_string())?;
         client
@@ -151,7 +174,130 @@ pub async fn enforce_prompt_input(
             .await
             .map_err(|error| error.to_string())
     })
-    .await;
+    .await
+}
+
+/// Screen user or untrusted text through TinySecurity. Missing configuration,
+/// module failure, timeout, and oversized inputs all fail closed as Review,
+/// unless security is disabled or the configuration turns the screen off.
+///
+/// Reads only the boot-time embedder snapshot, which exists for a preloaded
+/// config or a `SecretPreflight` boot. A host booted `Normal` (the CLI's
+/// `serve`) without a preloaded config has none, so with security enabled
+/// every call here is held. Screen with the caller's
+/// dispatch ([`enforce_prompt_input_in`]) or config
+/// ([`enforce_prompt_input_with_config`]) instead.
+pub async fn enforce_prompt_input(
+    input: &str,
+    context: PromptEnforcementContext<'_>,
+) -> PromptEnforcementDecision {
+    let config = crate::core::runtime::CoreContext::current_embedder_config();
+    enforce_prompt_input_with_config(input, context, config.as_ref()).await
+}
+
+/// Screen using the request owner's configuration, including a normal host's
+/// persisted config. An unbound dispatch cannot borrow another tenant's scanner.
+pub(crate) async fn enforce_prompt_input_in(
+    dispatch: &crate::core::runtime::DispatchCtx,
+    input: &str,
+    context: PromptEnforcementContext<'_>,
+) -> PromptEnforcementDecision {
+    let config = screening_config_in(dispatch).await;
+    dispatch
+        .enter(enforce_prompt_input_with_config(
+            input,
+            context,
+            config.as_ref(),
+        ))
+        .await
+}
+
+/// The configuration [`enforce_prompt_input_in`] screens `dispatch`'s input
+/// with: its owner's, or none (a held decision) for an unbound dispatch. Load
+/// it once to screen many inputs.
+pub(crate) async fn screening_config_in(
+    dispatch: &crate::core::runtime::DispatchCtx,
+) -> Option<crate::config::Config> {
+    dispatch
+        .enter(async {
+            if dispatch.resolved().is_some() {
+                dispatch.load_config().await.ok()
+            } else {
+                None
+            }
+        })
+        .await
+}
+
+/// Screen against the configuration supplied by the owning dispatch. Missing
+/// authority remains a held decision, even if another task has a configuration.
+/// Disabled security (no `security-module` feature, or `[security] mode =
+/// "off"`) and a configuration with `[prompt_screen] mode = "off"` allow the
+/// input without a scan; every screening path goes through here, so all of them
+/// honour both.
+pub(crate) async fn enforce_prompt_input_with_config(
+    input: &str,
+    context: PromptEnforcementContext<'_>,
+    config: Option<&crate::config::Config>,
+) -> PromptEnforcementDecision {
+    if crate::security::switch::disabled_for(config).is_some()
+        || config.is_some_and(|config| !config.prompt_screen.enforces())
+    {
+        return unscreened_decision(input);
+    }
+    if input.len() > MAX_PROMPT_BYTES {
+        return held_decision(input, context, "input.oversized");
+    }
+    // A test process has no booted host: a fixture with no configuration, or
+    // one that turned modules off, screens through the test host's module.
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let test_host_config = config
+        .is_none_or(|config| !config.modules.enabled)
+        .then(crate::modules::security::test_host::screening_config)
+        .flatten();
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let config = test_host_config.as_ref().or(config);
+    let Some(config) = config else {
+        return held_decision(input, context, "screen.unavailable");
+    };
+    #[cfg(not(feature = "security-module"))]
+    let _ = config;
+    #[cfg(all(
+        feature = "security-module",
+        not(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))
+    ))]
+    let scanned = scan_within_budget(config, input).await;
+    // On the module bus: a test's paused clock would otherwise expire the
+    // budget the moment it waits on another runtime, and a first load is
+    // not what the budget is sized for.
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let scanned = if let Some(answer) = scripted_scan(input).await {
+        Ok(answer)
+    } else {
+        let (config, input) = (config.clone(), input.to_owned());
+        // The bus task starts with no ambient context: carry the caller's, or
+        // a SaaS tenant's scan loads TinySecurity with no storage scope.
+        let scan = crate::core::runtime::CoreContext::propagate(async move {
+            let _ = crate::modules::security::ensure_loaded(&config).await;
+            scan_within_budget(&config, &input).await
+        });
+        let task = crate::modules::runtime::spawn_on_bus(scan);
+        match task {
+            Ok(task) => task
+                .await
+                .unwrap_or_else(|error| Ok(Err(error.to_string()))),
+            Err(error) => Ok(Err(error.to_string())),
+        }
+    };
     #[cfg(not(feature = "security-module"))]
     let scanned: Result<Result<tinysecurity_bus::ScanPromptScoredResponse2, String>, ()> = Err(());
     let response = match scanned {
@@ -220,10 +366,54 @@ pub struct ToolDefinitionScanHit {
     pub verdict: PromptInjectionVerdict,
 }
 
+/// The configuration tool-definition scans run with: the embedder's, else the
+/// loaded one.
+///
+/// A host booted `Normal` (the CLI's `serve`) has no embedder snapshot, but it
+/// does have a persisted config; requiring the snapshot made every scan there
+/// report `scan.unavailable`. `None` only when no config can be loaded, which
+/// callers treat as the scanner being unavailable (fail closed).
+pub(crate) async fn tool_scan_config() -> Option<crate::config::Config> {
+    if let Some(config) = crate::core::runtime::CoreContext::current_embedder_config() {
+        return Some(config);
+    }
+    match crate::core::runtime::DispatchCtx::ambient()
+        .load_config()
+        .await
+    {
+        Ok(config) => Some(config),
+        Err(error) => {
+            tracing::debug!(
+                %error,
+                "[prompt_injection] tool_scan_config: config load failed; scan unavailable"
+            );
+            None
+        }
+    }
+}
+
 /// Scan tool metadata through TinySecurity. Failure is represented as a hit.
+/// With security disabled nothing is scanned and there is no hit.
 pub async fn scan_tool_definition(field: &str, text: &str) -> Option<ToolDefinitionScanHit> {
+    let config = tool_scan_config().await;
+    if crate::security::switch::disabled_for(config.as_ref()).is_some() {
+        return None;
+    }
+    #[cfg(not(feature = "security-module"))]
+    let _ = config;
+    // A test process has no booted host, so no embedder scope names a
+    // configuration to scan under. The test host supplies the one the real
+    // TinySecurity module is admitted with, as `mcp::registry::tools_safe_for_agent`
+    // does; a process without the staged module still has none and fails
+    // closed below.
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let config = config.or_else(crate::modules::security::test_host::screening_config);
     #[cfg(feature = "security-module")]
-    let Some(config) = crate::core::runtime::CoreContext::current_embedder_config() else {
+    let Some(config) = config
+    else {
         return Some(ToolDefinitionScanHit {
             code: "scan.unavailable".into(),
             message: describe("scan.unavailable").into(),

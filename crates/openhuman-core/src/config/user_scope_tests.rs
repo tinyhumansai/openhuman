@@ -54,7 +54,16 @@ fn first_user_activation_queues_prelogin_purge_in_the_removed_workspace() {
         vec!["prelogin-channel-thread"]
     );
 
-    activate_user_scope(&ctx, "new-user").unwrap();
+    let activation = activate_user_scope(&ctx, "new-user").unwrap();
+    // Activation alone is reversible: nothing is purged before the credential
+    // is committed.
+    assert_eq!(
+        list_threads(&ctx, prelogin_workspace.clone())
+            .unwrap()
+            .len(),
+        1
+    );
+    complete_user_scope_activation(&ctx, &activation);
 
     assert!(list_threads(&ctx, prelogin_workspace.clone())
         .unwrap()
@@ -66,4 +75,84 @@ fn first_user_activation_queues_prelogin_purge_in_the_removed_workspace() {
         }]
     );
     assert!(pending(&active_workspace).is_empty());
+}
+
+#[test]
+fn a_rolled_back_first_activation_keeps_prelogin_threads_and_leaves_no_profile() {
+    use crate::threads::store::{ensure_thread, list_threads, CreateConversationThread};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let env = crate::config::test_env::EnvVarGuard::locked().with("HOME", tmp.path());
+    let root = crate::config::default_root_openhuman_dir().unwrap();
+    let _env = env.with("OPENHUMAN_WORKSPACE", &root);
+    let prelogin_workspace = crate::config::pre_login_user_dir(&root).join("workspace");
+    let user_dir = crate::config::user_openhuman_dir(&root, "failed-user");
+    crate::storage::local::use_persistent_default_for_test(&prelogin_workspace);
+    let ctx = crate::core::runtime::DispatchCtx::unbound();
+    ensure_thread(
+        &ctx,
+        prelogin_workspace.clone(),
+        CreateConversationThread {
+            id: "prelogin-thread".to_string(),
+            title: "Pre-login thread".to_string(),
+            created_at: "2026-11-04T00:00:00Z".to_string(),
+            parent_thread_id: None,
+            labels: None,
+            personality_id: None,
+            working_dir: None,
+        },
+    )
+    .unwrap();
+
+    let activation = activate_user_scope(&ctx, "failed-user").unwrap();
+    assert_eq!(
+        crate::config::read_active_user_id(&root).as_deref(),
+        Some("failed-user")
+    );
+    std::fs::write(
+        user_dir.join("config.toml"),
+        "# written by the failed sign-in",
+    )
+    .unwrap();
+    roll_back_user_scope_activation(activation).unwrap();
+
+    assert!(crate::config::read_active_user_id(&root).is_none());
+    assert!(
+        !user_dir.exists(),
+        "the half-created profile must be removed"
+    );
+    assert_eq!(
+        list_threads(&ctx, prelogin_workspace)
+            .unwrap()
+            .iter()
+            .map(|thread| thread.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["prelogin-thread"]
+    );
+}
+
+#[test]
+fn a_rolled_back_account_switch_restores_the_previous_user_and_keeps_their_profile() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = crate::config::test_env::EnvVarGuard::locked().with("HOME", tmp.path());
+    let root = crate::config::default_root_openhuman_dir().unwrap();
+    let _env = env.with("OPENHUMAN_WORKSPACE", &root);
+    let ctx = crate::core::runtime::DispatchCtx::unbound();
+    let user_a = crate::config::user_openhuman_dir(&root, "user-a");
+    std::fs::create_dir_all(&user_a).unwrap();
+    crate::config::write_active_user_id(&root, "user-a").unwrap();
+
+    let activation = activate_user_scope(&ctx, "user-b").unwrap();
+    assert_eq!(
+        crate::config::read_active_user_id(&root).as_deref(),
+        Some("user-b")
+    );
+    roll_back_user_scope_activation(activation).unwrap();
+
+    assert_eq!(
+        crate::config::read_active_user_id(&root).as_deref(),
+        Some("user-a")
+    );
+    assert!(user_a.is_dir());
+    assert!(!crate::config::user_openhuman_dir(&root, "user-b").exists());
 }

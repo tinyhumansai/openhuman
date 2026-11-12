@@ -172,3 +172,30 @@ fn openshell_is_a_container_executor_with_its_own_identity() {
         );
     }
 }
+
+#[test]
+fn agent37_enforces_isolation_but_reports_resources_as_best_effort() {
+    let executor = agent37();
+    assert_eq!(executor.executor_id, AGENT37_EXECUTOR);
+    assert_ne!(executor.executor_id, OPENSHELL_EXECUTOR);
+    assert_eq!(executor.backend, SandboxBackend::Docker);
+    assert_eq!(executor.isolation, IsolationLevel2::Kernel);
+    assert!(executor.available);
+    for constraint in [SandboxConstraint2::Filesystem, SandboxConstraint2::Network] {
+        assert_eq!(
+            enforcement_of(&executor, constraint),
+            Some(ConstraintEnforcement2::Enforced)
+        );
+    }
+    // The service snaps CPU and memory to fixed instance shapes, so a requested
+    // bound is a floor it rounds up, never an enforced ceiling.
+    for constraint in [
+        SandboxConstraint2::Memory,
+        SandboxConstraint2::CpuMillicores,
+    ] {
+        assert_eq!(
+            enforcement_of(&executor, constraint),
+            Some(ConstraintEnforcement2::BestEffort)
+        );
+    }
+}

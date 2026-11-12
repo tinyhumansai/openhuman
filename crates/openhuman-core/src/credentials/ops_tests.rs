@@ -13,12 +13,15 @@ use tempfile::TempDir;
 use tokio::net::TcpListener;
 
 fn test_config(tmp: &TempDir) -> Config {
-    let config = Config {
+    let mut config = Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };
+    // Credential routing uses synthetic tokens; explicit encrypt/decrypt
+    // operations below still construct an enabled SecretStore themselves.
+    config.secrets.encrypt = false;
     config
 }
 
@@ -50,12 +53,13 @@ async fn store_live_session(user_id: &str) -> Config {
     write_active_user_id(&root_dir, user_id).unwrap();
     let user_dir = user_openhuman_dir(&root_dir, user_id);
     std::fs::create_dir_all(user_dir.join("workspace")).unwrap();
-    let config = Config {
+    let mut config = Config {
         config_path: user_dir.join("config.toml"),
         workspace_dir: user_dir.join("workspace"),
         action_dir: user_dir.join("workspace"),
         ..Config::default()
     };
+    config.secrets.encrypt = false;
     let token = jwt_with_payload(json!({
         "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
     }));

@@ -66,6 +66,10 @@ const PREFLIGHT_RPC_METHODS: &[&str] = &[
     "openhuman.update_version",
     "openhuman.approval_list_pending",
     "openhuman.approval_decide",
+    // Reading a keyring-held session token at startup asks the user to
+    // approve the read; the socket that would carry the prompt is not up yet.
+    "openhuman.keyring_consent_list_pending_operations",
+    "openhuman.keyring_consent_respond_operation",
 ];
 
 pub(crate) fn preflight_rpc_method_allowed(method: &str) -> bool {

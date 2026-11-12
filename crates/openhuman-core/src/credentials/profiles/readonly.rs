@@ -31,8 +31,29 @@ pub(super) async fn load_profile(
     provider: &str,
     profile_override: Option<&str>,
 ) -> Result<Option<AuthProfile>, ReadOnlyAuthProfileError> {
-    load_profile_with_keyring(config, provider, profile_override, |store, id| {
-        store.keychain_load_secrets(id)
+    // The TinySecurity keyring sits behind the security module, and admitting
+    // that module opens (and so creates) the workspace store. A read-only
+    // lookup must never create it, so with no store yet the keyring is
+    // reported *unavailable* -- not empty. That reuses the fail-closed
+    // unavailable-keyring handling in `load_profile_with_keyring`: a
+    // keyring-owned record, or one with no document secret to fall back on,
+    // is `Unavailable`; it is never read as a profile without secrets.
+    let keyring_reachable = crate::storage::local::store_exists(&config.workspace_dir);
+    if !keyring_reachable {
+        log::debug!(
+            "[auth] read-only profile lookup: no workspace store; keyring reported unavailable"
+        );
+    }
+    load_profile_with_keyring(config, provider, profile_override, move |store, id| {
+        if keyring_reachable {
+            Box::pin(store.keychain_load_secrets(id))
+        } else {
+            Box::pin(async {
+                Err(anyhow::anyhow!(
+                    "TinySecurity keyring unavailable: no workspace store for a read-only lookup"
+                ))
+            })
+        }
     })
     .await
 }
@@ -41,13 +62,31 @@ async fn load_profile_with_keyring(
     config: &Config,
     provider: &str,
     profile_override: Option<&str>,
-    read_keyring: impl Fn(&AuthProfilesStore, &str) -> anyhow::Result<Option<KeychainSecrets>>,
+    read_keyring: impl for<'a> Fn(
+        &'a AuthProfilesStore,
+        &'a str,
+    ) -> futures::future::BoxFuture<
+        'a,
+        anyhow::Result<Option<KeychainSecrets>>,
+    >,
 ) -> Result<Option<AuthProfile>, ReadOnlyAuthProfileError> {
     let state_dir = config
         .config_path
         .parent()
         .ok_or(ReadOnlyAuthProfileError::Unavailable)?;
-    let bytes = {
+    // A SaaS tenant's document lives on the storage backend; a tenant's store
+    // outside its own scope is refused, not read from a local file.
+    let backend_bytes = match super::backend::document_for(state_dir) {
+        Ok(Some(document)) => document
+            .get()
+            .map_err(|_| ReadOnlyAuthProfileError::Unavailable)?
+            .map(|(value, _)| value.to_vec()),
+        Ok(None) => None,
+        Err(_) => return Err(ReadOnlyAuthProfileError::Unavailable),
+    };
+    let bytes = if let Some(bytes) = backend_bytes {
+        bytes
+    } else {
         let path = super::profiles_file(state_dir);
         if path.exists() {
             let directory = path.parent().ok_or(ReadOnlyAuthProfileError::Unavailable)?;
@@ -84,12 +123,22 @@ async fn load_profile_with_keyring(
         .get(&id)
         .ok_or(ReadOnlyAuthProfileError::InvalidStore)?;
 
+    profile
+        .validate_secret_location()
+        .map_err(|_| ReadOnlyAuthProfileError::InvalidStore)?;
     let user_id = super::user_id_from_state_dir(state_dir);
     let profile_store =
         AuthProfilesStore::new_with_config(state_dir, config.secrets.encrypt, config);
+    let keyring_owned =
+        profile.secret_location == Some(super::persistence::SecretLocation::Keyring);
+    if keyring_owned && !profile_store.use_keychain {
+        return Err(ReadOnlyAuthProfileError::Unavailable);
+    }
     let mut keyring_unavailable = false;
-    let keychain_secrets = if profile_store.use_keychain {
-        match read_keyring(&profile_store, &id) {
+    let document_owned =
+        profile.secret_location == Some(super::persistence::SecretLocation::EncryptedDocument);
+    let keychain_secrets = if profile_store.use_keychain && !document_owned {
+        match read_keyring(&profile_store, &id).await {
             Ok(Some(secrets)) => Some(secrets),
             Ok(None) => None,
             Err(error) if super::keychain::is_consent_error(&error) => {
@@ -106,8 +155,12 @@ async fn load_profile_with_keyring(
         None
     };
 
+    if keyring_owned && keychain_secrets.is_none() {
+        return Err(ReadOnlyAuthProfileError::Unavailable);
+    }
     let secrets = match keychain_secrets {
         Some(secrets) => Some(secrets),
+        None if document_owned => None,
         None => match read_profile_secret(config, &user_id, &super::auth_profile_secret_key(&id)) {
             Ok(Some(payload)) => Some(
                 serde_json::from_str::<KeychainSecrets>(&payload)

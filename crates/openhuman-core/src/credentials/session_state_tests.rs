@@ -10,12 +10,16 @@ use std::collections::BTreeMap;
 use tempfile::TempDir;
 
 fn test_config(tmp: &TempDir) -> Config {
-    Config {
+    let mut config = Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
-    }
+    };
+    // These fixtures test credential selection and issuer binding with fake
+    // tokens. Secret encryption has dedicated module-backed coverage.
+    config.secrets.encrypt = false;
+    config
 }
 
 #[tokio::test]
@@ -555,4 +559,23 @@ async fn direct_backend_credential_returns_a_live_session() {
         direct_backend_credential(&config, "test").await,
         Some(BackendCredential::Session("raw-session-token".into()))
     );
+}
+
+#[test]
+fn only_two_profiles_of_this_installation_make_a_profile_switch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let _env = crate::config::test_env::EnvVarGuard::locked().with("HOME", tmp.path());
+    let root = crate::config::default_root_openhuman_dir().unwrap();
+    let local = root.join("users/local/.secret_key");
+    let user = root.join("users/u1/.secret_key");
+    let elsewhere = tmp.path().join("scratch/.secret_key");
+
+    assert!(is_profile_switch(&local, &user));
+    assert!(is_profile_switch(&user, &local));
+    assert!(!is_profile_switch(&user, &user));
+    assert!(
+        !is_profile_switch(&elsewhere, &user),
+        "another root is not this installation"
+    );
+    assert!(!is_profile_switch(&user, &elsewhere));
 }

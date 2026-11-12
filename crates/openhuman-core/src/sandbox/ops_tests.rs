@@ -11,6 +11,16 @@ use std::time::Duration;
 use std::{collections::HashMap, ffi::OsString};
 use tinyagents_definition::SandboxMode;
 
+/// The module host serves a TinyBox resource's records from the process
+/// storage slot. A unit test does not boot the core, so it installs one: with
+/// no backend the module answers `the host did not provide storage` and a
+/// planned command never starts.
+fn native_shell_storage() -> crate::storage::test_support::InstalledBackendGuard {
+    crate::storage::test_support::install_backend_for_test(
+        crate::storage::test_support::memory_backend(),
+    )
+}
+
 #[test]
 fn resolve_sandbox_policy_none_mode() {
     let policy = crate::sandbox::policy::route_for_mode(
@@ -206,10 +216,17 @@ async fn execute_unsandboxed_echo_runs_on_every_os() {
 #[cfg(unix)]
 #[tokio::test]
 async fn execute_in_sandbox_none_backend() {
+    let _storage = native_shell_storage();
+    // A private folder: the jail's bwrap backend owns `/tmp` as a private mount
+    // and refuses a grant on `/tmp` itself.
+    let workdir = tempfile::tempdir().unwrap();
+    // The module canonicalizes the state folder before it runs a command, so it
+    // must exist, as the core's `workspace_dir` does in a booted host.
+    let state = tempfile::tempdir().unwrap();
     let policy = crate::sandbox::policy::route_for_mode(
         SandboxMode::None,
-        Path::new("/tmp"),
-        Path::new("/tmp/state"),
+        workdir.path(),
+        state.path(),
         &SandboxConfig::default(),
         &RuntimeConfig::default(),
         false,
@@ -218,7 +235,7 @@ async fn execute_in_sandbox_none_backend() {
         &DispatchCtx::process_default(),
         &policy,
         "echo sandbox-test",
-        Path::new("/tmp"),
+        workdir.path(),
         HashMap::new(),
         Duration::from_secs(5),
     )
@@ -282,11 +299,13 @@ async fn execute_unsandboxed_applies_environment_overrides() {
 /// so both Unix and Windows CI catch a shell-selection regression.
 #[tokio::test]
 async fn execute_in_sandbox_none_backend_runs_on_every_os() {
+    let _storage = native_shell_storage();
     let tempdir = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
     let policy = crate::sandbox::policy::route_for_mode(
         SandboxMode::None,
         tempdir.path(),
-        Path::new("/tmp/state"),
+        state.path(),
         &SandboxConfig::default(),
         &RuntimeConfig::default(),
         false,
@@ -415,4 +434,76 @@ async fn the_openshell_handle_is_ready_without_pretending_to_be_a_container() {
     assert_eq!(handle.status, SandboxStatus::Ready);
     assert_eq!(handle.backend_id, None);
     assert_eq!(handle.isolation, None);
+}
+
+#[test]
+fn security_disabled_keeps_the_configured_backend_unless_the_operator_turns_it_off() {
+    use super::exec::unchecked_backend;
+    for backend in [
+        SandboxBackendKind::Local,
+        SandboxBackendKind::None,
+        SandboxBackendKind::Docker,
+        SandboxBackendKind::OpenShell,
+    ] {
+        assert_eq!(unchecked_backend(backend, false), backend);
+        assert_eq!(
+            unchecked_backend(backend, true),
+            SandboxBackendKind::None,
+            "the operator's sandbox-off switch still runs on the host"
+        );
+    }
+}
+
+#[cfg(feature = "modules")]
+#[test]
+fn security_disabled_jails_with_the_policys_own_grants() {
+    let mut policy = crate::sandbox::policy::route_for_mode(
+        SandboxMode::Sandboxed,
+        Path::new("/tmp/action"),
+        Path::new("/tmp/state"),
+        &SandboxConfig::default(),
+        &RuntimeConfig::default(),
+        false,
+    );
+    policy.read_only_mounts = vec!["/opt/tools".into()];
+    policy.read_write_mounts = vec!["/srv/out".into()];
+    policy.allow_network = false;
+    let jail = crate::sandbox::native_jail::host_jail(&policy);
+    assert_eq!(jail.read_only, vec!["/opt/tools".to_string()]);
+    assert_eq!(jail.read_write, vec!["/srv/out".to_string()]);
+    assert!(!jail.allow_net);
+    assert!(jail.deny_read.is_empty());
+    assert!(!jail.require_process_isolation);
+}
+
+fn config_with_backend(backend: crate::config::SandboxBackend) -> crate::config::Config {
+    let mut config = crate::config::Config::default();
+    config.sandbox.backend = backend;
+    config
+}
+
+#[test]
+fn a_config_naming_a_box_keeping_backend_keeps_boxes() {
+    use crate::config::SandboxBackend;
+    for backend in [SandboxBackend::OpenShell, SandboxBackend::Agent37] {
+        assert!(
+            config_keeps_boxes(&config_with_backend(backend.clone())),
+            "{backend:?}"
+        );
+    }
+    for backend in [
+        SandboxBackend::Auto,
+        SandboxBackend::None,
+        SandboxBackend::Docker,
+        SandboxBackend::Landlock,
+    ] {
+        assert!(!config_keeps_boxes(&config_with_backend(backend)));
+    }
+}
+
+#[test]
+fn a_config_that_turns_the_sandbox_off_keeps_no_boxes() {
+    let mut config = config_with_backend(crate::config::SandboxBackend::OpenShell);
+    config.sandbox.enabled = Some(false);
+    assert!(!config_keeps_boxes(&config));
 }

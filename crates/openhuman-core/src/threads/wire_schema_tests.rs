@@ -167,3 +167,21 @@ fn started_chat_ack_schema_requires_every_serialized_field() {
         );
     }
 }
+
+#[test]
+fn run_mode_schema_values_round_trip_through_the_wire_labels() {
+    let schema: serde_json::Value =
+        serde_json::from_str(&thread_wire_schema_json().expect("schema serializes"))
+            .expect("schema is JSON");
+    let values = schema_string_values(&schema, &schema["properties"]["runMode"]);
+    assert_eq!(
+        values.len(),
+        2,
+        "one schema value per RunMode variant: {values:?}"
+    );
+    for value in values {
+        let mode = crate::threads::parse_mode_label(&value)
+            .unwrap_or_else(|| panic!("schema value {value} is not a run-mode wire label"));
+        assert_eq!(crate::threads::run_mode::mode_label(mode), value);
+    }
+}

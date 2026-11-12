@@ -24,13 +24,13 @@ pub(crate) struct DevicePairingStore {
 }
 
 impl DevicePairingStore {
-    pub(crate) fn current(
+    pub(crate) async fn current(
         config: &Config,
         backend_id: String,
         secret_registration_id: String,
     ) -> Result<Self> {
         Ok(Self {
-            repo: Repo::current_for(&config.workspace_dir, DOMAIN, collections)?,
+            repo: Repo::current_for_async(&config.workspace_dir, DOMAIN, collections).await?,
             backend_id,
             secret_registration_id,
         })

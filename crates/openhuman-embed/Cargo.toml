@@ -102,6 +102,9 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+# `test-keyring-consent` lets the suite answer TinySecurity's prompts as
+# openhuman-cli's does; dev-dependency features never reach a shipped build.
+openhuman-core = { path = "../openhuman-core", package = "openhuman", default-features = false, features = ["test-keyring-consent"] }
 async-trait = "0.1"
 tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api", features = ["conformance"] }
 tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session", features = ["testkit"] }
@@ -201,3 +204,10 @@ required-features = ["profiles"]
 [[test]]
 name = "mcp_module"
 required-features = ["mcp", "modules", "skills", "storage-sqlite"]
+
+# While the runtime that admitted TinySecurity is live, another secret scope is
+# refused the module. Calls the core's security module directly, so it needs
+# the feature by name. Ignored by default: it needs the module's release.
+[[test]]
+name = "security_live_scope"
+required-features = ["security-module"]

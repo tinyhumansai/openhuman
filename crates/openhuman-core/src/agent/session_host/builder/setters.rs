@@ -12,6 +12,7 @@ impl SessionHostBuilder {
         Self {
             turn_model_source: None,
             runtime_config: None,
+            security_policy: None,
             tools: None,
             pack_registry_handle: None,
             synthesized_tools: None,
@@ -95,6 +96,13 @@ impl SessionHostBuilder {
         source: crate::agent::tinyagents::TurnModelSource,
     ) -> Self {
         self.turn_model_source = Some(source);
+        self
+    }
+
+    /// Sets the policy the hosted base carries: the same instance the session's
+    /// tools were built with, so `build` makes no stand-in from a default config.
+    pub(crate) fn security_policy(mut self, policy: Arc<crate::security::SecurityPolicy>) -> Self {
+        self.security_policy = Some(policy);
         self
     }
 

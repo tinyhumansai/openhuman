@@ -25,6 +25,7 @@ use tinystoragedrivers_api::StorageBackend;
 use tinystoragedrivers_busproxy::{PerCallerEndpoint, ServedStorage, StorageServer};
 use tinystoragedrivers_testkit::MemoryBackend;
 
+use super::claims::Claims;
 use super::deliver::Deliverer;
 use super::host::InboundHost;
 use super::pinned::{Pinned, PinnedAgent, PinnedRun};
@@ -299,6 +300,8 @@ pub(crate) struct Rig {
     pub(crate) client: ModuleClient,
     /// The triage the host callbacks run.
     pub(crate) triage: Arc<ScriptedTriage>,
+    /// The claims the host callbacks share with this rig's offers.
+    pub(crate) claims: Arc<Claims>,
     _host: Connection,
     _storage: ServedStorage,
     _modules: ModuleHost,
@@ -327,12 +330,14 @@ impl Rig {
         let host = Connection::connect(bus.connect().await.unwrap())
             .await
             .unwrap();
+        let claims = Arc::new(Claims::default());
         let deliverer = Deliverer::new(
             triage.clone() as Arc<dyn TriageRunner>,
             DispatchCtx::host_default(),
             Duration::from_secs(5),
         )
-        .with_max_attempts(|_| Some(5));
+        .with_max_attempts(|_| Some(5))
+        .with_claims(Arc::clone(&claims));
         let mut pipeline = fast_pipeline();
         let deliverer = match pinned {
             Some((inbound, pinned)) => {
@@ -366,7 +371,6 @@ impl Rig {
             .attach_linked_with_config(
                 tinyeventqueues::linked_module().unwrap(),
                 json!({
-                    "storage_callback": tinystoragedrivers_bus::STORAGE_INTERFACE,
                     "pipeline": pipeline,
                     "timer": { "min_interval_ms": 5, "max_interval_ms": 25 },
                 }),
@@ -386,9 +390,35 @@ impl Rig {
         let proxy = host
             .proxy(names::INTERFACE, names::OBJECT_PATH, names::INTERFACE)
             .unwrap();
+        // A claimed name can precede the linked module's async initialization.
+        // The rig is ready only when its read-only contract can answer.
+        let mut last_error = String::new();
+        let ready = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match proxy
+                    .call::<tinyeventqueues_bus::StatsResponse>(
+                        names::methods::STATS,
+                        (tinyeventqueues_bus::StatsRequest::new(),),
+                    )
+                    .await
+                {
+                    Ok(_) => break,
+                    Err(error) => {
+                        last_error = error.to_string();
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                }
+            }
+        })
+        .await;
+        assert!(
+            ready.is_ok(),
+            "the linked event queues module serves its contract: {last_error}"
+        );
         Self {
             client: crate::modules::ops::fixture_client(proxy),
             triage,
+            claims,
             _host: host,
             _storage: storage,
             _modules: modules,

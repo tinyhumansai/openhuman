@@ -21,6 +21,7 @@
 //! | [`settings`] | `[inbound]` resolved: the queues and pipeline the module runs, the queue backend, whether routing is on |
 //! | [`events`] | a trigger envelope, or an external source's event, as an `InboundEvent`, and back |
 //! | [`route`] | the hand-off; the caller's direct path runs when the queues do not take an event |
+//! | [`claims`] | who runs an event whose hand-off was ambiguous: the direct path or `Deliver`, never both |
 //! | [`deliver`] | `Deliver` and `ClassifySalience`: triage, ack semantics, retry and dead-letter events |
 //! | [`host`] | the served `ai.tinyhumans.tinyeventqueues.Host` callbacks |
 //! | [`pinned`] | a configured external source's batch run on its pinned agent, without triage |
@@ -32,6 +33,7 @@
 //! plus the configured queue manifest) and component (`eventqueues`) live
 //! with the other modules.
 
+pub mod claims;
 pub mod deliver;
 pub mod events;
 pub mod host;

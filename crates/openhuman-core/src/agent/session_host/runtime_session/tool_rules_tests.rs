@@ -1,13 +1,14 @@
 use super::*;
 
 async fn config_with_rules(tmp: &tempfile::TempDir) -> crate::config::Config {
-    let config = crate::config::Config {
+    let mut config = crate::config::Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         tool_rules: tinytools::ToolRules::from_allow_deny(Vec::<String>::new(), ["shell"]),
         ..crate::config::Config::default()
     };
+    config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
     crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     config
@@ -56,10 +57,11 @@ async fn a_session_composes_the_operator_and_definition_layers() {
 async fn goal_session_prompt(rules: serde_json::Value) -> (String, Vec<String>) {
     let _ = crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins();
     let action_dir = tempfile::tempdir().expect("tempdir");
-    let config = crate::config::Config {
+    let mut config = crate::config::Config {
         tool_rules: serde_json::from_value(rules).expect("rules"),
         ..crate::config::Config::default()
     };
+    config.secrets.encrypt = false;
     let model: std::sync::Arc<dyn tinyinference_llm::model::ChatModel<()>> =
         std::sync::Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
     let mut host = crate::agent::SessionHostBuilder::new()

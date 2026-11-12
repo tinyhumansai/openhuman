@@ -5,10 +5,15 @@
 //! 1. Agent harness calls [`ApprovalGate::intercept`] with the tool
 //!    name, a redacted JSON of the arguments, and a short summary.
 //! 2. Gate registers the call's posture with TinySecurity. Durable whole-tool
-//!    trust is resolved by the module under the exact approval scope;
-//!    `autonomy.auto_approve` is not replayed, so revocations cannot be
-//!    resurrected from legacy config. `ApproveAlwaysForTool` records a grant
-//!    through `GrantTool2` after resolving the current call.
+//!    trust is resolved by the module under the exact approval scope.
+//!    `ApproveAlwaysForTool` resolves the current call once. For a process
+//!    request, `approval_decide` then saves the tool to `autonomy.auto_approve`
+//!    (best-effort: a failed save only means the next call prompts again), and
+//!    the native engine imports each entry as a module grant the first time it
+//!    sees it (`legacy-import`, outside SaaS, standard posture). An entry is
+//!    imported only once, so a revoked grant is not resurrected from the list.
+//!    An agent's request is approved once and nothing is saved: an agent's
+//!    "Always allow" comes from its own access.
 //! 3. Otherwise: persist a row in `pending_approvals`, publish a
 //!    [`DomainEvent::ApprovalRequested`] event so the UI can pop a
 //!    toast, and park the call on a `oneshot::Sender` keyed by
@@ -97,6 +102,12 @@ pub(crate) fn current_route_tenant() -> crate::core::runtime::Tenant {
     crate::core::runtime::tenant::current_tenant_or_isolated("approval_gate")
 }
 
+/// The approval the native secret cipher raises to unlock the configuration's
+/// User master (`modules::security::secret_cipher`). TinySecurity consumes its
+/// HumanOnce grant itself, and it is the one forced approval that may park
+/// without a chat route ([`secret_grant_parks_unrouted`]).
+pub const NATIVE_SECRET_GRANT_TOOL: &str = "native_secret_grant";
+
 /// Phrase every TTL-expiry denial carries, so a caller that renders its own
 /// refusal (the approval resolver, `middleware::approval`) can tell "nobody answered" from
 /// "the user said no" without parsing the rest of the reason. See
@@ -137,7 +148,7 @@ pub struct ApprovalChatContext {
 /// Per-run flow context (flow-approval-surface, PR2 of the tinyflows
 /// approval-surfacing design). `flows::ops::flows_run` / `flows_resume`
 /// hand it to the engine's capabilities, alongside the existing
-/// `Workflow` [`AgentTurnOrigin`](crate::security::turn_origin::AgentTurnOrigin),
+/// `Workflow` [`AgentTurnOrigin`](crate::core::runtime::turn_origin::AgentTurnOrigin),
 /// so a tool call parked from that run can correlate
 /// [`PendingApproval::source_context`](super::types::PendingApproval) back to
 /// the exact flow + run (the origin alone only carries `flow_id`, not
@@ -456,6 +467,8 @@ include!("gate_surface.rs");
 include!("gate_intercept.rs");
 include!("gate_intercept_decision.rs");
 include!("gate_state.rs");
+include!("gate_saas_grant.rs");
+include!("gate_host_grant.rs");
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

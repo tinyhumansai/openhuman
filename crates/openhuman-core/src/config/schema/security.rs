@@ -47,6 +47,11 @@ pub enum SandboxBackend {
     /// the TinyBox module (`[runtime.openshell]`).
     #[serde(rename = "openshell")]
     OpenShell,
+    /// The tenant's retained box on the hosted agent37 HTTP sandbox service,
+    /// through the TinyBox module (`[runtime.agent37]`): it sleeps when idle
+    /// and keeps its files across commands and restarts.
+    #[serde(rename = "agent37")]
+    Agent37,
     None,
 }
 

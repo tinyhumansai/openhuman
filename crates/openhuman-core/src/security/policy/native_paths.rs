@@ -21,7 +21,7 @@ impl SecurityPolicy {
     /// Registration deduplicates the complete immutable value, so changed roots
     /// or policy settings cannot reuse a stale scope from a cloned policy.
     pub(crate) fn native_path_policy(&self) -> PathPolicy {
-        let trusted_roots: Vec<_> = self
+        let mut trusted_roots: Vec<_> = self
             .trusted_roots
             .iter()
             .map(|root| PathTrustedRoot {
@@ -33,13 +33,26 @@ impl SecurityPolicy {
                 },
             })
             .collect();
-        let media_exceptions = self
+        let media_paths = self
             .media_artifact_paths
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .cloned()
             .collect::<Vec<_>>();
+        let artifacts_dir = self.workspace_dir.join(ARTIFACTS_DIR);
+        // TinySecurity admits a reservation exception only when it resolves to
+        // a strict descendant of the reservation, and refuses the whole policy
+        // otherwise. A ready media artifact filed in the Files folder lives
+        // outside `<workspace>/artifacts`, so it is granted as a read-only
+        // trusted root of that exact file instead.
+        let (media_exceptions, media_outside): (Vec<_>, Vec<_>) = media_paths
+            .into_iter()
+            .partition(|path| is_strict_descendant(path, &artifacts_dir));
+        trusted_roots.extend(media_outside.into_iter().map(|path| PathTrustedRoot {
+            path,
+            access: PathAccess::ReadOnly,
+        }));
         let mut reserved_paths: Vec<_> = WORKSPACE_INTERNAL_DIRS
             .iter()
             .chain(WORKSPACE_INTERNAL_FILES.iter())
@@ -56,12 +69,9 @@ impl SecurityPolicy {
                 children_only: false,
             });
         }
-        let tool_results = self
-            .workspace_dir
-            .join(ARTIFACTS_DIR)
-            .join(ARTIFACT_TOOL_RESULTS_DIR);
+        let tool_results = artifacts_dir.join(ARTIFACT_TOOL_RESULTS_DIR);
         reserved_paths.push(PathReservation {
-            path: self.workspace_dir.join(ARTIFACTS_DIR),
+            path: artifacts_dir,
             exceptions: std::iter::once(tool_results.clone())
                 .chain(media_exceptions)
                 .collect(),
@@ -96,6 +106,9 @@ impl SecurityPolicy {
         path: &str,
         parent: bool,
     ) -> Result<PathBuf, String> {
+        if crate::security::switch::disabled().is_some() {
+            return self.resolve_unchecked(path, parent).await;
+        }
         let scope = self.native_path_policy();
         #[cfg(feature = "security-module")]
         let result = crate::modules::security::validate_host_path(scope, path, parent).await;
@@ -106,6 +119,61 @@ impl SecurityPolicy {
         };
         project_native_result(path, result)
     }
+}
+
+impl SecurityPolicy {
+    /// Resolve `path` without asking TinySecurity, for security disabled
+    /// (`crate::security::switch`). Resolution follows the module's own shape so
+    /// callers see the same paths: `~/` expanded, relative paths joined onto
+    /// `action_dir`, a read resolved through symlinks (it must exist), a write
+    /// target resolved through its nearest existing ancestor. No root, floor or
+    /// reservation is applied.
+    async fn resolve_unchecked(&self, path: &str, parent: bool) -> Result<PathBuf, String> {
+        let expanded = PathBuf::from(self.expand_tilde(path));
+        let absolute = if expanded.is_absolute() {
+            expanded
+        } else {
+            self.action_dir.join(expanded)
+        };
+        let unresolved = || format!("Failed to resolve path '{path}'");
+        if !parent {
+            return tokio::fs::canonicalize(&absolute)
+                .await
+                .map_err(|_| unresolved());
+        }
+        let Some(filename) = absolute.file_name().map(ToOwned::to_owned) else {
+            return Err(format!("Invalid path: {path}"));
+        };
+        if tokio::fs::symlink_metadata(&absolute).await.is_ok() {
+            return tokio::fs::canonicalize(&absolute)
+                .await
+                .map_err(|_| unresolved());
+        }
+        let mut missing = vec![filename];
+        let mut ancestor = absolute.parent().map(std::path::Path::to_path_buf);
+        while let Some(dir) = ancestor {
+            if let Ok(resolved) = tokio::fs::canonicalize(&dir).await {
+                return Ok(missing
+                    .iter()
+                    .rev()
+                    .fold(resolved, |at, part| at.join(part)));
+            }
+            match dir.file_name() {
+                Some(name) => missing.push(name.to_owned()),
+                None => break,
+            }
+            ancestor = dir.parent().map(std::path::Path::to_path_buf);
+        }
+        Err(unresolved())
+    }
+}
+
+/// Whether `path` sits strictly inside `root`, compared both lexically and
+/// through the root's canonical form (media paths are recorded canonical, a
+/// configured workspace may not be, e.g. macOS `/var` -> `/private/var`).
+fn is_strict_descendant(path: &std::path::Path, root: &std::path::Path) -> bool {
+    let inside = |root: &std::path::Path| path != root && path.starts_with(root);
+    inside(root) || std::fs::canonicalize(root).is_ok_and(|canonical| inside(&canonical))
 }
 
 /// Project stable native categories into the existing host tool error contract.

@@ -308,11 +308,12 @@ impl Tool for TinySearchTool {
                     results = response.results.len(),
                     "[search][tool] completed"
                 );
-                Ok(super::render::render(
+                Ok(super::render::render_with(
                     &response,
                     &subject,
                     max_results,
                     options.prefer_markdown,
+                    &super::render::render_options(config.search.compact_results),
                 ))
             }
             Err(error) => {

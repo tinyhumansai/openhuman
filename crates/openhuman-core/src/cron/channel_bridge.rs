@@ -1,7 +1,8 @@
 //! Cron's handle on the live channel send adapters. Conversation context and
 //! delivered replies are stored in durable agent transcripts, not here.
+use crate::core::slots::HookSlot;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use tinybus::module::ModuleObjectClient;
 use tinychannels_bus::module_progressive::ProgressiveResult;
 use tinychannels_bus::{ChannelRef, ConversationKind, ConversationRef};
@@ -11,29 +12,25 @@ struct Bridge {
     module_objects: Arc<HashMap<String, ModuleObjectClient>>,
 }
 
-fn slot() -> &'static RwLock<Option<Bridge>> {
-    static SLOT: RwLock<Option<Bridge>> = RwLock::new(None);
-    &SLOT
-}
+/// One entry, keyed `RUNTIME`. A `HookSlot` is per-thread under `cfg(test)`,
+/// so one test's bridge never reaches another test.
+static BRIDGE: HookSlot<Bridge> = HookSlot::new("cron::channel_bridge");
+const RUNTIME: &str = "runtime";
 
 fn current() -> Option<Bridge> {
-    slot().read().ok().and_then(|guard| guard.clone())
+    BRIDGE.get(RUNTIME)
 }
 
 /// Register the running channel runtime's send adapters. The latest
 /// registration wins (the runtime restarts on logout/login).
 pub fn register_channel_bridge(module_objects: Arc<HashMap<String, ModuleObjectClient>>) {
-    if let Ok(mut guard) = slot().write() {
-        *guard = Some(Bridge { module_objects });
-        tracing::debug!("[cron] channel delivery bridge registered");
-    }
+    BRIDGE.register(RUNTIME, Bridge { module_objects });
+    tracing::debug!("[cron] channel delivery bridge registered");
 }
 
 /// Release callback objects when the channel runtime shuts down.
 pub fn clear_channel_bridge() {
-    if let Ok(mut guard) = slot().write() {
-        *guard = None;
-    }
+    BRIDGE.unregister(RUNTIME);
 }
 
 /// Send `text` to `reply_target` on the named channel through the registered

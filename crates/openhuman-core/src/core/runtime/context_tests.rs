@@ -18,6 +18,7 @@ fn ctx(dir: &str) -> Arc<CoreContext> {
         user_skill_roots: true,
         extensions: Default::default(),
         turn_origin: None,
+        host_secret_grant: None,
         channel_thread: None,
         session_agent: None,
         profile: None,
@@ -63,6 +64,38 @@ fn an_embedder_config_is_readable_from_the_context() {
     let read = ctx.embedder_config().expect("supplied config is readable");
     assert_eq!(read.workspace_dir, PathBuf::from("/tmp/embedder-ws"));
     assert_eq!(read.default_model.as_deref(), Some("embedder-model"));
+}
+
+/// The desktop's secret preflight replaces the snapshot once it has opened
+/// the sealed config; the replacement must return and stay bound.
+#[test]
+fn replacing_the_embedder_config_returns_and_keeps_it_bound() {
+    let ctx = ctx_with_config(crate::config::Config::default());
+    let mut replacement = crate::config::Config::default();
+    replacement.default_model = Some("after-preflight".into());
+
+    let (done, finished) = std::sync::mpsc::channel();
+    let replacing = Arc::clone(&ctx);
+    std::thread::spawn(move || {
+        replacing.replace_latest_embedder_config(replacement);
+        let _ = done.send(());
+    });
+    finished
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("replacing the embedder config returns");
+
+    let read = ctx.latest_embedder_config().expect("snapshot is bound");
+    assert_eq!(read.default_model.as_deref(), Some("after-preflight"));
+    let snapshot = ctx.latest_embedder_config.as_ref().expect("snapshot");
+    let bound = snapshot
+        .lock()
+        .unwrap()
+        .runtime_state
+        .context_snapshot
+        .clone();
+    assert!(bound
+        .and_then(|weak| weak.upgrade())
+        .is_some_and(|bound| Arc::ptr_eq(&bound, snapshot)));
 }
 
 #[tokio::test]
@@ -421,6 +454,7 @@ fn degraded_context_rejects_workspace_bound_stores() {
         user_skill_roots: true,
         extensions: Default::default(),
         turn_origin: None,
+        host_secret_grant: None,
         channel_thread: None,
         session_agent: None,
         profile: None,

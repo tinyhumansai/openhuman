@@ -185,9 +185,10 @@ default_model = "claude-sonnet-4"
     let loaded = Config::load_from_config_path(&config_path, &workspace)
         .await
         .unwrap();
-    assert_eq!(loaded.schema_version, 14);
+    let current = crate::config::migrations::CURRENT_SCHEMA_VERSION;
+    assert_eq!(loaded.schema_version, current);
     let once = std::fs::read_to_string(&config_path).unwrap();
-    assert!(once.contains("schema_version = 14"));
+    assert!(once.contains(&format!("schema_version = {current}")));
     assert!(!once.contains("type = \"anthropic\""));
     let reloaded = Config::load_from_config_path(&config_path, &workspace)
         .await
@@ -314,4 +315,31 @@ meme_cooldown = 7
         "components.memes is dropped on save"
     );
     assert_eq!(saved["components"]["search"].as_bool(), Some(false));
+}
+
+#[test]
+fn retired_matrix_and_webhook_sections_are_named_and_ignored() {
+    let contents = r#"
+[channels_config.matrix]
+homeserver = "https://matrix.invalid"
+access_token = "secret-matrix-token"
+
+[channels_config.webhook]
+port = 8080
+secret = "secret-webhook"
+
+[channels_config.telegram]
+bot_token = "telegram-token"
+allowed_users = []
+"#;
+    let document: toml::Value = toml::from_str(contents).unwrap();
+    assert_eq!(retired_channel_sections(&document), ["matrix", "webhook"]);
+    let config = config_from_toml_str(contents).expect("retired sections still load");
+    assert!(config.channels_config.telegram.is_some());
+    let saved = serde_json::to_string(&config).unwrap();
+    assert!(!saved.contains("secret-matrix-token"));
+    assert!(!saved.contains("secret-webhook"));
+
+    let plain: toml::Value = toml::from_str(SAMPLE).unwrap();
+    assert!(retired_channel_sections(&plain).is_empty());
 }

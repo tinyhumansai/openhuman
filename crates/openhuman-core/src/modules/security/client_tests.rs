@@ -113,3 +113,23 @@ async fn device_pairing_and_frame_calls_reject_unattested_recipients() {
     ));
     assert!(fixture.frame.lock().unwrap().is_none());
 }
+
+#[test]
+fn a_policy_denial_is_told_apart_from_a_failed_call_without_leaking_the_reason() {
+    assert_eq!(
+        call_failed(tinybus::Error::failed("approval denied")),
+        MODULE_REFUSED,
+        "the module answering no is a refusal the approval engine can explain"
+    );
+    for other in [
+        tinybus::Error::failed("approval unavailable"),
+        tinybus::Error::failed("approval denied: secret-looking detail"),
+        tinybus::Error::ConnectionClosed,
+    ] {
+        assert_eq!(
+            call_failed(other),
+            "security module call failed",
+            "any other failure stays one generic message"
+        );
+    }
+}

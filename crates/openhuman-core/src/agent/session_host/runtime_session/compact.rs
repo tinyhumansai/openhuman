@@ -137,12 +137,15 @@ impl OpenHumanSessionHost {
             .turn_model_source
             .effective_context_window(&self.model_name)
             .await;
-        let models = self.turn_model_source.build(
-            &self.model_name,
-            self.temperature,
-            context_window,
-            Some(&thread_id),
-        )?;
+        let models = self
+            .turn_model_source
+            .build(
+                &self.model_name,
+                self.temperature,
+                context_window,
+                Some(&thread_id),
+            )
+            .await?;
         let summarizer = CompactionSummarizer {
             model: models.summarizer.clone(),
             model_id: models.summarizer_model_id().to_owned(),
@@ -236,8 +239,12 @@ impl OpenHumanSessionHost {
         compacted: Vec<Message>,
         prefix_len: usize,
     ) -> (Vec<Message>, usize) {
-        let Some(block) = self.memory_block_for_new_generation().await else {
-            return (compacted, prefix_len);
+        let block = match self.new_generation_block().await {
+            super::memory_block::NewGenerationBlock::Fresh(block) => Some(block),
+            super::memory_block::NewGenerationBlock::Keep => return (compacted, prefix_len),
+            // A memory change voided the render: the inherited block may
+            // hold what it erased.
+            super::memory_block::NewGenerationBlock::Drop => None,
         };
         let prefix_len = prefix_len.min(
             compacted
@@ -247,7 +254,7 @@ impl OpenHumanSessionHost {
         );
         let prefix = super::memory_block::with_memory_block(
             &tinyagents_runtime::PrefixSnapshot::new(compacted[..prefix_len].to_vec()),
-            Some(block),
+            block,
         );
         let refreshed_len = prefix.messages().len();
         let mut messages = prefix.messages().to_vec();

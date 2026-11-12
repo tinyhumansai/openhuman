@@ -62,6 +62,8 @@ pub mod hosting;
 pub use hosting::HostingConfig;
 pub mod storage;
 pub use storage::StorageConfig;
+pub mod wallet_policy;
+pub use wallet_policy::{WalletAssetCap, WalletPolicyConfig};
 pub mod profile_layout;
 pub use profile_layout::{users_dir, ProfileLayout};
 mod identity_cost;
@@ -100,12 +102,15 @@ pub(crate) mod memory;
 mod modules;
 mod observability;
 mod privacy;
+mod prompt_screen;
 mod proxy;
 mod routes;
 mod runtime;
+mod runtime_agent37;
 mod runtime_local_jail;
 mod runtime_openshell;
 mod scheduler_gate;
+mod security_mode;
 mod task_sources;
 mod tokenjuice;
 mod tools;
@@ -120,7 +125,8 @@ pub use capability_providers::{CapabilityProviderConfig, CapabilityProviderTrust
 pub use channel_voice::{ChannelVoiceConfig, ChannelVoiceOverride, VoiceReplyMode};
 pub(crate) use cli_overrides::set_cli_inference_overrides;
 pub use context::{
-    CompactionSettings, CompactionStrategy, ContextConfig, ContextSettings, SummarizerSettings,
+    CompactionSettings, CompactionStrategy, ContextConfig, ContextOverrides, ContextSettings,
+    ReasoningReplay, SummarizerSettings,
 };
 pub use cron::CronConfig;
 pub use dashboard::{DashboardConfig, DiagramViewerConfig, EventStreamConfig, ModelHealthConfig};
@@ -140,6 +146,7 @@ pub use modules::{
 };
 pub use observability::{AgentTracingBackend, AgentTracingConfig, ObservabilityConfig};
 pub use privacy::{PrivacyConfig, PrivacyMode};
+pub use prompt_screen::{PromptScreenConfig, PromptScreenMode};
 pub use proxy::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
@@ -149,18 +156,21 @@ pub use routes::{EmbeddingRouteConfig, ModelRouteConfig};
 pub use runtime::{
     DockerRuntimeConfig, ReliabilityConfig, RuntimeConfig, SchedulerConfig, ShellConfig,
 };
+pub use runtime_agent37::{Agent37RuntimeConfig, DEFAULT_AGENT37_TEMPLATE};
 pub use runtime_local_jail::LocalJailConfig;
 pub use runtime_openshell::{OpenShellRuntimeConfig, DEFAULT_OPENSHELL_IMAGE};
 pub use scheduler_gate::{PauseReason, Policy, SchedulerGateConfig, SchedulerGateMode};
 pub use security::{
     AuditConfig, ResourceLimitsConfig, SandboxBackend, SandboxConfig, SecurityConfig,
 };
+pub use security_mode::{
+    JudgeMode, SecurityJudgeDialect, SecurityJudgeRoute, SecurityMode, SecurityModeConfig,
+};
 pub use task_sources::TaskSourcesConfig;
 pub use tinychannels_bus::config::{
     ChannelsConfig, DingTalkConfig, DiscordConfig, EmailConfig, IMessageConfig, IrcConfig,
-    LarkConfig, LarkReceiveMode, LinqConfig, MatrixConfig, MattermostConfig, QQConfig,
-    SignalConfig, SlackConfig, StreamMode, TelegramConfig, WebhookConfig, WhatsAppConfig,
-    YuanbaoConfig,
+    LarkConfig, LarkReceiveMode, LinqConfig, MattermostConfig, QQConfig, SignalConfig, SlackConfig,
+    StreamMode, TelegramConfig, WhatsAppConfig, YuanbaoConfig,
 };
 pub use tokenjuice::TokenjuiceConfig;
 pub use tools::{

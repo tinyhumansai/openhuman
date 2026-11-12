@@ -41,7 +41,7 @@ struct SlotClaim {
 impl Drop for SlotClaim {
     fn drop(&mut self) {
         if self.armed {
-            RUNTIME_LIVE.store(false, std::sync::atomic::Ordering::Release);
+            super::release_process_slot();
             log::debug!("[embed][runtime] build did not complete; process slot released");
         }
     }
@@ -176,6 +176,16 @@ impl RuntimeBuilder {
         let inherit = self.workspace.is_operator_owned();
         let resolved = ResolvedWorkspace::resolve(&self.workspace, self.action_dir.as_deref())
             .map_err(map_ws)?;
+        // A scratch directory's secrets go with it, so this runtime may take
+        // over the TinySecurity module a released runtime left admitted (it is
+        // loaded once per process and keeps its first secret scope). A durable
+        // directory may not: its secrets would be kept under another scope's
+        // master key.
+        if resolved._temp.is_some() {
+            if let Some(config_dir) = resolved.config_path.parent() {
+                openhuman_core::security::declare_transient_secret_scope(config_dir);
+            }
+        }
 
         // Discovered: the core loads its own config during boot; nothing to
         // assemble here. Resolved: `Inherit` starts from the operator's own
@@ -364,6 +374,12 @@ impl RuntimeBuilder {
             }
             self.access.apply(&mut base_config);
             apply_provider(&mut base_config, &self.provider);
+            // The core booted with the configuration it discovered; a
+            // `[security]` mode the host set on the builder governs the
+            // process-wide checks too, not only the agents' config.
+            if self.config_knobs.security.is_some() && !inspection {
+                openhuman_core::security::switch::apply_boot_config(&base_config);
+            }
         }
 
         if seams.has_pending_live_policy() {
@@ -401,6 +417,7 @@ impl RuntimeBuilder {
             domains,
             tool_groups,
             self.max_agents,
+            self.agent_opener.take(),
             defaults,
             host_kind,
             self.selection,
@@ -552,19 +569,14 @@ pub(crate) fn routed_provider_effective(provider: &Provider, config: Option<&Con
 }
 
 async fn store_api_key(config: &Config, key: &ApiKey) -> Result<(), RuntimeError> {
-    let state_dir = config
-        .config_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| config.config_path.clone());
-    openhuman_core::credentials::api_key::store_api_key_in(
-        &state_dir,
-        config.secrets.encrypt,
-        key.expose(),
-    )
-    .await
-    .map(|_| ())
-    .map_err(RuntimeError::Build)
+    // The host supplied this key for its own runtime: it authorises the
+    // secret master grant of this config directory, which nobody else can
+    // answer before the core (and its approval gate) boots.
+    let store = openhuman_core::credentials::api_key::store_api_key(config, key.expose());
+    openhuman_core::security::approval::gate::host_authorised_secret_grant(config, store)
+        .await
+        .map(|_| ())
+        .map_err(RuntimeError::Build)
 }
 
 fn create_dir(dir: &Path, what: &'static str) -> Result<(), RuntimeError> {

@@ -47,6 +47,7 @@ controls whether OpenHuman asks the module to apply the enabled tier policy.
 | --- | --- |
 | [`types.rs`](./types.rs) | Host configuration/context types, autonomy tier, stable gate/error types, and trusted roots |
 | [`native_commands.rs`](./native_commands.rs) | TinySecurity command gateway and adaptation to host approval outcomes |
+| [`local_only_commands.rs`](./local_only_commands.rs) | With security disabled: the host's conservative classifier that refuses shell commands which may reach the network under `[privacy] mode = "local_only"` |
 | [`native_paths.rs`](./native_paths.rs) | Host path context translated to TinySecurity's path-policy contract |
 | [`module_gate.rs`](./module_gate.rs) | Batched path checks and cached module answers for sync-only host traits |
 | [`enforcement.rs`](./enforcement.rs) | Host tool admission, budget snapshots, and scratch-directory mechanics |

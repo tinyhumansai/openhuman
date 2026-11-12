@@ -222,6 +222,37 @@ fn only_mongodb_is_shared_between_processes() {
     }
 }
 
+/// The installed backend is shared when its driver is, however the host
+/// installed it: by URL, with a driver name, or (not shared) with neither.
+#[test]
+fn the_installed_backend_is_shared_by_its_driver_however_it_was_installed() {
+    let _guard = test_support::install_backend_for_test(test_support::memory_backend());
+    assert!(!installed_is_shared(), "no driver known");
+
+    install_with_driver("mongodb", test_support::memory_backend());
+    assert!(installed_is_shared());
+    assert_eq!(installed_driver().as_deref(), Some("mongodb"));
+    assert_eq!(
+        installed_url(),
+        None,
+        "a driver name never opts into rebind"
+    );
+
+    install_with_driver("sqlite", test_support::memory_backend());
+    assert!(!installed_is_shared());
+
+    install_for_url("mongodb://db.example/x", test_support::memory_backend());
+    assert!(installed_is_shared());
+
+    install(test_support::memory_backend());
+    assert!(!installed_is_shared(), "a plain install forgets the driver");
+    assert_eq!(installed_driver(), None);
+
+    install_with_driver("mongodb", test_support::memory_backend());
+    assert!(clear());
+    assert!(!installed_is_shared(), "clearing forgets the driver");
+}
+
 #[test]
 fn only_mongodb_and_sqlite_have_cross_process_cas() {
     for driver in ["mongodb", "sqlite"] {
@@ -436,4 +467,30 @@ fn a_test_installed_slot_is_hidden_from_other_test_threads() {
         !other.join().unwrap(),
         "another test's thread must not see the installer's backend"
     );
+}
+
+/// A bridge call may wait on a bridge call made from another thread that is
+/// not on the storage runtime — a module runtime's blocking pool opening the
+/// workspace backend while the host's synchronous store awaits that module.
+/// The bridge must run both instead of queueing the second behind the first.
+#[test]
+fn a_bridge_call_can_wait_on_a_bridge_call_from_another_thread() {
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome = block_on(async move {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(block_on(async { Ok::<_, StorageError>(7) }));
+            });
+            let inner = rx
+                .await
+                .map_err(|error| StorageError::backend(error.to_string()))??;
+            Ok::<_, StorageError>(inner + 1)
+        });
+        let _ = done_tx.send(outcome);
+    });
+    let outcome = done_rx
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("a bridge call waiting on another thread's bridge call deadlocked");
+    assert_eq!(outcome.unwrap(), 8);
 }

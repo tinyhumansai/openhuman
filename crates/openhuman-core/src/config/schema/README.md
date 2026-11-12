@@ -28,15 +28,18 @@ is mounted as a submodule of [`load/dirs.rs`](./load/dirs.rs) via `#[path]`.
 | `[dashboard]` | [`dashboard.rs`](./dashboard.rs) | `DashboardConfig`, `DiagramViewerConfig`, `EventStreamConfig`, `ModelHealthConfig` |
 | `[channel_voice]` | [`channel_voice.rs`](./channel_voice.rs) | `ChannelVoiceConfig`, `ChannelVoiceOverride`, `VoiceReplyMode` |
 | `[ephemeral_route]` | [`ephemeral_route.rs`](./ephemeral_route.rs) | `EphemeralRoute` |
-| `[cron]` | [`cron.rs`](./cron.rs) | `CronConfig` |
+| `[cron]` | [`cron.rs`](./cron.rs) | `CronConfig` (`shell_timeout_secs`: shell-job timeout, default 120) |
 | `[hooks]` | [`hooks.rs`](./hooks.rs) | `HooksConfig` |
 | `[hosting]` | [`hosting.rs`](./hosting.rs) | `HostingConfig` |
+| `[wallet_policy]` (+ `[[wallet_policy.assets]]`) | [`wallet_policy.rs`](./wallet_policy.rs) | `WalletPolicyConfig`, `WalletAssetCap`: allowlist and per-transaction / rolling-day / per-recipient-week caps for wallet executes without a per-transfer confirmation |
 | `[learning]` | `learning.rs` | `LearningConfig`, `ReflectionSource` |
 | `[inbound_debounce]` (+ `by_channel.<name>`) | [`inbound_debounce.rs`](./inbound_debounce.rs) | `InboundDebounceConfig`, `InboundDebounceOverride`: per-conversation batching of inbound channel messages before a turn |
 | `[local_ai]` | [`local_ai.rs`](./local_ai.rs) | `LocalAiConfig`, `LocalAiUsage` |
 | `[modules]` | [`modules.rs`](./modules.rs) | `ModulesConfig`, `ModuleOverride`: controls only whether compiled-in modules load. The loadable *set* is fixed by `crate::modules::registry` |
 | `[observability]` | [`observability.rs`](./observability.rs) | `ObservabilityConfig`, `AgentTracingConfig` |
 | `[privacy]` | [`privacy.rs`](./privacy.rs) | `PrivacyConfig`, `PrivacyMode` |
+| `[prompt_screen]` | [`prompt_screen.rs`](./prompt_screen.rs) | `PromptScreenConfig`, `PromptScreenMode` (TinySecurity prompt screen; `off` is an explicit opt-out, default enforces and fails closed; `[security] mode = "off"` also turns it off) |
+| `[security]` | [`security_mode.rs`](./security_mode.rs) | `SecurityModeConfig`, `SecurityMode` (whether TinySecurity-delegated checks run; `off` allows them and passes redaction through, default enforces and fails closed). Not the daemon's `SecurityConfig` in `security.rs` |
 | `[proxy]` | [`proxy.rs`](./proxy.rs) | `ProxyConfig`, `ProxyScope`, plus `runtime_proxy_config()` / `set_runtime_proxy_config()` process-wide accessors |
 | `[[model_routes]]`, `[[embedding_routes]]` | [`routes.rs`](./routes.rs) | `ModelRouteConfig`, `EmbeddingRouteConfig` |
 | `[runtime]` (+ `[runtime.docker]`), `[shell]`, `[reliability]`, `[scheduler]` | [`runtime.rs`](./runtime.rs) | `RuntimeConfig`, `DockerRuntimeConfig`, `ShellConfig`, `ReliabilityConfig`, `SchedulerConfig` |

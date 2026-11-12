@@ -225,6 +225,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agentes y autonomía',
   'settings.devGroups.automationIntegrations': 'Automatización e integraciones',
   'settings.tokenUsage.title': 'Ahorro de tokens',
+  'settings.secretGrant.title': '¿Permitir que OpenHuman desbloquee tus secretos guardados?',
+  'settings.secretGrant.subtitle':
+    'Guardar este ajuste requiere tu aprobación única para cifrarlo. Deniega para cancelar el guardado.',
   'settings.tokenUsage.menuDesc': 'Ajustes de compresión y cuántos tokens y dólares han ahorrado',
   'settings.tokenUsage.saving': 'Guardando…',
   'settings.tokenUsage.saved': 'Guardado',
@@ -3953,6 +3956,10 @@ const messages: TranslationMap = {
     'El agente ejecutó el número máximo de pasos de herramientas en un turno sin terminar. Normalmente significa que una herramienta siguió fallando (a menudo por un límite de solicitudes en una descarga web). Puedes repetir la misma pregunta en este hilo cuando se levante el límite.',
   'chat_error.turn_timeout':
     'Este turno superó su límite de tiempo sin terminar y se detuvo para que no se quedara colgado. Normalmente significa que una llamada a una herramienta o un subagente delegado se atascó. Puedes repetir tu pregunta en este hilo.',
+  'chat_error.disk_full':
+    'Tu disco está lleno, así que no se pudo guardar esta conversación. Libera algo de espacio en disco y vuelve a enviar tu mensaje en este hilo.',
+  'chat_error.prompt_screened':
+    'El filtro de seguridad de OpenHuman retuvo este mensaje, así que no se envió al modelo. Si cita instrucciones dirigidas a un asistente (por ejemplo, de una página web o un correo), quítalas e inténtalo de nuevo. Si se retienen mensajes normales, puede que el módulo de seguridad no esté disponible: reinicia OpenHuman e inténtalo de nuevo.',
   'chat_error.empty_response':
     'El modelo devolvió una respuesta vacía. Inténtalo de nuevo. Si sigue ocurriendo, prueba con otro modelo o revisa su configuración en Conexiones → Claves de API → LLM.',
   'chat_error.chat_template_rejected':
@@ -4446,6 +4453,10 @@ const messages: TranslationMap = {
     'Se denegó el acceso al micrófono. Permítelo en la configuración del sistema e inténtalo de nuevo.',
   'voice.live.error.micUnavailable': 'No hay ningún micrófono disponible.',
   'voice.live.error.connection': 'No se pudo conectar con el agente de voz.',
+  'voice.live.error.insufficientCredits':
+    'La voz en directo necesita más créditos. Añade créditos para continuar.',
+  'voice.live.error.paidPlanRequired':
+    'La voz en directo requiere un plan de pago. Mejora tu plan para continuar.',
   'voice.live.toolRunning': 'Ejecutando {name}',
   'voice.live.toolOk': '{name} completado',
   'voice.live.toolFailed': '{name} falló',
@@ -4708,11 +4719,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'Cadena de proceso espacial',
   'settings.sandbox.backendHint.bubblewrap': 'Espacios de nombre de usuario ligeros',
   'settings.sandbox.backendHint.none': 'Ejecutar herramientas directamente, sin aislamiento',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Inventario de herramientas',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Herramientas totales',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Herramientas activadas',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'Herramientas MCP stdio',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'Herramientas JSON-RPC',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Estado de la política',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Nivel de autonomía',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Solo en el espacio de trabajo',

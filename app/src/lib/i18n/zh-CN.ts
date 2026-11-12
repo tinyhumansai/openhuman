@@ -206,6 +206,8 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': '智能体与自主性',
   'settings.devGroups.automationIntegrations': '自动化与集成',
   'settings.tokenUsage.title': '令牌节省',
+  'settings.secretGrant.title': '允许 OpenHuman 解锁您保存的密钥吗？',
+  'settings.secretGrant.subtitle': '保存此设置需要您一次性批准对其加密。拒绝即可取消保存。',
   'settings.tokenUsage.menuDesc': '压缩设置以及它们已节省的令牌和美元数量',
   'settings.tokenUsage.saving': '正在保存…',
   'settings.tokenUsage.saved': '已保存',
@@ -3655,6 +3657,10 @@ const messages: TranslationMap = {
     '智能体在一轮中已执行最大数量的工具步骤，但仍未完成。这通常意味着某个工具一直失败（常见原因是网页抓取触发了速率限制）。限制解除后，你可以在此对话中重试同一个问题。',
   'chat_error.turn_timeout':
     '这一轮超出了时间预算仍未完成，已被停止以免卡住。这通常意味着某次工具调用或被委派的子智能体停滞了。你可以在此对话中重试你的问题。',
+  'chat_error.disk_full':
+    '你的磁盘已满，因此无法保存此对话。请释放一些磁盘空间，然后在此对话中重新发送你的消息。',
+  'chat_error.prompt_screened':
+    'OpenHuman 的安全筛查拦下了这条消息，因此它没有发送给模型。如果消息中引用了写给助手的指令（例如来自网页或邮件），请删除后重试。如果普通消息也被拦下，可能是安全模块不可用：请重启 OpenHuman 后重试。',
   'chat_error.empty_response':
     '模型返回了空响应。请重试。如果持续出现，请尝试其他模型，或在 连接 → API 密钥 → 语言模型 中检查其设置。',
   'chat_error.chat_template_rejected':
@@ -4106,6 +4112,8 @@ const messages: TranslationMap = {
   'voice.live.error.micDenied': '麦克风访问被拒绝。请在系统设置中允许后重试。',
   'voice.live.error.micUnavailable': '没有可用的麦克风。',
   'voice.live.error.connection': '无法连接到语音助手。',
+  'voice.live.error.insufficientCredits': '实时语音需要更多额度。请充值后继续。',
+  'voice.live.error.paidPlanRequired': '实时语音需要付费套餐。请升级后继续。',
   'voice.live.toolRunning': '正在运行 {name}',
   'voice.live.toolOk': '{name} 已完成',
   'voice.live.toolFailed': '{name} 失败',
@@ -4338,11 +4346,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': '命名空格进程监狱',
   'settings.sandbox.backendHint.bubblewrap': '轻量级用户命名空间',
   'settings.sandbox.backendHint.none': '直接运行工具, 不孤立',
-  'devOptions.toolPolicyDiagnostics.inventory.title': '工具清单',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': '工具总数',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': '已启用的工具',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP 标准输入输出工具',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC 工具',
   'devOptions.toolPolicyDiagnostics.posture.title': '策略状态',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': '自主级别',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': '仅限工作区',

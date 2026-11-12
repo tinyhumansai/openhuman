@@ -17,7 +17,7 @@
 //!   structured arguments before persistence and prompt delivery.
 //! - [`crate::agent_tool_policy`] — a pre-built [`ToolPolicySession`]
 //!   (channel permission boundary).
-//! - [`crate::prompt_injection`] — [`enforce_prompt_input`] for
+//! - [`crate::prompt_injection`] — [`crate::security::prompt_injection::enforce_prompt_input`] for
 //!   [`SecurityGate::screen_input`].
 //!
 //! # Contract mismatches, resolved in favour of the existing guard
@@ -146,10 +146,17 @@ pub struct OpenHumanSecurityGate {
     /// The owning turn's dispatch context, read from the turn's run context
     /// when the gate is built; `None` falls back to the calling task's.
     dispatch: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
+    /// Immutable configuration supplied by the owning host invocation.
+    screening_config: Option<Arc<crate::config::Config>>,
     /// Only a root that owns settlement of its headless child tree may use
     /// recursive delegation as orchestration control under the Cron policy.
     /// The Cron origin check remains mandatory at authorization time.
     headless_descendant_settlement: bool,
+    /// Set only on the root session the cron scheduler built for a job whose
+    /// agent opted into scheduled actions. Together with a
+    /// `TrustedAutomationSource::CronActions` origin and a root run (depth 0)
+    /// it lifts the read-only Cron stage; every later stage still applies.
+    scheduled_actions: bool,
 }
 
 impl OpenHumanSecurityGate {
@@ -169,13 +176,29 @@ impl OpenHumanSecurityGate {
             screens_input: true,
             approval: ApprovalTurnContext::default(),
             dispatch: None,
+            screening_config: None,
             headless_descendant_settlement: false,
+            scheduled_actions: false,
         }
+    }
+
+    /// Marks the gate as the root session of an opted-in scheduled-actions
+    /// cron run (`cron::origin::scheduled_actions_enabled`).
+    pub(crate) fn with_scheduled_actions(mut self, enabled: bool) -> Self {
+        self.scheduled_actions = enabled;
+        self
     }
 
     /// Marks the gate as part of a host-owned headless root turn.
     pub(crate) fn with_headless_descendant_settlement(mut self, enabled: bool) -> Self {
         self.headless_descendant_settlement = enabled;
+        self
+    }
+
+    /// Bind prompt screening to the configuration supplied by the owning host.
+    /// This authority takes precedence over another task's ambient context.
+    pub fn with_config(mut self, config: Arc<crate::config::Config>) -> Self {
+        self.screening_config = Some(config);
         self
     }
 
@@ -229,6 +252,28 @@ impl OpenHumanSecurityGate {
     fn effective_policy(&self) -> Arc<SecurityPolicy> {
         crate::security::live_policy::effective_in(&DispatchCtx::from_weak(self.dispatch.as_ref()))
             .unwrap_or_else(|| self.policy.clone())
+    }
+
+    /// Hand the answers TinySecurity gave for `evaluated` to the constructor
+    /// policy, which the session's tools hold, when the two are different
+    /// instances. The tools' sync gates read only their own cached answers.
+    ///
+    /// `false` when `evaluated` sets the tools' questions differently (the
+    /// autonomy settings changed during the session): the tools would check
+    /// paths against settings no longer in force, so the caller refuses.
+    fn share_answers(&self, evaluated: &Arc<SecurityPolicy>) -> bool {
+        if Arc::ptr_eq(evaluated, &self.policy) {
+            return true;
+        }
+        if !self.policy.decides_tools_like(evaluated) {
+            tracing::warn!(
+                target: "tinyagents",
+                "[tinyagents::host::security] the autonomy settings changed during this session; refusing the call"
+            );
+            return false;
+        }
+        self.policy.adopt_answers_from(evaluated);
+        true
     }
 
     /// The origin of the turn this gate authorizes for: the run's own context

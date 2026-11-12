@@ -5,26 +5,26 @@ impl ApprovalGate {
     /// allowing an approval decision. A process-scoped UI may project into one
     /// agent's request only by naming that exact agent; an agent-scoped
     /// dispatch cannot decide for another agent or the process.
+    ///
+    /// Reads the route once. `Ok(None)` means it is not parked here (never was,
+    /// or was decided or expired since), which `decide` reports as its miss.
     pub(crate) fn validate_decision_context(
         &self,
         request_id: &str,
         dispatch_tenant: &crate::core::runtime::Tenant,
         requested_agent: Option<&str>,
-    ) -> anyhow::Result<(crate::core::runtime::Tenant, Variant)> {
-        let route = self
-            .parked
-            .request_routes
-            .lock()
-            .get(request_id)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("approval request is not parked in this host session"))?;
+    ) -> anyhow::Result<Option<(crate::core::runtime::Tenant, Variant)>> {
+        let route = self.parked.request_routes.lock().get(request_id).cloned();
+        let Some(route) = route else {
+            return Ok(None);
+        };
         validate_decision_tenant(
             dispatch_tenant,
             requested_agent,
             &route.tenant,
             request_id,
         )?;
-        Ok((route.tenant, route.variant))
+        Ok(Some((route.tenant, route.variant)))
     }
 
     /// Persist a whole-tool grant under the parked request's exact subject.
@@ -197,8 +197,10 @@ impl ApprovalGate {
             }
         }
         // `ApproveAlwaysForTool` persistence is handled by the `approval_decide`
-        // RPC handler after this call has been released. The module records the
-        // whole-tool grant under the parked request's exact subject.
+        // RPC handler after this call has been released. For a process request
+        // it saves the tool to `autonomy.auto_approve` (best-effort), which the
+        // native engine imports as a grant on the next check; an agent's
+        // request is approved once and nothing is saved.
         if let Some(tx) = self.parked.take_waiter(request_id) {
             let _ = tx.send(decision);
         }
@@ -219,6 +221,36 @@ impl ApprovalGate {
             agent_id: route.agent_id.clone(),
         });
         Ok(Some(route.pending))
+    }
+
+    /// Apply a decision from an authenticated dispatch serving `dispatch`.
+    ///
+    /// A request parked in this session is decided only by its owner: the
+    /// same profile, and the same agent when the dispatch is agent-scoped or
+    /// names one ([`Self::validate_decision_context`], one read of the route).
+    /// An id that is not parked here, including one decided or expired since,
+    /// goes straight to [`Self::decide`], which reports the miss.
+    pub(crate) fn decide_as(
+        &self,
+        dispatch: &crate::core::runtime::Tenant,
+        agent: Option<&str>,
+        request_id: &str,
+        decision: ApprovalDecision,
+    ) -> anyhow::Result<Option<PendingApproval>> {
+        // One read of the route. If an expiry or a competing decision removes
+        // it after this, `decide` reports the miss as the benign race it is.
+        if let Err(error) = self.validate_decision_context(request_id, dispatch, agent) {
+            tracing::warn!(
+                request_id = %request_id,
+                error = %error,
+                "[approval::gate] decision refused: the caller does not own the request"
+            );
+            return Err(error);
+        }
+        match agent {
+            Some(agent) => self.decide_for_agent(agent, request_id, decision),
+            None => self.decide(request_id, decision),
+        }
     }
 
     /// [`Self::decide`] on behalf of `agent`: refuses with
@@ -363,12 +395,29 @@ impl ApprovalGate {
     /// The requests this tenant has parked and not yet seen decided, oldest
     /// first. A SaaS profile sees every agent's; anything else sees only its own
     /// agent's (the process, for the default orchestrator).
+    ///
+    /// The process's own list also carries the requests an earlier launch left
+    /// undecided (the engine's pending orphans), after its parked ones.
     pub fn list_pending(&self) -> anyhow::Result<Vec<PendingApproval>> {
         let tenant = super::gate::current_route_tenant();
-        Ok(self.pending_where(|route| {
+        let mut rows = self.pending_where(|route| {
             route.tenant.profile == tenant.profile
                 && (tenant.profile.is_some() || route.tenant.agent == tenant.agent)
-        }))
+        });
+        if tenant == crate::core::runtime::Tenant::default() {
+            // The parked list stands on its own: an engine that cannot answer
+            // costs only the orphans.
+            let orphans = self
+                .run_engine(|engine| async move { engine.orphans().await })?
+                .unwrap_or_else(|error| {
+                    tracing::warn!(error = %error, "[approval::gate] pending orphans were not listed");
+                    Vec::new()
+                });
+            let parked: std::collections::HashSet<String> =
+                rows.iter().map(|row| row.request_id.clone()).collect();
+            rows.extend(orphans.into_iter().filter(|row| !parked.contains(&row.request_id)));
+        }
+        Ok(rows)
     }
 
     /// [`Self::list_pending`] narrowed to `agent`'s requests; `None` lists the

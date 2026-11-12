@@ -6,7 +6,8 @@ use super::super::types::OpenHumanSessionHost;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::security::prompt_injection::{
-    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+    enforce_prompt_input_with_config, screening_config_in, PromptEnforcementAction,
+    PromptEnforcementContext,
 };
 use anyhow::Result;
 use tinyagents_harness::agent_error::AgentError;
@@ -54,7 +55,7 @@ impl OpenHumanSessionHost {
         &mut self,
         message: &str,
         input: Message,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
         approval: crate::security::approval::ApprovalTurnContext,
     ) -> Result<String> {
         self.run_single_with_input(message, Some(input), origin, approval)
@@ -65,23 +66,37 @@ impl OpenHumanSessionHost {
         &mut self,
         message: &str,
         input: Option<Message>,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
         approval: crate::security::approval::ApprovalTurnContext,
     ) -> Result<String> {
         let origin = origin.or_else(|| {
             crate::core::runtime::DispatchCtx::from_weak(self.host_env.core.as_ref())
                 .turn_origin_or_scoped()
         });
-        let guard = enforce_prompt_input(
-            message,
-            PromptEnforcementContext {
-                source: "agent.runtime.run_single",
-                request_id: None,
-                user_id: Some(self.event_channel()),
-                session_id: Some(self.event_session_id()),
-            },
-        )
-        .await;
+        let dispatch = crate::core::runtime::DispatchCtx::from_weak(self.host_env.core.as_ref());
+        let owner_config = screening_config_in(&dispatch).await;
+        // A process with no core has no owner to load from; screen with the
+        // config this session was built with. An owner whose config fails to
+        // load stays held, and so does SaaS work that lost its tenant, as
+        // `DispatchCtx::ambient` keeps it.
+        let ownerless = dispatch.resolved().is_none() && !crate::core::runtime::is_saas();
+        let screen_config = if ownerless {
+            self.runtime_config.as_deref()
+        } else {
+            owner_config.as_ref()
+        };
+        let guard = dispatch
+            .enter(enforce_prompt_input_with_config(
+                message,
+                PromptEnforcementContext {
+                    source: "agent.runtime.run_single",
+                    request_id: None,
+                    user_id: Some(self.event_channel()),
+                    session_id: Some(self.event_session_id()),
+                },
+                screen_config,
+            ))
+            .await;
         // A host-only session reading untrusted data has opted out; see
         // `set_untrusted_input`, which refuses any other session.
         if !self.untrusted_input && !matches!(guard.action, PromptEnforcementAction::Allow) {

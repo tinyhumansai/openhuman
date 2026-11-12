@@ -422,6 +422,10 @@ pub(crate) async fn finish_secret_preflight_credentials(
     config: &crate::config::Config,
 ) {
     seed_startup_credentials(ctx, config).await;
+    // Boot could not read a profile the keyring keeps; now it can be asked.
+    if let Err(e) = crate::credentials::session_state::bind_session_user(config).await {
+        log::debug!("[auth] session user bind skipped after the secret preflight: {e}");
+    }
 }
 
 async fn seed_startup_credentials(ctx: &DispatchCtx, config: &crate::config::Config) {

@@ -166,11 +166,17 @@ pub(crate) async fn prepare_native_transfer(
 /// Execute one explicitly confirmed native quote. The host retrieves only the
 /// matching account secret and delivers it over the attested confidential bus
 /// call; the module owns quote validation, approval facts, signing and broadcast.
+///
+/// Every execute runs through the host spend policy
+/// (`web3::wallet::policy::guarded_execute`): `origin` says who is asking, the
+/// policy refuses or records the attempt as pending in the persistent ledger
+/// before the module is called, and the outcome is recorded afterwards.
 pub(crate) async fn execute_native_transfer(
     ctx: &DispatchCtx,
     config: &Config,
     owner: Option<tinywallet_bus::wire::QuoteOwner>,
     params: tinywallet_bus::wire::ExecutePreparedParams,
+    origin: crate::web3::wallet::policy::ExecutionOrigin,
 ) -> Result<tinywallet_bus::wire::ExecutionResult, WalletCallError> {
     if !params.confirmed {
         return Err(WalletCallError::InvalidInput(
@@ -202,24 +208,48 @@ pub(crate) async fn execute_native_transfer(
         .ok_or_else(|| {
             WalletCallError::InvalidInput("prepared wallet quote is unavailable".into())
         })?;
-    let secret = signing_secret(ctx, config, quote.chain).await?;
-    let mut request = tinywallet_bus::wire::NativeWalletExecuteRequest {
-        service: service.response.service.clone(),
-        owner,
-        quote_id: params.quote_id.clone(),
-        confirmed: params.confirmed,
-        secret,
-    };
-    let result = super::wallet_host::with_confirmed_execution(
-        super::wallet_host::ApprovalKind::Native,
-        &params.quote_id,
-        Some(quote),
-        None,
-        wallet::call_confidential(config, methods::NATIVE_WALLET_EXECUTE_PREPARED, &request),
+    let ledger =
+        crate::web3::wallet::ledger::SpendLedger::open(&config.workspace_dir).map_err(|error| {
+            WalletCallError::Failed(format!("wallet spend ledger is unavailable: {error:#}"))
+        })?;
+    let handle = service.response.service.clone();
+    let result = crate::web3::wallet::policy::guarded_execute(
+        &ledger,
+        &config.wallet_policy,
+        &origin,
+        &quote,
+        now_ms(),
+        || async {
+            let secret = signing_secret(ctx, config, quote.chain).await?;
+            let mut request = tinywallet_bus::wire::NativeWalletExecuteRequest {
+                service: handle,
+                owner,
+                quote_id: params.quote_id.clone(),
+                confirmed: params.confirmed,
+                secret,
+            };
+            let result = super::wallet_host::with_confirmed_execution(
+                super::wallet_host::ApprovalKind::Native,
+                &params.quote_id,
+                Some(quote.clone()),
+                None,
+                wallet::call_confidential(
+                    config,
+                    methods::NATIVE_WALLET_EXECUTE_PREPARED,
+                    &request,
+                ),
+            )
+            .await;
+            request.secret.mnemonic.zeroize();
+            result
+        },
     )
     .await;
-    request.secret.mnemonic.zeroize();
-    if result.is_ok() {
+    // A quote is single-use once an attempt reached the module, whatever the
+    // outcome: an in-doubt execute is never retried with the same quote.
+    if !matches!(&result, Err(WalletCallError::InvalidInput(message))
+        if message.starts_with(crate::web3::wallet::policy::POLICY_REFUSED_PREFIX))
+    {
         service.prepared_quotes.remove(&params.quote_id);
     }
     result

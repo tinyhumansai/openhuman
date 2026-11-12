@@ -5,10 +5,12 @@
 //! It keeps the lifecycle the module defines in memory: a request is pending, a
 //! person approves or denies it, an approval is reserved once and its outcome
 //! recorded, a request past its window expires. It applies the user's posture the
-//! way the module does (auto-approve everything, a tool grant, a flow grant) and
-//! records what the gate asked, so a test can pin what was sent. It is not the
-//! module: what the module itself answers is pinned by the module-backed tests
-//! in `native/engine_tests.rs`.
+//! way the module does (auto-approve everything, a tool grant, a flow grant),
+//! imports the legacy `auto_approve` list once as tool grants as the native
+//! engine does, and records what the gate asked, so a test can pin what was
+//! sent. It is not the module: the module-backed tests in
+//! `native/engine_tests.rs` are not compiled today, so nothing here is checked
+//! against the module's own answers.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -72,10 +74,20 @@ pub(crate) struct StubEngine {
     fail_reserve: AtomicBool,
     fail_record_execution: AtomicBool,
     always_pending: AtomicBool,
+    /// Park `check` after the prompt was delivered, and `decide` before it
+    /// answers, so a test can drop the caller while either is in flight.
+    hold_after_delivery: AtomicBool,
+    hold_decides: AtomicBool,
+    /// Make `decide` wait for this signal, as the native engine waits for the
+    /// parked call's check to release its subject's stream.
+    decide_waits_for: Mutex<Option<Arc<tokio::sync::Notify>>>,
     /// The durable flow trust the module keeps: `(flow, tool)` pairs.
     trust: Mutex<std::collections::BTreeSet<(String, String)>>,
     /// Durable whole-tool trust keyed by the exact tenant and posture variant.
     tool_trust: Mutex<HashSet<(Tenant, Variant, String)>>,
+    /// Legacy `auto_approve` entries already imported, per tenant. The module
+    /// answers a repeat import as already done, so a revoked grant stays revoked.
+    imported: Mutex<HashSet<(Tenant, String)>>,
 }
 
 impl std::fmt::Debug for StubEngine {
@@ -124,6 +136,15 @@ impl StubEngine {
             .and_then(|row| row.attribution)
     }
 
+    /// The label a decision was recorded under, when one was.
+    pub(crate) fn label(&self, request_id: &str) -> Option<String> {
+        self.rows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(request_id)
+            .and_then(|row| row.label.clone())
+    }
+
     /// Every request id, oldest first.
     pub(crate) fn request_ids(&self) -> Vec<String> {
         let rows = self.rows.lock().unwrap_or_else(PoisonError::into_inner);
@@ -131,6 +152,15 @@ impl StubEngine {
             rows.iter().map(|(id, row)| (id, row.created_ms)).collect();
         ids.sort_by_key(|(_, created)| *created);
         ids.into_iter().map(|(id, _)| id.clone()).collect()
+    }
+
+    /// Revoke a durable tool grant, as a person does in the trust settings. The
+    /// tool stays imported: a later check does not grant it again.
+    pub(crate) fn revoke_tool_grant(&self, tenant: &Tenant, variant: Variant, tool: &str) {
+        self.tool_trust
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&(tenant.clone(), variant, tool.to_owned()));
     }
 
     /// Make every later `check` fail, as a module that cannot answer does.
@@ -144,6 +174,24 @@ impl StubEngine {
     }
 
     /// Make every later `reserve` fail.
+    /// Hold every `check` after its prompt is delivered until the caller drops it.
+    pub(crate) fn hold_after_delivery(&self, hold: bool) {
+        self.hold_after_delivery.store(hold, Ordering::SeqCst);
+    }
+
+    /// Hold every `decide` until the caller drops it.
+    pub(crate) fn hold_decides(&self, hold: bool) {
+        self.hold_decides.store(hold, Ordering::SeqCst);
+    }
+
+    /// Make every later `decide` wait until `signal` is notified.
+    pub(crate) fn decide_waits_for(&self, signal: Arc<tokio::sync::Notify>) {
+        *self
+            .decide_waits_for
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(signal);
+    }
+
     pub(crate) fn fail_reserve(&self, fail: bool) {
         self.fail_reserve.store(fail, Ordering::SeqCst);
     }
@@ -237,6 +285,27 @@ impl ApprovalEngine for StubEngine {
         if self.refuse.load(Ordering::SeqCst) {
             return Err(EngineError::Unavailable("the stub engine refuses".into()));
         }
+        // As `NativeEngine::check`: the legacy list becomes durable tool trust
+        // the first time each tool is seen (ImportTrustSource2), outside SaaS
+        // and for the standard posture only.
+        #[cfg(feature = "legacy-import")]
+        if !crate::core::runtime::is_saas() && input.variant == Variant::Standard {
+            let mut imported = self.imported.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut trust = self
+                .tool_trust
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            // The importer skips names the module would not accept as a tool.
+            for tool in input
+                .legacy_tool_grants
+                .iter()
+                .filter(|tool| tinysecurity_bus::is_host_tool_name2(tool))
+            {
+                if imported.insert((input.tenant.clone(), tool.clone())) {
+                    trust.insert((input.tenant.clone(), Variant::Standard, tool.clone()));
+                }
+            }
+        }
         let trusted_tool = self
             .tool_trust
             .lock()
@@ -307,6 +376,9 @@ impl ApprovalEngine for StubEngine {
             self.with(&request_id, |row| row.state = State::Cancelled);
             return Err(EngineError::Unavailable(error));
         }
+        if self.hold_after_delivery.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
         Ok(Checked::Pending {
             request_id,
             expires_at_ms: expires_ms,
@@ -319,6 +391,17 @@ impl ApprovalEngine for StubEngine {
         choice: Choice,
         label: &str,
     ) -> Result<Decided, EngineError> {
+        if self.hold_decides.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+        let signal = self
+            .decide_waits_for
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(signal) = signal {
+            signal.notified().await;
+        }
         let now = now_ms();
         self.with(request_id, |row| {
             if row.state != State::Pending || now >= row.expires_ms {

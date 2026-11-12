@@ -13,6 +13,8 @@ fn legacy(id: &str, decision: Option<&str>, executed: bool, age_minutes: i64) ->
         decided_at: decision.map(|_| created + Duration::seconds(5)),
         decision: decision.map(str::to_owned),
         executed,
+        summary: decision.is_none().then(|| format!("run {id}")),
+        args_redacted: decision.is_none().then(|| r#"{"cmd":"ls"}"#.to_owned()),
     }
 }
 
@@ -30,11 +32,49 @@ fn a_legacy_decision_maps_to_the_module_state_it_ended_in() {
         state_of(&legacy("a", Some("deny"), false, 1)),
         ApprovalState::Denied
     );
-    // A request an earlier launch left undecided can never be resumed.
+    // A request an earlier launch left undecided stays visible while its window
+    // is open, and is history once it closed.
     assert_eq!(
         state_of(&legacy("a", None, false, 1)),
+        ApprovalState::Pending
+    );
+    assert_eq!(
+        state_of(&legacy("a", None, false, 11)),
         ApprovalState::Expired
     );
+}
+
+#[test]
+fn an_undecided_row_in_its_window_is_sent_as_a_pending_orphan_a_person_can_recognize() {
+    let record = legacy_record(&legacy("still-pending", None, false, 1));
+    assert_eq!(record.state, ApprovalState::Pending);
+    assert_eq!(record.tool_name.as_deref(), Some("composio"));
+    assert_eq!(record.summary.as_deref(), Some("run still-pending"));
+    assert_eq!(record.args_redacted.as_deref(), Some(r#"{"cmd":"ls"}"#));
+
+    // Once its window closed it is inert history and carries none of them.
+    let expired = legacy_record(&legacy("gone", None, false, 11));
+    assert_eq!(expired.state, ApprovalState::Expired);
+    assert_eq!(
+        (expired.tool_name, expired.summary, expired.args_redacted),
+        (None, None, None)
+    );
+}
+
+#[test]
+fn only_the_undecided_rows_still_in_their_window_are_imported_as_open_requests() {
+    let mut history = LegacyHistory::default();
+    history
+        .approvals
+        .push(legacy("decided", Some("deny"), false, 1));
+    history.approvals.push(legacy("expired", None, false, 11));
+    history.approvals.push(legacy("newer", None, false, 1));
+    history.approvals.push(legacy("older", None, false, 2));
+    let open: Vec<&str> = open_requests(&history)
+        .iter()
+        .map(|row| row.request_id.as_str())
+        .collect();
+    assert_eq!(open, ["older", "newer"]);
 }
 
 #[test]
@@ -134,7 +174,7 @@ async fn absent_module() -> (
 }
 
 fn seed_legacy(config: &Config) {
-    use crate::storage::{DocumentStoreExt, Precondition};
+    use crate::storage::Precondition;
     let opened = crate::storage::local::open("history import test", &config.workspace_dir).unwrap();
     let storage = opened.scoped().unwrap();
     let docs = std::sync::Arc::clone(storage.documents());
@@ -191,4 +231,20 @@ async fn a_legacy_import_that_cannot_reach_the_module_remains_retryable() {
         read(config.clone()).await.unwrap().unwrap().approvals.len(),
         1
     );
+}
+
+/// The gate reaches the engine from the storage bridge's runtime
+/// (`run_engine`), and the first engine call runs this import, whose legacy
+/// read is itself a synchronous storage call.
+#[test]
+fn the_legacy_read_works_from_inside_a_storage_bridge_call() {
+    let (_dir, config) = workspace();
+    seed_legacy(&config);
+    let read_back = crate::storage::block_on_anyhow(async move {
+        read(config)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))
+    })
+    .expect("the legacy history is readable from the bridge");
+    assert_eq!(read_back.expect("seeded history").approvals.len(), 1);
 }

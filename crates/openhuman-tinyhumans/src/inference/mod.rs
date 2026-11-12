@@ -34,6 +34,8 @@ use openhuman_embed::__host::inference_registry::{
 };
 use tinyinference_llm::model::ChatModel;
 
+#[cfg(feature = "voice")]
+pub use backend_error_code::HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE;
 pub use managed_model::ManagedOptions;
 
 use crate::install::InstallOptions;
@@ -45,6 +47,7 @@ fn managed_options(config: &Config) -> ManagedOptions {
         openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
         secrets_encrypt: config.secrets.encrypt,
         auth_profile_override: None,
+        config: Some(Arc::new(config.clone())),
     }
 }
 

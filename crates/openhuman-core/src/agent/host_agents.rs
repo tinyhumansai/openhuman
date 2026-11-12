@@ -28,6 +28,9 @@
 //! origin. Resolving an agent does not change who is asking.
 
 use crate::core::runtime::DispatchCtx;
+use std::any::Any;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, LazyLock, PoisonError, RwLock};
 
 use crate::agent::{HostTools, OpenHumanSessionHost};
@@ -96,7 +99,7 @@ impl HostAgent {
         channel: &str,
         message: &str,
         message_input: Option<tinyinference_llm::message::Message>,
-        origin: crate::security::turn_origin::AgentTurnOrigin,
+        origin: crate::core::runtime::turn_origin::AgentTurnOrigin,
         approval: crate::security::approval::ApprovalTurnContext,
         progress: Option<tokio::sync::mpsc::Sender<crate::progress::AgentProgress>>,
         run_queue: Option<
@@ -114,7 +117,7 @@ impl HostAgent {
     ) -> anyhow::Result<String> {
         let config = self.config.clone();
         let agent_id = self.definition.id.clone();
-        let mut session = self.session_host(&config, Some(session_key))?;
+        let mut session = self.session_host(&config, Some(session_key)).await?;
         session.set_thread_id(Some(session_key));
         session.set_event_context(event_session_id, channel);
         session.adopt_imported_history(imported_history)?;
@@ -168,7 +171,7 @@ impl HostAgent {
         event_session_id: &str,
         channel: &str,
     ) -> anyhow::Result<bool> {
-        let mut session = self.session_host(&self.config, Some(session_key))?;
+        let mut session = self.session_host(&self.config, Some(session_key)).await?;
         session.set_thread_id(Some(session_key));
         session.set_event_context(event_session_id, channel);
         self.scope(session.reset_bound_history()).await
@@ -257,6 +260,55 @@ impl std::fmt::Debug for HostAgent {
 pub trait HostAgentResolver: Send + Sync {
     /// The agent registered under `agent_id`, if the host has one.
     fn resolve(&self, agent_id: &str) -> Option<HostAgent>;
+
+    /// Like [`resolve`](Self::resolve), for a driver that runs the agent for
+    /// a while: the [`OpenedHostAgent`] may carry a lease that keeps a live
+    /// agent from being torn down mid-run when its owner drops the last other
+    /// handle. The default holds nothing.
+    fn resolve_leased(&self, agent_id: &str) -> Option<OpenedHostAgent> {
+        self.resolve(agent_id).map(OpenedHostAgent::new)
+    }
+
+    /// Bring up the agent `agent_id` when [`resolve`](Self::resolve) found
+    /// nothing live, for a driver (a due cron job) that cannot run without
+    /// it. `None` -- the default -- means the host cannot or will not open
+    /// it, and the driver must not substitute another agent. The
+    /// [`OpenedHostAgent`] may carry a lease that keeps the agent alive until
+    /// the driver is done with it.
+    fn open<'a>(
+        &'a self,
+        agent_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Option<OpenedHostAgent>> + Send + 'a>> {
+        let _ = agent_id;
+        Box::pin(async { None })
+    }
+}
+
+/// A [`HostAgent`] a resolver opened on demand, with whatever keeps it alive.
+pub struct OpenedHostAgent {
+    /// The agent to build the session from.
+    pub agent: HostAgent,
+    /// Dropped when the driver finishes with the agent, so a host can close
+    /// an agent it only opened for one run.
+    lease: Option<Box<dyn Any + Send + Sync>>,
+}
+
+impl OpenedHostAgent {
+    /// An agent that needs nothing held after it is built.
+    pub fn new(agent: HostAgent) -> Self {
+        Self { agent, lease: None }
+    }
+
+    /// Hold `lease` for as long as this value (and so the run) lives.
+    pub fn with_lease(mut self, lease: impl Any + Send + Sync) -> Self {
+        self.lease = Some(Box::new(lease));
+        self
+    }
+
+    /// Split into the agent and its lease; keep the lease for the whole run.
+    pub fn into_parts(self) -> (HostAgent, Option<Box<dyn Any + Send + Sync>>) {
+        (self.agent, self.lease)
+    }
 }
 
 static RESOLVER: LazyLock<RwLock<Option<Arc<dyn HostAgentResolver>>>> =
@@ -301,6 +353,41 @@ pub fn resolve(agent_id: &str) -> Option<HostAgent> {
         "[host_agents] resolve host agent"
     );
     hit
+}
+
+/// Like [`resolve`], but the agent comes with the lease its resolver holds
+/// for it (see [`HostAgentResolver::resolve_leased`]).
+pub fn resolve_leased(agent_id: &str) -> Option<OpenedHostAgent> {
+    let resolver = RESOLVER
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()?;
+    resolver.resolve_leased(agent_id)
+}
+
+/// Like [`resolve`], but when the installed resolver has no live `agent_id`
+/// it is asked to [`open`](HostAgentResolver::open) one. `None` when nothing
+/// is installed or the host has no such agent and will not open it, or when
+/// it opens an agent under another id: a driver never runs a different agent
+/// than the one it asked for.
+pub async fn resolve_or_open(agent_id: &str) -> Option<OpenedHostAgent> {
+    let resolver = RESOLVER
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()?;
+    if let Some(live) = resolver.resolve_leased(agent_id) {
+        return Some(live);
+    }
+    let opened = resolver
+        .open(agent_id)
+        .await
+        .filter(|opened| opened.agent.definition.id == agent_id);
+    tracing::debug!(
+        agent_id,
+        opened = opened.is_some(),
+        "[host_agents] open missing host agent"
+    );
+    opened
 }
 
 #[cfg(test)]

@@ -3,13 +3,14 @@ use super::*;
 #[tokio::test]
 async fn cache_key_changes_when_backend_credential_rotates() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = Config {
+    let mut config = Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };
 
+    config.secrets.encrypt = false;
     crate::credentials::api_key::store_api_key(&config, "tiny_first_key")
         .await
         .unwrap();
@@ -33,6 +34,7 @@ async fn cache_key_changes_when_backend_url_changes() {
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };
+    config.secrets.encrypt = false;
     crate::credentials::api_key::store_api_key(&config, "tiny_test_key")
         .await
         .unwrap();

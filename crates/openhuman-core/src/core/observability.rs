@@ -34,8 +34,9 @@ pub use release_tag::is_stale_release_event;
 mod availability;
 use availability::log_module_unavailable;
 pub use availability::{
-    is_api_key_rejected_message, is_backend_unavailable_message, is_module_unavailable_message,
-    API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX,
+    is_api_key_rejected_message, is_backend_unavailable_message, is_hosted_billing_refusal_message,
+    is_module_unavailable_message, API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX,
+    INSUFFICIENT_CREDITS_PREFIX, PAID_PLAN_REQUIRED_PREFIX,
 };
 
 /// A `(key, value)` pair attached as a Sentry tag. Tags are short, indexed,
@@ -371,6 +372,7 @@ include!("observability_expected_error_classification.rs");
 include!("observability_plan_and_session_errors.rs");
 include!("observability_provider_local_errors.rs");
 include!("observability_network_provider_errors.rs");
+include!("observability_voice_provider_errors.rs");
 include!("observability_reporting.rs");
 include!("observability_event_classification.rs");
 include!("observability_backend_event_classification.rs");

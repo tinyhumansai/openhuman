@@ -1,20 +1,20 @@
 use super::*;
 
-#[test]
-fn start_openai_oauth_returns_authorize_url() {
+#[tokio::test]
+async fn start_openai_oauth_returns_authorize_url() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
 
-    let start = runtime().block_on(start_openai_oauth(&config)).unwrap();
+    let start = start_openai_oauth(&config).await.unwrap();
     assert!(start.auth_url.contains("auth.openai.com"));
     assert!(start.auth_url.contains("code_challenge="));
     assert_eq!(start.redirect_uri, "http://127.0.0.1:1455/auth/callback");
     assert!(!start.state.is_empty());
-    assert!(!openai_oauth_status(&config).unwrap().connected);
+    assert!(!openai_oauth_status(&config).await.unwrap().connected);
 }
 
-#[test]
-fn build_authorize_url_includes_codex_pkce_and_extra_params() {
+#[tokio::test]
+async fn build_authorize_url_includes_codex_pkce_and_extra_params() {
     let config = tiny_oauth_config(
         &test_oauth_config("https://token.example.test/oauth/token"),
         "http://127.0.0.1:1455/auth/callback",
@@ -47,15 +47,15 @@ fn build_authorize_url_includes_codex_pkce_and_extra_params() {
     assert_eq!(pairs.get("prompt").map(String::as_str), Some("consent"));
 }
 
-#[test]
-fn parse_callback_input_accepts_raw_query_string() {
+#[tokio::test]
+async fn parse_callback_input_accepts_raw_query_string() {
     let (code, state) = parse_callback_input("code=abc%20123&state=xyz").unwrap();
     assert_eq!(code, "abc 123");
     assert_eq!(state, "xyz");
 }
 
-#[test]
-fn parse_callback_input_rejects_blank_and_missing_state() {
+#[tokio::test]
+async fn parse_callback_input_rejects_blank_and_missing_state() {
     let blank = parse_callback_input("   ").unwrap_err();
     assert!(blank.contains("required"));
 
@@ -64,25 +64,25 @@ fn parse_callback_input_rejects_blank_and_missing_state() {
     assert!(missing_state.contains("state"));
 }
 
-#[test]
-fn complete_openai_oauth_rejects_missing_pending_session() {
+#[tokio::test]
+async fn complete_openai_oauth_rejects_missing_pending_session() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = runtime()
-        .block_on(complete_openai_oauth(
-            &config,
-            "http://127.0.0.1:1455/auth/callback?code=fake&state=state",
-        ))
-        .unwrap_err();
+    let err = complete_openai_oauth(
+        &config,
+        "http://127.0.0.1:1455/auth/callback?code=fake&state=state",
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("no pending OAuth session"));
 }
 
-#[test]
-fn complete_openai_oauth_rejects_expired_pending_session() {
+#[tokio::test]
+async fn complete_openai_oauth_rejects_expired_pending_session() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let pending = pending::store(&config).unwrap();
-    runtime().block_on(async {
+    (async {
         pending
             .set(
                 "openai-oauth-pending",
@@ -105,27 +105,29 @@ fn complete_openai_oauth_rejects_expired_pending_session() {
         .unwrap_err();
         assert!(err.contains("no pending OAuth session"));
         assert!(pending.get("openai-oauth-pending").await.unwrap().is_none());
-    });
+    })
+    .await;
 }
 
-#[test]
-fn start_openai_oauth_keeps_the_pending_session_in_the_secret_store_not_a_file() {
+#[tokio::test]
+async fn start_openai_oauth_keeps_the_pending_session_in_the_secret_store_not_a_file() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let start = runtime().block_on(start_openai_oauth(&config)).unwrap();
+    let start = start_openai_oauth(&config).await.unwrap();
 
     assert!(!tmp.path().join("openai-oauth-pending.json").exists());
     let pending = pending::store(&config).unwrap();
-    let stored = runtime()
-        .block_on(pending.get("openai-oauth-pending"))
+    let stored = pending
+        .get("openai-oauth-pending")
+        .await
         .unwrap()
         .expect("the session is stored");
     let doc: serde_json::Value = serde_json::from_slice(&stored).unwrap();
     assert_eq!(doc["state"], start.state);
 }
 
-#[test]
-fn a_legacy_pending_file_started_before_the_upgrade_still_completes_its_flow() {
+#[tokio::test]
+async fn a_legacy_pending_file_started_before_the_upgrade_still_completes_its_flow() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let legacy = tmp.path().join("openai-oauth-pending.json");
@@ -144,28 +146,26 @@ fn a_legacy_pending_file_started_before_the_upgrade_still_completes_its_flow() {
 
     // A wrong state is rejected as a mismatch, which only happens when the
     // legacy session was found.
-    let err = runtime()
-        .block_on(complete_openai_oauth(
-            &config,
-            "http://127.0.0.1:1455/auth/callback?code=fake&state=wrong",
-        ))
-        .unwrap_err();
+    let err = complete_openai_oauth(
+        &config,
+        "http://127.0.0.1:1455/auth/callback?code=fake&state=wrong",
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("state mismatch"), "{err}");
     assert_eq!(std::fs::read_to_string(&legacy).unwrap(), bytes);
 }
 
-#[test]
-fn complete_openai_oauth_rejects_state_mismatch() {
+#[tokio::test]
+async fn complete_openai_oauth_rejects_state_mismatch() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let start = runtime().block_on(start_openai_oauth(&config)).unwrap();
+    let start = start_openai_oauth(&config).await.unwrap();
     let callback = format!(
         "http://127.0.0.1:1455/auth/callback?code=fake&state=not-{}",
         start.state
     );
-    let err = runtime()
-        .block_on(complete_openai_oauth(&config, &callback))
-        .unwrap_err();
+    let err = complete_openai_oauth(&config, &callback).await.unwrap_err();
     assert!(err.contains("state mismatch"));
 }
 
@@ -231,8 +231,8 @@ async fn exchange_authorization_code_reports_http_errors() {
     assert!(err.contains("bad auth code"));
 }
 
-#[test]
-fn persist_openai_oauth_token_stores_oauth_profile_with_metadata() {
+#[tokio::test]
+async fn persist_openai_oauth_token_stores_oauth_profile_with_metadata() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let access_token = unsigned_jwt(serde_json::json!({ "sub": "acct_123" }));
@@ -244,7 +244,7 @@ fn persist_openai_oauth_token_stores_oauth_profile_with_metadata() {
         issued_at: 123,
     };
 
-    let profile = persist_openai_oauth_token(&config, &token).unwrap();
+    let profile = persist_openai_oauth_token(&config, &token).await.unwrap();
     assert_eq!(profile.kind, AuthProfileKind::OAuth);
     assert_eq!(
         profile.metadata.get("account_id").map(String::as_str),
@@ -270,13 +270,16 @@ fn persist_openai_oauth_token_stores_oauth_profile_with_metadata() {
         .and_then(|set| set.expires_at)
         .is_some());
 
-    let data = AuthProfilesStore::new(tmp.path(), false).load().unwrap();
+    let data = AuthProfilesStore::new_with_config(tmp.path(), &config)
+        .load()
+        .await
+        .unwrap();
     let stored = data.profiles.get(&profile.id).unwrap();
     assert_eq!(stored.id, profile.id);
 }
 
-#[test]
-fn persist_openai_oauth_token_rejects_blank_access_token() {
+#[tokio::test]
+async fn persist_openai_oauth_token_rejects_blank_access_token() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let token = OAuthTokenSet {
@@ -287,21 +290,26 @@ fn persist_openai_oauth_token_rejects_blank_access_token() {
         issued_at: 123,
     };
 
-    let err = persist_openai_oauth_token(&config, &token).unwrap_err();
+    let err = persist_openai_oauth_token(&config, &token)
+        .await
+        .unwrap_err();
     assert!(
         err.contains("access_token"),
         "expected missing access_token error, got: {err}"
     );
 
-    let data = AuthProfilesStore::new(tmp.path(), false).load().unwrap();
+    let data = AuthProfilesStore::new_with_config(tmp.path(), &config)
+        .load()
+        .await
+        .unwrap();
     assert!(
         data.profiles.is_empty(),
         "blank-access OAuth token should not be persisted"
     );
 }
 
-#[test]
-fn import_codex_cli_auth_file_stores_oauth_profile_with_account_metadata() {
+#[tokio::test]
+async fn import_codex_cli_auth_file_stores_oauth_profile_with_account_metadata() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let access_token = unsigned_jwt(serde_json::json!({
@@ -324,7 +332,9 @@ fn import_codex_cli_auth_file_stores_oauth_profile_with_account_metadata() {
     )
     .unwrap();
 
-    let profile = import_codex_cli_auth_from_path(&config, &auth_path).unwrap();
+    let profile = import_codex_cli_auth_from_path(&config, &auth_path)
+        .await
+        .unwrap();
 
     assert_eq!(profile.kind, AuthProfileKind::OAuth);
     assert_eq!(
@@ -338,18 +348,22 @@ fn import_codex_cli_auth_file_stores_oauth_profile_with_account_metadata() {
     assert!(token_set.expires_at.is_some());
 
     let credentials = lookup_openai_oauth_credentials(&config)
+        .await
         .unwrap()
         .expect("imported oauth credentials");
     assert_eq!(credentials.access_token, access_token);
     assert_eq!(credentials.account_id.as_deref(), Some("acct_from_file"));
     assert_eq!(
-        lookup_key_for_slug("openai", &config).unwrap(),
-        access_token
+        lookup_openai_bearer_token(&config)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(access_token.as_str())
     );
 }
 
-#[test]
-fn import_codex_cli_auth_extracts_nested_chatgpt_account_id() {
+#[tokio::test]
+async fn import_codex_cli_auth_extracts_nested_chatgpt_account_id() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let access_token = unsigned_jwt(serde_json::json!({
@@ -373,20 +387,23 @@ fn import_codex_cli_auth_extracts_nested_chatgpt_account_id() {
     )
     .unwrap();
 
-    let profile = import_codex_cli_auth_from_path(&config, &auth_path).unwrap();
+    let profile = import_codex_cli_auth_from_path(&config, &auth_path)
+        .await
+        .unwrap();
 
     assert_eq!(
         profile.metadata.get("account_id").map(String::as_str),
         Some("acct_nested")
     );
     let credentials = lookup_openai_oauth_credentials(&config)
+        .await
         .unwrap()
         .expect("imported oauth credentials");
     assert_eq!(credentials.account_id.as_deref(), Some("acct_nested"));
 }
 
-#[test]
-fn import_codex_cli_auth_decodes_padded_base64url_access_token() {
+#[tokio::test]
+async fn import_codex_cli_auth_decodes_padded_base64url_access_token() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let payload = "eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdF9wYWRkZWQifSwibm9uY2UiOiI-In0=";
@@ -409,7 +426,9 @@ fn import_codex_cli_auth_decodes_padded_base64url_access_token() {
     )
     .unwrap();
 
-    let profile = import_codex_cli_auth_from_path(&config, &auth_path).unwrap();
+    let profile = import_codex_cli_auth_from_path(&config, &auth_path)
+        .await
+        .unwrap();
 
     assert_eq!(
         profile.metadata.get("account_id").map(String::as_str),
@@ -417,11 +436,12 @@ fn import_codex_cli_auth_decodes_padded_base64url_access_token() {
     );
 }
 
-#[test]
-fn import_codex_cli_auth_file_reports_missing_file_with_login_hint() {
+#[tokio::test]
+async fn import_codex_cli_auth_file_reports_missing_file_with_login_hint() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let err = import_codex_cli_auth_from_path(&config, &tmp.path().join("missing-auth.json"))
+        .await
         .unwrap_err();
 
     assert!(err.contains("Could not read Codex CLI auth"));
@@ -433,8 +453,8 @@ fn import_codex_cli_auth_file_reports_missing_file_with_login_hint() {
 /// demotion at `ops.rs` (TAURI-RUST-83A) keeps working even if the wording
 /// changes. If a future edit to `store.rs` drops the `codex cli auth` /
 /// `.codex/auth.json` anchor from a message, this test fails in CI.
-#[test]
-fn codex_import_user_state_errors_classify_as_expected() {
+#[tokio::test]
+async fn codex_import_user_state_errors_classify_as_expected() {
     use crate::core::observability::{expected_error_kind, ExpectedErrorKind};
 
     let tmp = tempdir().unwrap();
@@ -442,22 +462,29 @@ fn codex_import_user_state_errors_classify_as_expected() {
 
     // Missing file (no `codex login`).
     let missing = import_codex_cli_auth_from_path(&config, &tmp.path().join("missing-auth.json"))
+        .await
         .unwrap_err();
 
     // Unparseable file.
     let garbage_path = tmp.path().join("garbage-auth.json");
     std::fs::write(&garbage_path, b"not json").unwrap();
-    let garbage = import_codex_cli_auth_from_path(&config, &garbage_path).unwrap_err();
+    let garbage = import_codex_cli_auth_from_path(&config, &garbage_path)
+        .await
+        .unwrap_err();
 
     // Parses but carries no tokens.
     let no_tokens_path = tmp.path().join("no-tokens-auth.json");
     std::fs::write(&no_tokens_path, b"{}").unwrap();
-    let no_tokens = import_codex_cli_auth_from_path(&config, &no_tokens_path).unwrap_err();
+    let no_tokens = import_codex_cli_auth_from_path(&config, &no_tokens_path)
+        .await
+        .unwrap_err();
 
     // Parses with a tokens object but no access token.
     let no_access_path = tmp.path().join("no-access-auth.json");
     std::fs::write(&no_access_path, br#"{"tokens":{"refresh_token":"r"}}"#).unwrap();
-    let no_access = import_codex_cli_auth_from_path(&config, &no_access_path).unwrap_err();
+    let no_access = import_codex_cli_auth_from_path(&config, &no_access_path)
+        .await
+        .unwrap_err();
 
     for err in [&missing, &garbage, &no_tokens, &no_access] {
         assert_eq!(
@@ -479,19 +506,20 @@ async fn inference_import_codex_cli_surfaces_error_when_auth_missing() {
     let config = test_config(&tmp);
     let _env_guard = EnvVarGuard::set("CODEX_HOME", tmp.path());
 
-    let err = crate::inference::ops::inference_openai_oauth_import_codex_cli(&config)
-        .await
-        .unwrap_err();
+    let err =
+        crate::security::credentials::openai_oauth::import_openai_oauth_from_codex_cli(&config)
+            .await
+            .unwrap_err();
 
     assert!(err.contains("Could not read Codex CLI auth"));
     assert!(err.contains("codex login"));
 }
 
-#[test]
-fn openai_oauth_status_reports_token_profile_as_disconnected() {
+#[tokio::test]
+async fn openai_oauth_status_reports_token_profile_as_disconnected() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
     store
         .upsert_profile(
             AuthProfile::new_token(
@@ -501,19 +529,23 @@ fn openai_oauth_status_reports_token_profile_as_disconnected() {
             ),
             true,
         )
+        .await
         .unwrap();
 
-    let status = openai_oauth_status(&config).unwrap();
+    let status = openai_oauth_status(&config).await.unwrap();
     assert!(!status.connected);
     assert_eq!(status.auth_method.as_deref(), Some("token"));
     assert!(status.profile_id.is_some());
 }
 
-#[test]
-fn lookup_key_for_slug_prefers_api_key_over_oauth_for_openai() {
+#[tokio::test]
+async fn lookup_key_for_slug_prefers_api_key_over_oauth_for_openai() {
+    // `lookup_key_for_slug` reads through `crate::credentials` (the host port's
+    // store), so these fixtures write the profiles that store reads.
+    use crate::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), config.secrets.encrypt, &config);
 
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
@@ -527,20 +559,23 @@ fn lookup_key_for_slug_prefers_api_key_over_oauth_for_openai() {
             scope: None,
         },
     );
-    store.upsert_profile(oauth_profile, true).unwrap();
+    store.upsert_profile(oauth_profile, true).await.unwrap();
 
     let api_profile =
         AuthProfile::new_token("provider:openai", "default", "sk-api-key".to_string());
-    store.upsert_profile(api_profile, true).unwrap();
+    store.upsert_profile(api_profile, true).await.unwrap();
 
     // The standard `lookup_key_for_slug` path resolves the API key first; the
     // OAuth fallback only fires when no API key is present.
-    let token = lookup_key_for_slug("openai", &config).unwrap();
+    let token = lookup_key_for_slug("openai", &config).await.unwrap();
     assert_eq!(token, "sk-api-key");
 }
 
-#[test]
-fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_rotation() {
+#[tokio::test]
+async fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_rotation() {
+    // `lookup_key_for_slug` reads through `crate::credentials` (the host port's
+    // store), so these fixtures write the profiles that store reads.
+    use crate::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
     // #5353: routing keys on *which credential is stored*, not on comparing two
     // independently-resolved OAuth tokens. Near expiry each read refreshes the
     // token and OpenAI mints a new one, so the old `access_token == bearer_key`
@@ -553,7 +588,7 @@ fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_rotation
 
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), config.secrets.encrypt, &config);
     store
         .upsert_profile(
             AuthProfile::new_oauth(
@@ -570,9 +605,10 @@ fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_rotation
             ),
             true,
         )
+        .await
         .unwrap();
     assert!(
-        openai_bearer_is_oauth(&config),
+        openai_bearer_is_oauth(&config).await,
         "OAuth is the only openai credential, so the bearer is OAuth"
     );
 
@@ -583,8 +619,9 @@ fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_rotation
         // A stale bearer that does NOT equal the stored access token: the pre-fix
         // equality check mis-routed on exactly this.
         "oauth-access-stale",
-        openai_bearer_is_oauth(&config),
+        openai_bearer_is_oauth(&config).await,
     )
+    .await
     .unwrap();
     assert!(routing.using_oauth, "OAuth-only openai must route to Codex");
     assert_ne!(
@@ -599,15 +636,17 @@ fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_rotation
             AuthProfile::new_token("provider:openai", "default", "sk-api-key".into()),
             true,
         )
+        .await
         .unwrap();
-    assert!(!openai_bearer_is_oauth(&config));
+    assert!(!openai_bearer_is_oauth(&config).await);
     let routing = resolve_codex_routing(
         &config,
         "openai",
         "https://api.openai.com/v1/",
         "sk-api-key",
-        openai_bearer_is_oauth(&config),
+        openai_bearer_is_oauth(&config).await,
     )
+    .await
     .unwrap();
     assert!(
         !routing.using_oauth,
@@ -616,11 +655,11 @@ fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_rotation
     assert_eq!(routing.endpoint, "https://api.openai.com/v1/");
 }
 
-#[test]
-fn lookup_openai_bearer_token_uses_oauth_when_api_key_missing() {
+#[tokio::test]
+async fn lookup_openai_bearer_token_uses_oauth_when_api_key_missing() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,
@@ -633,14 +672,17 @@ fn lookup_openai_bearer_token_uses_oauth_when_api_key_missing() {
             scope: None,
         },
     );
-    store.upsert_profile(oauth_profile, true).unwrap();
+    store.upsert_profile(oauth_profile, true).await.unwrap();
 
-    let token = lookup_openai_bearer_token(&config).unwrap();
+    let token = lookup_openai_bearer_token(&config).await.unwrap();
     assert_eq!(token.as_deref(), Some("oauth-access"));
 }
 
-#[test]
-fn credits_gate_bypassed_with_oauth_only_credentials() {
+#[tokio::test]
+async fn credits_gate_bypassed_with_oauth_only_credentials() {
+    // `lookup_key_for_slug` reads through `crate::credentials` (the host port's
+    // store), so these fixtures write the profiles that store reads.
+    use crate::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
     // #3767 regression: the per-tier credits-gate bypass chains through
     // route_has_usable_credentials → lookup_key_for_slug, which falls back to
     // the OpenAI OAuth token for the `openai` slug. Pin that OAuth-only
@@ -653,9 +695,9 @@ fn credits_gate_bypassed_with_oauth_only_credentials() {
     config.chat_provider = Some("openai:gpt-4o".into());
 
     // No credential yet → gate stays on.
-    assert!(!role_bypasses_managed_credits("chat", &config));
+    assert!(!role_bypasses_managed_credits("chat", &config).await);
 
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), config.secrets.encrypt, &config);
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,
@@ -668,8 +710,8 @@ fn credits_gate_bypassed_with_oauth_only_credentials() {
             scope: None,
         },
     );
-    store.upsert_profile(oauth_profile, true).unwrap();
+    store.upsert_profile(oauth_profile, true).await.unwrap();
 
     // OAuth-only credential now backs the route → gate bypassed.
-    assert!(role_bypasses_managed_credits("chat", &config));
+    assert!(role_bypasses_managed_credits("chat", &config).await);
 }

@@ -15,9 +15,24 @@ pub enum SandboxBackendKind {
     Local,
     /// Docker container isolation.
     Docker,
-    /// The tenant's long-lived OpenShell box (`sandbox::openshell`).
+    /// The tenant's long-lived OpenShell box (`sandbox::boxes`).
     #[serde(rename = "openshell")]
     OpenShell,
+    /// The tenant's retained box on the hosted agent37 service
+    /// (`sandbox::agent37`, over `sandbox::boxes`).
+    #[serde(rename = "agent37")]
+    Agent37,
+}
+
+impl SandboxBackendKind {
+    /// Whether the backend keeps a box per tenant between commands, so a file
+    /// an agent makes stays in that tenant's box and is not on the host.
+    /// [`Self::OpenShell`] and [`Self::Agent37`] do; a backend that joins
+    /// them answers `true` here and gets the box-side behavior of every
+    /// caller that asks.
+    pub fn keeps_boxes(self) -> bool {
+        matches!(self, Self::OpenShell | Self::Agent37)
+    }
 }
 
 /// Per-session sandbox policy resolved from agent definition, session
@@ -47,6 +62,11 @@ pub struct SandboxPolicy {
     pub env_passthrough: Vec<String>,
     /// Docker-specific overrides (image, resource limits).
     pub docker_overrides: Option<DockerOverrides>,
+    /// The agent opted into a files-only jail (`AgentExt::sandbox_filesystem_only`):
+    /// with the host network, its plan asks the executor to enforce only the file
+    /// grants (`spawn_plan::files_only`). Never set for text the host did not author.
+    #[serde(default)]
+    pub filesystem_only: bool,
 }
 
 fn default_mount_workspace() -> bool {

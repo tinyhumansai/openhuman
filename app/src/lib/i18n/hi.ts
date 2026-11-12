@@ -220,6 +220,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'एजेंट और स्वायत्तता',
   'settings.devGroups.automationIntegrations': 'स्वचालन और एकीकरण',
   'settings.tokenUsage.title': 'टोकन बचत',
+  'settings.secretGrant.title': 'क्या OpenHuman को आपके सहेजे गए रहस्य अनलॉक करने दें?',
+  'settings.secretGrant.subtitle':
+    'इस सेटिंग को सहेजने के लिए इसे एन्क्रिप्ट करने हेतु आपकी एक बार की स्वीकृति चाहिए। सहेजना रद्द करने के लिए अस्वीकार करें।',
   'settings.tokenUsage.menuDesc': 'संपीड़न सेटिंग्स और उन्होंने कितने टोकन और डॉलर बचाए हैं',
   'settings.tokenUsage.saving': 'सहेजा जा रहा है…',
   'settings.tokenUsage.saved': 'सहेजा गया',
@@ -3870,6 +3873,10 @@ const messages: TranslationMap = {
     'एजेंट ने एक टर्न में अधिकतम टूल चरण चलाए, फिर भी काम पूरा नहीं हुआ। इसका आम तौर पर मतलब है कि कोई टूल बार-बार विफल होता रहा (अक्सर वेब फ़ेच पर रेट लिमिट के कारण)। सीमा हटने पर आप इसी थ्रेड में वही सवाल दोबारा पूछ सकते हैं।',
   'chat_error.turn_timeout':
     'यह टर्न अपने समय-बजट से आगे निकल गया और पूरा नहीं हुआ, इसलिए इसे रोक दिया गया ताकि यह अटका न रहे। इसका आम तौर पर मतलब है कि कोई टूल कॉल या सौंपा गया सब-एजेंट अटक गया। आप इसी थ्रेड में अपना सवाल दोबारा पूछ सकते हैं।',
+  'chat_error.disk_full':
+    'आपकी डिस्क भर गई है, इसलिए यह बातचीत सहेजी नहीं जा सकी। कुछ डिस्क स्थान खाली करें, फिर इसी थ्रेड में अपना संदेश दोबारा भेजें।',
+  'chat_error.prompt_screened':
+    'OpenHuman की सुरक्षा जाँच ने इस संदेश को रोक लिया, इसलिए इसे मॉडल को नहीं भेजा गया। अगर इसमें किसी असिस्टेंट के लिए लिखे निर्देश उद्धृत हैं (जैसे किसी वेब पेज या ईमेल से), तो उन्हें हटाकर फिर कोशिश करें। अगर सामान्य संदेश भी रोके जा रहे हैं, तो सुरक्षा मॉड्यूल उपलब्ध नहीं हो सकता: OpenHuman को फिर से शुरू करें और दोबारा कोशिश करें।',
   'chat_error.empty_response':
     'मॉडल ने खाली उत्तर लौटाया। कृपया फिर कोशिश करें। अगर यह बार-बार हो, तो कोई दूसरा मॉडल आज़माएँ या कनेक्शन → API कुंजियाँ → LLM में उसकी सेटिंग जाँचें।',
   'chat_error.chat_template_rejected':
@@ -4357,6 +4364,10 @@ const messages: TranslationMap = {
     'माइक्रोफ़ोन की अनुमति नहीं मिली। सिस्टम सेटिंग में अनुमति दें और फिर कोशिश करें।',
   'voice.live.error.micUnavailable': 'कोई माइक्रोफ़ोन उपलब्ध नहीं है।',
   'voice.live.error.connection': 'वॉइस एजेंट से कनेक्ट नहीं हो सका।',
+  'voice.live.error.insufficientCredits':
+    'लाइव वॉइस के लिए और क्रेडिट चाहिए। जारी रखने के लिए क्रेडिट जोड़ें।',
+  'voice.live.error.paidPlanRequired':
+    'लाइव वॉइस के लिए पेड प्लान ज़रूरी है। जारी रखने के लिए अपग्रेड करें।',
   'voice.live.toolRunning': '{name} चल रहा है',
   'voice.live.toolOk': '{name} पूरा हुआ',
   'voice.live.toolFailed': '{name} विफल रहा',
@@ -4641,11 +4652,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'नेमस्पेस प्रक्रिया जेल',
   'settings.sandbox.backendHint.bubblewrap': 'लाइटवेट यूज़र नेमस्पेस',
   'settings.sandbox.backendHint.none': 'सीधे उपकरण चलाएं, unisolated',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'टूल सूची',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'कुल टूल',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'सक्रिय टूल',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP stdio टूल',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC टूल',
   'devOptions.toolPolicyDiagnostics.posture.title': 'नीति की स्थिति',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'स्वायत्तता स्तर',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'केवल कार्यक्षेत्र',

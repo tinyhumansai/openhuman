@@ -33,7 +33,6 @@ jobs:
       - name: Fetch fork-pinned submodules
         shell: bash
         run: |
-          git config --global url."https://github.com/senamakel/tinysecurity.git".insteadOf "https://github.com/tinyhumansai/tinysecurity.git"
           git config --global url."https://github.com/senamakel/tinydesktop.git".insteadOf "https://github.com/tinyhumansai/tinydesktop.git"
           git submodule update --init --recursive
       - uses: dtolnay/rust-toolchain@stable

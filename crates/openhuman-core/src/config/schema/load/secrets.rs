@@ -19,6 +19,7 @@ async fn decrypt_optional_secret(
 ) -> Result<bool> {
     if let Some(raw) = value.clone() {
         if crate::security::secret_storage::SecretStore::is_encrypted(&raw) {
+            log::debug!("[security][config] opening sealed secret '{field_name}'");
             match store.decrypt_and_migrate_via_security(&raw).await {
                 Ok((plaintext, migrated)) => {
                     if migrated.is_some() {
@@ -76,7 +77,12 @@ async fn encrypt_optional_secret(
                 store
                     .encrypt_via_security(&raw)
                     .await
-                    .with_context(|| format!("Failed to encrypt {field_name}"))?,
+                    // The save RPC prints only the outermost context, so the
+                    // context itself carries the cause (never the value).
+                    .map_err(|error| {
+                        let cause = format!("{error:#}");
+                        error.context(format!("Failed to encrypt {field_name}: {cause}"))
+                    })?,
             );
         }
     }
@@ -151,37 +157,39 @@ pub(super) async fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
     Ok(())
 }
 
-/// Every config field that holds a credential, listed once. Save and load both
-/// walk this list, so a field cannot be sealed on one path and missed on the
-/// other. `storage.url` is not here: its decrypt fails closed, so each pass
-/// handles it itself.
-async fn for_each_secret(
-    config: &mut Config,
-    store: &crate::security::secret_storage::SecretStore,
-    encrypt: bool,
-    strict: bool,
-) -> Result<bool> {
-    let mut migrated = false;
-    macro_rules! process_secret {
-        ($value:expr, $name:expr) => {{
-            if encrypt {
-                encrypt_optional_secret(store, $value, $name).await?;
-            } else {
-                migrated |= decrypt_optional_secret(store, $value, $name, strict).await?;
-            }
-        }};
-    }
-    process_secret!(&mut config.api_key, "api_key");
-    process_secret!(&mut config.seltz.api_key, "seltz.api_key");
-    for provider in [
-        "parallel", "brave", "querit", "exa", "tavily", "gemini", "tinyfish",
+/// One credential field: optional, or a plain `String` where empty means unset.
+pub(crate) enum SecretSlot<'a> {
+    Opt(&'a mut Option<String>),
+    Str(&'a mut String),
+}
+
+/// Every config field that holds a credential, listed once. Save, load and
+/// the UI snapshot all walk this list, so a field cannot be sealed on one path
+/// and missed on another. `storage.url` is not here: its decrypt fails closed,
+/// so each pass handles it itself.
+pub(crate) fn secret_slots(config: &mut Config) -> Vec<(String, SecretSlot<'_>)> {
+    use SecretSlot::{Opt, Str};
+    let mut slots = vec![
+        ("api_key".to_string(), Opt(&mut config.api_key)),
+        ("seltz.api_key".to_string(), Opt(&mut config.seltz.api_key)),
+    ];
+    let search = &mut config.search;
+    for (provider, creds) in [
+        ("parallel", &mut search.parallel),
+        ("brave", &mut search.brave),
+        ("querit", &mut search.querit),
+        ("exa", &mut search.exa),
+        ("tavily", &mut search.tavily),
+        ("gemini", &mut search.gemini),
+        ("tinyfish", &mut search.tinyfish),
     ] {
-        if let Some(creds) = config.search.credentials_mut(provider) {
-            process_secret!(&mut creds.api_key, &format!("search.{provider}.api_key"));
-        }
+        slots.push((
+            format!("search.{provider}.api_key"),
+            Opt(&mut creds.api_key),
+        ));
     }
-    process_secret!(&mut config.local_ai.api_key, "local_ai.api_key");
-    process_secret!(&mut config.composio.api_key, "composio.api_key");
+    slots.push(("local_ai.api_key".into(), Opt(&mut config.local_ai.api_key)));
+    slots.push(("composio.api_key".into(), Opt(&mut config.composio.api_key)));
     let integrations = &mut config.integrations;
     for (name, toggle) in [
         ("google_places", &mut integrations.google_places),
@@ -189,106 +197,96 @@ async fn for_each_secret(
         ("tinyfish", &mut integrations.tinyfish),
         ("stock_prices", &mut integrations.stock_prices),
     ] {
-        process_secret!(&mut toggle.api_key, &format!("integrations.{name}.api_key"));
+        slots.push((
+            format!("integrations.{name}.api_key"),
+            Opt(&mut toggle.api_key),
+        ));
     }
     // Empty means "read the environment", so it stays empty.
-    migrated |= string_secret(
-        &mut config.hosting.api_key,
-        "hosting.api_key",
-        store,
-        encrypt,
-        strict,
-    )
-    .await?;
+    slots.push(("hosting.api_key".into(), Str(&mut config.hosting.api_key)));
 
     let ch = &mut config.channels_config;
-    if let Some(ref mut tg) = ch.telegram {
-        migrated |= string_secret(
-            &mut tg.bot_token,
-            "telegram.bot_token",
-            store,
-            encrypt,
-            strict,
-        )
-        .await?;
+    if let Some(tg) = ch.telegram.as_mut() {
+        slots.push(("telegram.bot_token".into(), Str(&mut tg.bot_token)));
     }
-    if let Some(ref mut d) = ch.discord {
-        migrated |= string_secret(
-            &mut d.bot_token,
-            "discord.bot_token",
-            store,
-            encrypt,
-            strict,
-        )
-        .await?;
+    if let Some(d) = ch.discord.as_mut() {
+        slots.push(("discord.bot_token".into(), Str(&mut d.bot_token)));
     }
-    if let Some(ref mut s) = ch.slack {
-        migrated |=
-            string_secret(&mut s.bot_token, "slack.bot_token", store, encrypt, strict).await?;
-        process_secret!(&mut s.app_token, "slack.app_token");
+    if let Some(s) = ch.slack.as_mut() {
+        slots.push(("slack.bot_token".into(), Str(&mut s.bot_token)));
+        slots.push(("slack.app_token".into(), Opt(&mut s.app_token)));
     }
-    if let Some(ref mut m) = ch.mattermost {
-        migrated |= string_secret(
-            &mut m.bot_token,
-            "mattermost.bot_token",
-            store,
-            encrypt,
-            strict,
-        )
-        .await?;
+    if let Some(m) = ch.mattermost.as_mut() {
+        slots.push(("mattermost.bot_token".into(), Str(&mut m.bot_token)));
     }
-    if let Some(ref mut w) = ch.webhook {
-        process_secret!(&mut w.secret, "webhook.secret");
+    if let Some(wa) = ch.whatsapp.as_mut() {
+        slots.push(("whatsapp.access_token".into(), Opt(&mut wa.access_token)));
+        slots.push(("whatsapp.verify_token".into(), Opt(&mut wa.verify_token)));
+        slots.push(("whatsapp.app_secret".into(), Opt(&mut wa.app_secret)));
     }
-    if let Some(ref mut mx) = ch.matrix {
-        migrated |= string_secret(
-            &mut mx.access_token,
-            "matrix.access_token",
-            store,
-            encrypt,
-            strict,
-        )
-        .await?;
+    if let Some(lq) = ch.linq.as_mut() {
+        slots.push(("linq.api_token".into(), Str(&mut lq.api_token)));
+        slots.push(("linq.webhook_secret".into(), Opt(&mut lq.webhook_secret)));
     }
-    if let Some(ref mut wa) = ch.whatsapp {
-        process_secret!(&mut wa.access_token, "whatsapp.access_token");
-        process_secret!(&mut wa.verify_token, "whatsapp.verify_token");
-        process_secret!(&mut wa.app_secret, "whatsapp.app_secret");
+    if let Some(irc) = ch.irc.as_mut() {
+        slots.push(("irc.server_password".into(), Opt(&mut irc.server_password)));
+        slots.push((
+            "irc.nickserv_password".into(),
+            Opt(&mut irc.nickserv_password),
+        ));
+        slots.push(("irc.sasl_password".into(), Opt(&mut irc.sasl_password)));
     }
-    if let Some(ref mut lq) = ch.linq {
-        migrated |=
-            string_secret(&mut lq.api_token, "linq.api_token", store, encrypt, strict).await?;
+    if let Some(lk) = ch.lark.as_mut() {
+        slots.push(("lark.app_secret".into(), Str(&mut lk.app_secret)));
+        slots.push(("lark.encrypt_key".into(), Opt(&mut lk.encrypt_key)));
+        slots.push((
+            "lark.verification_token".into(),
+            Opt(&mut lk.verification_token),
+        ));
     }
-    if let Some(ref mut irc) = ch.irc {
-        process_secret!(&mut irc.server_password, "irc.server_password");
-        process_secret!(&mut irc.nickserv_password, "irc.nickserv_password");
-        process_secret!(&mut irc.sasl_password, "irc.sasl_password");
+    if let Some(dt) = ch.dingtalk.as_mut() {
+        slots.push(("dingtalk.client_secret".into(), Str(&mut dt.client_secret)));
     }
-    if let Some(ref mut lk) = ch.lark {
-        migrated |= string_secret(
-            &mut lk.app_secret,
-            "lark.app_secret",
-            store,
-            encrypt,
-            strict,
-        )
-        .await?;
-        process_secret!(&mut lk.encrypt_key, "lark.encrypt_key");
-        process_secret!(&mut lk.verification_token, "lark.verification_token");
+    if let Some(qq) = ch.qq.as_mut() {
+        slots.push(("qq.app_secret".into(), Str(&mut qq.app_secret)));
     }
-    if let Some(ref mut dt) = ch.dingtalk {
-        migrated |= string_secret(
-            &mut dt.client_secret,
-            "dingtalk.client_secret",
-            store,
-            encrypt,
-            strict,
-        )
-        .await?;
+    // The connect flow keeps these two in the credentials store, but a value
+    // written to `config.toml` by hand still wins and must not sit in plaintext.
+    if let Some(email) = ch.email.as_mut() {
+        slots.push(("email.password".into(), Str(&mut email.password)));
     }
-    if let Some(ref mut qq) = ch.qq {
-        migrated |=
-            string_secret(&mut qq.app_secret, "qq.app_secret", store, encrypt, strict).await?;
+    if let Some(yb) = ch.yuanbao.as_mut() {
+        slots.push(("yuanbao.app_secret".into(), Str(&mut yb.app_secret)));
+        slots.push(("yuanbao.token".into(), Str(&mut yb.token)));
+    }
+    if let Some(relay) = ch.relay.as_mut() {
+        slots.push((
+            "relay.upgrade_secret".into(),
+            Opt(&mut relay.upgrade_secret),
+        ));
+    }
+    slots
+}
+
+async fn for_each_secret(
+    config: &mut Config,
+    store: &crate::security::secret_storage::SecretStore,
+    encrypt: bool,
+    strict: bool,
+) -> Result<bool> {
+    let mut migrated = false;
+    for (name, slot) in secret_slots(config) {
+        match slot {
+            SecretSlot::Opt(value) if encrypt => {
+                encrypt_optional_secret(store, value, &name).await?
+            }
+            SecretSlot::Opt(value) => {
+                migrated |= decrypt_optional_secret(store, value, &name, strict).await?
+            }
+            SecretSlot::Str(value) => {
+                migrated |= string_secret(value, &name, store, encrypt, strict).await?
+            }
+        }
     }
     Ok(migrated)
 }

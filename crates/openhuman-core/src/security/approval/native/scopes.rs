@@ -192,6 +192,12 @@ impl ScopeEntry {
         Ok(())
     }
 
+    /// Forget the module's registration of this subject after it was retired,
+    /// so the next registration starts from `RegisterApprovalScope2`.
+    pub(super) async fn forget_registration(&self) {
+        *self.registered.lock().await = None;
+    }
+
     /// Register through the exact callback binding used to initialize the
     /// module, keeping API calls and host callbacks on one authenticated peer.
     pub(super) async fn register_with_callback(
@@ -274,19 +280,6 @@ pub(super) async fn ensure(
     ensure_with_registration(config, proxy, subject, posture, generation, false).await
 }
 
-/// Register a scope that TinySecurity already created from module init config.
-/// Its init-time scope has no audit stream, so attach the persisted stream with
-/// `ReplaceApprovalScope2` on first use.
-pub(super) async fn ensure_preconfigured(
-    config: &Config,
-    proxy: &SecurityProxy,
-    subject: SubjectScope,
-    posture: &Posture,
-    generation: u64,
-) -> Result<Arc<ScopeEntry>, String> {
-    ensure_with_registration(config, proxy, subject, posture, generation, true).await
-}
-
 async fn ensure_with_registration(
     config: &Config,
     proxy: &SecurityProxy,
@@ -301,7 +294,9 @@ async fn ensure_with_registration(
         match scopes.by_subject.get(&key) {
             Some(found) => Arc::clone(found),
             None => {
-                let rows = Rows::current(config).map_err(|error| error.to_string())?;
+                let rows = Rows::current(config)
+                    .await
+                    .map_err(|error| error.to_string())?;
                 let stream_id = rows.stream_for(&key).await?;
                 let entry = Arc::new(ScopeEntry::new(subject, stream_id, rows));
                 scopes.by_subject.insert(key, Arc::clone(&entry));
@@ -328,7 +323,9 @@ pub(super) async fn audit_entry(
         match scopes.by_subject.get(&key) {
             Some(found) => Arc::clone(found),
             None => {
-                let rows = Rows::current(config).map_err(|error| error.to_string())?;
+                let rows = Rows::current(config)
+                    .await
+                    .map_err(|error| error.to_string())?;
                 let stream_id = rows.stream_for(&key).await?;
                 let entry = Arc::new(ScopeEntry::new(subject, stream_id, rows));
                 scopes.by_subject.insert(key, Arc::clone(&entry));

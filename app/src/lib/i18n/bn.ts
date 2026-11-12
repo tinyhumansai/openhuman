@@ -217,6 +217,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'এজেন্ট ও স্বায়ত্তশাসন',
   'settings.devGroups.automationIntegrations': 'অটোমেশন ও ইন্টিগ্রেশন',
   'settings.tokenUsage.title': 'টোকেন সাশ্রয়',
+  'settings.secretGrant.title': 'OpenHuman-কে আপনার সংরক্ষিত গোপন তথ্য আনলক করতে দেবেন?',
+  'settings.secretGrant.subtitle':
+    'এই সেটিং সংরক্ষণ করতে এটি এনক্রিপ্ট করার জন্য আপনার এককালীন অনুমোদন প্রয়োজন। সংরক্ষণ বাতিল করতে প্রত্যাখ্যান করুন।',
   'settings.tokenUsage.menuDesc': 'সংকোচন সেটিংস এবং সেগুলি কত টোকেন ও ডলার সাশ্রয় করেছে',
   'settings.tokenUsage.saving': 'সংরক্ষণ করা হচ্ছে…',
   'settings.tokenUsage.saved': 'সংরক্ষিত হয়েছে',
@@ -3866,6 +3869,10 @@ const messages: TranslationMap = {
     'এজেন্ট এক টার্নে সর্বোচ্চ সংখ্যক টুল ধাপ চালিয়েছে কিন্তু কাজ শেষ করতে পারেনি। সাধারণত এর অর্থ কোনো টুল বারবার ব্যর্থ হচ্ছিল (প্রায়ই ওয়েব ফেচে রেট লিমিটের কারণে)। সীমা কেটে গেলে আপনি এই থ্রেডেই একই প্রশ্ন আবার করতে পারেন।',
   'chat_error.turn_timeout':
     'এই টার্নটি সময়সীমা পেরিয়ে গেছে কিন্তু শেষ হয়নি, তাই আটকে না থাকার জন্য এটি থামিয়ে দেওয়া হয়েছে। সাধারণত এর অর্থ কোনো টুল কল বা অর্পিত সাব-এজেন্ট আটকে গিয়েছিল। আপনি এই থ্রেডেই আপনার প্রশ্ন আবার করতে পারেন।',
+  'chat_error.disk_full':
+    'আপনার ডিস্ক পূর্ণ, তাই এই কথোপকথনটি সংরক্ষণ করা যায়নি। কিছু ডিস্ক স্থান খালি করুন, তারপর এই থ্রেডেই আপনার বার্তাটি আবার পাঠান।',
+  'chat_error.prompt_screened':
+    'OpenHuman-এর নিরাপত্তা যাচাই এই বার্তাটি আটকে দিয়েছে, তাই এটি মডেলে পাঠানো হয়নি। যদি এতে কোনো সহকারীর উদ্দেশে লেখা নির্দেশনা উদ্ধৃত থাকে (যেমন কোনো ওয়েব পেজ বা ইমেল থেকে), সেগুলো সরিয়ে আবার চেষ্টা করুন। সাধারণ বার্তাও আটকে গেলে নিরাপত্তা মডিউলটি হয়তো উপলব্ধ নেই: OpenHuman আবার চালু করে আবার চেষ্টা করুন।',
   'chat_error.empty_response':
     'মডেল একটি ফাঁকা উত্তর দিয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন। বারবার হলে অন্য একটি মডেল ব্যবহার করুন বা সংযোগ → API কী → LLM-এ এর সেটআপ দেখুন।',
   'chat_error.chat_template_rejected':
@@ -4352,6 +4359,10 @@ const messages: TranslationMap = {
     'মাইক্রোফোনের অনুমতি দেওয়া হয়নি। সিস্টেম সেটিংসে অনুমতি দিয়ে আবার চেষ্টা করুন।',
   'voice.live.error.micUnavailable': 'কোনো মাইক্রোফোন পাওয়া যায়নি।',
   'voice.live.error.connection': 'ভয়েস এজেন্টের সাথে সংযোগ করা যায়নি।',
+  'voice.live.error.insufficientCredits':
+    'লাইভ ভয়েসের জন্য আরও ক্রেডিট প্রয়োজন। চালিয়ে যেতে ক্রেডিট যোগ করুন।',
+  'voice.live.error.paidPlanRequired':
+    'লাইভ ভয়েসের জন্য একটি পেইড প্ল্যান প্রয়োজন। চালিয়ে যেতে আপগ্রেড করুন।',
   'voice.live.toolRunning': '{name} চলছে',
   'voice.live.toolOk': '{name} সম্পন্ন',
   'voice.live.toolFailed': '{name} ব্যর্থ হয়েছে',
@@ -4602,11 +4613,6 @@ const messages: TranslationMap = {
   'settings.sandbox.backendHint.firejail': 'আই. ডি.',
   'settings.sandbox.backendHint.bubblewrap': 'লাইটওয়েট ব্যবহারকারীর সংখ্যা',
   'settings.sandbox.backendHint.none': 'চলমান টুলগুলি সরাসরি সঞ্চালন করা হবে, উপেক্ষা করা হবে',
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'টুলের তালিকা',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'মোট টুল',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'চালু টুল',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP stdio টুল',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC টুল',
   'devOptions.toolPolicyDiagnostics.posture.title': 'নীতির অবস্থা',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'স্বায়ত্তশাসনের স্তর',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'শুধু কর্মক্ষেত্র',

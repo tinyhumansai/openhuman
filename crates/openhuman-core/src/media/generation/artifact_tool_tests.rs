@@ -571,3 +571,28 @@ async fn per_call_observer_reports_each_calls_own_job_state() {
     assert_eq!(ma, vec!["Generating video — 15s elapsed (job pending)"]);
     assert_eq!(mb, vec!["Generating video — 15s elapsed (job in_progress)"]);
 }
+
+/// With security disabled the media reference floor checks nothing: a
+/// reference inside a credential store is admitted.
+async fn assert_references_are_unchecked() {
+    let dir = tempfile::tempdir().unwrap();
+    let key = dir.path().join("home/.ssh/id_rsa");
+    let args = json!({
+        "references": [key.to_string_lossy()],
+        "first_frame": key.to_string_lossy(),
+    });
+    assert_eq!(super::check_media_reference_floor(&args).await, Ok(()));
+}
+
+#[cfg(not(feature = "security-module"))]
+#[tokio::test]
+async fn a_build_without_the_module_admits_any_media_reference() {
+    assert_references_are_unchecked().await;
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn security_configured_off_admits_any_media_reference() {
+    let _off = crate::security::switch::off_for_this_thread();
+    assert_references_are_unchecked().await;
+}

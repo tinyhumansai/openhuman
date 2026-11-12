@@ -164,6 +164,7 @@ impl CoreContext {
             Ok(cfg) => {
                 if boot_mode != crate::core::runtime::CoreBootMode::Inspection {
                     init_stores(&cfg, domains).await;
+                    crate::security::switch::apply_boot_config(&cfg);
                 }
                 Some(cfg)
             }
@@ -230,6 +231,7 @@ impl CoreContext {
                 user_skill_roots: true,
                 extensions: Default::default(),
                 turn_origin: None,
+                host_secret_grant: None,
                 channel_thread: None,
                 session_agent: None,
                 profile: None,

@@ -118,7 +118,11 @@ impl TtsProvider for ExternalTtsProvider {
             text.len()
         );
 
-        let (audio_bytes, audio_mime) = self.client.synthesize(text, resolved_voice).await?;
+        let (audio_bytes, audio_mime) = self
+            .client
+            .synthesize(text, resolved_voice)
+            .await
+            .map_err(crate::core::observability::map_voice_provider_error)?;
 
         use base64::Engine;
         let audio_base64 = base64::engine::general_purpose::STANDARD.encode(&audio_bytes);

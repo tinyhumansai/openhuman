@@ -310,6 +310,33 @@ async fn json_rpc_wallet_execution_surface_round_trips() {
         );
     }
 
+    // token_balances: the module reads the catalogued USDC mint for the one
+    // Solana account. The mock answers no SPL accounts, so the amount may be
+    // zero or marked missing, but the row and its shape must arrive.
+    let tokens = post_json_rpc(
+        &rpc_base,
+        2104,
+        "openhuman.wallet_token_balances",
+        json!({}),
+    )
+    .await;
+    let body = assert_no_jsonrpc_error(&tokens, "wallet_token_balances");
+    let result = body.get("result").unwrap_or(body);
+    let token_rows = result.as_array().expect("token balances array");
+    assert_eq!(
+        token_rows.len(),
+        1,
+        "one USDC row for the Solana account: {result}"
+    );
+    assert_eq!(token_rows[0]["chain"], "solana");
+    assert_eq!(token_rows[0]["assetSymbol"], "USDC");
+    assert_eq!(token_rows[0]["decimals"], 6);
+    let raw = token_rows[0]["raw"].as_str().expect("raw present");
+    assert!(
+        raw.chars().all(|c| c.is_ascii_digit()),
+        "raw must be decimal, got: {raw}"
+    );
+
     // prepare_transfer + execute_prepared (happy path).
     let prep = post_json_rpc(
         &rpc_base,

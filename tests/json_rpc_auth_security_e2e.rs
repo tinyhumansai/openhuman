@@ -1565,7 +1565,11 @@ fn find_auth_profiles_store(root: &Path) -> Option<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.file_name() == Some(std::ffi::OsStr::new("auth-profiles.json")) {
+            } else if path.file_name() == Some(std::ffi::OsStr::new("secrets.enc"))
+                && path.parent().and_then(Path::file_name)
+                    == Some(std::ffi::OsStr::new("auth-profiles"))
+            {
+                // The profile store is `<state>/auth-profiles/secrets.enc`.
                 return Some(path);
             }
         }
@@ -1675,8 +1679,8 @@ async fn auth_store_provider_credentials_writes_an_owner_only_store_file() {
     .await;
     assert_no_jsonrpc_error(&stored, "auth_store_provider_credentials");
 
-    let store_path =
-        find_auth_profiles_store(home).expect("the save must have produced an auth-profiles.json");
+    let store_path = find_auth_profiles_store(home)
+        .expect("the save must have produced auth-profiles/secrets.enc");
     let mode = std::fs::metadata(&store_path)
         .expect("store metadata")
         .permissions()
@@ -1689,6 +1693,20 @@ async fn auth_store_provider_credentials_writes_an_owner_only_store_file() {
         "the credential store at {} must be owner-only, got {mode:#o} \
          (a plain create in this environment yields {probe_mode:#o})",
         store_path.display()
+    );
+    // The store's directory also holds its key file; nobody but the owner
+    // may list or enter it.
+    let store_dir = store_path.parent().expect("store directory");
+    let dir_mode = std::fs::metadata(store_dir)
+        .expect("store directory metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        dir_mode & 0o077,
+        0,
+        "the credential store directory {} must be owner-only, got {dir_mode:#o}",
+        store_dir.display()
     );
 
     mock_join.abort();

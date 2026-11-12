@@ -10,7 +10,7 @@ use tinyagents_harness::observability::trace_export as te;
 use tinychannels_bus::web::ChatRequestMetadata;
 
 /// The trace context the journal export uses after the turn ends. `None` when tracing is disabled.
-pub(super) fn trace_context(
+pub(super) async fn trace_context(
     config: &crate::config::Config,
     metadata: &ChatRequestMetadata,
     client_id: &str,
@@ -31,9 +31,11 @@ pub(super) fn trace_context(
     // the separate `client.id` metadata attribute. The backend stamps
     // the authenticated JWT user on every accepted trace.
     let identity = crate::security::credentials::identity::peek_credential_user_identity();
-    let user_id = identity
-        .and_then(|i| i.id.or(i.email))
-        .or_else(|| session_profile_user_attribution(config));
+    let user_id = identity.and_then(|i| i.id.or(i.email));
+    let user_id = match user_id {
+        Some(user_id) => Some(user_id),
+        None => session_profile_user_attribution(config).await,
+    };
     let user_attributed = user_id.is_some();
     // Run origin for trace metadata: the request's source tag
     // ("ptt"/"dictation"/"type"/"autonomous"/…), else a
@@ -75,8 +77,12 @@ pub(super) fn trace_context(
 /// identity (headless / autonomous / freshly booted cores): read the on-disk
 /// app-session profile and return the user's email (preferred) or backend user
 /// id. `None` when signed out or the profile is unreadable.
-pub(super) fn session_profile_user_attribution(config: &crate::config::Config) -> Option<String> {
-    let state = crate::security::credentials::session_support::build_session_state(config).ok()?;
+pub(super) async fn session_profile_user_attribution(
+    config: &crate::config::Config,
+) -> Option<String> {
+    let state = crate::security::credentials::session_support::build_session_state(config)
+        .await
+        .ok()?;
     state
         .user
         .as_ref()

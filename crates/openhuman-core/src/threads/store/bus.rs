@@ -520,7 +520,7 @@ async fn persist_channel_turn(
         .map_err(|error| error.to_string())?;
     let thread_id = format!("channel:{}", prepared.history_key);
     let history_key_ignores_thread =
-        tinychannels_bus::capabilities::capabilities_for(descriptor.channel)
+        crate::channels::capabilities::capabilities_for(descriptor.channel)
             .history_key_ignores_thread;
     let session_key = descriptor.inbound_envelope.map(|_| prepared.session_key);
     let title = channel_thread_title(

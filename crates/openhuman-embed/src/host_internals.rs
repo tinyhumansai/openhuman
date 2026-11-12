@@ -41,8 +41,8 @@ pub mod core {
             is_session_expired_message, is_suppressed_usage_probe_backoff,
             is_transient_http_status_code, is_transient_message_failure, report_error,
             report_error_or_expected, report_warning_message, ExpectedErrorKind,
-            API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX, REPORT_ERROR_TRACING_TARGET,
-            USAGE_PROBE_BACKOFF_PREFIX,
+            API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX, INSUFFICIENT_CREDITS_PREFIX,
+            PAID_PLAN_REQUIRED_PREFIX, REPORT_ERROR_TRACING_TARGET, USAGE_PROBE_BACKOFF_PREFIX,
         };
     }
 

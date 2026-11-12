@@ -56,9 +56,44 @@ impl AuthService {
         }
     }
 
+    pub(super) fn config_document(config: &Config) -> Self {
+        Self {
+            store: AuthProfilesStore::document_with_config(&state_dir_from_config(config), config),
+        }
+    }
+
     pub fn new(state_dir: &Path, encrypt_secrets: bool) -> Self {
         Self {
             store: AuthProfilesStore::new(state_dir, encrypt_secrets),
+        }
+    }
+
+    /// The profile store for a credential directory known by its path, bound
+    /// to the runtime config that owns that directory.
+    ///
+    /// Sign-in writes the app session through [`Self::from_config`], whose
+    /// store keeps secrets in the keyring under `security-module`; a plain
+    /// [`Self::new`] store over the same directory cannot see them. So a
+    /// caller holding only `(state_dir, encrypt)` reads through the owning
+    /// config's store: `config` when it owns the directory, else the current
+    /// dispatch's embedder config when that does. A config for another
+    /// directory, or with another encryption setting, never lends its
+    /// authority; with no owner the store is directory-only.
+    pub fn for_state_dir(state_dir: &Path, encrypt_secrets: bool, config: Option<&Config>) -> Self {
+        if let Some(config) =
+            config.filter(|config| config_owns_state_dir(config, state_dir, encrypt_secrets))
+        {
+            return Self::from_config(config);
+        }
+        match owning_embedder_config(state_dir, encrypt_secrets) {
+            Some(config) => Self::from_config(&config),
+            None => {
+                log::debug!(
+                    "[auth] no runtime config owns state_dir={}; using a directory-only store",
+                    state_dir.display()
+                );
+                Self::new(state_dir, encrypt_secrets)
+            }
         }
     }
 
@@ -80,6 +115,8 @@ impl AuthService {
         self.store
             .upsert_profile(profile.clone(), set_active)
             .await?;
+        // A replaced key serves memory as another account from now on.
+        crate::memory::engine::drop_memory_reads_for_provider(&provider);
         Ok(profile)
     }
 
@@ -108,6 +145,9 @@ impl AuthService {
         self.store
             .set_active_profile(&provider, &profile_id)
             .await?;
+        // Another account's key now serves memory: what was read as the
+        // previous one must not reach the next generation.
+        crate::memory::engine::drop_memory_reads_for_provider(&provider);
         Ok(profile_id)
     }
 
@@ -119,16 +159,17 @@ impl AuthService {
     pub async fn remove_profile(&self, provider: &str, requested_profile: &str) -> Result<bool> {
         let provider = normalize_provider(provider)?;
         let profile_id = resolve_requested_profile_id(&provider, requested_profile);
-        if self.store.remove_profile(&profile_id).await? {
-            return Ok(true);
-        }
-        if !profile_id.starts_with("provider:") {
+        let mut removed = self.store.remove_profile(&profile_id).await?;
+        if !removed && !profile_id.starts_with("provider:") {
             let namespaced = format!("provider:{profile_id}");
-            if self.store.remove_profile(&namespaced).await? {
-                return Ok(true);
-            }
+            removed = self.store.remove_profile(&namespaced).await?;
         }
-        Ok(false)
+        if removed {
+            // The memory key's account is gone: what it read must not reach
+            // a later generation.
+            crate::memory::engine::drop_memory_reads_for_provider(&provider);
+        }
+        Ok(removed)
     }
 
     pub async fn get_profile(
@@ -189,11 +230,25 @@ pub fn state_dir_from_config(config: &Config) -> PathBuf {
         .map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
+/// Whether `config` is the runtime config for the credential directory
+/// `state_dir` stored with `encrypt` — the same directory and the same
+/// encryption setting.
+pub(super) fn config_owns_state_dir(config: &Config, state_dir: &Path, encrypt: bool) -> bool {
+    state_dir_from_config(config) == state_dir && config.secrets.encrypt == encrypt
+}
+
+/// The current dispatch's embedder config, only when it owns the credential
+/// directory `state_dir` stored with `encrypt`. A different ambient tenant
+/// never supplies cipher or keyring authority for another directory.
+pub(super) fn owning_embedder_config(state_dir: &Path, encrypt: bool) -> Option<Config> {
+    crate::core::runtime::CoreContext::current_embedder_config()
+        .filter(|config| config_owns_state_dir(config, state_dir, encrypt))
+}
+
 /// The files holding OpenHuman's own credentials for `config`, at the paths
 /// their stores write: the encrypted keyring (`secrets.enc`), the auth
 /// profiles, the HTTP credentials and the account config. A path may not
 /// exist.
-#[cfg(any(feature = "modules", test))]
 pub(crate) fn credential_files(config: &Config) -> Vec<PathBuf> {
     let state_dir = state_dir_from_config(config);
     let mut files = vec![

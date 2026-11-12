@@ -45,7 +45,12 @@ pub(super) async fn stdio_sandbox(config: &Config) -> Option<StdioSandboxConfig>
     let home = crate::sandbox::local_grants::grant_home(saas, dirs::home_dir);
     let jail = &config.runtime.local_jail;
     let isolated = require_process_isolation(saas);
-    let deny_read = if isolated {
+    // Security disabled (`crate::security::switch`): TinySecurity is not asked
+    // for credential roots or the protected-path floor, so nothing is denied by
+    // path and every existing configured grant is admitted. The jail itself,
+    // and its isolation floor, stay.
+    let unchecked = crate::security::switch::disabled_for(Some(config)).is_some();
+    let deny_read = if isolated || unchecked {
         Vec::new()
     } else {
         match credential_denials(config, home.as_deref(), &workspace).await {
@@ -56,8 +61,17 @@ pub(super) async fn stdio_sandbox(config: &Config) -> Option<StdioSandboxConfig>
             }
         }
     };
-    let read_only = admit_all(&jail.extra_read_only, home.as_deref()).await;
-    let read_write = admit_all(&jail.extra_read_write, home.as_deref()).await;
+    let (read_only, read_write) = if unchecked {
+        (
+            existing_grants(&jail.extra_read_only, home.as_deref()),
+            existing_grants(&jail.extra_read_write, home.as_deref()),
+        )
+    } else {
+        (
+            admit_all(&jail.extra_read_only, home.as_deref()).await,
+            admit_all(&jail.extra_read_write, home.as_deref()).await,
+        )
+    };
     Some(StdioSandboxConfig {
         workspace: path_string(&workspace),
         read_only,
@@ -83,6 +97,7 @@ pub(super) async fn stdio_sandbox(_config: &Config) -> Option<StdioSandboxConfig
 pub(super) async fn with_toolchain_grants(config: &Config, sandbox: &mut StdioSandboxConfig) {
     use crate::sandbox::types::SandboxPolicy;
     let seed = SandboxPolicy {
+        filesystem_only: false,
         backend: crate::sandbox::types::SandboxBackendKind::Local,
         workspace_root: PathBuf::from(&sandbox.workspace),
         state_dir: config.workspace_dir.clone(),
@@ -151,6 +166,27 @@ fn prepare_workspace(workspace_dir: &Path) -> std::io::Result<PathBuf> {
     let dir = workspace_dir.join(WORKSPACE_DIR);
     std::fs::create_dir_all(&dir)?;
     dir.canonicalize()
+}
+
+/// Existing absolute grants from configuration, `~/` expanded and resolved,
+/// with no floor applied: the grants when security is disabled.
+#[cfg(feature = "modules")]
+fn existing_grants(raw: &[String], home: Option<&Path>) -> Vec<String> {
+    let mut out = Vec::new();
+    for entry in raw {
+        let expanded = match (entry.strip_prefix("~/"), home) {
+            (Some(rest), Some(home)) => home.join(rest),
+            _ => PathBuf::from(entry),
+        };
+        if !expanded.is_absolute() || !expanded.exists() {
+            continue;
+        }
+        let path = path_string(&expanded.canonicalize().unwrap_or(expanded));
+        if !out.contains(&path) {
+            out.push(path);
+        }
+    }
+    out
 }
 
 /// Existing absolute grants from configuration, `~/` expanded, each past the

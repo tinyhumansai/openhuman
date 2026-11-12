@@ -1,3 +1,4 @@
+mod box_source;
 pub mod files;
 pub mod migrate;
 pub mod ops;

@@ -8,8 +8,13 @@
 //!
 /// Redact an endpoint for safe logging through TinySecurity. Query parameters
 /// and fragments are never retained. If the module is unavailable, suppress it.
+/// With security disabled (`crate::security::switch`) the endpoint is logged as
+/// given, unredacted.
 #[must_use]
 pub fn redact_url_for_log(raw: &str) -> String {
+    if crate::security::switch::disabled().is_some() {
+        return raw.trim().to_owned();
+    }
     #[cfg(feature = "security-module")]
     {
         crate::modules::security::text::redact_blocking(

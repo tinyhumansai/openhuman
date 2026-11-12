@@ -15,7 +15,7 @@ use tinyagents_definition::SandboxMode;
 
 /// The executor `sandbox` and `runtime` name, if any. `remote` marks a channel, cron or
 /// remote session, which has always asked for a container.
-fn named_backend(
+pub(crate) fn named_backend(
     sandbox: &SandboxConfig,
     runtime: &RuntimeConfig,
     remote: bool,
@@ -26,6 +26,7 @@ fn named_backend(
         }
         SandboxBackend::Docker => SandboxBackendKind::Docker,
         SandboxBackend::OpenShell => SandboxBackendKind::OpenShell,
+        SandboxBackend::Agent37 => SandboxBackendKind::Agent37,
         SandboxBackend::Auto | SandboxBackend::None => {
             // `[runtime] kind = "docker"` is the legacy spelling of an operator-required
             // container.
@@ -62,7 +63,10 @@ pub fn route_for_mode(
     let docker = &runtime.docker;
     // A tenant's OpenShell box has its own workspace and no egress: nothing on
     // the host is mounted into it and no container settings apply.
-    let remote_box = backend == SandboxBackendKind::OpenShell;
+    let remote_box = matches!(
+        backend,
+        SandboxBackendKind::OpenShell | SandboxBackendKind::Agent37
+    );
     tracing::debug!(
         backend = ?backend,
         remote,
@@ -70,6 +74,7 @@ pub fn route_for_mode(
         "[sandbox] spawn policy"
     );
     SandboxPolicy {
+        filesystem_only: false,
         backend,
         workspace_root: action_dir.to_path_buf(),
         state_dir: state_dir.to_path_buf(),
@@ -140,6 +145,7 @@ pub(crate) fn backend_requires_sandbox(backend: &SandboxBackend) -> bool {
             | SandboxBackend::Bubblewrap
             | SandboxBackend::Docker
             | SandboxBackend::OpenShell
+            | SandboxBackend::Agent37
     )
 }
 

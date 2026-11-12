@@ -68,6 +68,39 @@ pub(crate) async fn status(
     Err("TinyBox module support is disabled; native jail status is unavailable".to_owned())
 }
 
+/// The jail for a command TinySecurity did not plan (security disabled,
+/// `crate::security::switch`): the policy's own grants, its network rule and
+/// subprocesses allowed, every constraint enforced (folder confinement accepted
+/// on macOS, where Seatbelt is the host's best-effort jail), with no protected
+/// floor and no process-isolation requirement.
+#[cfg(feature = "modules")]
+pub(crate) fn host_jail(policy: &SandboxPolicy) -> NativeJailConfig {
+    let paths = |paths: &[std::path::PathBuf]| {
+        paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect()
+    };
+    NativeJailConfig {
+        read_only: paths(&policy.read_only_mounts),
+        read_write: paths(&policy.read_write_mounts),
+        allow_net: policy.allow_network,
+        allow_subprocess: true,
+        enforcement: if cfg!(target_os = "macos") {
+            contract::JailEnforcement::Declared
+        } else {
+            contract::JailEnforcement::Enforced
+        },
+        require_process_isolation: false,
+        deny_read: Vec::new(),
+        resources: None,
+    }
+}
+
+/// Without TinyBox there is no jail; [`execute`] refuses.
+#[cfg(not(feature = "modules"))]
+pub(crate) fn host_jail(_policy: &SandboxPolicy) -> NativeJailConfig {}
+
 /// Run a command inside TinyBox's native jail and keep its resource lifecycle
 /// module-owned. With `yield_after`, a command still running then comes back
 /// as [`ShellRunOutcome::Running`] and keeps running in the jail.

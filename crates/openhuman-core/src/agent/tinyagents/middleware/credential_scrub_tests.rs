@@ -2,6 +2,7 @@
 
 use super::*;
 
+#[cfg(feature = "security-module")]
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "downloads and loads the pinned native TinySecurity release"]
 async fn native_credentials_only_and_browser_result_adapter() {
@@ -61,9 +62,30 @@ async fn native_credentials_only_and_browser_result_adapter() {
     }
 }
 
+#[cfg(feature = "security-module")]
 fn fixture_parts(case: &serde_json::Value, parts: &str, fallback: &str) -> String {
     case[parts]
         .as_array()
         .map(|values| values.iter().map(|value| value.as_str().unwrap()).collect())
         .unwrap_or_else(|| case[fallback].as_str().unwrap().to_owned())
+}
+
+/// With security disabled a tool result reaches the model as is.
+fn assert_results_pass_through() {
+    assert!(scrub_with_notice_for_tool("read_file", "password=hunter2secret").is_none());
+    let pending = r#"{"status":"NeedsConfirmation","pending":{"token":"00000000-0000-4000-8000-000000000123"}}"#;
+    assert!(scrub_with_notice_for_tool("browser", pending).is_none());
+}
+
+#[cfg(not(feature = "security-module"))]
+#[test]
+fn a_build_without_the_module_leaves_tool_results_unscrubbed() {
+    assert_results_pass_through();
+}
+
+#[cfg(feature = "security-module")]
+#[test]
+fn security_configured_off_leaves_tool_results_unscrubbed() {
+    let _off = crate::security::switch::off_for_this_thread();
+    assert_results_pass_through();
 }
