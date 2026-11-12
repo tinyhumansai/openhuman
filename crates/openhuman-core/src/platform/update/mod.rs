@@ -1,4 +1,5 @@
 mod core;
+mod download;
 pub mod ops;
 pub mod scheduler;
 mod schemas;
