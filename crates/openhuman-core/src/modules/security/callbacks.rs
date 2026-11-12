@@ -80,6 +80,8 @@ impl KeyringConsent {
             crate::security::keyring_consent::operation_approval::request_approval(request).await;
         Ok(KeyringConsentResponse2 {
             outcome: keyring_consent_outcome(approved),
+            // The host configures no read grants, so the module offers none.
+            grant: None,
         })
     }
 }

@@ -211,6 +211,8 @@ fn options(policy: &SandboxPolicy, host_run: bool) -> SandboxPlanOptions2 {
         require_preferred_backend: policy.backend != SandboxBackendKind::None,
         no_workspace: !policy.mount_workspace,
         host_run,
+        // Files-only confinement is an operator opt-in this host does not offer.
+        filesystem_only: false,
     }
 }
 

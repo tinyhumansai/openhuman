@@ -100,6 +100,8 @@ pub fn module_config(config: &Config) -> tinysecurity_bus::ModuleConfig {
                 service: "openhuman".into(),
                 backend,
                 consent_timeout_ms: KEYRING_CONSENT_TIMEOUT_MS,
+                // One consent per keyring operation, as before read grants.
+                read_grant: None,
             }),
             pairing: None,
         }),
