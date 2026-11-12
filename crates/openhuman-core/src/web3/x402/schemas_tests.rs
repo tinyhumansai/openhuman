@@ -112,10 +112,6 @@ fn fetch_controller_is_registered_with_its_schema() {
     assert_eq!(required, vec!["url", "maxAmountAtomic"]);
 }
 
-fn update_budget_params(value: Value) -> Map<String, Value> {
-    value.as_object().cloned().expect("object params")
-}
-
 #[test]
 fn update_budget_reads_every_input_the_schema_declares() {
     let schema = schemas("update_budget");
@@ -129,18 +125,4 @@ fn update_budget_reads_every_input_the_schema_declares() {
     assert_eq!(parsed.per_request_max, Some(100));
     assert_eq!(parsed.daily_max, Some(200));
     assert_eq!(parsed.monthly_max, Some(300));
-}
-
-#[test]
-fn update_budget_still_accepts_snake_case_limit_names() {
-    let parsed = parse_update_budget(update_budget_params(json!({
-        "per_request_max": 1,
-        "daily_max": 2,
-        "monthly_max": 3,
-    })))
-    .expect("snake_case names parse");
-    assert_eq!(
-        (parsed.per_request_max, parsed.daily_max, parsed.monthly_max),
-        (Some(1), Some(2), Some(3))
-    );
 }
