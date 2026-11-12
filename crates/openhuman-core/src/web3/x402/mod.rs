@@ -14,14 +14,6 @@ mod schemas;
 pub use schemas::all_controller_schemas as all_x402_controller_schemas;
 #[cfg(feature = "web3")]
 pub use schemas::all_registered_controllers as all_x402_registered_controllers;
-#[cfg(feature = "web3")]
-pub use tinywallet_bus::wire::{
-    X402PaymentRecord as PaymentRecord, X402PaymentStatus as PaymentStatus,
-};
-
-/// Kept as a compatibility no-op. The module-owned ledger opens lazily when
-/// the first x402 service operation is requested, scoped to the active workspace.
-pub fn init_ledger(_workspace_dir: &std::path::Path, _session_id: &str) {}
 
 #[cfg(not(feature = "web3"))]
 mod stub;

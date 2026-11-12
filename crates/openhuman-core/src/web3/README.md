@@ -73,7 +73,7 @@ second x402 ledger or parse payment protocol payloads.
 | --- | --- |
 | [`mod.rs`](./mod.rs) | Web3 facade and controller/tool aggregation. |
 | [`client.rs`](./client.rs) | Generic authenticated client for the deBridge integration proxy. |
-| [`module_tools.rs`](./module_tools.rs) | Agent-tool adapters over TinyWallet bus operations. |
+| [`tools.rs`](./tools.rs) | Agent-tool adapters over TinyWallet bus operations, for both the `wallet_*` and `web3_*` declarations. |
 | [`swap/`](swap/README.md), [`bridge/`](bridge/), [`dapp/`](dapp/README.md) | Product RPC schemas and controller handlers. |
 | [`wallet/`](wallet/README.md) | Wallet onboarding, host config/custody, controller and tool adapters. |
 | [`x402/`](x402/README.md) | x402 controller projection over the module-owned ledger. |
