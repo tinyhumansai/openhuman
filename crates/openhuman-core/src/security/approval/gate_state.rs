@@ -239,13 +239,24 @@ impl ApprovalGate {
     ) -> anyhow::Result<Option<PendingApproval>> {
         // One read of the route. If an expiry or a competing decision removes
         // it after this, `decide` reports the miss as the benign race it is.
-        if let Err(error) = self.validate_decision_context(request_id, dispatch, agent) {
-            tracing::warn!(
-                request_id = %request_id,
-                error = %error,
-                "[approval::gate] decision refused: the caller does not own the request"
-            );
-            return Err(error);
+        let parked = match self.validate_decision_context(request_id, dispatch, agent) {
+            Ok(parked) => parked,
+            Err(error) => {
+                tracing::warn!(
+                    request_id = %request_id,
+                    error = %error,
+                    "[approval::gate] decision refused: the caller does not own the request"
+                );
+                return Err(error);
+            }
+        };
+        // Pending orphans are listed only for the default tenant, so only it
+        // may dismiss one.
+        if parked.is_none() && agent.is_none() && *dispatch == crate::core::runtime::Tenant::default()
+        {
+            if let Some(dismissed) = self.decide_orphan(request_id, decision)? {
+                return Ok(Some(dismissed));
+            }
         }
         match agent {
             Some(agent) => self.decide_for_agent(agent, request_id, decision),

@@ -20,6 +20,16 @@ pending request once after an audited decision; it cannot create a reusable
 grant or override a hard denial. OpenHuman's current TinySecurity config leaves
 Jev scoring disabled.
 
+**Requests an earlier launch left waiting.** The one-time legacy import
+carries an undecided request that is still inside its window into TinySecurity
+as a pending orphan: a pending row no host instance owns, bound to a synthetic
+call nothing can run. `approval_list_pending` lists orphans for the default
+tenant after the requests this process parked. A person can only deny one
+(`gate_orphans.rs`, `native/engine_orphans.rs`): the host verifies that denial
+against the listed row byte for byte, and TinySecurity accepts nothing else for
+a row another instance owns. Approving one is refused, and it stays listed until
+it is denied or its window closes.
+
 **SaaS secret master grant.** A SaaS core has no person to ask when a headless
 tenant request (a gateway call, a background or delivery job, the embed
 `profiles` API) must unlock that tenant's config secrets, which needs
