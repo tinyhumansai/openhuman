@@ -420,6 +420,7 @@ async fn run_sandboxed(
         mount_workspace: true,
         env_passthrough: vec![],
         docker_overrides: None,
+        filesystem_only: false,
     };
     turn_origin::with_origin(
         AgentTurnOrigin::Cli,
