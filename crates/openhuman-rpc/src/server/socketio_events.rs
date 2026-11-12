@@ -28,49 +28,47 @@ fn authorize(
     handshake_gate: &Option<super::super::auth::PreflightGate>,
 ) -> bool {
     let client_id = socket.id.to_string();
-        if handshake_gate.as_ref().is_some_and(|gate| gate.is_active()) {
-            log::info!("[socketio] rejecting connect during startup preflight client={client_id}");
-            return false;
-        }
+    if handshake_gate.as_ref().is_some_and(|gate| gate.is_active()) {
+        log::info!("[socketio] rejecting connect during startup preflight client={client_id}");
+        return false;
+    }
 
-        // Reject cross-origin browser pages before the handshake completes.
-        // Native clients (Tauri shell, CLI) do not set an `Origin` header and
-        // are accepted; only browser pages from origins outside the local
-        // app surface are dropped here. See `origin_is_allowed`.
-        let origin = socket
-            .req_parts()
-            .headers
-            .get(axum::http::header::ORIGIN)
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-        if !origin_is_allowed(origin.as_deref()) {
-            log::warn!(
-                "[socketio] rejecting connect: bad origin {:?} client={}",
-                origin,
-                client_id
-            );
-            return false;
-        }
+    // Reject cross-origin browser pages before the handshake completes.
+    // Native clients (Tauri shell, CLI) do not set an `Origin` header and
+    // are accepted; only browser pages from origins outside the local
+    // app surface are dropped here. See `origin_is_allowed`.
+    let origin = socket
+        .req_parts()
+        .headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    if !origin_is_allowed(origin.as_deref()) {
+        log::warn!(
+            "[socketio] rejecting connect: bad origin {:?} client={}",
+            origin,
+            client_id
+        );
+        return false;
+    }
 
-        // Verify the handshake bearer matches the per-process RPC token.
-        // `TryData` lets us treat a missing/malformed `auth` payload as a
-        // soft failure (no panic) and reject the connect cleanly.
-        let supplied = token.unwrap_or_default();
-        if !crate::core_host::core::auth::verify_bearer_token(&supplied) {
-            log::warn!(
-                "[socketio] rejecting connect: missing or invalid bearer client={}",
-                client_id
-            );
-            return false;
-        }
-        socket.extensions.insert(AuthedConnection);
-        let Some(tenant) = socket_tenant_from_request_extensions(
-            &socket.req_parts().extensions,
-        ) else {
-            log::warn!("[socketio] rejecting socket without a tenant scope in SaaS mode");
-            return false;
-        };
-        socket.extensions.insert(tenant);
+    // Verify the handshake bearer matches the per-process RPC token.
+    // `TryData` lets us treat a missing/malformed `auth` payload as a
+    // soft failure (no panic) and reject the connect cleanly.
+    let supplied = token.unwrap_or_default();
+    if !crate::core_host::core::auth::verify_bearer_token(&supplied) {
+        log::warn!(
+            "[socketio] rejecting connect: missing or invalid bearer client={}",
+            client_id
+        );
+        return false;
+    }
+    socket.extensions.insert(AuthedConnection);
+    let Some(tenant) = socket_tenant_from_request_extensions(&socket.req_parts().extensions) else {
+        log::warn!("[socketio] rejecting socket without a tenant scope in SaaS mode");
+        return false;
+    };
+    socket.extensions.insert(tenant);
     true
 }
 
@@ -85,56 +83,56 @@ fn register_event_handlers(
         move |socket: SocketRef, Data(payload): Data<SocketRpcRequest>| {
             let rpc_gate = rpc_gate.clone();
             async move {
-            if rpc_gate.as_ref().is_some_and(|gate| gate.is_active()) {
-                let _ = socket.emit(
-                    "rpc:error",
-                    &json!({
-                        "id": payload.id,
-                        "error": {
-                            "code": -32003,
-                            "message": "RPC is unavailable during startup approval preflight"
-                        }
-                    }),
+                if rpc_gate.as_ref().is_some_and(|gate| gate.is_active()) {
+                    let _ = socket.emit(
+                        "rpc:error",
+                        &json!({
+                            "id": payload.id,
+                            "error": {
+                                "code": -32003,
+                                "message": "RPC is unavailable during startup approval preflight"
+                            }
+                        }),
+                    );
+                    return;
+                }
+                if !socket_is_authed(&socket) {
+                    drop_unauthed(&socket, "rpc:request from unauthenticated socket");
+                    return;
+                }
+                let client_id = socket.id.to_string();
+                log::info!(
+                    "[socketio] rpc:request method={} id={} client={}",
+                    payload.method,
+                    payload.id,
+                    client_id
                 );
-                return;
-            }
-            if !socket_is_authed(&socket) {
-                drop_unauthed(&socket, "rpc:request from unauthenticated socket");
-                return;
-            }
-            let client_id = socket.id.to_string();
-            log::info!(
-                "[socketio] rpc:request method={} id={} client={}",
-                payload.method,
-                payload.id,
-                client_id
-            );
 
-            // Invoke the method through the same logic used by the HTTP RPC endpoint.
-            let response = match crate::core_host::core::invoke::invoke_method(
-                // A Socket.IO event is not scoped to a request, so it
-                // runs under the process default context.
-                crate::core_host::core::runtime::DispatchCtx::process_default(),
-                crate::core_host::core::invoke::default_state(),
-                payload.method.as_str(),
-                payload.params,
-            )
-            .await
-            {
-                Ok(result) => (
-                    "rpc:response",
-                    json!({ "id": payload.id, "result": result }),
-                ),
-                Err(message) => (
-                    "rpc:error",
-                    json!({
-                        "id": payload.id,
-                        "error": { "code": -32000, "message": message }
-                    }),
-                ),
-            };
+                // Invoke the method through the same logic used by the HTTP RPC endpoint.
+                let response = match crate::core_host::core::invoke::invoke_method(
+                    // A Socket.IO event is not scoped to a request, so it
+                    // runs under the process default context.
+                    crate::core_host::core::runtime::DispatchCtx::process_default(),
+                    crate::core_host::core::invoke::default_state(),
+                    payload.method.as_str(),
+                    payload.params,
+                )
+                .await
+                {
+                    Ok(result) => (
+                        "rpc:response",
+                        json!({ "id": payload.id, "result": result }),
+                    ),
+                    Err(message) => (
+                        "rpc:error",
+                        json!({
+                            "id": payload.id,
+                            "error": { "code": -32000, "message": message }
+                        }),
+                    ),
+                };
 
-            let _ = socket.emit(response.0, &response.1);
+                let _ = socket.emit(response.0, &response.1);
             }
         },
     );
