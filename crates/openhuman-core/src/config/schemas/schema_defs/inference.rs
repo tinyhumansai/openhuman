@@ -197,6 +197,10 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                     "usage_embeddings",
                     "Use the local model for embedding generation (when runtime_enabled).",
                 ),
+                optional_bool(
+                    "native_tool_calling",
+                    "Send native tools to the local runtime instead of the text tool protocol. For endpoints whose model calls tools natively.",
+                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         }),

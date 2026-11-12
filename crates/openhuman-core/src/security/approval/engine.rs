@@ -217,6 +217,13 @@ pub(crate) trait ApprovalEngine: sealed::Sealed + std::fmt::Debug + Send + Sync 
     /// never stored in the current scope.
     async fn is_decided(&self, request_id: &str) -> Result<Option<bool>, EngineError>;
 
+    /// Requests an earlier launch left undecided that the engine still holds
+    /// (pending orphans), oldest first. They are listed so a person can see and
+    /// dismiss them; deciding one resumes nothing.
+    async fn orphans(&self) -> Result<Vec<super::types::PendingApproval>, EngineError> {
+        Ok(Vec::new())
+    }
+
     /// The most recently decided requests of the current scope, newest first.
     async fn history(
         &self,
