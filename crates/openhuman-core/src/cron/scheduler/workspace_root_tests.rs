@@ -49,6 +49,7 @@ fn a_relative_root_resolves_against_the_action_dir() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn an_absolute_root_is_followed_through_symlinks() {
     let tmp = TempDir::new().unwrap();
