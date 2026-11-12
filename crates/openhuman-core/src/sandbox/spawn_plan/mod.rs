@@ -91,9 +91,8 @@ fn refusal(denial: SandboxDenial2, policy: &SandboxPolicy, config: &Config) -> P
     if denial != SandboxDenial2::Path {
         return PlanError::Refused(denial);
     }
-    let canonical = |path: &std::path::Path| {
-        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-    };
+    let canonical =
+        |path: &std::path::Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let root = canonical(&policy.workspace_root);
     let workspace = canonical(&config.workspace_dir);
     if root.starts_with(&workspace) || workspace.starts_with(&root) {

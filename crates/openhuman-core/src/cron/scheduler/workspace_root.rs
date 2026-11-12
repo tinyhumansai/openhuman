@@ -85,7 +85,10 @@ fn credential_stores(config: &Config) -> Vec<PathBuf> {
     {
         stores.push(PathBuf::from(master_key));
     }
-    stores.iter().map(|store| canonical_or_original(store)).collect()
+    stores
+        .iter()
+        .map(|store| canonical_or_original(store))
+        .collect()
 }
 
 fn canonical_or_original(path: &Path) -> PathBuf {

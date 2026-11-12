@@ -68,7 +68,10 @@ async fn checkout(tmp: &TempDir) -> Config {
     config
 }
 
-async fn build(config: &Config, root: &'static str) -> anyhow::Result<crate::cron::scheduler::agent_run::BuiltCronAgent> {
+async fn build(
+    config: &Config,
+    root: &'static str,
+) -> anyhow::Result<crate::cron::scheduler::agent_run::BuiltCronAgent> {
     let installed: Arc<dyn HostAgentResolver> = Arc::new(Rooted {
         config: config.clone(),
         root,
@@ -91,7 +94,9 @@ async fn a_rooted_cron_agent_plans_its_shell_with_only_that_root_writable() {
     let config = checkout(&tmp).await;
     let job_root = config.action_dir.join("work/job");
 
-    let built = build(&config, "work/job").await.expect("the rooted agent builds");
+    let built = build(&config, "work/job")
+        .await
+        .expect("the rooted agent builds");
     let workspace = built
         .agent
         .live_workspace_descriptor()

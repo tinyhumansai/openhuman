@@ -25,9 +25,9 @@ mod failure_classification;
 mod live_agents;
 mod origin_context;
 mod origin_delivery;
-mod workspace_root;
 pub(crate) mod run_delivery;
 pub(crate) mod shell_job;
+mod workspace_root;
 
 #[cfg(test)]
 #[path = "scheduler_tests.rs"]

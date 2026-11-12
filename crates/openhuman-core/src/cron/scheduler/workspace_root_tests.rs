@@ -33,7 +33,10 @@ fn an_agent_that_names_no_root_keeps_the_action_dir() {
     let tmp = TempDir::new().unwrap();
     let config = checkout(&tmp);
     assert_eq!(scheduled_workspace(&config, &rooted_at(None)), Ok(None));
-    assert_eq!(scheduled_workspace(&config, &rooted_at(Some("  "))), Ok(None));
+    assert_eq!(
+        scheduled_workspace(&config, &rooted_at(Some("  "))),
+        Ok(None)
+    );
 }
 
 #[test]
@@ -63,7 +66,10 @@ fn a_root_that_is_missing_or_not_a_directory_is_refused() {
     let tmp = TempDir::new().unwrap();
     let config = checkout(&tmp);
     let missing = scheduled_workspace(&config, &rooted_at(Some("work/gone"))).unwrap_err();
-    assert!(missing.contains("rooted") && missing.contains("work/gone"), "{missing}");
+    assert!(
+        missing.contains("rooted") && missing.contains("work/gone"),
+        "{missing}"
+    );
     std::fs::write(config.action_dir.join("work/file"), "x").unwrap();
     let file = scheduled_workspace(&config, &rooted_at(Some("work/file"))).unwrap_err();
     assert!(file.contains("not a directory"), "{file}");

@@ -212,7 +212,10 @@ fn a_path_refusal_of_a_root_over_the_core_workspace_names_the_overlap() {
     let explained = refusal(SandboxDenial2::Path, &over, &config).to_string();
     assert!(explained.contains("Path"), "{explained}");
     assert!(explained.contains("core workspace"), "{explained}");
-    assert!(explained.contains(&root.display().to_string()), "{explained}");
+    assert!(
+        explained.contains(&root.display().to_string()),
+        "{explained}"
+    );
 
     // A root inside the workspace is the same overlap.
     over.workspace_root = root.join("brain");
