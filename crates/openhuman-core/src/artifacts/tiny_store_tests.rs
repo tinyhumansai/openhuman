@@ -661,3 +661,32 @@ fn share_artifact_is_offered_only_with_a_publisher() {
     let with = names(true);
     assert!(with.contains(&"share_artifact".to_string()), "{with:?}");
 }
+
+/// A cached chat session keeps its tool belt in its tenant's own state
+/// slots (`web_chat::ops::thread_sessions`), so an artifact tool that held
+/// the context it was built under strongly would keep that tenant in use
+/// (`CoreContext::tenant_in_use`) forever, and its SaaS profile slot would
+/// never free.
+#[tokio::test]
+async fn artifact_tools_kept_past_their_turn_do_not_keep_the_tenant_in_use() {
+    use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
+    let root = CoreContext::for_test(DomainSet::full(), None);
+    let profile = root.derive_with(
+        ContextOverlay::new(
+            crate::config::Config::default(),
+            DomainSet::kernel(),
+            crate::tools::toolpacks::ToolGroups::none(),
+        )
+        .profile("p1"),
+    );
+    let (workspace, files) = temp_dirs();
+    let tools = CoreContext::scope_with_turn_origin(std::sync::Arc::clone(&profile), None, async {
+        registered_tools(&workspace, FileRoots::new(&files), &workspace, None)
+    })
+    .await;
+    assert!(tools.iter().any(|t| t.name() == "create_artifact"));
+    assert!(
+        !profile.tenant_in_use(),
+        "the kept artifact tools pin the tenant they were built under"
+    );
+}

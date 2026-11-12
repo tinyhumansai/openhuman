@@ -224,7 +224,16 @@ impl ApprovalEngine for NativeEngine {
                     Choice::Once => ApprovalChoice2::Once,
                     Choice::Deny => ApprovalChoice2::Deny,
                 },
-                ACTOR.to_owned(),
+                // A SaaS host's own approval of a tenant's secret grant is
+                // audited under its own actor, never as a person's.
+                if label == crate::security::approval::gate::SAAS_HOST_AUTHORISED {
+                    crate::security::approval::gate::SAAS_HOST_AUTHORISED
+                } else if label == crate::security::approval::gate::EMBEDDER_HOST_AUTHORISED {
+                    crate::security::approval::gate::EMBEDDER_HOST_AUTHORISED
+                } else {
+                    ACTOR
+                }
+                .to_owned(),
             ),
         );
         let decided = async {
@@ -388,6 +397,18 @@ impl ApprovalEngine for NativeEngine {
 
     async fn is_decided(&self, request_id: &str) -> Result<Option<bool>, EngineError> {
         super::super::view::row_decided(&self.config, request_id)
+            .await
+            .map_err(|error| unavailable(error.to_string()))
+    }
+
+    async fn orphans(
+        &self,
+    ) -> Result<Vec<crate::security::approval::types::PendingApproval>, EngineError> {
+        // Reaching the module runs the one-time legacy import first, which is
+        // where an earlier launch's undecided requests become orphans.
+        self.proxy().await?;
+        let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0);
+        super::super::view::orphans(&self.config, now, |id| host().request(id).is_some())
             .await
             .map_err(|error| unavailable(error.to_string()))
     }

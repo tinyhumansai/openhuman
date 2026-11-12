@@ -94,6 +94,17 @@ pub struct LocalAiConfig {
     /// All default to `false` (cloud path).
     #[serde(default)]
     pub usage: LocalAiUsage,
+    /// Send native `tools` to the local runtime and read its structured tool
+    /// calls, instead of prompting the JSON-in-tag text protocol.
+    ///
+    /// Off by default: many models on Ollama / LM Studio reject `tools` or
+    /// answer them badly. Turn it on for an endpoint whose model calls tools
+    /// natively, typically a hosted OpenAI-compatible gateway behind
+    /// `local-openai`. Such a gateway may also parse `<tool_call>` text in the
+    /// model's own template and hand the JSON-in-tag body back as the tool's
+    /// *name*, so the text protocol is not a safe fallback there.
+    #[serde(default)]
+    pub native_tool_calling: bool,
 }
 
 impl std::fmt::Debug for LocalAiConfig {
@@ -118,6 +129,7 @@ impl std::fmt::Debug for LocalAiConfig {
             .field("voice_llm_cleanup_enabled", &self.voice_llm_cleanup_enabled)
             .field("num_ctx", &self.num_ctx)
             .field("usage", &self.usage)
+            .field("native_tool_calling", &self.native_tool_calling)
             .finish()
     }
 }
@@ -202,6 +214,7 @@ impl Default for LocalAiConfig {
             voice_llm_cleanup_enabled: default_voice_llm_cleanup_enabled(),
             num_ctx: None,
             usage: LocalAiUsage::default(),
+            native_tool_calling: false,
         }
     }
 }
