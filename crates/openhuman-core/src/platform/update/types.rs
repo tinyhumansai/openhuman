@@ -17,6 +17,10 @@ pub struct UpdateInfo {
     pub download_url: Option<String>,
     /// Asset file name.
     pub asset_name: Option<String>,
+    /// Asset size in bytes, as the release declared it. The download is
+    /// refused unless its body is exactly this long.
+    #[serde(default)]
+    pub asset_size: Option<u64>,
     /// Release notes / body from GitHub.
     pub release_notes: Option<String>,
     /// When the release was published (ISO 8601).
