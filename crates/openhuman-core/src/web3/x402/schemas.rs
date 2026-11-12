@@ -1,7 +1,7 @@
 //! Controller schemas + handlers for the `x402` namespace.
 //!
-//! Wires `x402_get_summary`, `x402_list_payments`, and `x402_update_budget`
-//! into the global registry consumed by `crates/openhuman-core/src/core/all.rs`.
+//! Wires `x402_get_summary`, `x402_list_payments`, `x402_update_budget`, and
+//! `x402_fetch` into the global registry consumed by `crates/openhuman-core/src/core/all.rs`.
 
 use crate::core::runtime::DispatchCtx;
 use serde::Deserialize;
@@ -15,6 +15,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_summary"),
         schemas("list_payments"),
         schemas("update_budget"),
+        schemas("fetch"),
     ]
 }
 
@@ -31,6 +32,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_budget"),
             handler: handle_update_budget,
+        },
+        RegisteredController {
+            schema: schemas("fetch"),
+            handler: handle_fetch,
         },
     ]
 }
@@ -105,6 +110,82 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "fetch" => ControllerSchema {
+            namespace: "x402",
+            function: "fetch",
+            description: "Make one HTTPS request and, on an HTTP 402 x402 challenge, pay it from the wallet within maxAmountAtomic and the per-request budget, then retry once. Refusals are errors prefixed X402_REFUSED:.",
+            inputs: vec![
+                FieldSchema {
+                    name: "url",
+                    ty: TypeSchema::String,
+                    comment: "Absolute https:// URL; local and private hosts are refused.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "method",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Enum {
+                        variants: vec!["GET", "POST"],
+                    })),
+                    comment: "GET (default) or POST.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "headers",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Map(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Request headers; PAYMENT-SIGNATURE and X-PAYMENT are refused.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "body",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Request body (POST only).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "maxAmountAtomic",
+                    ty: TypeSchema::BoundedU64 {
+                        min: 1,
+                        max: u64::MAX,
+                    },
+                    comment: "Most this request may pay, in token atomic units.",
+                    required: true,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "status",
+                    ty: TypeSchema::U64,
+                    comment: "HTTP status of the final response.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "contentType",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Response Content-Type, when present.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "body",
+                    ty: TypeSchema::String,
+                    comment: "Response body as UTF-8 text, at most 256 KiB.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "truncated",
+                    ty: TypeSchema::Bool,
+                    comment: "Whether the body was cut at the size limit.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "payment",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Null when unpaid, else paymentId, amountAtomic, asset, recipient, network, settled and settlementResponse.",
+                    required: true,
+                },
+            ],
+        },
         other => panic!("unknown x402 schema function: {other}"),
     }
 }
@@ -120,6 +201,10 @@ fn handle_get_summary(ctx: DispatchCtx, _params: Map<String, Value>) -> Controll
             .map_err(|error| format!("x402 get_summary: {error}"))?;
         Ok(summary_value(summary))
     })
+}
+
+fn handle_fetch(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(super::fetch::fetch(ctx, params))
 }
 
 #[derive(Deserialize)]

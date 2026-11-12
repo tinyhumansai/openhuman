@@ -347,7 +347,9 @@ impl NativeEngine {
     ) -> Result<std::sync::Arc<ScopeEntry>, EngineError> {
         let subject = self.subject(tenant, Variant::Standard)?;
         let generation = Self::generation(proxy).await?;
-        scopes::ensure(
+        // The import and an orphan's dismissal only need the scope to exist;
+        // a live check's posture for the same subject stays as it is.
+        scopes::ensure_keeping_posture(
             self.config(),
             proxy,
             subject,
