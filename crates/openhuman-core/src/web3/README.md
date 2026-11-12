@@ -92,7 +92,7 @@ Namespace names are wire contracts.
 | `web3_bridge` | `quote`, `execute` |
 | `web3_dapp` | `call`, `execute` |
 | [`wallet`](./wallet/README.md) | `setup`, `status`, `reveal_recovery_phrase`, `balances`, `token_balances`, `chain_status`, `network_defaults`, `supported_assets`, `encode_erc20_transfer`, `prepare_transfer`, `execute_prepared`, `tx_status`, `tx_receipt`, `lookup_tx`, `policy_get`, `policy_update`, `ledger_list` |
-| [`x402`](./x402/README.md) | `get_summary`, `list_payments`, `update_budget` |
+| [`x402`](./x402/README.md) | `get_summary`, `list_payments`, `update_budget`, `fetch` |
 
 The existing Wallet/Web3/x402 agent declarations come from `tinywallet-bus`;
 OpenHuman supplies adapters that call the module. The policy-bound
@@ -115,6 +115,8 @@ name and parameter schema.
   contract and module support, not TinyWallet implementation crates.
 - The `client` logs endpoint and operation metadata only; request bodies and
   wallet addresses must not be logged.
+- `x402_fetch` logs the method, host, status and payment amount only; the URL
+  path and query, request headers, bodies and wallet material are never logged.
 
 ```bash
 cargo test -p openhuman --features web3 web3::
