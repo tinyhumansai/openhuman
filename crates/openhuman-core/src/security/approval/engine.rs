@@ -224,6 +224,12 @@ pub(crate) trait ApprovalEngine: sealed::Sealed + std::fmt::Debug + Send + Sync 
         Ok(Vec::new())
     }
 
+    /// Deny the pending orphan `request_id` (see [`Self::orphans`]) as a
+    /// person's decision. `Err(NotPending)` when it is not one.
+    async fn dismiss_orphan(&self, _request_id: &str, _label: &str) -> Result<(), EngineError> {
+        Err(EngineError::NotPending)
+    }
+
     /// The most recently decided requests of the current scope, newest first.
     async fn history(
         &self,
