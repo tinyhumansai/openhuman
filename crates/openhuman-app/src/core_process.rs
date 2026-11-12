@@ -401,7 +401,7 @@ impl CoreProcessHandle {
                                     }
                                 }
                                 Err(format!(
-                                    "in-process core server exited before becoming ready: {err}"
+                                    "in-process core server exited before becoming ready: {err:#}"
                                 ))
                             }
                             Err(err) => Err(format!(
