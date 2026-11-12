@@ -246,6 +246,8 @@ fn options(policy: &SandboxPolicy, host_run: bool) -> SandboxPlanOptions2 {
         require_preferred_backend: policy.backend != SandboxBackendKind::None,
         no_workspace: !policy.mount_workspace,
         host_run,
+        // Set per spawn by `files_only`, which needs the source and the network.
+        filesystem_only: false,
     }
 }
 
