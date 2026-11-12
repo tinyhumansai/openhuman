@@ -156,22 +156,35 @@ pub(crate) async fn orphans(
         .map_err(|error| anyhow::anyhow!(error))?;
     Ok(open
         .iter()
-        .map(|stored| &stored.row)
-        .filter(|row| !live(&row.request_id))
-        .map(|row| {
-            let mut pending = PendingApproval::new(
-                row.request_id.clone(),
-                row.tool_name.clone(),
-                row.summary.clone(),
-                serde_json::from_str::<Value>(&row.args_redacted).unwrap_or(Value::Null),
-                Some(instant(
-                    i64::try_from(row.expires_at_ms).unwrap_or(i64::MAX),
-                )),
-            );
-            pending.created_at = instant(i64::try_from(row.created_at_ms).unwrap_or(i64::MAX));
-            pending
-        })
+        .filter_map(|stored| orphan(&stored.row, &live))
         .collect())
+}
+
+/// `row` as a pending orphan, or `None` when it is not one.
+///
+/// Only the legacy import writes an orphan, and only it sets
+/// `legacy_history_json`. A row of this launch never carries it, so a request
+/// this process parks is never mistaken for an orphan, even in the moment
+/// between the module storing its row and the host registering it, or after
+/// the host has let it go but before its decision lands.
+fn orphan(row: &ApprovalRow2, live: impl Fn(&str) -> bool) -> Option<PendingApproval> {
+    if row.state != ApprovalLifecycle2::Pending
+        || row.legacy_history_json.is_none()
+        || live(&row.request_id)
+    {
+        return None;
+    }
+    let mut pending = PendingApproval::new(
+        row.request_id.clone(),
+        row.tool_name.clone(),
+        row.summary.clone(),
+        serde_json::from_str::<Value>(&row.args_redacted).unwrap_or(Value::Null),
+        Some(instant(
+            i64::try_from(row.expires_at_ms).unwrap_or(i64::MAX),
+        )),
+    );
+    pending.created_at = instant(i64::try_from(row.created_at_ms).unwrap_or(i64::MAX));
+    Some(pending)
 }
 
 /// Whether the request was stored and has left `Pending`. `None` when it is not
