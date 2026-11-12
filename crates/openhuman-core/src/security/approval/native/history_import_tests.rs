@@ -241,7 +241,9 @@ fn the_legacy_read_works_from_inside_a_storage_bridge_call() {
     let (_dir, config) = workspace();
     seed_legacy(&config);
     let read_back = crate::storage::block_on_anyhow(async move {
-        read(config).await.map_err(|error| anyhow::anyhow!("{error}"))
+        read(config)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))
     })
     .expect("the legacy history is readable from the bridge");
     assert_eq!(read_back.expect("seeded history").approvals.len(), 1);

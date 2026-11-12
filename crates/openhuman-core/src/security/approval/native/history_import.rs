@@ -187,9 +187,22 @@ pub(super) fn open_requests(history: &LegacyHistory) -> Vec<&LegacyApproval> {
     open
 }
 
+/// Read the legacy history on a thread of its own.
+///
+/// The read is a synchronous storage call, and the gate reaches the engine from
+/// the storage bridge's own runtime (`run_engine`), whose threads, blocking pool
+/// included, refuse to re-enter the bridge. A plain OS thread is outside it.
 async fn read(config: Config) -> Result<Option<LegacyHistory>, EngineError> {
-    crate::core::runtime::DispatchCtx::ambient()
-        .spawn_blocking(move || read_legacy(&config))
+    let (reply, result) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("approval-history-import".into())
+        .spawn(move || {
+            let _ = reply.send(read_legacy(&config));
+        })
+        .map_err(|error| {
+            EngineError::Unavailable(format!("the legacy read did not start: {error}"))
+        })?;
+    result
         .await
         .map_err(|error| {
             EngineError::Unavailable(format!("the legacy read did not finish: {error}"))
