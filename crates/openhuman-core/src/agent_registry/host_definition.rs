@@ -99,6 +99,19 @@ pub struct AgentExt {
     /// Ignored in SaaS mode. See `cron::origin::scheduled_actions_enabled`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub scheduled_actions: bool,
+    /// The directory a cron run of this agent is rooted at, so its shell and
+    /// file tools work there rather than in the process-wide `action_dir`.
+    ///
+    /// A relative path resolves against `action_dir`. Each run resolves it
+    /// again (symlinks followed) and refuses to start when it does not name an
+    /// existing directory, overlaps the core workspace, or holds the core's
+    /// credentials. The run carries it as its workspace descriptor
+    /// (`RunContext::with_workspace`), the same mechanism `agent.chat`'s `cwd`
+    /// and sub-agent worktrees use, so a sandboxed shell asks for this root
+    /// read-write instead of the whole action dir. Unset keeps the run on
+    /// `action_dir`. See `cron::scheduler::workspace_root`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled_workspace: Option<String>,
     /// Function-driven system prompt, set with `PromptSource::Dynamic(())`.
     /// Runtime only: never serialised and not authorable in TOML.
     #[serde(skip)]
@@ -128,6 +141,7 @@ impl Default for AgentExt {
             memory_block: None,
             searches_connected_mcp: false,
             scheduled_actions: false,
+            scheduled_workspace: None,
             prompt_builder: None,
             tinyflows_prompt_owner: None,
         }
