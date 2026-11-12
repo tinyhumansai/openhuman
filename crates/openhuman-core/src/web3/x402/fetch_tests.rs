@@ -74,7 +74,12 @@ fn params_reject_a_body_on_get() {
 
 #[test]
 fn params_reject_caller_supplied_payment_headers() {
-    for name in ["PAYMENT-SIGNATURE", "payment-signature", "X-PAYMENT", "x-Payment"] {
+    for name in [
+        "PAYMENT-SIGNATURE",
+        "payment-signature",
+        "X-PAYMENT",
+        "x-Payment",
+    ] {
         let error = parse_params(params(json!({
             "url": "https://api.example.test/resource",
             "headers": {name: "forged"},
@@ -108,15 +113,25 @@ fn params_require_a_positive_max_amount() {
 
 #[tokio::test]
 async fn destination_guard_refuses_loopback_and_private_hosts() {
-    for url in ["https://127.0.0.1/x", "https://10.0.0.1/x", "https://localhost/x"] {
+    for url in [
+        "https://127.0.0.1/x",
+        "https://10.0.0.1/x",
+        "https://localhost/x",
+    ] {
         assert!(guard_destination(url).await.is_err(), "{url}");
     }
 }
 
 #[test]
 fn body_text_truncates_at_the_cap_and_flags_it() {
-    assert_eq!(body_text(b"hello".to_vec(), 5), ("hello".to_string(), false));
-    assert_eq!(body_text(b"hello!".to_vec(), 5), ("hello".to_string(), true));
+    assert_eq!(
+        body_text(b"hello".to_vec(), 5),
+        ("hello".to_string(), false)
+    );
+    assert_eq!(
+        body_text(b"hello!".to_vec(), 5),
+        ("hello".to_string(), true)
+    );
     // A cut inside a multi-byte character never yields invalid UTF-8.
     let (text, truncated) = body_text("aé".as_bytes().to_vec(), 2);
     assert!(truncated);

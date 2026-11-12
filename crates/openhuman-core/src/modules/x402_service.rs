@@ -79,7 +79,9 @@ async fn prepare(
     }
     let Some(service_handle) = active.as_ref().map(|current| current.handle.clone()) else {
         return (
-            Err(WalletCallError::Failed("x402 service is unavailable".into())),
+            Err(WalletCallError::Failed(
+                "x402 service is unavailable".into(),
+            )),
             X402RpcPermitOutcome::Unused,
         );
     };

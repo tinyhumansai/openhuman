@@ -71,7 +71,12 @@ pub(super) fn parse_params(params: Map<String, Value>) -> Result<FetchParams, St
         return Err("x402_fetch params: url must be an absolute https:// URL".into());
     }
 
-    let method = match raw.method.as_deref().map(str::to_ascii_uppercase).as_deref() {
+    let method = match raw
+        .method
+        .as_deref()
+        .map(str::to_ascii_uppercase)
+        .as_deref()
+    {
         None | Some("GET") => reqwest::Method::GET,
         Some("POST") => reqwest::Method::POST,
         Some(_) => return Err("x402_fetch params: method must be GET or POST".into()),
@@ -126,7 +131,10 @@ pub(super) async fn guard_destination(url: &str) -> Result<ValidatedUrl, String>
 
 /// The caller-facing error for a failed payment preparation: refusals carry
 /// [`REFUSED_PREFIX`] so the caller can tell policy from failure.
-pub(super) fn prepare_error(outcome: X402RpcPermitOutcome, error: impl std::fmt::Display) -> String {
+pub(super) fn prepare_error(
+    outcome: X402RpcPermitOutcome,
+    error: impl std::fmt::Display,
+) -> String {
     match outcome {
         X402RpcPermitOutcome::Refused(reason) => format!("{REFUSED_PREFIX} {reason}"),
         X402RpcPermitOutcome::Approved | X402RpcPermitOutcome::Unused => {
@@ -263,7 +271,13 @@ async fn into_value(
     let status = response.status().as_u16();
     let content_type = header(&response, &["content-type"]);
     let (body, truncated) = response_body(response).await?;
-    Ok(response_value(status, content_type, body, truncated, payment))
+    Ok(response_value(
+        status,
+        content_type,
+        body,
+        truncated,
+        payment,
+    ))
 }
 
 /// Whether the module ledger holds `payment_id` as settled. The host does not
@@ -289,9 +303,9 @@ async fn ledger_settled(
 pub(super) async fn fetch(ctx: DispatchCtx, params: Map<String, Value>) -> Result<Value, String> {
     let params = parse_params(params)?;
     let target = guard_destination(&params.url).await?;
-    crate::security::egress::enforce_egress(&crate::security::egress::EgressDescriptor::network_fetch(
-        &target.host,
-    ))
+    crate::security::egress::enforce_egress(
+        &crate::security::egress::EgressDescriptor::network_fetch(&target.host),
+    )
     .await
     .map_err(|error| format!("x402_fetch: {error}"))?;
 

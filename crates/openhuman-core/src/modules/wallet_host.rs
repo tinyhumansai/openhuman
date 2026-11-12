@@ -230,10 +230,7 @@ pub(super) fn x402_rpc_permit_route(
             X402RpcPermitOutcome::Refused(reason),
             X402Route::Refused(reason),
         ),
-        None => (
-            X402RpcPermitOutcome::Approved,
-            X402Route::RpcPermitApproved,
-        ),
+        None => (X402RpcPermitOutcome::Approved, X402Route::RpcPermitApproved),
     };
     entry.outcome = Some(outcome);
     Some(route)
