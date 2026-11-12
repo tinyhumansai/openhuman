@@ -235,3 +235,20 @@ fn a_path_refusal_of_a_root_over_the_core_workspace_names_the_overlap() {
         PlanError::Refused(SandboxDenial2::Approval)
     );
 }
+
+#[test]
+fn only_an_opted_in_agent_spawn_with_the_host_network_asks_for_a_files_only_plan() {
+    let mut opted = policy(SandboxBackendKind::Local);
+    opted.filesystem_only = true;
+    let host = NetworkPolicy::Host;
+    assert!(files_only(&opted, false, SpawnSource::Agent, &host));
+    // A policy that did not opt in keeps the network requirement and the floor.
+    let plain = policy(SandboxBackendKind::Local);
+    assert!(!files_only(&plain, false, SpawnSource::Agent, &host));
+    // Text the host did not author never asks, whatever the policy says.
+    assert!(!files_only(&opted, false, SpawnSource::Untrusted, &host));
+    // A files-only plan cannot promise less network than the host's own.
+    assert!(!files_only(&opted, false, SpawnSource::Agent, &NetworkPolicy::None));
+    // A run on the host confines nothing, so it is never files-only.
+    assert!(!files_only(&opted, true, SpawnSource::Agent, &host));
+}

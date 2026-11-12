@@ -249,6 +249,22 @@ fn options(policy: &SandboxPolicy, host_run: bool) -> SandboxPlanOptions2 {
     }
 }
 
+/// Whether this spawn asks the module for a files-only plan (contract 2.2): only the
+/// operator's own agent spawn whose policy opted in and that runs with the host network.
+/// The module admits it on the same terms; anything else keeps the network requirement
+/// and the isolation floor.
+fn files_only(
+    policy: &SandboxPolicy,
+    host_run: bool,
+    source: SpawnSource,
+    network: &NetworkPolicy,
+) -> bool {
+    policy.filesystem_only
+        && !host_run
+        && source == SpawnSource::Agent
+        && *network == NetworkPolicy::Host
+}
+
 /// Every executor TinyBox verified on this host, in the order the module should prefer
 /// them. A policy that requires one executor probes only that one. An executor whose
 /// probe fails is declared unavailable; when every probe fails the spawn is refused.
@@ -425,7 +441,10 @@ async fn plan_with(
         limits,
         deny_subprocesses: false,
         accept_process_isolation: source.accepts_process_isolation(),
-        options: options(policy, host_run),
+        options: SandboxPlanOptions2 {
+            filesystem_only: files_only(policy, host_run, source, &network),
+            ..options(policy, host_run)
+        },
         generation,
         ttl_ms: facts::PLAN_TTL_MS,
         credential_denials: host_credential_denials(config),
