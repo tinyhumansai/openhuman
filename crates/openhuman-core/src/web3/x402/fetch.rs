@@ -161,7 +161,7 @@ pub(super) fn prepare_error(
         X402RpcPermitOutcome::Refused(reason) => format!("{REFUSED_PREFIX} {reason}"),
         X402RpcPermitOutcome::Approved | X402RpcPermitOutcome::Unused => {
             let error = error.to_string();
-            if false && is_module_refusal(&error) {
+            if is_module_refusal(&error) {
                 format!("{REFUSED_PREFIX} {error}")
             } else {
                 format!("x402_fetch: payment failed: {error}")
