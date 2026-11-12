@@ -157,6 +157,8 @@ mod halt_and_persist_tests;
 mod headless_descendants_tests;
 #[path = "scheduler_host_agent_tests.rs"]
 mod host_agent_tests;
+#[path = "scheduler_workspace_root_tests.rs"]
+mod workspace_root_tests;
 #[path = "scheduler_transcript_isolation_tests.rs"]
 mod transcript_isolation_tests;
 
