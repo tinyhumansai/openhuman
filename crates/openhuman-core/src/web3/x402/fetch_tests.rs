@@ -17,6 +17,43 @@ fn params_default_to_get_with_no_headers_or_body() {
     assert!(parsed.headers.is_empty());
     assert_eq!(parsed.body, None);
     assert_eq!(parsed.max_amount_atomic, 2500);
+    assert_eq!(parsed.network, None);
+    assert!(!parsed.sign_in);
+}
+
+#[test]
+fn params_accept_a_network_pin_and_sign_in() {
+    for network in ["eip155:8453", "eip155", "solana", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"] {
+        let parsed = parse_params(params(json!({
+            "url": "https://api.example.test/resource",
+            "maxAmountAtomic": 1,
+            "network": network,
+            "signIn": true,
+        })))
+        .expect("valid params");
+        assert_eq!(parsed.network.as_deref(), Some(network));
+        assert!(parsed.sign_in);
+    }
+    let blank = parse_params(params(json!({
+        "url": "https://api.example.test/resource",
+        "maxAmountAtomic": 1,
+        "network": " ",
+    })))
+    .expect("a blank pin is no pin");
+    assert_eq!(blank.network, None);
+}
+
+#[test]
+fn params_reject_a_malformed_network_pin() {
+    for network in ["eip155:8453:1", ":8453", "eip155:", "eip 155", "eip155;drop", &"a".repeat(65)] {
+        let error = parse_params(params(json!({
+            "url": "https://api.example.test/resource",
+            "maxAmountAtomic": 1,
+            "network": network,
+        })))
+        .expect_err("malformed network is refused");
+        assert!(error.contains("network"), "{error}");
+    }
 }
 
 #[test]
@@ -79,6 +116,8 @@ fn params_reject_caller_supplied_payment_headers() {
         "payment-signature",
         "X-PAYMENT",
         "x-Payment",
+        "SIGN-IN-WITH-X",
+        "sign-in-with-x",
     ] {
         let error = parse_params(params(json!({
             "url": "https://api.example.test/resource",
