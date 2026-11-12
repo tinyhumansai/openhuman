@@ -122,8 +122,7 @@ impl AttachmentModel {
                 "attachment exceeds configured file limit".into(),
             ));
         }
-        let client =
-            crate::config::build_runtime_proxy_client_with_timeouts("inference.attachment", 30, 10);
+        let client = crate::attachments::fetch_client();
         let limits = FileLimits {
             max_files: 1,
             max_file_size_mb: mb,
