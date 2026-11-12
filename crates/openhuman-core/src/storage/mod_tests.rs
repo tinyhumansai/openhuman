@@ -179,7 +179,10 @@ fn a_reinstall_by_url_never_shows_a_backend_without_its_url() {
     }
     stop.store(true, std::sync::atomic::Ordering::Release);
     let (torn, observations) = reader.join().unwrap();
-    assert!(observations > 0, "the reader must sample the installed slot");
+    assert!(
+        observations > 0,
+        "the reader must sample the installed slot"
+    );
     assert_eq!(
         torn, 0,
         "a reader saw an installed backend with no URL {torn} times"
