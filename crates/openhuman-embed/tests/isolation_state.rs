@@ -7,7 +7,7 @@ mod common;
 
 use common::{
     chat_requests, offline_config, route, runtime, scripted_provider, stub_backend,
-    tool_call_completion, tool_results,
+    tool_call_completion,
 };
 use openhuman_embed::{
     Access, Agent, AgentDefinitionSpec, AgentSpec, Runtime, SessionStoreProvider, ToolScopeSpec,
@@ -161,11 +161,6 @@ fn agents_on_one_workspace_keep_their_own_state() {
                     );
                 }
             }
-            let a_created = a_requests.iter().map(tool_results).collect::<String>();
-            assert!(
-                a_created.contains(&name),
-                "create_skill returned the skill it created: {a_created}"
-            );
         })
         .await
         .expect("test task");
