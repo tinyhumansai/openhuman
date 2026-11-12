@@ -11,7 +11,6 @@
 //! bundles, so there is no signature to verify here.
 
 use std::io::Write;
-use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
@@ -88,19 +87,18 @@ pub(super) fn check_declared_length(
     }
 }
 
-/// Stream `response` into a new file at `path`, hashing as it goes.
+/// Stream `response` into `file` (a freshly created temp file), hashing as it
+/// goes.
 ///
 /// Stops reading once more than `max_bytes` arrive, without writing the
 /// excess; the returned count then exceeds `max_bytes` and `verify` refuses
 /// it. Returns the byte count and the SHA-256 digest of what was read. The
-/// caller removes `path` on error.
+/// caller creates the file and removes it on error.
 pub(super) async fn stream_to_file(
     mut response: reqwest::Response,
-    path: &Path,
+    file: &mut std::fs::File,
     max_bytes: u64,
 ) -> Result<(u64, [u8; 32]), String> {
-    let mut file =
-        std::fs::File::create(path).map_err(|e| format!("failed to create temp file: {e}"))?;
     let mut hasher = Sha256::new();
     let mut read: u64 = 0;
     while let Some(chunk) = response
