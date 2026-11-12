@@ -155,13 +155,22 @@ fn a_reinstall_by_url_never_shows_a_backend_without_its_url() {
         let ready = Arc::clone(&ready);
         std::thread::spawn(move || {
             let mut torn = 0_usize;
-            ready.wait();
-            while !stop.load(std::sync::atomic::Ordering::Acquire) {
-                if installed_url().is_none() && installed().is_some() {
+            let mut observations = 0_usize;
+            loop {
+                let url = installed_url();
+                let backend = installed();
+                observations += 1;
+                if url.is_none() && backend.is_some() {
                     torn += 1;
                 }
+                if observations == 1 {
+                    ready.wait();
+                }
+                if stop.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
             }
-            torn
+            (torn, observations)
         })
     };
     ready.wait();
@@ -169,7 +178,8 @@ fn a_reinstall_by_url_never_shows_a_backend_without_its_url() {
         install_for_url("memory", test_support::memory_backend());
     }
     stop.store(true, std::sync::atomic::Ordering::Release);
-    let torn = reader.join().unwrap();
+    let (torn, observations) = reader.join().unwrap();
+    assert!(observations > 0, "the reader must sample the installed slot");
     assert_eq!(
         torn, 0,
         "a reader saw an installed backend with no URL {torn} times"
