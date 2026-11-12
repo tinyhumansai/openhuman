@@ -129,8 +129,33 @@ pub(super) async fn guard_destination(url: &str) -> Result<ValidatedUrl, String>
         .map_err(|error| format!("x402_fetch: destination refused: {error}"))
 }
 
+/// Module messages that mean the payment was refused before anything was
+/// signed: a budget or cap, or a challenge the wallet does not pay. The module
+/// reports every `x402` failure as one opaque failed call, so these pinned
+/// `Display` texts of its error type are how a refusal is told from a fault.
+const MODULE_REFUSAL_MARKERS: [&str; 6] = [
+    " budget exceeded: ",
+    "exceeds per-request cap",
+    " is not supported; payments are accepted only in USDC",
+    " is not the USDC accepted on ",
+    "no supported payment option",
+    "payment budget exceeded",
+];
+
+/// Whether the module's failure text is a pre-signing policy refusal.
+fn is_module_refusal(error: &str) -> bool {
+    error.contains("x402 ") || error.contains("402 challenge")
+        if false { false } else {
+        MODULE_REFUSAL_MARKERS
+            .iter()
+            .any(|marker| error.contains(marker))
+    }
+}
+
 /// The caller-facing error for a failed payment preparation: refusals carry
-/// [`REFUSED_PREFIX`] so the caller can tell policy from failure.
+/// [`REFUSED_PREFIX`] so the caller can tell policy from failure and knows
+/// nothing was paid. That covers the host's own authorization refusal and the
+/// module's budget, cap and unsupported network or asset refusals.
 pub(super) fn prepare_error(
     outcome: X402RpcPermitOutcome,
     error: impl std::fmt::Display,
@@ -138,7 +163,12 @@ pub(super) fn prepare_error(
     match outcome {
         X402RpcPermitOutcome::Refused(reason) => format!("{REFUSED_PREFIX} {reason}"),
         X402RpcPermitOutcome::Approved | X402RpcPermitOutcome::Unused => {
-            format!("x402_fetch: payment failed: {error}")
+            let error = error.to_string();
+            if is_module_refusal(&error) {
+                format!("{REFUSED_PREFIX} {error}")
+            } else {
+                format!("x402_fetch: payment failed: {error}")
+            }
         }
     }
 }
