@@ -19,6 +19,7 @@ fn x402_approval_is_bound_to_the_exact_chat_owner_and_payment_facts() {
         asset: "0x1111111111111111111111111111111111111111".into(),
         recipient: "0x2222222222222222222222222222222222222222".into(),
         amount_atomic: 2500,
+        scheme: None,
         owner: Some(QuoteOwner {
             thread_id: "thread-1".into(),
             client_id: "client-1".into(),
@@ -472,6 +473,7 @@ fn x402_request(amount_atomic: u64, owner: Option<QuoteOwner>) -> AuthorizeX402P
         asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".into(),
         recipient: "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk".into(),
         amount_atomic,
+        scheme: None,
         owner,
     }
 }
