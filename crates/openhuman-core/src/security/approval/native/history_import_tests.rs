@@ -64,7 +64,9 @@ fn an_undecided_row_in_its_window_is_sent_as_a_pending_orphan_a_person_can_recog
 #[test]
 fn only_the_undecided_rows_still_in_their_window_are_imported_as_open_requests() {
     let mut history = LegacyHistory::default();
-    history.approvals.push(legacy("decided", Some("deny"), false, 1));
+    history
+        .approvals
+        .push(legacy("decided", Some("deny"), false, 1));
     history.approvals.push(legacy("expired", None, false, 11));
     history.approvals.push(legacy("newer", None, false, 1));
     history.approvals.push(legacy("older", None, false, 2));

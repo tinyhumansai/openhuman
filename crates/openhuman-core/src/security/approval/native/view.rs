@@ -158,7 +158,9 @@ pub(crate) async fn orphans(
                 row.tool_name.clone(),
                 row.summary.clone(),
                 serde_json::from_str::<Value>(&row.args_redacted).unwrap_or(Value::Null),
-                Some(instant(i64::try_from(row.expires_at_ms).unwrap_or(i64::MAX))),
+                Some(instant(
+                    i64::try_from(row.expires_at_ms).unwrap_or(i64::MAX),
+                )),
             );
             pending.created_at = instant(i64::try_from(row.created_at_ms).unwrap_or(i64::MAX));
             pending

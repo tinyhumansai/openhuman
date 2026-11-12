@@ -96,11 +96,6 @@ pub(super) async fn ensure(engine: &NativeEngine, proxy: &SecurityProxy) {
 
 /// The module state an imported legacy row maps to.
 pub(super) fn state_of(row: &LegacyApproval) -> ApprovalState {
-    state_at(row, chrono::Utc::now())
-}
-
-/// [`state_of`] at `now`.
-pub(super) fn state_at(row: &LegacyApproval, now: chrono::DateTime<chrono::Utc>) -> ApprovalState {
     match row.decision.as_deref() {
         Some(decision) if decision.starts_with("approve") => {
             if row.executed {
@@ -112,7 +107,7 @@ pub(super) fn state_at(row: &LegacyApproval, now: chrono::DateTime<chrono::Utc>)
         Some(_) => ApprovalState::Denied,
         // An undecided request of an earlier launch can never be resumed, but one
         // still inside its window stays visible until a person dismisses it.
-        None if expiry(row) > now => ApprovalState::Pending,
+        None if expiry(row) > chrono::Utc::now() => ApprovalState::Pending,
         None => ApprovalState::Expired,
     }
 }
