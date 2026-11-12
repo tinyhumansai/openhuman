@@ -64,17 +64,15 @@ pub use scope::{
 use std::future::Future;
 use std::sync::{mpsc, Arc, LazyLock, Mutex, OnceLock, RwLock};
 
-/// SQLite bindings re-exported by the storage driver crate, for the two
+/// SQLite bindings re-exported by the storage driver crate, for the
 /// consumers that open a SQLite file that is not a storage backend: the
 /// read-only legacy importers ([`import`], which open the old per-domain files
-/// on a scratch copy) and the vault watcher's per-machine mtime table
-/// (`config/workspace/state.rs`). `SqliteNative` cannot stand in for either: it
+/// on a scratch copy). `SqliteNative` cannot stand in for them: it
 /// opens the driver's own database with the driver's schema, not an arbitrary
 /// foreign file, and its `run_blocking` hands the closure a `rusqlite`
 /// connection anyway. The core has no `rusqlite` dependency of its own,
 /// tinystoragedrivers owns the one copy; the re-export goes when the importers
-/// do (the one-time legacy import window closes). Re-checked for #7768: both
-/// consumers are still present, so it stays.
+/// do (the one-time legacy import window closes).
 pub use tinystoragedrivers::{
     CollectionSpec, Precondition, StorageBackend, StorageConfig as StorageUrl, StorageError,
 };

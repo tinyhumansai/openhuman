@@ -3,16 +3,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
-pub struct SecurityConfig {
-    #[serde(default)]
-    pub sandbox: SandboxConfig,
-    #[serde(default)]
-    pub resources: ResourceLimitsConfig,
-    #[serde(default)]
-    pub audit: AuditConfig,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SandboxConfig {
@@ -54,10 +44,6 @@ pub enum SandboxBackend {
     Agent37,
     None,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
-#[serde(default)]
-pub struct ResourceLimitsConfig {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]

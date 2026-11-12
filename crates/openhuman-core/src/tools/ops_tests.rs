@@ -56,7 +56,6 @@ fn integration_test_config(tmp: &TempDir, backend_url: &str) -> Config {
     let mut cfg = test_config(tmp);
     cfg.api_url = Some(backend_url.to_string());
     cfg.integrations.google_places.enabled = true;
-    cfg.integrations.parallel.enabled = true;
     cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
     cfg

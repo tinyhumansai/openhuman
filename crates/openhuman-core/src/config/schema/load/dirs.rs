@@ -417,9 +417,7 @@ pub(crate) async fn resolve_runtime_config_dirs_with(
 }
 
 /// Same as [`resolve_runtime_config_dirs`] but skips the
-/// `OPENHUMAN_WORKSPACE` env var override. Used by
-/// [`Config::load_from_default_paths`] so callers can reliably load
-/// the real user config without mutating the process environment.
+/// `OPENHUMAN_WORKSPACE` env var override.
 pub(super) async fn resolve_config_dirs_ignoring_env(
     default_openhuman_dir: &Path,
     default_workspace_dir: &Path,

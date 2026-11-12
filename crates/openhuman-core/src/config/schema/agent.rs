@@ -244,14 +244,6 @@ pub struct AgentConfig {
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
 
-    /// **Retired, no effect.** Once mirrored each completed turn from the
-    /// `session_raw/*.jsonl` transcript into a second, file-shaped layout
-    /// (`{workspace}/tinyagents_store/{kv,journal}`). Sessions now live in the
-    /// storage backend and nothing is mirrored; the field is kept so existing
-    /// `config.toml` files still load.
-    #[serde(default = "default_session_dual_write")]
-    pub session_dual_write: bool,
-
     /// **Retired, no effect.** Once compared a resumed session's transcript
     /// with its mirror in the file-shaped store and logged any divergence
     /// (`[session_shadow_read]`). The mirror is gone with the dual-write; the
@@ -383,10 +375,6 @@ fn default_agents_md_enabled() -> bool {
     true
 }
 
-fn default_session_dual_write() -> bool {
-    true
-}
-
 fn default_session_shadow_reads() -> bool {
     // ON for the Phase 2 parity soak. Observation-only: the legacy read stays
     // authoritative and the probe runs on a background task, so the worst case
@@ -495,7 +483,6 @@ impl Default for AgentConfig {
             channel_agents: std::collections::HashMap::new(),
             tool_result_budget_bytes: default_tool_result_budget_bytes(),
             agent_timeout_secs: default_agent_timeout_secs(),
-            session_dual_write: default_session_dual_write(),
             session_shadow_reads: default_session_shadow_reads(),
             required_output: None,
             agents_md_enabled: default_agents_md_enabled(),

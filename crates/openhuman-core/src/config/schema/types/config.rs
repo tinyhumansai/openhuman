@@ -380,9 +380,6 @@ pub struct Config {
     #[serde(default)]
     pub searxng: SearxngConfig,
 
-    #[serde(default)]
-    pub web_search: WebSearchConfig,
-
     /// Unified search-engine selector. Picks exactly one engine
     /// (managed / parallel / brave) and layers the corresponding tools.
     #[serde(default)]
