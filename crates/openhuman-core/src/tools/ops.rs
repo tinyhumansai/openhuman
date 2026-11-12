@@ -208,6 +208,8 @@ pub async fn all_tools_with_runtime_and_pack_handle(
         // task_source_add/update/remove) are registered too but ship
         // default-OFF via `tools::user_filter` (their toggle IDs default off
         // in onboarding). The per-call permission ladder still gates them.
+        // The `task_source_*` family registers nothing while no provider can
+        // fetch (`task_sources::types::any_provider_can_fetch`).
     ]);
     tools.extend(crate::artifacts::tiny_store::registered_tools(
         &config.workspace_dir,
