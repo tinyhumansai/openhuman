@@ -55,10 +55,8 @@ where
     match tokio::time::timeout(timeout, screen).await {
         Ok(Ok(verdict)) => verdict,
         Ok(Err(error)) => {
-                warn!(
-                    "{LOG_PREFIX} hallucination filter unavailable ({error}); passing text through"
-                );
-                false
+            warn!("{LOG_PREFIX} hallucination filter unavailable ({error}); passing text through");
+            false
         }
         Err(_) => {
             warn!("{LOG_PREFIX} hallucination filter timed out; passing text through");

@@ -9,7 +9,10 @@ async fn hallucination_screen_timeout_fails_open() {
     )
     .await;
 
-    assert!(!result, "a timed-out screen must pass the transcript through");
+    assert!(
+        !result,
+        "a timed-out screen must pass the transcript through"
+    );
 }
 
 #[test]
