@@ -4,7 +4,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
 use tinysecurity_bus::{ApprovalChoice2, ApprovalLifecycle2, ApprovalRow2, JudgeEvidence2};
 
-use super::super::types::{ApprovalAuditEntry, ApprovalDecision, JudgeVerdict};
+use super::super::types::{ApprovalAuditEntry, ApprovalDecision, JudgeVerdict, PendingApproval};
 use super::rows::{Rows, StoredRow};
 use crate::config::Config;
 
@@ -55,15 +55,21 @@ const FLOW_TRUST: &str = "flow-trust-grant";
 /// The summary a flow pre-authorization has always shown in the history.
 const FLOW_TRUST_SUMMARY: &str = "Pre-authorized for this flow when it was saved and enabled";
 
-/// What an imported legacy request was decided as, from the record the module
-/// kept (`legacy_history_json`).
-fn imported_decision(row: &ApprovalRow2) -> Option<ApprovalDecision> {
+/// What an imported legacy request was decided as, and the request id it had in
+/// the earlier version, from the record the module kept (`legacy_history_json`).
+fn imported_decision(row: &ApprovalRow2) -> Option<(ApprovalDecision, Option<String>)> {
     let json = row.legacy_history_json.as_deref()?;
     let record: Value = serde_json::from_str(json).ok()?;
-    Some(match record.get("state").and_then(Value::as_str) {
+    let decision = match record.get("state").and_then(Value::as_str) {
         Some("allowed" | "executed") => ApprovalDecision::ApproveOnce,
         _ => ApprovalDecision::Deny,
-    })
+    };
+    let request_id = record
+        .get("request_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned);
+    Some((decision, request_id))
 }
 
 fn entry(stored: &StoredRow, label: Option<&str>) -> Option<ApprovalAuditEntry> {
@@ -87,9 +93,9 @@ fn entry(stored: &StoredRow, label: Option<&str>) -> Option<ApprovalAuditEntry> 
             judge: None,
         });
     }
-    if let Some(decision) = imported_decision(row) {
+    if let Some((decision, legacy_id)) = imported_decision(row) {
         return Some(ApprovalAuditEntry {
-            request_id: row.request_id.clone(),
+            request_id: legacy_id.unwrap_or_else(|| row.request_id.clone()),
             tool_name: "earlier approval".to_owned(),
             action_summary: "Recorded by an earlier version".to_owned(),
             args_redacted: Value::Null,
@@ -133,6 +139,39 @@ pub(crate) async fn decided_history(
         entries.extend(entry(stored, label.as_deref()));
     }
     Ok(entries)
+}
+
+/// Pending rows no request of this process is waiting on: requests an earlier
+/// launch left undecided, which the module imported as pending orphans. Oldest
+/// window first.
+pub(crate) async fn orphans(
+    config: &Config,
+    now_ms: u64,
+    live: impl Fn(&str) -> bool,
+) -> anyhow::Result<Vec<PendingApproval>> {
+    let rows = Rows::current(config).await?;
+    let open = rows
+        .open(now_ms, 500)
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
+    Ok(open
+        .iter()
+        .map(|stored| &stored.row)
+        .filter(|row| !live(&row.request_id))
+        .map(|row| {
+            let mut pending = PendingApproval::new(
+                row.request_id.clone(),
+                row.tool_name.clone(),
+                row.summary.clone(),
+                serde_json::from_str::<Value>(&row.args_redacted).unwrap_or(Value::Null),
+                Some(instant(
+                    i64::try_from(row.expires_at_ms).unwrap_or(i64::MAX),
+                )),
+            );
+            pending.created_at = instant(i64::try_from(row.created_at_ms).unwrap_or(i64::MAX));
+            pending
+        })
+        .collect())
 }
 
 /// Whether the request was stored and has left `Pending`. `None` when it is not

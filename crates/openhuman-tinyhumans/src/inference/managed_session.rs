@@ -11,10 +11,16 @@ use tinyinference_llm::providers::tinyhumans::{
 /// Both chat and embeddings use this path so signed-out state, expiry checks,
 /// offline-local credential refusal, and the plaintext-endpoint refusal stay
 /// consistent.
+///
+/// `config` is the runtime config the caller was built for. The session is
+/// read through the store bound to the config owning `state_dir` (see
+/// `AuthService::for_state_dir`) — the store sign-in wrote it with, whose
+/// secrets live in the keyring under `security-module`.
 pub(super) async fn resolve_session_bearer(
     endpoint: &str,
     state_dir: &std::path::Path,
     secrets_encrypt: bool,
+    config: Option<&openhuman_embed::__host::config::Config>,
     profile_override: Option<&str>,
     operation: &str,
 ) -> anyhow::Result<String> {
@@ -27,7 +33,7 @@ pub(super) async fn resolve_session_bearer(
     if openhuman_embed::__host::platform::llm_gate::is_signed_out() {
         anyhow::bail!("SESSION_EXPIRED: backend session not active — sign in to resume LLM work");
     }
-    let auth = AuthService::new(state_dir, secrets_encrypt);
+    let auth = AuthService::for_state_dir(state_dir, secrets_encrypt, config);
     let profile = auth
         .get_profile(APP_SESSION_PROVIDER, profile_override)
         .await?;

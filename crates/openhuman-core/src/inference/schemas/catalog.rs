@@ -129,6 +129,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "usage_embeddings",
                     "Whether embeddings workload may use the local provider.",
                 ),
+                optional_bool(
+                    "native_tool_calling",
+                    "Whether the local provider gets native tools instead of the text tool protocol.",
+                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },

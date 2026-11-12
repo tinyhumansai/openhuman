@@ -395,12 +395,29 @@ impl ApprovalGate {
     /// The requests this tenant has parked and not yet seen decided, oldest
     /// first. A SaaS profile sees every agent's; anything else sees only its own
     /// agent's (the process, for the default orchestrator).
+    ///
+    /// The process's own list also carries the requests an earlier launch left
+    /// undecided (the engine's pending orphans), after its parked ones.
     pub fn list_pending(&self) -> anyhow::Result<Vec<PendingApproval>> {
         let tenant = super::gate::current_route_tenant();
-        Ok(self.pending_where(|route| {
+        let mut rows = self.pending_where(|route| {
             route.tenant.profile == tenant.profile
                 && (tenant.profile.is_some() || route.tenant.agent == tenant.agent)
-        }))
+        });
+        if tenant == crate::core::runtime::Tenant::default() {
+            // The parked list stands on its own: an engine that cannot answer
+            // costs only the orphans.
+            let orphans = self
+                .run_engine(|engine| async move { engine.orphans().await })?
+                .unwrap_or_else(|error| {
+                    tracing::warn!(error = %error, "[approval::gate] pending orphans were not listed");
+                    Vec::new()
+                });
+            let parked: std::collections::HashSet<String> =
+                rows.iter().map(|row| row.request_id.clone()).collect();
+            rows.extend(orphans.into_iter().filter(|row| !parked.contains(&row.request_id)));
+        }
+        Ok(rows)
     }
 
     /// [`Self::list_pending`] narrowed to `agent`'s requests; `None` lists the
