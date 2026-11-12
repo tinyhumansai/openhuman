@@ -404,7 +404,7 @@ run_full_suite() {
     elif [ "$target" = "inbound_module_e2e" ]; then
       # Outside the product set (e2e-test-support); it loads the staged
       # TinyEventQueues release from OPENHUMAN_MODULE_PATH (#8155).
-      cargo_test --features e2e-test-support --test "$target" -- "$@"
+      cargo_test --features modules,inbound-queues,e2e-test-support --test "$target" -- "$@"
     elif [ "$target" = "tinymcp_storage_smoke_e2e" ]; then
       OPENHUMAN_MODULE_PATH="$tinymcp_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}" \
         cargo_test --features e2e-test-support --test "$target" -- "$@"

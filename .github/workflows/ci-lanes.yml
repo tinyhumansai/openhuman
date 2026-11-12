@@ -49,6 +49,7 @@ jobs:
       toolchain-image: ${{ steps.filter.outputs['toolchain-image'] }}
       install-ps1: ${{ steps.filter.outputs.install_ps1 }}
       storage: ${{ steps.filter.outputs.storage }}
+      inbound: ${{ steps.filter.outputs.inbound }}
       coverage: ${{ steps.filter.outputs.frontend == 'true' || steps.filter.outputs['rust-core'] == 'true' || steps.filter.outputs['rust-tauri'] == 'true' }}
     steps:
       - name: Checkout filter and lane plan
@@ -125,6 +126,7 @@ jobs:
       CI_AREA_TOOLCHAIN_IMAGE: ${{ needs.plan.outputs['toolchain-image'] }}
       CI_AREA_INSTALL_PS1: ${{ needs.plan.outputs['install-ps1'] }}
       CI_AREA_STORAGE: ${{ needs.plan.outputs.storage }}
+      CI_AREA_INBOUND: ${{ needs.plan.outputs.inbound }}
     steps:
       - name: Free disk space
         # Inside the container /opt/hostedtoolcache is bind-mounted at /__t;

@@ -1306,6 +1306,11 @@ test("the inbound path filter arms its lane for the inbound host, the module hos
     assert.ok(block.includes(`'${entry}'`), `${entry} must arm the inbound area`);
   }
   assert.match(ciLanes, /CI_AREA_INBOUND: \$\{\{ steps\.filter\.outputs\.inbound \}\}/);
+  // The plan job schedules the group; the lane job rebuilds the plan from
+  // its own environment, so the flag must reach it too or the lane runs
+  // nothing and passes.
+  assert.match(ciLanes, /^ {6}inbound: \$\{\{ steps\.filter\.outputs\.inbound \}\}$/m);
+  assert.match(ciLanes, /CI_AREA_INBOUND: \$\{\{ needs\.plan\.outputs\.inbound \}\}/);
 });
 
 test("every lane has a step in ci-lanes.yml that waits on it", () => {
@@ -1314,6 +1319,16 @@ test("every lane has a step in ci-lanes.yml that waits on it", () => {
     assert.ok(
       ciLanes.includes(`lanes.mjs --wait ${lane.name}\n`),
       `ci-lanes.yml has no \`Lane:\` step for ${lane.name}`,
+    );
+  }
+});
+
+test("every area flag the plan job reads reaches the lane job", () => {
+  for (const name of Object.values(AREA_ENV)) {
+    assert.match(
+      ciLanes,
+      new RegExp(`${name}: \\$\\{\\{ needs\\.plan\\.outputs`),
+      `${name} is not forwarded to the lane job`,
     );
   }
 });

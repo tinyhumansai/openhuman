@@ -260,6 +260,10 @@ fi
 if [ "${#e2e_source_ids[@]}" -gt 0 ]; then
   echo "[rust-e2e] Building pinned local test modules: ${e2e_source_ids[*]} ..."
   stage_source_modules "${e2e_source_ids[@]}"
+  # inbound_module_e2e loads the TinyEventQueues release in either mode; it is
+  # not among the modules built from source.
+  released_dir="$(stage_release_module tinyeventqueues "$module_platform" "$module_ext")"
+  export OPENHUMAN_MODULE_PATH="$released_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
 fi
 for source_id in ${e2e_source_ids[@]+"${e2e_source_ids[@]}"}; do
   export OPENHUMAN_MODULE_PATH="$REPO_ROOT/target/module-sources/$source_id${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
