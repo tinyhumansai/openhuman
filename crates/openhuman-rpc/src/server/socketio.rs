@@ -30,6 +30,7 @@ use serde::Serialize;
 use serde_json::json;
 use serde_json::Value;
 use socketioxide::extract::{AckSender, Data, SocketRef, TryData};
+use socketioxide::handler::ConnectHandler as _;
 use socketioxide::SocketIo;
 
 use crate::core_host::web_chat::{GuardrailPayload, ScopedWebEvent};
@@ -269,13 +270,12 @@ pub(crate) fn attach_socketio_with_preflight(
         io.config().engine_config.req_path
     );
 
-    let handshake_gate = preflight_gate.clone();
     io.ns(
         "/",
         // CONNECT reaches the client after the middleware and before this
         // handler (socketioxide 0.18 `Namespace::connect`). A socket the
         // middleware refused has no handlers and no auth mark; drop it here.
-        move |socket: SocketRef| {
+        (move |socket: SocketRef| {
             let client_id = socket.id.to_string();
             if !socket_is_authed(&socket) {
                 log::warn!("[socketio] disconnecting unauthorized socket client={client_id}");
@@ -336,15 +336,15 @@ pub(crate) fn attach_socketio_with_preflight(
                 });
             }
 
-            // `ready` goes out last, so a client that waits for it can rely on
-            // every handler above being registered.
+            // `ready` goes out last, after the rooms are joined; every event
+            // handler was registered by the middleware before CONNECT.
             let ready_payload = json!({ "sid": client_id });
             log::debug!("[socketio] emit event=ready to_client={}", socket.id);
             let _ = socket.emit("ready", &ready_payload);
             std::future::ready(())
         },
             std::future::ready(())
-        }
+        })
         .with(move |socket: SocketRef, TryData(handshake): TryData<HandshakeAuth>| {
             let gate = preflight_gate.clone();
             async move {
