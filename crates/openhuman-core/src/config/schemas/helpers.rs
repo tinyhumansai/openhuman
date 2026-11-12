@@ -143,6 +143,7 @@ pub(super) struct LocalAiSettingsUpdate {
     pub(super) chat_model_id: Option<String>,
     pub(super) usage_embeddings: Option<bool>,
     pub(super) api_key: Option<String>,
+    pub(super) native_tool_calling: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
