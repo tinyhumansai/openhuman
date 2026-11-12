@@ -151,7 +151,6 @@ fn a_reinstall_by_url_never_shows_a_backend_without_its_url() {
     let observed = Arc::new(std::sync::Barrier::new(2));
     // Unnamed, so it sees the slot this test installed (see `slot_visible_here`).
     let reader = {
-        let stop = Arc::clone(&stop);
         let checkpoint = Arc::clone(&checkpoint);
         let observed = Arc::clone(&observed);
         std::thread::spawn(move || {
