@@ -15,7 +15,12 @@ async fn an_orphan_is_listed_and_a_person_can_deny_it() {
     assert_eq!(listed[0].request_id, "left-waiting");
 
     let dismissed = gate
-        .decide_as(&Tenant::default(), None, "left-waiting", ApprovalDecision::Deny)
+        .decide_as(
+            &Tenant::default(),
+            None,
+            "left-waiting",
+            ApprovalDecision::Deny,
+        )
         .unwrap()
         .expect("the orphan is dismissed");
     assert_eq!(dismissed.request_id, "left-waiting");
@@ -26,7 +31,12 @@ async fn an_orphan_is_listed_and_a_person_can_deny_it() {
 
     // Dismissed once: a second denial finds nothing to decide.
     assert!(gate
-        .decide_as(&Tenant::default(), None, "left-waiting", ApprovalDecision::Deny)
+        .decide_as(
+            &Tenant::default(),
+            None,
+            "left-waiting",
+            ApprovalDecision::Deny
+        )
         .unwrap()
         .is_none());
 }
@@ -63,16 +73,14 @@ async fn only_the_default_tenant_dismisses_an_orphan() {
         .decide_as(&profile, None, "left-waiting", ApprovalDecision::Deny)
         .unwrap()
         .is_none());
-    // Naming an agent is a decision for that agent's own requests.
-    assert!(gate
-        .decide_as(
-            &Tenant::default(),
-            Some("agent-1"),
-            "left-waiting",
-            ApprovalDecision::Deny
-        )
-        .is_err_and(|_| true)
-        || stub.state("left-waiting") == Some(State::Pending));
+    // Naming an agent is a decision for that agent's own requests, which an
+    // orphan never is, whatever the agent path answers.
+    let _ = gate.decide_as(
+        &Tenant::default(),
+        Some("agent-1"),
+        "left-waiting",
+        ApprovalDecision::Deny,
+    );
     assert_eq!(stub.state("left-waiting"), Some(State::Pending));
 }
 

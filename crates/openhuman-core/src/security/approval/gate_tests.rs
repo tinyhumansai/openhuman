@@ -225,14 +225,14 @@ mod core_flow_tests;
 mod engine_tests;
 #[path = "gate_forced_tests.rs"]
 mod forced_tests;
-#[path = "gate_orphan_tests.rs"]
-mod orphan_tests;
 #[path = "gate_origin_class_tests.rs"]
 mod gate_origin_class_tests;
 #[path = "gate_host_grant_tests.rs"]
 mod host_grant_tests;
 #[path = "gate_origin_intercept_tests.rs"]
 mod origin_intercept_tests;
+#[path = "gate_orphan_tests.rs"]
+mod orphan_tests;
 #[path = "gate_rpc_decide_tests.rs"]
 mod rpc_decide_tests;
 #[path = "gate_saas_grant_tests.rs"]
