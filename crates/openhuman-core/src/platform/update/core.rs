@@ -525,7 +525,7 @@ pub async fn download_and_stage_with_version(
     // Stream to a temp file first, then rename for atomicity.
     let tmp_path = dir.join(format!(".{asset_name}.tmp"));
     let mut file = std::fs::File::create(&tmp_path)
-        .map_err(|e| format!("failed to create temp file: {e}"))?;
+        .map_err(|e| format!("failed to create the download temp file for {asset_name}: {e}"))?;
     let streamed = download::stream_to_file(response, &mut file, max_bytes).await;
     let refusal = match streamed {
         Ok((written, digest)) => {
