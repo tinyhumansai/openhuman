@@ -126,7 +126,6 @@ agent/queued_turn_tests.rs
 cron/ops_tests.rs
 cron/scheduler_tests.rs
 web_chat/web_tests_turn_lifecycle_tests.rs
-web_chat/run_task.rs
 channels/host/voice_tests.rs
 EOF
 )

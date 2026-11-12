@@ -88,6 +88,9 @@ pub(crate) struct StubEngine {
     /// Legacy `auto_approve` entries already imported, per tenant. The module
     /// answers a repeat import as already done, so a revoked grant stays revoked.
     imported: Mutex<HashSet<(Tenant, String)>>,
+    /// Requests an earlier launch left undecided (pending orphans): listed, and
+    /// only ever denied.
+    orphans: Mutex<HashSet<String>>,
 }
 
 impl std::fmt::Debug for StubEngine {
@@ -220,6 +223,22 @@ impl StubEngine {
                     attribution: None,
                 },
             );
+    }
+
+    /// [`Self::leave_pending`], as a pending orphan the import carried over.
+    pub(crate) fn leave_orphan(&self, request_id: &str, tool: &str, expires_in: Duration) {
+        self.leave_pending(request_id, tool, expires_in);
+        self.orphans
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(request_id.to_owned());
+    }
+
+    fn is_orphan(&self, request_id: &str) -> bool {
+        self.orphans
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(request_id)
     }
 
     fn insert(&self, row: Row) -> String {
@@ -402,6 +421,10 @@ impl ApprovalEngine for StubEngine {
         if let Some(signal) = signal {
             signal.notified().await;
         }
+        // No host instance owns an orphan, so a decision cannot reach it.
+        if self.is_orphan(request_id) {
+            return Err(EngineError::NotPending);
+        }
         let now = now_ms();
         self.with(request_id, |row| {
             if row.state != State::Pending || now >= row.expires_ms {
@@ -581,6 +604,45 @@ impl ApprovalEngine for StubEngine {
             .filter(|(flow, _)| flow == flow_id)
             .map(|(_, tool)| tool.clone())
             .collect())
+    }
+
+    async fn orphans(&self) -> Result<Vec<super::types::PendingApproval>, EngineError> {
+        let now = now_ms();
+        let rows = self.rows.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut listed: Vec<_> = rows
+            .iter()
+            .filter(|(id, row)| {
+                self.is_orphan(id) && row.state == State::Pending && now < row.expires_ms
+            })
+            .map(|(id, row)| {
+                super::types::PendingApproval::new(
+                    id.clone(),
+                    row.tool.clone(),
+                    "left by an earlier launch",
+                    serde_json::Value::Null,
+                    None,
+                )
+            })
+            .collect();
+        listed.sort_by(|a, b| a.request_id.cmp(&b.request_id));
+        Ok(listed)
+    }
+
+    async fn dismiss_orphan(&self, request_id: &str, label: &str) -> Result<(), EngineError> {
+        if !self.is_orphan(request_id) {
+            return Err(EngineError::NotPending);
+        }
+        let now = now_ms();
+        self.with(request_id, |row| {
+            if row.state != State::Pending || now >= row.expires_ms {
+                return Err(EngineError::NotPending);
+            }
+            row.state = State::Denied;
+            row.decided_ms = Some(now);
+            row.label = Some(label.to_owned());
+            Ok(())
+        })
+        .unwrap_or(Err(EngineError::NotPending))
     }
 
     async fn history(&self, limit: usize) -> Result<Vec<ApprovalAuditEntry>, EngineError> {
