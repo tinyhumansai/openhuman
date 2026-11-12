@@ -50,6 +50,12 @@ use crate::security::approval::native::audit_stream::AuditStream;
 pub(crate) enum PlanError {
     /// The module planned and refused.
     Refused(SandboxDenial2),
+    /// The module refused a `Path` grant, and the spawn's root overlaps the core
+    /// workspace, which no sandbox grant may.
+    RootOverlapsWorkspace {
+        root: std::path::PathBuf,
+        workspace: std::path::PathBuf,
+    },
     /// The module could not be asked, answered something unusable, or the plan
     /// cannot be applied by the executors the host drives.
     Unavailable(String),
@@ -59,6 +65,14 @@ impl std::fmt::Display for PlanError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Refused(denial) => write!(f, "the sandbox plan was refused ({denial:?})"),
+            Self::RootOverlapsWorkspace { root, workspace } => write!(
+                f,
+                "the sandbox plan was refused (Path): its root {} overlaps the core workspace {}; \
+                 a sandboxed shell needs a root beside the workspace (an agent's \
+                 scheduled_workspace, or an action dir that does not contain it)",
+                root.display(),
+                workspace.display()
+            ),
             Self::Unavailable(reason) => write!(f, "the sandbox plan is unavailable: {reason}"),
         }
     }
@@ -68,8 +82,23 @@ impl std::error::Error for PlanError {}
 
 /// The error for a denial the module returned: its own, unless the host can say
 /// why a `Path` refusal happened.
+///
+/// TinySecurity refuses any grant that overlaps the core workspace and answers
+/// only `Path`. When the spawn's root does overlap it (an action dir that holds
+/// the workspace, say), the error names both, so the operator can see which
+/// grant failed and why.
 fn refusal(denial: SandboxDenial2, policy: &SandboxPolicy, config: &Config) -> PlanError {
-    let _ = (policy, config);
+    if denial != SandboxDenial2::Path {
+        return PlanError::Refused(denial);
+    }
+    let canonical = |path: &std::path::Path| {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    };
+    let root = canonical(&policy.workspace_root);
+    let workspace = canonical(&config.workspace_dir);
+    if root.starts_with(&workspace) || workspace.starts_with(&root) {
+        return PlanError::RootOverlapsWorkspace { root, workspace };
+    }
     PlanError::Refused(denial)
 }
 
@@ -438,7 +467,7 @@ async fn plan_with(
         }
         drop(ordered);
         tracing::warn!(?denial, "[sandbox:plan] the module refused the spawn");
-        return Err(PlanError::Refused(denial));
+        return Err(refusal(denial, policy, config));
     }
     let artifact = match (response.decision.verdict, response.artifact) {
         (Verdict::Allow, Some(artifact)) => artifact,

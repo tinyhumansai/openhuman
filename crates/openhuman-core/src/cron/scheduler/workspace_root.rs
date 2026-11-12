@@ -24,8 +24,72 @@ pub(super) fn scheduled_workspace(
     config: &Config,
     definition: &AgentDefinition,
 ) -> Result<Option<PathBuf>, String> {
-    let _ = (config, definition, Path::new(""));
-    Ok(None)
+    let Some(raw) = definition.extensions.scheduled_workspace.as_deref() else {
+        return Ok(None);
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let agent = &definition.id;
+    let named = Path::new(raw);
+    let path = if named.is_absolute() {
+        named.to_path_buf()
+    } else {
+        config.action_dir.join(named)
+    };
+    let root = std::fs::canonicalize(&path).map_err(|error| {
+        format!("agent `{agent}`: scheduled_workspace '{raw}' is not accessible: {error}")
+    })?;
+    if !root.is_dir() {
+        return Err(format!(
+            "agent `{agent}`: scheduled_workspace '{raw}' is not a directory"
+        ));
+    }
+    let workspace = canonical_or_original(&config.workspace_dir);
+    if root.starts_with(&workspace) || workspace.starts_with(&root) {
+        return Err(format!(
+            "agent `{agent}`: scheduled_workspace {} overlaps the core workspace {}; \
+             a scheduled run must be rooted beside it, never over the core's own state",
+            root.display(),
+            workspace.display()
+        ));
+    }
+    if let Some(store) = credential_stores(config)
+        .into_iter()
+        .find(|store| store.starts_with(&root))
+    {
+        return Err(format!(
+            "agent `{agent}`: scheduled_workspace {} holds the core credential store {}",
+            root.display(),
+            store.display()
+        ));
+    }
+    tracing::debug!(
+        agent_id = %agent,
+        root = %root.display(),
+        "[cron] scheduled run rooted at the agent's scheduled_workspace"
+    );
+    Ok(Some(root))
+}
+
+/// Every file holding the core's credentials, resolved where it exists: the
+/// stores the sandbox already denies to a jail, plus the operator's keyring
+/// master key file when one is configured.
+fn credential_stores(config: &Config) -> Vec<PathBuf> {
+    let mut stores = crate::credentials::credential_files(config);
+    if let Some(master_key) = std::env::var_os(
+        crate::security::secret_storage::encrypted_file_backend::MASTER_KEY_FILE_ENV,
+    )
+    .filter(|value| !value.is_empty())
+    {
+        stores.push(PathBuf::from(master_key));
+    }
+    stores.iter().map(|store| canonical_or_original(store)).collect()
+}
+
+fn canonical_or_original(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[cfg(test)]
