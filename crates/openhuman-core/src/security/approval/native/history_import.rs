@@ -139,6 +139,11 @@ pub(super) fn legacy_record(row: &LegacyApproval) -> ApprovalRecord {
             .expires_at
             .map_or_else(|| millis(row.created_at) + DEFAULT_WINDOW_MS, millis),
         state: state_of(row),
+        // TinySecurity 0.21 carries these only for an undecided row it imports as a
+        // pending orphan; this import keeps sending decided history, as before.
+        tool_name: None,
+        summary: None,
+        args_redacted: None,
     }
 }
 

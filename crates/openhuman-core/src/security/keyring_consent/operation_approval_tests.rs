@@ -242,6 +242,7 @@ fn consent_request(call_id: &str, timeout_ms: u32) -> tinysecurity_bus::KeyringC
         access: tinysecurity_bus::KeyringAccess2::Write,
         name: "user-1:auth:app-session:default".into(),
         timeout_ms,
+        offer: None,
     }
 }
 
