@@ -282,12 +282,6 @@ pub struct ToolOutputCompaction<'a> {
 /// timeout is the one that fires.
 const COMPACT_WITH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(330);
 
-/// Deadline for a `CompactWith` that asks for no summary. The module then does
-/// local work only and answers in milliseconds, so a reply that has not come
-/// within the ordinary TinyBus deadline is lost, and waiting out the summary
-/// budget would hold the whole turn for five and a half minutes.
-const COMPACT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-
 /// Compact one tool result through the module, passing it through unchanged on
 /// any failure.
 pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToolOutput {
@@ -368,13 +362,8 @@ pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToo
         context_token,
         scope,
     };
-    let deadline = if wants_summary {
-        COMPACT_WITH_TIMEOUT
-    } else {
-        COMPACT_TIMEOUT
-    };
     let response = match client(&config)
-        .with_timeout(deadline)
+        .with_timeout(COMPACT_WITH_TIMEOUT)
         .call::<tinyjuice_bus::wire::CompactResponse>(
             "tinyjuice",
             methods::COMPACT_WITH,
@@ -384,10 +373,7 @@ pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToo
     {
         Ok(response) => response,
         Err(error) => {
-            log::warn!(
-                "[tokenjuice] module compaction unavailable, passing through: tool={tool_name} wants_summary={wants_summary} deadline_secs={} error={error}",
-                deadline.as_secs()
-            );
+            log::debug!("[tokenjuice] module compaction unavailable: {error}");
             return CompactedToolOutput::passthrough(content, wants_summary);
         }
     };
@@ -533,10 +519,6 @@ mod repl_module_tests;
 #[cfg(test)]
 #[path = "rpc_scope_tests.rs"]
 mod rpc_scope_tests;
-
-#[cfg(test)]
-#[path = "compact_deadline_tests.rs"]
-mod compact_deadline_tests;
 
 /// Run a typed query inside TinyJuice; cached originals stay inside the module.
 pub async fn query(
