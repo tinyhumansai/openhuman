@@ -156,6 +156,43 @@ fn a_refused_authorization_is_reported_with_the_refusal_prefix() {
 }
 
 #[test]
+fn module_refusals_before_signing_are_reported_with_the_refusal_prefix() {
+    // The module's own refusals reach the host as one opaque failed call whose
+    // text is the module's message; the host callback was never consulted.
+    for message in [
+        "ai.tinyhumans.tinywallet.Error.X402OperationFailed: x402 daily budget exceeded: 9000000/10000000 atomic units",
+        "ai.tinyhumans.tinywallet.Error.X402OperationFailed: x402 monthly budget exceeded: 99000000/100000000 atomic units",
+        "ai.tinyhumans.tinywallet.Error.X402OperationFailed: x402 amount 2000000 exceeds per-request cap 1000000",
+        "ai.tinyhumans.tinywallet.Error.X402OperationFailed: x402 network solana:unknown is not supported; payments are accepted only in USDC on known networks",
+        "ai.tinyhumans.tinywallet.Error.X402OperationFailed: x402 asset 0xabc is not the USDC accepted on eip155:8453",
+        "ai.tinyhumans.tinywallet.Error.X402OperationFailed: no supported payment option (Solana exact or EVM exact) in 402 challenge",
+    ] {
+        let error = prepare_error(
+            crate::modules::x402_service::X402RpcPermitOutcome::Unused,
+            message,
+        );
+        assert!(error.starts_with(REFUSED_PREFIX), "{error}");
+        assert!(error.contains(message), "the module's reason is kept: {error}");
+    }
+}
+
+#[test]
+fn failures_that_are_not_refusals_keep_the_payment_failed_wording() {
+    for message in [
+        "x402 service handle is unavailable",
+        "x402 pending-payment capacity reached",
+        "transport: connection closed",
+    ] {
+        let error = prepare_error(
+            crate::modules::x402_service::X402RpcPermitOutcome::Unused,
+            message,
+        );
+        assert!(!error.starts_with(REFUSED_PREFIX), "{error}");
+        assert!(error.starts_with("x402_fetch: payment failed:"), "{error}");
+    }
+}
+
+#[test]
 fn an_unpaid_response_has_a_null_payment() {
     assert_eq!(
         response_value(200, Some("text/plain".into()), "ok".into(), false, None),

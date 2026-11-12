@@ -433,3 +433,66 @@ fn enriched_plain_turn_reloads_with_identical_text_blocks() {
     let replayed = crate::agent::message_convert::chat_message_to_message(&row);
     assert_eq!(replayed, enriched);
 }
+
+/// Accepts one plain HTTP proxy request and returns its request line.
+async fn record_one_proxy_request(listener: tokio::net::TcpListener) -> String {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let (mut stream, _) = listener.accept().await.unwrap();
+    let mut head = Vec::new();
+    let mut buf = [0u8; 1024];
+    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+        let n = stream.read(&mut buf).await.unwrap();
+        if n == 0 {
+            break;
+        }
+        head.extend_from_slice(&buf[..n]);
+    }
+    stream
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        .await
+        .unwrap();
+    String::from_utf8_lossy(&head)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[tokio::test]
+async fn fetch_client_follows_the_attachment_proxy_service_not_ollama() {
+    use crate::config::schema::{ProxyConfig, ProxyScope};
+    use crate::config::{runtime_proxy_config, set_runtime_proxy_config};
+
+    let _env = crate::config::TEST_ENV_LOCK.lock().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = format!("http://{}", listener.local_addr().unwrap());
+    let recorder = tokio::spawn(record_one_proxy_request(listener));
+
+    let previous = runtime_proxy_config();
+    set_runtime_proxy_config(ProxyConfig {
+        enabled: true,
+        http_proxy: Some(proxy),
+        // Only attachment traffic: the runtime proxy is process-global.
+        scope: ProxyScope::Services,
+        services: vec!["inference.attachment".into()],
+        ..ProxyConfig::default()
+    });
+    let fetched = fetch_client()
+        .get("http://attachment.invalid/photo.png")
+        .send()
+        .await;
+    set_runtime_proxy_config(previous);
+
+    if fetched.is_err() {
+        recorder.abort();
+    }
+    assert!(
+        fetched.is_ok(),
+        "attachment fetch client bypassed the inference.attachment proxy: {fetched:?}"
+    );
+    let request_line = recorder.await.unwrap();
+    assert!(
+        request_line.starts_with("GET http://attachment.invalid/photo.png"),
+        "proxy saw an unexpected request: {request_line}"
+    );
+}
