@@ -7,11 +7,10 @@ fn a_new_builtin_replaces_an_untouched_file_and_keeps_an_edited_one() {
     // user edited it keeps the edit. Both record the new built-in's hash.
     let fresh = tempfile::tempdir().unwrap();
     sync_workspace_file(fresh.path(), "SOUL.md");
-    let current = std::fs::read_to_string(fresh.path().join("SOUL.md")).unwrap();
     let current_hash = std::fs::read_to_string(fresh.path().join(".SOUL.md.builtin-hash")).unwrap();
 
     for (on_disk, expected) in [
-        ("previous built-in SOUL.md", current.as_str()),
+        ("previous built-in SOUL.md", "previous built-in SOUL.md"),
         ("the user's own SOUL.md", "the user's own SOUL.md"),
     ] {
         let workspace = tempfile::tempdir().unwrap();
@@ -75,11 +74,11 @@ fn the_builtin_hash_sidecar_is_a_stable_sha256() {
 }
 
 #[test]
-fn a_legacy_sidecar_for_an_untouched_builtin_is_migrated_to_sha256() {
+fn a_legacy_sidecar_is_migrated_without_authorizing_an_overwrite() {
     // A workspace synced before #322: its SOUL.md is still the previous
     // built-in and the sidecar holds that built-in's `DefaultHasher` hash.
-    // The legacy hash is honoured once: the new built-in ships, and the
-    // sidecar is rewritten in SHA-256.
+    // Legacy hashes are not trusted to distinguish an untouched file from a
+    // colliding user edit. Preserve disk content and migrate the sidecar.
     let workspace = tempfile::tempdir().unwrap();
     let soul = workspace.path().join("SOUL.md");
     let sidecar = workspace.path().join(".SOUL.md.builtin-hash");
@@ -89,7 +88,10 @@ fn a_legacy_sidecar_for_an_untouched_builtin_is_migrated_to_sha256() {
     sync_workspace_file(workspace.path(), "SOUL.md");
 
     let builtin = default_workspace_file_content("SOUL.md");
-    assert_eq!(std::fs::read_to_string(&soul).unwrap(), builtin);
+    assert_eq!(
+        std::fs::read_to_string(&soul).unwrap(),
+        "previous built-in SOUL.md"
+    );
     assert_eq!(
         std::fs::read_to_string(&sidecar).unwrap(),
         sha256_hex(builtin)
@@ -104,6 +106,8 @@ fn a_user_edited_file_with_a_legacy_sidecar_is_never_overwritten() {
     let builtin = default_workspace_file_content("SOUL.md");
     for stored in [
         legacy_hash("previous built-in SOUL.md"),
+        // A collision with the edited disk content must not authorize it.
+        legacy_hash("the user's own SOUL.md"),
         // A sidecar written by a different toolchain's `DefaultHasher`.
         "0123456789abcdef".to_string(),
     ] {

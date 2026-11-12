@@ -5,7 +5,6 @@
 use crate::agent::harness::artifact_offload::READ_TOOL;
 use crate::agent::prompts::types::*;
 use std::fmt::Write;
-use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 /// Hash recorded in the `.{filename}.builtin-hash` sidecar: lowercase hex
@@ -16,29 +15,15 @@ fn builtin_hash(content: &str) -> String {
     hex::encode(Sha256::digest(content.as_bytes()))
 }
 
-/// The pre-#322 sidecar hash, `DefaultHasher` rendered as 16 hex chars. Only
-/// read, to migrate an existing sidecar; never written.
-fn legacy_builtin_hash(content: &str) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    content.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
-}
-
 /// Whether the on-disk `disk` content still matches the built-in recorded in
 /// the `stored` sidecar.
 ///
-/// A SHA-256 sidecar is compared directly. A legacy (16-hex) one is compared
-/// with this build's `DefaultHasher`: when it was written by a different
-/// toolchain the hashes simply don't match, so the file is treated as edited
-/// and kept. The legacy form can therefore only ever cause a file to be kept,
-/// never overwritten — and the caller rewrites the sidecar in SHA-256, so it is
-/// honoured at most once.
+/// Only a SHA-256 sidecar may authorize an overwrite. Legacy 16-hex sidecars
+/// are migrated by the caller, but are never trusted to classify disk content
+/// as unedited: a collision or changed `DefaultHasher` implementation could
+/// otherwise overwrite a user's file.
 fn matches_stored_builtin(disk: &str, stored: &str) -> bool {
-    if stored.len() == 16 {
-        legacy_builtin_hash(disk) == stored
-    } else {
-        builtin_hash(disk) == stored
-    }
+    stored.len() == 64 && builtin_hash(disk) == stored
 }
 
 /// Ensure the workspace file is up-to-date with the compiled-in default.
