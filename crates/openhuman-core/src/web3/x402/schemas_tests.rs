@@ -111,3 +111,18 @@ fn fetch_controller_is_registered_with_its_schema() {
         .collect();
     assert_eq!(required, vec!["url", "maxAmountAtomic"]);
 }
+
+#[test]
+fn update_budget_reads_every_input_the_schema_declares() {
+    let schema = schemas("update_budget");
+    let mut params = Map::new();
+    for (index, input) in schema.inputs.iter().enumerate() {
+        params.insert(input.name.to_string(), json!(100 * (index as u64 + 1)));
+    }
+    assert_eq!(params.len(), 3, "schema declares three limits");
+
+    let parsed = parse_update_budget(params).expect("schema param names parse");
+    assert_eq!(parsed.per_request_max, Some(100));
+    assert_eq!(parsed.daily_max, Some(200));
+    assert_eq!(parsed.monthly_max, Some(300));
+}

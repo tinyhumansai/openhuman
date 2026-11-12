@@ -303,7 +303,8 @@ test("the E2E runner stages released search and connector fixtures, and builds o
           "unset OPENHUMAN_MODULE_PATH",
           'stage_source_modules() { printf "built=%s\\n" "$*"; }',
           // inbound_module_e2e loads the TinyEventQueues release in both modes.
-          "module_platform=linux-x86_64 module_ext=so",
+          "module_platform=linux-x86_64",
+          "module_ext=so",
           'stage_release_module() { printf "%s" "$STUB_DIR/released/$1-$2.$3"; }',
           source.slice(start, end),
           "printf 'path=%s\\n' \"${OPENHUMAN_MODULE_PATH:-}\"",
