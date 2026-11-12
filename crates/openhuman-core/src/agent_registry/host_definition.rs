@@ -112,6 +112,21 @@ pub struct AgentExt {
     /// `action_dir`. See `cron::scheduler::workspace_root`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scheduled_workspace: Option<String>,
+    /// Let this agent's sandboxed shell run in a files-only jail.
+    ///
+    /// A sandboxed spawn normally asks TinySecurity for an executor that enforces
+    /// both its file grants and its network rule, so where the only jail is
+    /// Landlock (a container without user namespaces) every command is refused.
+    /// An agent whose shell already gets the host network may opt in: its plan
+    /// then asks only for the files (TinySecurity contract 2.2,
+    /// `SandboxPlanOptions2::filesystem_only`), and Landlock may serve it. Files
+    /// stay jailed to the run's root; the network is the host's. The option is
+    /// sent only for the operator's own agent spawn with the host network, and
+    /// the module admits it only for a trusted operator source outside SaaS, so
+    /// it never reaches text the host did not author. Sub-agents and channel
+    /// turns never inherit it. Off unless the definition names it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox_filesystem_only: bool,
     /// Function-driven system prompt, set with `PromptSource::Dynamic(())`.
     /// Runtime only: never serialised and not authorable in TOML.
     #[serde(skip)]
@@ -142,6 +157,7 @@ impl Default for AgentExt {
             searches_connected_mcp: false,
             scheduled_actions: false,
             scheduled_workspace: None,
+            sandbox_filesystem_only: false,
             prompt_builder: None,
             tinyflows_prompt_owner: None,
         }

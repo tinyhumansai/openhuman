@@ -173,6 +173,7 @@ async fn handle_resolve_policy_uses_loaded_action_dir() {
 
 fn docker_policy_params(workspace: &str) -> Map<String, Value> {
     let policy = super::super::types::SandboxPolicy {
+        filesystem_only: false,
         backend: super::super::types::SandboxBackendKind::Docker,
         workspace_root: std::path::PathBuf::from(workspace),
         state_dir: std::path::PathBuf::from("/tmp/state"),

@@ -44,6 +44,7 @@ impl OpenHumanRunContext {
             command_environment: None,
             autonomous_iter_cap: None,
             sandbox_mode: None,
+            sandbox_filesystem_only: false,
             spawn_depth: 0,
             subagent_usage: Arc::new(Mutex::new(Vec::new())),
             parent_subagent_usage: None,
@@ -300,6 +301,7 @@ impl OpenHumanRunContext {
             origin: self.origin.clone(),
             approval: self.approval.clone(),
             sandbox_mode: self.sandbox_mode,
+            sandbox_filesystem_only: self.sandbox_filesystem_only,
             parent_agent_id: self
                 .parent
                 .as_ref()
