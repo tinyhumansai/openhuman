@@ -11,7 +11,6 @@
 //! bundles, so there is no signature to verify here.
 
 use std::io::Write;
-use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
