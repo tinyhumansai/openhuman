@@ -73,6 +73,12 @@ pub struct DocumentTool {
     workspace_dir: PathBuf,
     /// Visible folder the generated document is written into (#5505).
     files_dir: crate::artifacts::FileRoots,
+    /// Host config the engine runs against. `Some` for every registered
+    /// tool, so a tool call never reloads — or, on a fresh machine, writes —
+    /// the user config, and an embedder's or profile's config is the one
+    /// used. `None` only via [`Self::new`], which falls back to
+    /// `load_or_init` exactly as [`PresentationTool`] does.
+    config: Option<crate::config::Config>,
     /// Retained for constructor parity with [`PresentationTool`] (both are
     /// registered identically in `tools::ops`) and for future features
     /// (e.g. embedding a `File`-source image) that will need the same
@@ -94,6 +100,7 @@ impl DocumentTool {
         Self {
             workspace_dir,
             files_dir: files_dir.into(),
+            config: None,
             security,
         }
     }
@@ -101,11 +108,27 @@ impl DocumentTool {
     /// The agent-registry constructor: the artifact metadata goes to
     /// `config.workspace_dir`, the document to the files folder (#5505).
     pub fn for_config(config: &crate::config::Config, security: Arc<SecurityPolicy>) -> Self {
-        Self::new(
+        Self::with_config(
             config.workspace_dir.clone(),
             crate::artifacts::FileRoots::from_config(config),
             security,
+            config.clone(),
         )
+    }
+
+    /// Construct the tool with an authoritative host config snapshot.
+    pub(crate) fn with_config(
+        workspace_dir: PathBuf,
+        files_dir: impl Into<crate::artifacts::FileRoots>,
+        security: Arc<SecurityPolicy>,
+        config: crate::config::Config,
+    ) -> Self {
+        Self {
+            workspace_dir,
+            files_dir: files_dir.into(),
+            config: Some(config),
+            security,
+        }
     }
 }
 
@@ -295,7 +318,7 @@ impl DocumentTool {
             );
         }
 
-        let bytes = match engine::generate(&input, GENERATION_TIMEOUT).await {
+        let bytes = match engine::generate(&input, GENERATION_TIMEOUT, self.config.as_ref()).await {
             Ok(bytes) => bytes,
             Err(err) => {
                 production.fail(&err.to_string()).await;
