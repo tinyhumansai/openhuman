@@ -189,7 +189,7 @@ fn host_credential_denials(config: &Config) -> Vec<std::path::PathBuf> {
 
 /// The grants one spawn asks for: its workspace read-write plus the mounts the policy
 /// names. A workspace-less spawn asks for no writable root at all.
-fn grants(policy: &SandboxPolicy) -> Option<Vec<PathGrant>> {
+pub(crate) fn grants(policy: &SandboxPolicy) -> Option<Vec<PathGrant>> {
     let mut grants = facts::grant_ceiling(policy)?;
     if !policy.mount_workspace {
         grants.retain(|grant| !grant.write);
