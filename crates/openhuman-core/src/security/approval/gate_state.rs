@@ -405,9 +405,14 @@ impl ApprovalGate {
                 && (tenant.profile.is_some() || route.tenant.agent == tenant.agent)
         });
         if tenant == crate::core::runtime::Tenant::default() {
+            // The parked list stands on its own: an engine that cannot answer
+            // costs only the orphans.
             let orphans = self
                 .run_engine(|engine| async move { engine.orphans().await })?
-                .map_err(|error| anyhow::anyhow!("{error}"))?;
+                .unwrap_or_else(|error| {
+                    tracing::warn!(error = %error, "[approval::gate] pending orphans were not listed");
+                    Vec::new()
+                });
             let parked: std::collections::HashSet<String> =
                 rows.iter().map(|row| row.request_id.clone()).collect();
             rows.extend(orphans.into_iter().filter(|row| !parked.contains(&row.request_id)));

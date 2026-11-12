@@ -404,6 +404,9 @@ impl ApprovalEngine for NativeEngine {
     async fn orphans(
         &self,
     ) -> Result<Vec<crate::security::approval::types::PendingApproval>, EngineError> {
+        // Reaching the module runs the one-time legacy import first, which is
+        // where an earlier launch's undecided requests become orphans.
+        self.proxy().await?;
         let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0);
         super::super::view::orphans(&self.config, now, |id| host().request(id).is_some())
             .await
