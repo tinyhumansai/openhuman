@@ -124,8 +124,12 @@ async fn cancellation_during_required_output_repair_finalizes_native_run() {
         Arc::clone(&core),
         async move { host.run_single_with_origin(&input, Some(origin)).await },
     ));
+    // A hang guard on the repair signal, not a speed budget: before the first
+    // model call the turn resolves TinyBox's local jail grants for each MCP
+    // sandbox seed (about 0.85 s each, three times, on an idle machine), so a
+    // loaded test process spent all of a 5 s bound before the model was asked.
     tokio::time::timeout(
-        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(60),
         model.repair_started.notified(),
     )
     .await

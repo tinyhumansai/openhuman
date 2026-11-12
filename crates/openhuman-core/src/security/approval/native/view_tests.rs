@@ -185,3 +185,19 @@ fn an_imported_legacy_request_reads_by_the_state_it_ended_in() {
         assert_eq!(shown.tool_name, "earlier approval");
     }
 }
+
+#[test]
+fn an_imported_legacy_request_keeps_the_request_id_it_had_in_the_earlier_version() {
+    let mut imported = row(ApprovalLifecycle2::Denied);
+    imported.tool_name = "imported-history".into();
+    imported.choice = None;
+    imported.legacy_history_json =
+        Some(r#"{"request_id":"already-approved","state":"allowed"}"#.into());
+    let shown = entry(&stored(imported.clone()), None).unwrap();
+    assert_eq!(shown.request_id, "already-approved");
+
+    // A record without one keeps the module's row id.
+    imported.legacy_history_json = Some(r#"{"state":"allowed"}"#.into());
+    let shown = entry(&stored(imported.clone()), None).unwrap();
+    assert_eq!(shown.request_id, imported.request_id);
+}
