@@ -390,6 +390,15 @@ fn a_local_runtime_reports_native_tools_only_when_opted_in() {
         !source(&config).supports_native_tool_calling(),
         "local runtimes stay on the text protocol by default"
     );
+    // A cloud provider calls tools natively whatever the local flag says.
+    let cloud = TurnModelSource::new_crate_native_from_string(
+        &ctx,
+        "chat",
+        "openai:gpt-4o",
+        Arc::new(config.clone()),
+    );
+    assert!(cloud.supports_native_tool_calling());
+
     config.local_ai.native_tool_calling = true;
     assert!(source(&config).supports_native_tool_calling());
 }
