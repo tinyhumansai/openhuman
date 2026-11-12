@@ -537,3 +537,56 @@ async fn only_the_choices_the_host_offers_are_verified() {
     );
     host().revoke("ticket-deny");
 }
+
+/// A pending orphan (an earlier launch's request) has no request of this
+/// process behind it: only the row a person is dismissing, and only a denial,
+/// is ever verified for one.
+#[tokio::test]
+async fn an_orphan_under_review_verifies_only_a_denial_of_the_listed_row() {
+    let orphan = row("verify-orphan", "a", "abcd000a", "shell");
+    for (ticket, choice) in [
+        ("ticket-orphan-deny", ApprovalChoice2::Deny),
+        ("ticket-orphan-once", ApprovalChoice2::Once),
+    ] {
+        host().issue(
+            ticket.into(),
+            Ticket::new(orphan.request_id.clone(), choice, "operator".into()),
+        );
+    }
+    // Not under review: nothing verifies it.
+    assert!(super::verify_human(verify(&orphan, "ticket-orphan-deny"))
+        .await
+        .is_err());
+
+    assert!(host().begin_orphan_review(orphan.clone()));
+    assert!(
+        !host().begin_orphan_review(orphan.clone()),
+        "one review at a time"
+    );
+    let receipt = super::verify_human(verify(&orphan, "ticket-orphan-deny"))
+        .await
+        .expect("a denial of the listed row is verified");
+    assert_eq!(receipt.choice, ApprovalChoice2::Deny);
+    assert_eq!(receipt.row, orphan);
+    let refused = super::verify_human(verify(&orphan, "ticket-orphan-once")).await;
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|error| error.contains("can only be denied")),
+        "{:?}",
+        refused.map(|receipt| receipt.choice)
+    );
+    let mut altered = orphan.clone();
+    altered.summary = "a different action".into();
+    assert!(super::verify_human(verify(&altered, "ticket-orphan-deny"))
+        .await
+        .is_err());
+
+    host().end_orphan_review(&orphan.request_id);
+    assert!(super::verify_human(verify(&orphan, "ticket-orphan-deny"))
+        .await
+        .is_err());
+    for ticket in ["ticket-orphan-deny", "ticket-orphan-once"] {
+        host().revoke(ticket);
+    }
+}
