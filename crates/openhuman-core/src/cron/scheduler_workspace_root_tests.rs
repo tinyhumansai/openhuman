@@ -103,12 +103,18 @@ async fn a_rooted_cron_agent_plans_its_shell_with_only_that_root_writable() {
         .expect("the run carries its root as the workspace descriptor");
     assert_eq!(workspace.root, job_root);
 
-    // The shell roots its sandbox policy at the run's workspace descriptor
-    // (`ShellTool::effective_action_dir_for_context`); that policy is what the
-    // spawn asks TinySecurity to grant.
+    assert_shell_asks_for_only(&config, &workspace.root);
+}
+
+/// The shell roots its sandbox policy at the run's workspace descriptor
+/// (`ShellTool::effective_action_dir_for_context`), and the run's own config
+/// has the same root as its action dir; that policy is what a spawn asks
+/// TinySecurity to grant.
+#[cfg(feature = "security-module")]
+fn assert_shell_asks_for_only(config: &Config, job_root: &std::path::Path) {
     let policy = crate::sandbox::policy::route_for_mode(
         tinyagents_definition::SandboxMode::Sandboxed,
-        &workspace.root,
+        job_root,
         &config.workspace_dir,
         &config.sandbox,
         &config.runtime,
@@ -122,6 +128,9 @@ async fn a_rooted_cron_agent_plans_its_shell_with_only_that_root_writable() {
         .collect();
     assert_eq!(writable, [job_root.to_string_lossy().to_string()]);
 }
+
+#[cfg(not(feature = "security-module"))]
+fn assert_shell_asks_for_only(_config: &Config, _job_root: &std::path::Path) {}
 
 #[tokio::test]
 async fn a_cron_agent_rooted_over_the_core_workspace_fails_before_it_runs() {

@@ -33,10 +33,14 @@ fn an_agent_that_names_no_root_keeps_the_action_dir() {
     let tmp = TempDir::new().unwrap();
     let config = checkout(&tmp);
     assert_eq!(scheduled_workspace(&config, &rooted_at(None)), Ok(None));
-    assert_eq!(
-        scheduled_workspace(&config, &rooted_at(Some("  "))),
-        Ok(None)
-    );
+}
+
+#[test]
+fn a_blank_root_is_refused_rather_than_read_as_unset() {
+    let tmp = TempDir::new().unwrap();
+    let config = checkout(&tmp);
+    let refused = scheduled_workspace(&config, &rooted_at(Some("  "))).unwrap_err();
+    assert!(refused.contains("blank"), "{refused}");
 }
 
 #[test]
@@ -95,4 +99,49 @@ fn a_root_that_holds_the_core_credentials_is_refused() {
     config.config_path = config.action_dir.join("work/job/config.toml");
     let refused = scheduled_workspace(&config, &rooted_at(Some("work"))).unwrap_err();
     assert!(refused.contains("credential"), "{refused}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_root_reached_through_an_alias_of_a_store_not_yet_written_is_refused() {
+    let tmp = TempDir::new().unwrap();
+    let mut config = checkout(&tmp);
+    let alias = config.action_dir.join("alias");
+    std::os::unix::fs::symlink(config.action_dir.join("work/job"), &alias).unwrap();
+    // No config file exists yet; it would be written inside work/job.
+    config.config_path = alias.join("config.toml");
+    let refused = scheduled_workspace(&config, &rooted_at(Some("work/job"))).unwrap_err();
+    assert!(refused.contains("credential"), "{refused}");
+}
+
+#[test]
+fn the_master_key_file_is_matched_as_the_key_loader_reads_it() {
+    let tmp = TempDir::new().unwrap();
+    let config = checkout(&tmp);
+    let key = config.action_dir.join("work/job/master.key");
+    std::fs::write(&key, "k").unwrap();
+    let padded = std::ffi::OsString::from(format!("  {}  ", key.display()));
+    assert!(credential_stores_with(&config, Some(padded)).contains(&key));
+    assert!(credential_stores_with(&config, Some("   ".into()))
+        .iter()
+        .all(|store| store != Path::new("")));
+}
+
+#[test]
+fn a_rooted_run_is_built_from_a_config_whose_action_dir_is_the_root() {
+    let tmp = TempDir::new().unwrap();
+    let config = checkout(&tmp);
+    let root = config.action_dir.join("work/job");
+    let rooted = rooted_config(&config, &root);
+    assert_eq!(rooted.action_dir, root);
+    assert_eq!(rooted.workspace_dir, config.workspace_dir);
+    assert!(rooted.autonomy.trusted_roots.iter().any(|trusted| {
+        trusted.path == root.to_string_lossy()
+            && trusted.access == crate::security::TrustedAccess::ReadWrite
+    }));
+    // Idempotent, and an operator's own entry for the root is left alone.
+    assert_eq!(
+        rooted_config(&rooted, &root).autonomy.trusted_roots.len(),
+        rooted.autonomy.trusted_roots.len()
+    );
 }

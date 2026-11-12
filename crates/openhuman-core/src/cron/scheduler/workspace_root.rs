@@ -76,6 +76,17 @@ pub(super) fn scheduled_workspace(
 /// Every file holding the core's credentials, resolved where it exists: the
 /// stores the sandbox already denies to a jail, plus the operator's keyring
 /// master key file when one is configured.
+/// `config` scoped to a scheduled run's `root`: stub for the red step.
+pub(super) fn rooted_config(config: &Config, root: &Path) -> Config {
+    let _ = root;
+    config.clone()
+}
+
+fn credential_stores_with(config: &Config, master_key: Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let _ = master_key;
+    credential_stores(config)
+}
+
 fn credential_stores(config: &Config) -> Vec<PathBuf> {
     let mut stores = crate::credentials::credential_files(config);
     if let Some(master_key) = std::env::var_os(
