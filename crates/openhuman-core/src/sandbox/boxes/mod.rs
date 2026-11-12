@@ -42,7 +42,7 @@
 //! holds one registry per backend, whose TTL, `max_live` and retention come
 //! from the config of the first call that needs it, so changes to them take
 //! effect on restart. Each call still reaches the module with its own
-//! configuration ([`BusBoxDriver::serve`]).
+//! configuration ([`BoxSettings::module`]).
 
 #[cfg(feature = "modules")]
 mod bus_driver;
@@ -60,9 +60,9 @@ pub use bus_driver::BusBoxDriver;
 pub use files::{read_file_in, write_file_in, MAX_FILE_BYTES};
 pub use registry::{owner_key, BoxRegistry};
 pub use types::{
-    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, OwnerScope, RegistryLimits,
-    RetainPolicy, Retention, AGENT37_WORKDIR, MAX_IDLE_SLEEP_SECS, MIN_IDLE_SLEEP_SECS,
-    OPENSHELL_WORKDIR,
+    BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, ModuleConfig, OwnerScope,
+    RegistryLimits, RetainPolicy, Retention, AGENT37_WORKDIR, MAX_IDLE_SLEEP_SECS,
+    MIN_IDLE_SLEEP_SECS, OPENSHELL_WORKDIR,
 };
 
 use super::types::{SandboxBackendKind, SandboxExecResult};
@@ -125,6 +125,7 @@ impl BoxBackend {
         }?;
         Ok(BoxSettings {
             owner_scope: self.owner_scope(config),
+            module: ModuleConfig::new(config),
             ..settings
         })
     }
@@ -281,12 +282,7 @@ pub(crate) async fn execute(
         let tenant = tenant_for_box(ctx.tenant())?;
         let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        registry
-            .driver()
-            .serve(
-                config,
-                run_command(registry, Ok(tenant), &settings, command, extra_env, timeout),
-            )
+        run_command(registry, Ok(tenant), &settings, command, extra_env, timeout)
             .await
             .map_err(anyhow::Error::from)
     }
@@ -331,13 +327,7 @@ pub async fn write_file(
     {
         let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        registry
-            .driver()
-            .serve(
-                config,
-                write_file_in(registry, tenant, &settings, path, bytes),
-            )
-            .await
+        write_file_in(registry, tenant, &settings, path, bytes).await
     }
     #[cfg(not(feature = "modules"))]
     {
@@ -367,13 +357,7 @@ pub async fn read_file(
     {
         let settings = backend.settings(config)?;
         let registry = registry(backend, config);
-        registry
-            .driver()
-            .serve(
-                config,
-                read_file_in(registry, tenant, &settings, path, max_bytes),
-            )
-            .await
+        read_file_in(registry, tenant, &settings, path, max_bytes).await
     }
     #[cfg(not(feature = "modules"))]
     {

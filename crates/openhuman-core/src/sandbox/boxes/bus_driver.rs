@@ -11,11 +11,11 @@
 //! without deleting anything.
 //!
 //! Each call reaches the module with the configuration of the host call it
-//! serves ([`BusBoxDriver::serve`]), not of whichever call built the
-//! process's registry. A box's close or forget reaches the module with the
-//! configuration it was created under, so a later call cannot redirect the
-//! cleanup of an earlier box; work outside any call (the idle reaper) uses the
-//! most recent module-enabled call's.
+//! serves (carried in [`BoxSettings::module`] and [`BoxExec::module`]), not
+//! of whichever call built the process's registry. A box's close or forget
+//! reaches the module with the configuration it was created under, so a
+//! later call cannot redirect the cleanup of an earlier box; work outside any
+//! call (the idle reaper) uses the most recent module-enabled call's.
 //!
 //! A reservation is closed if the create it was for is cancelled before the
 //! module answers ([`AbandonGuard`]), so a cancelled first command never
@@ -28,13 +28,14 @@
 //! [`BoxError::UnknownResource`], which the registry answers with a new box.
 
 use std::collections::HashMap;
-use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 
-use super::{BoxBackend, BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings, Retention};
+use super::{
+    BoxBackend, BoxDriver, BoxError, BoxExec, BoxOutput, BoxSettings, ModuleConfig, Retention,
+};
 use crate::config::Config;
 use crate::modules::tinybox::{self, contract};
 
@@ -59,13 +60,8 @@ pub(crate) const BUS_REPLY_GRACE: Duration = Duration::from_secs(5);
 /// Box states that still take commands.
 const LIVE_STATES: &[&str] = &["ready", "running"];
 
-tokio::task_local! {
-    /// The configuration of the host call a driver step runs for.
-    static CALL_CONFIG: Arc<Config>;
-}
-
 /// A [`BoxDriver`] over the TinyBox module, for one backend, reaching the
-/// module with the configuration of the call it serves.
+/// module with the configuration of the call each step belongs to.
 pub struct BusBoxDriver {
     /// The configuration of the most recent call that has modules enabled,
     /// for work outside any call; the initial configuration until such a call.
@@ -98,36 +94,32 @@ impl BusBoxDriver {
     }
 
     /// The configuration a step on `resource` reaches the module with: the
-    /// one it was created under, or the current one for a box not recorded.
+    /// one it was created under, or the most recent call's for a box not
+    /// recorded.
     fn config_of(&self, resource: &str) -> Arc<Config> {
         self.created_with
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(resource)
             .cloned()
-            .unwrap_or_else(|| self.config())
+            .unwrap_or_else(|| self.config(&ModuleConfig::default()))
     }
 
-    /// Run `call` with every step of this driver inside it reaching the
-    /// module with `config`, which also becomes the configuration for work
-    /// outside any call.
-    pub fn serve<F: Future>(&self, config: &Config, call: F) -> impl Future<Output = F::Output> {
-        let config = Arc::new(config.clone());
-        // A call that has the module switched off must not become the
-        // configuration for later cleanups: they would be refused before they
-        // reach TinyBox, and the box would be left untracked.
-        if config.modules.enabled {
-            *self.latest.write().unwrap_or_else(PoisonError::into_inner) = Arc::clone(&config);
+    /// The configuration for a step now: the call's own, or the most recent
+    /// module-enabled call's when the step brought none. A call that has the
+    /// module switched off never becomes the latest: later cleanups would be
+    /// refused before they reach TinyBox and leave a box untracked.
+    pub(crate) fn config(&self, module: &ModuleConfig) -> Arc<Config> {
+        match module.get() {
+            Some(config) => {
+                if config.modules.enabled {
+                    *self.latest.write().unwrap_or_else(PoisonError::into_inner) =
+                        Arc::clone(config);
+                }
+                Arc::clone(config)
+            }
+            None => Arc::clone(&self.latest.read().unwrap_or_else(PoisonError::into_inner)),
         }
-        CALL_CONFIG.scope(config, call)
-    }
-
-    /// The configuration for a step now: the serving call's, or the most
-    /// recent call's outside one.
-    pub(crate) fn config(&self) -> Arc<Config> {
-        CALL_CONFIG.try_with(Arc::clone).unwrap_or_else(|_| {
-            Arc::clone(&self.latest.read().unwrap_or_else(PoisonError::into_inner))
-        })
     }
 }
 
@@ -203,7 +195,7 @@ impl BoxDriver for BusBoxDriver {
         settings: &BoxSettings,
         retention: Option<&Retention>,
     ) -> Result<String, BoxError> {
-        let config = self.config();
+        let config = self.config(&settings.module);
         let resource = tinybox::reserve(&config, contract::ReserveRequest::Resource)
             .await
             .map_err(BoxError::Driver)?;
@@ -223,7 +215,7 @@ impl BoxDriver for BusBoxDriver {
     }
 
     async fn exec(&self, resource: &str, exec: &BoxExec) -> Result<BoxOutput, BoxError> {
-        let config = self.config();
+        let config = self.config(&exec.module);
         match tinybox::exec_within(
             &config,
             exec_request(resource, exec),

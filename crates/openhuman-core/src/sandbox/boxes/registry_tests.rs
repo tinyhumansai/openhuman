@@ -1,5 +1,6 @@
 use super::*;
 use crate::sandbox::boxes::scripted_driver::{ok_output, Call, ExecStep, ScriptedDriver};
+use crate::sandbox::boxes::ModuleConfig;
 use std::collections::BTreeMap;
 use tokio::sync::Notify;
 
@@ -20,6 +21,7 @@ fn settings() -> BoxSettings {
         memory_bytes: 256 * 1024 * 1024,
         workdir: "/sandbox".into(),
         owner_scope: OwnerScope::default(),
+        module: ModuleConfig::default(),
     }
 }
 
