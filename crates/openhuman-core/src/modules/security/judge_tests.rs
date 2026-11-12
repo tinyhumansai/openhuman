@@ -14,7 +14,10 @@ pub(in crate::modules::security) fn a_judge() -> JudgeConfig {
 fn a_route_turns_the_judge_on_by_default() {
     let judge = build(&Config::default(), route()).expect("on by default");
 
-    assert_eq!(judge.credential.0, "a-working-key");
+    assert_eq!(
+        judge.credential.as_ref().map(|key| key.0.as_str()),
+        Some("a-working-key")
+    );
     assert_eq!(judge.endpoint, "https://openrouter.ai/api/v1/systemone");
     assert_eq!(judge.provider, JudgeProvider::OpenRouter);
 }
@@ -118,7 +121,10 @@ fn only_the_hosts_own_route_turns_the_judge_on() {
         ..Config::default()
     };
     let judge = resolve(&hosted).expect("the host supplied a route");
-    assert_eq!(judge.credential.0, "a-hosts-key");
+    assert_eq!(
+        judge.credential.as_ref().map(|key| key.0.as_str()),
+        Some("a-hosts-key")
+    );
     assert_eq!(judge.provider, JudgeProvider::OpenJev);
     // Without one it reads no stored credential: the judge stays off.
     assert!(resolve(&Config::default()).is_none());
