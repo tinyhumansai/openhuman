@@ -218,19 +218,25 @@ pub(super) fn x402_rpc_permit_route(
     let entry = permits
         .values_mut()
         .find(|entry| entry.outcome.is_none() && entry.url == request.url)?;
-    let outcome = if request.amount_atomic > entry.max_amount_atomic {
-        X402RpcPermitOutcome::Refused("x402 payment exceeds the caller's maxAmountAtomic")
+    let refusal = if request.amount_atomic > entry.max_amount_atomic {
+        Some("x402 payment exceeds the caller's maxAmountAtomic")
     } else if request.amount_atomic > per_request_max_atomic {
-        X402RpcPermitOutcome::Refused("x402 payment exceeds the per-request budget")
+        Some("x402 payment exceeds the per-request budget")
     } else {
-        X402RpcPermitOutcome::Approved
+        None
+    };
+    let (outcome, route) = match refusal {
+        Some(reason) => (
+            X402RpcPermitOutcome::Refused(reason),
+            X402Route::Refused(reason),
+        ),
+        None => (
+            X402RpcPermitOutcome::Approved,
+            X402Route::RpcPermitApproved,
+        ),
     };
     entry.outcome = Some(outcome);
-    Some(match outcome {
-        X402RpcPermitOutcome::Approved => X402Route::RpcPermitApproved,
-        X402RpcPermitOutcome::Refused(reason) => X402Route::Refused(reason),
-        X402RpcPermitOutcome::Unused => unreachable!("a matched permit always records a decision"),
-    })
+    Some(route)
 }
 
 /// Keep a direct-RPC x402 permit alive only while `future` (the module's
