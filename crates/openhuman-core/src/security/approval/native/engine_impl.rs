@@ -401,6 +401,15 @@ impl ApprovalEngine for NativeEngine {
             .map_err(|error| unavailable(error.to_string()))
     }
 
+    async fn orphans(
+        &self,
+    ) -> Result<Vec<crate::security::approval::types::PendingApproval>, EngineError> {
+        let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0);
+        super::super::view::orphans(&self.config, now, |id| host().request(id).is_some())
+            .await
+            .map_err(|error| unavailable(error.to_string()))
+    }
+
     async fn history(&self, limit: usize) -> Result<Vec<ApprovalAuditEntry>, EngineError> {
         super::super::view::decided_history(&self.config, limit)
             .await

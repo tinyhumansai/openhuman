@@ -4,7 +4,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
 use tinysecurity_bus::{ApprovalChoice2, ApprovalLifecycle2, ApprovalRow2, JudgeEvidence2};
 
-use super::super::types::{ApprovalAuditEntry, ApprovalDecision, JudgeVerdict};
+use super::super::types::{ApprovalAuditEntry, ApprovalDecision, JudgeVerdict, PendingApproval};
 use super::rows::{Rows, StoredRow};
 use crate::config::Config;
 
@@ -133,6 +133,37 @@ pub(crate) async fn decided_history(
         entries.extend(entry(stored, label.as_deref()));
     }
     Ok(entries)
+}
+
+/// Pending rows no request of this process is waiting on: requests an earlier
+/// launch left undecided, which the module imported as pending orphans. Oldest
+/// window first.
+pub(crate) async fn orphans(
+    config: &Config,
+    now_ms: u64,
+    live: impl Fn(&str) -> bool,
+) -> anyhow::Result<Vec<PendingApproval>> {
+    let rows = Rows::current(config).await?;
+    let open = rows
+        .open(now_ms, 500)
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
+    Ok(open
+        .iter()
+        .map(|stored| &stored.row)
+        .filter(|row| !live(&row.request_id))
+        .map(|row| {
+            let mut pending = PendingApproval::new(
+                row.request_id.clone(),
+                row.tool_name.clone(),
+                row.summary.clone(),
+                serde_json::from_str::<Value>(&row.args_redacted).unwrap_or(Value::Null),
+                Some(instant(i64::try_from(row.expires_at_ms).unwrap_or(i64::MAX))),
+            );
+            pending.created_at = instant(i64::try_from(row.created_at_ms).unwrap_or(i64::MAX));
+            pending
+        })
+        .collect())
 }
 
 /// Whether the request was stored and has left `Pending`. `None` when it is not
