@@ -88,7 +88,12 @@ pub(super) fn rooted_config(config: &Config, root: &Path) -> Config {
     let mut rooted = config.clone();
     rooted.action_dir = root.to_path_buf();
     let path = root.to_string_lossy().to_string();
-    if !rooted.autonomy.trusted_roots.iter().any(|trusted| trusted.path == path) {
+    if !rooted
+        .autonomy
+        .trusted_roots
+        .iter()
+        .any(|trusted| trusted.path == path)
+    {
         rooted
             .autonomy
             .trusted_roots
@@ -106,16 +111,15 @@ pub(super) fn rooted_config(config: &Config, root: &Path) -> Config {
 fn credential_stores(config: &Config) -> Vec<PathBuf> {
     credential_stores_with(
         config,
-        std::env::var_os(crate::security::secret_storage::encrypted_file_backend::MASTER_KEY_FILE_ENV),
+        std::env::var_os(
+            crate::security::secret_storage::encrypted_file_backend::MASTER_KEY_FILE_ENV,
+        ),
     )
 }
 
 /// [`credential_stores`] with the master key file setting given. It is read
 /// as the key loader reads it: trimmed, and ignored when blank.
-fn credential_stores_with(
-    config: &Config,
-    master_key: Option<std::ffi::OsString>,
-) -> Vec<PathBuf> {
+fn credential_stores_with(config: &Config, master_key: Option<std::ffi::OsString>) -> Vec<PathBuf> {
     let mut stores = crate::credentials::credential_files(config);
     if let Some(master_key) = master_key
         .as_deref()
