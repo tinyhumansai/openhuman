@@ -232,3 +232,17 @@ async fn a_legacy_import_that_cannot_reach_the_module_remains_retryable() {
         1
     );
 }
+
+/// The gate reaches the engine from the storage bridge's runtime
+/// (`run_engine`), and the first engine call runs this import, whose legacy
+/// read is itself a synchronous storage call.
+#[test]
+fn the_legacy_read_works_from_inside_a_storage_bridge_call() {
+    let (_dir, config) = workspace();
+    seed_legacy(&config);
+    let read_back = crate::storage::block_on_anyhow(async move {
+        read(config).await.map_err(|error| anyhow::anyhow!("{error}"))
+    })
+    .expect("the legacy history is readable from the bridge");
+    assert_eq!(read_back.expect("seeded history").approvals.len(), 1);
+}
