@@ -141,45 +141,44 @@ fn a_slot_keeps_the_url_and_driver_with_their_backend() {
     assert_eq!(slot.installed_driver(), None);
 }
 
-/// A rebind racing a reinstall by URL always finds the URL: while backends
-/// installed by URL replace each other, no reader sees a backend without one.
+/// Readers cannot observe a half-published installation at the publication
+/// boundary. The checkpoint pauses the writer while it holds the slot lock.
 #[test]
-fn a_reinstall_by_url_never_shows_a_backend_without_its_url() {
-    let _guard = test_support::install_backend_for_test(test_support::memory_backend());
-    install_for_url("memory", test_support::memory_backend());
-    let checkpoint = Arc::new(std::sync::Barrier::new(2));
-    let observed = Arc::new(std::sync::Barrier::new(2));
-    // Unnamed, so it sees the slot this test installed (see `slot_visible_here`).
-    let reader = {
-        let checkpoint = Arc::clone(&checkpoint);
-        let observed = Arc::clone(&observed);
+fn readers_cannot_observe_an_installation_at_its_publication_boundary() {
+    let slot = Arc::new(Slot::default());
+    slot.install_described(
+        test_support::memory_backend(),
+        Some("memory://old".into()),
+        Some("memory".into()),
+    );
+    let entered = Arc::new(std::sync::Barrier::new(2));
+    let resume = Arc::new(std::sync::Barrier::new(2));
+    let writer = {
+        let slot = Arc::clone(&slot);
+        let entered = Arc::clone(&entered);
+        let resume = Arc::clone(&resume);
         std::thread::spawn(move || {
-            let mut torn = 0_usize;
-            let mut observations = 0_usize;
-            for _ in 0..2_000 {
-                checkpoint.wait();
-                let url = installed_url();
-                let backend = installed();
-                observations += 1;
-                if url.is_none() && backend.is_some() {
-                    torn += 1;
-                }
-                observed.wait();
-            }
-            (torn, observations)
+            slot.install_described_at_checkpoint(
+                test_support::memory_backend(),
+                Some("memory://new".into()),
+                Some("memory".into()),
+                || {
+                    entered.wait();
+                    resume.wait();
+                },
+            );
         })
     };
-    for _ in 0..2_000 {
-        install_for_url("memory", test_support::memory_backend());
-        checkpoint.wait();
-        observed.wait();
-    }
-    let (torn, observations) = reader.join().unwrap();
-    assert_eq!(observations, 2_000, "every install must be sampled");
+
+    entered.wait();
     assert_eq!(
-        torn, 0,
-        "a reader saw an installed backend with no URL {torn} times"
+        slot.try_installed_url(),
+        Err(()),
+        "a reader must not inspect the slot during publication"
     );
+    resume.wait();
+    writer.join().unwrap();
+    assert_eq!(slot.installed_url().as_deref(), Some("memory://new"));
 }
 
 #[test]

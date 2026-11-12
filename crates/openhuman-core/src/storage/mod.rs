@@ -237,9 +237,21 @@ impl Slot {
         url: Option<String>,
         driver: Option<String>,
     ) -> Option<Arc<dyn StorageBackend>> {
-        self.0
+        self.install_described_at_checkpoint(backend, url, driver, || {})
+    }
+
+    fn install_described_at_checkpoint(
+        &self,
+        backend: Arc<dyn StorageBackend>,
+        url: Option<String>,
+        driver: Option<String>,
+        checkpoint: impl FnOnce(),
+    ) -> Option<Arc<dyn StorageBackend>> {
+        let mut installed = self.0
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        checkpoint();
+        installed
             .replace(Installed {
                 backend,
                 url,
@@ -266,6 +278,14 @@ impl Slot {
 
     fn installed_driver(&self) -> Option<String> {
         self.read(|installed| installed.driver.clone())
+    }
+
+    #[cfg(test)]
+    fn try_installed_url(&self) -> Result<Option<String>, ()> {
+        self.0
+            .try_read()
+            .map(|slot| slot.as_ref().and_then(|installed| installed.url.clone()))
+            .map_err(|_| ())
     }
 
     fn clear(&self) -> bool {
