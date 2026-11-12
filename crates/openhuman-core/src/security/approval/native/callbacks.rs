@@ -159,10 +159,24 @@ pub(crate) async fn verify_human(
     let (request_id, choice, actor) = host()
         .ticket(&request.decision_ticket)
         .ok_or("human verification: the ticket is unknown or expired")?;
-    let known = host()
-        .request(&request.row.request_id)
-        .ok_or("human verification: the request is not pending in this process")?;
-    if request_id != request.row.request_id || known.delivered.as_ref() != Some(&request.row) {
+    // A request of this process must match the row it delivered; a pending
+    // orphan (an earlier launch's request) the row a person is dismissing, and
+    // only a denial is ever verified for one.
+    let shown = match host().request(&request.row.request_id) {
+        Some(known) => known.delivered,
+        None => {
+            let listed = host()
+                .orphan_review(&request.row.request_id)
+                .ok_or("human verification: the request is not pending in this process")?;
+            if choice != ApprovalChoice2::Deny {
+                return Err(
+                    "human verification: an earlier launch's request can only be denied".into(),
+                );
+            }
+            Some(listed)
+        }
+    };
+    if request_id != request.row.request_id || shown.as_ref() != Some(&request.row) {
         tracing::warn!("{LOG} human ticket does not match the pending row");
         return Err("human verification: the ticket is not for this request".into());
     }
