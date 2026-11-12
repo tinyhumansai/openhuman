@@ -233,4 +233,28 @@ mod inbound {
 
         assert_eq!(triage.applied(), vec![LABEL.to_owned()]);
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_deferred_direct_webhook_is_reported_as_not_handled() {
+        // So a copy the queues hold is delivered, not dropped as handled.
+        for (step, expected) in [
+            (deferred(400), false),
+            (decision(TriageAction::React), true),
+        ] {
+            let triage = ScriptedTriage::new([step]);
+            let (sender, handled) = tokio::sync::oneshot::channel();
+            triage_agent_directly(
+                DispatchCtx::host_default(),
+                request(),
+                "corr-reported".to_owned(),
+                triage.clone() as Arc<dyn crate::triage::TriageRunner>,
+                Some(Box::new(move |handled| {
+                    let _ = sender.send(handled);
+                })),
+            )
+            .await
+            .unwrap();
+            assert_eq!(handled.await.unwrap(), expected);
+        }
+    }
 }

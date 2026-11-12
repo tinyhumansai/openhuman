@@ -193,3 +193,83 @@ fn a_turn_waits_for_a_running_direct_path_and_drops_only_handled_events() {
     ));
     assert!(matches!(claims.sort(turn(Vec::new())), Sorted::Deliver(_)));
 }
+
+#[test]
+fn an_evicted_handled_claim_is_not_taken_for_the_direct_path_again() {
+    let storage = storage();
+    let claims = Arc::new(Claims::over(&storage, NOW_MS));
+    claims
+        .take_direct("composio:slack:gone")
+        .unwrap()
+        .finish(true);
+    for n in 0..CAPACITY {
+        claims.open(&format!("composio:slack:f{n}"));
+        claims.delivering(&format!("composio:slack:f{n}"));
+    }
+    assert!(!claims.memory().claims.contains_key("composio:slack:gone"));
+    // A repeated ambiguous offer of it, after eviction.
+    claims.open("composio:slack:gone");
+    assert!(claims.take_direct("composio:slack:gone").is_none());
+}
+
+#[test]
+fn an_unsent_offer_does_not_release_another_pending_offer() {
+    // Offer A is still waiting; offer B of the same event was never sent.
+    let claims = claims();
+    claims.open("composio:slack:p1");
+    claims.open("composio:slack:p1");
+    assert!(!claims.close("composio:slack:p1"), "A is still pending");
+    // B goes through the claims, so A cannot take the direct path too.
+    let b = claims.take_direct("composio:slack:p1").unwrap();
+    assert!(claims.take_direct("composio:slack:p1").is_none());
+    b.finish(true);
+    // Alone, an unsent offer needs no claim.
+    claims.open("composio:slack:p2");
+    assert!(claims.close("composio:slack:p2"));
+}
+
+#[test]
+fn a_handled_claim_the_store_could_not_take_is_written_once_it_reads() {
+    let workspace = tempfile::tempdir().unwrap();
+    let unread = || {
+        Store::Unread(
+            workspace.path().to_path_buf(),
+            crate::storage::Scope::local(),
+        )
+    };
+    let claims = Claims::with_store(unread());
+    // Handled while the store was unreadable: held in memory, unevictable.
+    claims.memory().hold("webhook:t1:held", NOW_MS);
+    claims.read(NOW_MS);
+    assert!(claims.memory().unrecorded.is_empty());
+    // A new process over the same workspace finds it recorded.
+    let after = Claims::with_store(unread());
+    after.read(NOW_MS + 1_000);
+    assert_eq!(after.delivering("webhook:t1:held"), Delivery::Skip);
+}
+
+#[test]
+fn claims_without_a_storage_scope_are_shared_with_no_one() {
+    let workspace = tempfile::tempdir().unwrap();
+    let no_scope = || Err(crate::storage::StorageError::invalid_input("no profile"));
+    let first = Claims::of_scope(workspace.path(), no_scope(), NOW_MS);
+    first.take_direct("composio:slack:ns").unwrap().finish(true);
+    let second = Claims::of_scope(workspace.path(), no_scope(), NOW_MS);
+    assert_eq!(second.delivering("composio:slack:ns"), Delivery::Run);
+}
+
+#[test]
+fn an_evicted_handled_event_offered_again_is_still_dropped_on_delivery() {
+    let storage = storage();
+    let claims = Arc::new(Claims::over(&storage, NOW_MS));
+    claims
+        .take_direct("composio:slack:again")
+        .unwrap()
+        .finish(true);
+    for n in 0..CAPACITY {
+        claims.open(&format!("composio:slack:g{n}"));
+        claims.delivering(&format!("composio:slack:g{n}"));
+    }
+    claims.open("composio:slack:again");
+    assert_eq!(claims.delivering("composio:slack:again"), Delivery::Skip);
+}

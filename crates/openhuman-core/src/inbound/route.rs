@@ -136,20 +136,35 @@ async fn offer_or_direct_with(
     let key = event.dedupe_key();
     claims.open(&key);
     match hand_off(client, event, deadlines).await {
+        HandOff::Settled(Offered::Direct(why)) => {
+            // The queues never saw this offer. Alone, the direct path needs
+            // no claim; another offer of the event may have reached them,
+            // though, so then it goes through the claims like an ambiguous one.
+            if claims.close(&key) {
+                (Offered::Direct(why), None)
+            } else {
+                take_direct(claims, &key, why)
+            }
+        }
         HandOff::Settled(offered) => {
             claims.close(&key);
             (offered, None)
         }
-        HandOff::Ambiguous(why) => match claims.take_direct(&key) {
-            Some(claim) => (Offered::Direct(why), Some(claim)),
-            None => {
-                tracing::info!(
-                    key = %key,
-                    "[inbound] ingest never answered, but the queues or another offer have the event; not taking the direct path"
-                );
-                (Offered::Queued(Disposition::Duplicate), None)
-            }
-        },
+        HandOff::Ambiguous(why) => take_direct(claims, &key, why),
+    }
+}
+
+/// The direct path for `key`, when the claims grant it.
+fn take_direct(claims: &Arc<Claims>, key: &str, why: String) -> (Offered, Option<DirectClaim>) {
+    match claims.take_direct(key) {
+        Some(claim) => (Offered::Direct(why), Some(claim)),
+        None => {
+            tracing::info!(
+                key = %key,
+                "[inbound] the queues or another offer have the event; not taking the direct path"
+            );
+            (Offered::Queued(Disposition::Duplicate), None)
+        }
     }
 }
 

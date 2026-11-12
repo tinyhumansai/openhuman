@@ -331,10 +331,10 @@ pub(super) fn triage_agent_directly(
         })
         .await;
         if let Some(on_handled) = on_handled {
-            on_handled(matches!(result, Ok(Ok(_))));
+            on_handled(matches!(result, Ok(Ok((_, true)))));
         }
         let (resp, err) = match result {
-            Ok(Ok(output)) => (build_agent_response(&corr, 200, &output), None),
+            Ok(Ok((output, _))) => (build_agent_response(&corr, 200, &output), None),
             Ok(Err(e)) => {
                 crate::core::observability::report_error(
                     e.as_str(),
@@ -400,12 +400,13 @@ fn decode_webhook_body(base64_body: &str) -> Result<serde_json::Value, String> {
 }
 
 /// Run the triage pipeline for a trigger envelope and return the
-/// human-readable decision summary on success.
+/// human-readable decision summary on success, with whether it handled the
+/// webhook (a decision applied, or a terminal triage; not a deferral).
 async fn run_agent_trigger(
     ctx: &crate::core::runtime::DispatchCtx,
     envelope: &crate::triage::TriggerEnvelope,
     runner: &dyn crate::triage::TriageRunner,
-) -> Result<String, String> {
+) -> Result<(String, bool), String> {
     let outcome = runner
         .run(ctx, envelope)
         .await
@@ -421,18 +422,24 @@ async fn run_agent_trigger(
                 .await
                 .map_err(|e| format!("apply_decision failed: {e}"))?;
 
-            Ok(format!(
-                "Triage decision: {} (agent: {:?})",
-                run.decision.action.as_str(),
-                run.decision.target_agent
+            Ok((
+                format!(
+                    "Triage decision: {} (agent: {:?})",
+                    run.decision.action.as_str(),
+                    run.decision.target_agent
+                ),
+                true,
             ))
         }
         crate::triage::TriageOutcome::Deferred {
             defer_until_ms,
             reason,
-        } => Ok(format!("Triage deferred until {defer_until_ms}: {reason}")),
+        } => Ok((
+            format!("Triage deferred until {defer_until_ms}: {reason}"),
+            false,
+        )),
         crate::triage::TriageOutcome::Terminal { reason } => {
-            Ok(format!("Triage reached terminal state: {reason}"))
+            Ok((format!("Triage reached terminal state: {reason}"), true))
         }
     }
 }

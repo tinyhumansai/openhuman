@@ -49,7 +49,7 @@ use crate::core::events::DomainEvent;
 use crate::core::runtime::DispatchCtx;
 use crate::storage::documents::Repo;
 use crate::storage::schema_support::key_of;
-use crate::storage::DocumentStoreExt;
+use crate::storage::{DocumentStoreExt, Scope};
 
 /// The collection of events the direct path handled.
 pub const DIRECT: &str = "inbound.direct";
@@ -73,8 +73,8 @@ pub fn collection_specs() -> Vec<CollectionSpec> {
 /// Where an event's claim stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Claim {
-    /// The offer is still waiting for the queues' answer.
-    Open,
+    /// This many offers are waiting for the queues' answer.
+    Open(u32),
     /// The queues delivered it: they own it.
     Delivered,
     /// The direct path is running it.
@@ -106,6 +106,9 @@ struct Memory {
     claims: HashMap<String, Claim>,
     /// The settled claims, oldest first, for eviction.
     settled: VecDeque<String>,
+    /// Handled claims not recorded yet (the store was unreadable), with when
+    /// they were handled: written once it reads, never evicted meanwhile.
+    unrecorded: Vec<(String, i64)>,
     /// Whether a handled claim was evicted, so a miss may be in the store.
     evicted: bool,
 }
@@ -126,6 +129,12 @@ impl Memory {
             }
         }
     }
+
+    /// `key` was handled at `at_ms` but could not be recorded yet.
+    fn hold(&mut self, key: &str, at_ms: i64) {
+        self.claims.insert(key.to_owned(), Claim::Handled);
+        self.unrecorded.push((key.to_owned(), at_ms));
+    }
 }
 
 /// Where the claims' records live.
@@ -133,8 +142,8 @@ impl Memory {
 enum Store {
     /// Nowhere: the claims are memory only.
     None,
-    /// In this workspace's storage, not read yet.
-    Unread(PathBuf),
+    /// In this workspace's storage under this scope, not read yet.
+    Unread(PathBuf, Scope),
     /// In this repository, read into memory.
     Read(Repo),
 }
@@ -162,7 +171,7 @@ impl std::fmt::Debug for Claims {
 }
 
 /// Claims by workspace directory and storage scope.
-type ByWorkspace = HashMap<(PathBuf, String), Arc<Claims>>;
+type ByWorkspace = HashMap<(PathBuf, Scope), Arc<Claims>>;
 
 /// Each workspace and storage scope's claims.
 static WORKSPACES: LazyLock<Mutex<ByWorkspace>> = LazyLock::new(Mutex::default);
@@ -180,16 +189,34 @@ impl Claims {
     /// use and again after a failed read.
     #[must_use]
     pub fn of_workspace(workspace_dir: &Path, now_ms: i64) -> Arc<Self> {
-        let scope = crate::storage::current_scope()
-            .map(|scope| scope.as_str().to_owned())
-            .unwrap_or_default();
+        Self::of_scope(workspace_dir, crate::storage::current_scope(), now_ms)
+    }
+
+    /// `workspace_dir`'s claims under `scope`. With no scope (SaaS without a
+    /// profile) they are this call's own, in memory only: no scope shares
+    /// another's claims.
+    fn of_scope(
+        workspace_dir: &Path,
+        scope: Result<Scope, crate::storage::StorageError>,
+        now_ms: i64,
+    ) -> Arc<Self> {
+        let scope = match scope {
+            Ok(scope) => scope,
+            Err(error) => {
+                tracing::debug!(error = %error, "[inbound::claims] no storage scope; claims of this call only");
+                return Arc::new(Self::default());
+            }
+        };
         let claims = Arc::clone(
             WORKSPACES
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .entry((workspace_dir.to_path_buf(), scope))
+                .entry((workspace_dir.to_path_buf(), scope.clone()))
                 .or_insert_with(|| {
-                    Arc::new(Self::with_store(Store::Unread(workspace_dir.to_path_buf())))
+                    Arc::new(Self::with_store(Store::Unread(
+                        workspace_dir.to_path_buf(),
+                        scope,
+                    )))
                 }),
         );
         claims.read(now_ms);
@@ -211,22 +238,35 @@ impl Claims {
         self.memory.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The store; never taken while the memory is held.
     fn store(&self) -> std::sync::MutexGuard<'_, Store> {
         self.store.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Read the records into memory unless they were. The store stays locked
-    /// until they are, so no caller answers from a half-read memory.
+    /// Read the records into memory unless they were, then write the handled
+    /// claims that could not be recorded before. The store stays locked until
+    /// they are, so no caller answers from a half-read memory.
     fn read(&self, now_ms: i64) {
         let mut store = self.store();
-        let Store::Unread(workspace_dir) = &*store else {
+        let Store::Unread(workspace_dir, scope) = &*store else {
             return;
         };
-        let read = Repo::current_for(workspace_dir, DOMAIN, collection_specs)
+        let read = crate::storage::local::backend_for(workspace_dir)
+            .and_then(|backend| Repo::on(&backend, scope, DOMAIN, collection_specs))
             .and_then(|repo| load(&repo, now_ms).map(|keys| (repo, keys)));
         match read {
             Ok((repo, keys)) => {
                 self.remember(keys);
+                let unrecorded = std::mem::take(&mut self.memory().unrecorded);
+                for (key, at_ms) in unrecorded {
+                    match record(&repo, &key, at_ms) {
+                        Ok(()) => self.memory().settle(&key, Claim::Handled),
+                        Err(error) => {
+                            report_unrecorded(&error);
+                            self.memory().unrecorded.push((key, at_ms));
+                        }
+                    }
+                }
                 *store = Store::Read(repo);
             }
             Err(error) => {
@@ -245,35 +285,71 @@ impl Claims {
     fn repo(&self) -> Option<Repo> {
         match &*self.store() {
             Store::Read(repo) => Some(repo.clone()),
-            Store::None | Store::Unread(_) => None,
+            Store::None | Store::Unread(..) => None,
         }
     }
 
     /// An offer of `key` is about to be sent.
     pub fn open(&self, key: &str) {
-        self.memory()
-            .claims
-            .entry(key.to_owned())
-            .or_insert(Claim::Open);
+        let mut memory = self.memory();
+        match memory.claims.get(key).copied() {
+            Some(Claim::Open(offers)) => {
+                memory
+                    .claims
+                    .insert(key.to_owned(), Claim::Open(offers + 1));
+            }
+            None => {
+                memory.claims.insert(key.to_owned(), Claim::Open(1));
+            }
+            Some(Claim::Delivered | Claim::Direct | Claim::Handled) => {}
+        }
     }
 
-    /// The queues answered the offer of `key`: they own the event, or
-    /// proved they never saw it.
-    pub fn close(&self, key: &str) {
+    /// The queues answered an offer of `key`: they own the event, or proved
+    /// they never saw this offer. `true` when no other offer of it is pending
+    /// and nothing claims it, so a direct path needs no claim.
+    pub fn close(&self, key: &str) -> bool {
         let mut memory = self.memory();
-        if memory.claims.get(key) == Some(&Claim::Open) {
-            memory.claims.remove(key);
+        match memory.claims.get(key).copied() {
+            Some(Claim::Open(1)) => {
+                memory.claims.remove(key);
+                true
+            }
+            Some(Claim::Open(offers)) => {
+                memory
+                    .claims
+                    .insert(key.to_owned(), Claim::Open(offers - 1));
+                false
+            }
+            Some(Claim::Delivered | Claim::Direct | Claim::Handled) => false,
+            None => true,
         }
     }
 
     /// Every attempt to offer `key` was ambiguous: take it for the direct
     /// path. `None` when the queues delivered it, or another offer has the
-    /// direct path running or done, so the caller must not run it.
+    /// direct path running or done (in memory or, once evicted, recorded),
+    /// so the caller must not run it.
     pub fn take_direct(self: &Arc<Self>, key: &str) -> Option<DirectClaim> {
+        let evicted = {
+            let memory = self.memory();
+            match memory.claims.get(key) {
+                Some(Claim::Delivered | Claim::Direct | Claim::Handled) => return None,
+                // Open again after its handled claim was evicted, it may be
+                // recorded all the same.
+                Some(Claim::Open(_)) | None => memory.evicted,
+            }
+        };
+        let recorded = evicted && self.recorded(key);
+        // Checked again: another offer or delivery may have moved it meanwhile.
         let mut memory = self.memory();
         match memory.claims.get(key) {
             Some(Claim::Delivered | Claim::Direct | Claim::Handled) => None,
-            Some(Claim::Open) | None => {
+            Some(Claim::Open(_)) | None if recorded => {
+                memory.settle(key, Claim::Handled);
+                None
+            }
+            Some(Claim::Open(_)) | None => {
                 memory.claims.insert(key.to_owned(), Claim::Direct);
                 Some(DirectClaim {
                     claims: Arc::clone(self),
@@ -286,23 +362,35 @@ impl Claims {
 
     /// The queues deliver `key`.
     pub fn delivering(&self, key: &str) -> Delivery {
+        {
+            let mut memory = self.memory();
+            match memory.claims.get(key) {
+                Some(Claim::Handled) => return Delivery::Skip,
+                Some(Claim::Direct) => return Delivery::Wait,
+                Some(Claim::Delivered) => return Delivery::Run,
+                // After an eviction an open or unknown key may be recorded.
+                Some(Claim::Open(_)) | None if memory.evicted => {}
+                Some(Claim::Open(_)) => {
+                    memory.settle(key, Claim::Delivered);
+                    return Delivery::Run;
+                }
+                None => return Delivery::Run,
+            }
+        }
+        let recorded = self.recorded(key);
+        // Checked again: an offer may have taken it during the lookup.
         let mut memory = self.memory();
         match memory.claims.get(key) {
             Some(Claim::Handled) => Delivery::Skip,
             Some(Claim::Direct) => Delivery::Wait,
-            Some(Claim::Open) => {
+            Some(Claim::Delivered) => Delivery::Run,
+            Some(Claim::Open(_)) | None if recorded => {
+                memory.settle(key, Claim::Handled);
+                Delivery::Skip
+            }
+            Some(Claim::Open(_)) => {
                 memory.settle(key, Claim::Delivered);
                 Delivery::Run
-            }
-            Some(Claim::Delivered) => Delivery::Run,
-            None if memory.evicted => {
-                drop(memory);
-                if self.recorded(key) {
-                    self.memory().settle(key, Claim::Handled);
-                    Delivery::Skip
-                } else {
-                    Delivery::Run
-                }
             }
             None => Delivery::Run,
         }
@@ -331,35 +419,33 @@ impl Claims {
     }
 
     /// Settle `key`'s direct-path claim: recorded at `now_ms` when the
-    /// direct path handled the event, released otherwise.
+    /// direct path handled the event, released otherwise. A record that
+    /// cannot be written yet is held in memory and written once the store
+    /// reads.
     fn finish(&self, key: &str, handled: bool, now_ms: i64) {
         {
             let mut memory = self.memory();
             if memory.claims.get(key) != Some(&Claim::Direct) {
                 return;
             }
-            if handled {
-                memory.settle(key, Claim::Handled);
-            } else {
+            if !handled {
                 memory.claims.remove(key);
+                return;
             }
         }
-        if !handled {
-            return;
-        }
-        if let Some(repo) = self.repo() {
-            if let Err(error) = record(&repo, key, now_ms) {
-                // Still skipped in this process; only a restart before the
-                // queued copy is delivered could run it a second time.
-                let detail =
-                    format!("[inbound::claims] could not record a direct-path event: {error:#}");
-                crate::core::observability::report_error_or_expected(
-                    detail.as_str(),
-                    "inbound",
-                    "record_direct",
-                    &[],
-                );
-            }
+        // Try an unreadable store again first.
+        self.read(now_ms);
+        let store = self.store().clone();
+        match store {
+            Store::Read(repo) => match record(&repo, key, now_ms) {
+                Ok(()) => self.memory().settle(key, Claim::Handled),
+                Err(error) => {
+                    report_unrecorded(&error);
+                    self.memory().hold(key, now_ms);
+                }
+            },
+            Store::Unread(..) => self.memory().hold(key, now_ms),
+            Store::None => self.memory().settle(key, Claim::Handled),
         }
     }
 
@@ -378,7 +464,17 @@ impl Claims {
                 }
             },
         };
-        Self::of_workspace(&workspace_dir, now_ms)
+        let scope = ctx
+            .tenant()
+            .map_err(|no_tenant| crate::storage::StorageError::invalid_input(no_tenant.to_string()))
+            .and_then(|tenant| {
+                crate::storage::scope_from(
+                    tenant.profile.as_deref(),
+                    tenant.agent.as_deref(),
+                    crate::core::runtime::mode::is_saas(),
+                )
+            });
+        Self::of_scope(&workspace_dir, scope, now_ms)
     }
 
     /// What becomes of `turn`, which the queues deliver: delivered later
@@ -464,6 +560,18 @@ impl Drop for DirectClaim {
             self.claims.finish(&self.key, false, 0);
         }
     }
+}
+
+/// A handled claim could not be recorded: still skipped in this process, but a
+/// restart before the queued copy is delivered could run it a second time.
+fn report_unrecorded(error: &anyhow::Error) {
+    let detail = format!("[inbound::claims] could not record a direct-path event: {error:#}");
+    crate::core::observability::report_error_or_expected(
+        detail.as_str(),
+        "inbound",
+        "record_direct",
+        &[],
+    );
 }
 
 /// The keys recorded within the TTL at `now_ms`; older records are deleted.
