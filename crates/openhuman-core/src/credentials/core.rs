@@ -205,7 +205,6 @@ pub fn state_dir_from_config(config: &Config) -> PathBuf {
 /// their stores write: the encrypted keyring (`secrets.enc`), the auth
 /// profiles, the HTTP credentials and the account config. A path may not
 /// exist.
-#[cfg(any(feature = "modules", test))]
 pub(crate) fn credential_files(config: &Config) -> Vec<PathBuf> {
     let state_dir = state_dir_from_config(config);
     let mut files = vec![
