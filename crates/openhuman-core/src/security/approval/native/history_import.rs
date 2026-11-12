@@ -115,7 +115,8 @@ pub(super) fn state_of(row: &LegacyApproval) -> ApprovalState {
 /// When the legacy request's window closes.
 fn expiry(row: &LegacyApproval) -> chrono::DateTime<chrono::Utc> {
     row.expires_at.unwrap_or_else(|| {
-        row.created_at + chrono::Duration::milliseconds(DEFAULT_WINDOW_MS as i64)
+        row.created_at
+            + chrono::Duration::milliseconds(i64::try_from(DEFAULT_WINDOW_MS).unwrap_or(i64::MAX))
     })
 }
 
