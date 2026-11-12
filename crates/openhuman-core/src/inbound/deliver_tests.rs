@@ -685,44 +685,5 @@ async fn a_pinned_source_in_a_mixed_digest_still_runs_its_agent() {
 #[path = "deliver_digest_tests.rs"]
 mod digest;
 
-#[tokio::test]
-async fn an_event_handled_directly_is_not_delivered_again() {
-    // Its offer was ambiguous and ran on the caller's direct path, yet the
-    // module persisted it: the queued copy must not be triaged a second time.
-    let event = trigger_event("deliver-direct-1");
-    let claims = Arc::new(Claims::default());
-    assert!(claims.take_direct(&event.dedupe_key(), NOW_MS));
-    let triage = ScriptedTriage::new([decision(TriageAction::React)]);
-    let deliverer = deliverer(&triage).with_claims(claims);
-    let response = deliverer
-        .deliver(turn(vec![event.clone()], Lane::Background, 1))
-        .await;
-    assert_eq!(response.status, DeliverStatus::Accepted);
-    assert_eq!(triage.runs(), 0);
-    assert!(triage.applied().is_empty());
-    // A redelivery of the turn is not triaged either.
-    let again = deliverer
-        .deliver(turn(vec![event], Lane::Background, 2))
-        .await;
-    assert_eq!(again.status, DeliverStatus::Accepted);
-    assert_eq!(triage.runs(), 0);
-}
-
-#[tokio::test]
-async fn a_digest_leaves_out_only_the_events_handled_directly() {
-    let direct = trigger_event("deliver-direct-2");
-    let queued = trigger_event("deliver-direct-3");
-    let claims = Arc::new(Claims::default());
-    assert!(claims.take_direct(&direct.dedupe_key(), NOW_MS));
-    let triage = ScriptedTriage::new([decision(TriageAction::React)]);
-    let response = deliverer(&triage)
-        .with_claims(claims)
-        .deliver(turn(vec![direct, queued], Lane::Background, 1))
-        .await;
-    assert_eq!(response.status, DeliverStatus::Accepted);
-    assert_eq!(triage.runs(), 1);
-    assert_eq!(
-        triage.until_applied(1, Duration::from_secs(5)).await.len(),
-        1
-    );
-}
+#[path = "deliver_direct_tests.rs"]
+mod direct;

@@ -206,12 +206,15 @@ pub(super) async fn route_trigger(
     runner: Arc<dyn TriageRunner>,
     #[cfg(feature = "inbound-queues")] client: Option<tinybus::module::ModuleClient>,
 ) -> Routed {
+    #[cfg_attr(not(feature = "inbound-queues"), allow(unused_mut))]
+    let mut on_handled: Option<OnHandled> = None;
     #[cfg(feature = "inbound-queues")]
     if let Some(config) = config.as_ref() {
         match crate::inbound::events::composio(&envelope) {
             Ok(event) => {
                 let client = client.unwrap_or_else(|| crate::modules::ops::client(config.clone()));
-                let offered = crate::inbound::route::offer_or_direct(config, &client, event).await;
+                let (offered, claim) =
+                    crate::inbound::route::offer_or_direct(config, &client, event).await;
                 if offered.is_queued() {
                     tracing::debug!(
                         label = %envelope.display_label,
@@ -219,6 +222,10 @@ pub(super) async fn route_trigger(
                     );
                     return Routed::Queued;
                 }
+                // The queues may hold it too: tell them what the direct
+                // path did with it, so their copy is dropped or run.
+                on_handled =
+                    claim.map(|claim| Box::new(move |handled| claim.finish(handled)) as OnHandled);
             }
             Err(why) => tracing::info!(
                 label = %envelope.display_label,
@@ -229,17 +236,23 @@ pub(super) async fn route_trigger(
     }
     #[cfg(not(feature = "inbound-queues"))]
     let _ = config;
-    Routed::Direct(triage_directly(ctx, envelope, runner))
+    Routed::Direct(triage_directly(ctx, envelope, runner, on_handled))
 }
 
+/// Told, when the direct path ends, whether it handled the trigger (a
+/// decision applied, or a terminal triage).
+pub(super) type OnHandled = Box<dyn FnOnce(bool) + Send>;
+
 /// Triage `envelope` in its own task and apply a decision: the direct path.
+/// `on_handled` hears whether it handled the trigger.
 pub(super) fn triage_directly(
     ctx: DispatchCtx,
     envelope: TriggerEnvelope,
     runner: Arc<dyn TriageRunner>,
+    on_handled: Option<OnHandled>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        match runner.run(&ctx, &envelope).await {
+        let handled = match runner.run(&ctx, &envelope).await {
             Ok(TriageOutcome::Decision(run)) => {
                 // Remote payload: a Composio trigger body is
                 // attacker-influenceable, so the runner applies the decision
@@ -250,6 +263,9 @@ pub(super) fn triage_directly(
                         error = %e,
                         "[composio][triage] apply_decision failed"
                     );
+                    false
+                } else {
+                    true
                 }
             }
             Ok(TriageOutcome::Deferred {
@@ -267,6 +283,7 @@ pub(super) fn triage_directly(
                     reason = %reason,
                     "[composio][triage] run_triage deferred"
                 );
+                false
             }
             Ok(TriageOutcome::Terminal { reason }) => {
                 tracing::warn!(
@@ -274,6 +291,7 @@ pub(super) fn triage_directly(
                     reason = %reason,
                     "[composio][triage] run_triage reached terminal state"
                 );
+                true
             }
             Err(e) => {
                 // Route through the central observability classifier
@@ -297,7 +315,11 @@ pub(super) fn triage_directly(
                     "trigger_triage",
                     &[("label", envelope.display_label.as_str())],
                 );
+                false
             }
+        };
+        if let Some(on_handled) = on_handled {
+            on_handled(handled);
         }
     })
 }

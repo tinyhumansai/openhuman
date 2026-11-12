@@ -5,6 +5,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use super::*;
+use crate::inbound::claims::Delivery;
 use crate::inbound::events;
 use crate::inbound::fixture::{active_config, Rig, ScriptedTriage, Step};
 use crate::triage::{TriageOutcome, TriggerEnvelope};
@@ -80,10 +81,11 @@ async fn a_timed_out_ingest_that_landed_is_triaged_once() {
     // its copy. Exactly one decision is applied.
     let rig = Rig::new(ScriptedTriage::new(Vec::<Step>::new())).await;
     let (ambiguous, _bus) = ambiguous_client().await;
-    let offered =
+    let (offered, claim) =
         offer_or_direct_with(&ambiguous, event("u5"), &rig.claims, &ATTEMPT_DEADLINES).await;
     assert!(matches!(offered, Offered::Direct(ref why) if why.contains("ingest failed")));
     run_directly(&rig.triage, &event("u5")).await;
+    claim.expect("the direct path is taken").finish(true);
     // The write that landed: the module holds the event and delivers it.
     let landed = event_queues::ingest(&rig.client, vec![event("u5")])
         .await
@@ -110,8 +112,44 @@ async fn an_event_delivered_while_its_offer_waited_is_not_run_directly() {
         landed.unwrap().results[0].disposition,
         Disposition::Accepted
     );
-    assert_eq!(offered, Offered::Queued(Disposition::Accepted));
+    let (offered, claim) = offered;
+    assert_eq!(offered, Offered::Queued(Disposition::Duplicate));
+    assert!(claim.is_none());
     assert_eq!(rig.triage.applied().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_ingest_that_landed_still_runs_once_when_the_direct_path_fails() {
+    // The direct triage fails, so the queues' copy is not dropped as
+    // handled: it is delivered and decided, once.
+    let rig = Rig::new(ScriptedTriage::new(Vec::<Step>::new())).await;
+    let (ambiguous, _bus) = ambiguous_client().await;
+    let (offered, claim) =
+        offer_or_direct_with(&ambiguous, event("u11"), &rig.claims, &ATTEMPT_DEADLINES).await;
+    assert!(matches!(offered, Offered::Direct(_)));
+    claim.expect("the direct path is taken").finish(false);
+    let landed = event_queues::ingest(&rig.client, vec![event("u11")])
+        .await
+        .unwrap();
+    assert_eq!(landed.results[0].disposition, Disposition::Accepted);
+    let applied = rig.triage.until_applied(1, Duration::from_secs(5)).await;
+    assert_eq!(applied.len(), 1, "the queued copy was lost");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_second_ambiguous_offer_of_an_event_does_not_run_it_directly_again() {
+    // A platform redelivery during the same outage.
+    let rig = Rig::new(ScriptedTriage::new(Vec::<Step>::new())).await;
+    let (ambiguous, _bus) = ambiguous_client().await;
+    let (_, first) =
+        offer_or_direct_with(&ambiguous, event("u12"), &rig.claims, &ATTEMPT_DEADLINES).await;
+    first
+        .expect("the first offer takes the direct path")
+        .finish(true);
+    let (again, second) =
+        offer_or_direct_with(&ambiguous, event("u12"), &rig.claims, &ATTEMPT_DEADLINES).await;
+    assert_eq!(again, Offered::Queued(Disposition::Duplicate));
+    assert!(second.is_none());
 }
 
 #[tokio::test]
@@ -123,9 +161,11 @@ async fn an_ingest_that_surely_failed_still_takes_the_direct_path() {
     let mut off = config.clone();
     off.modules.enabled = false;
     let client = crate::modules::ops::client(off);
-    let offered = offer_or_direct(&config, &client, event("u7")).await;
+    let (offered, claim) = offer_or_direct(&config, &client, event("u7")).await;
     assert!(matches!(offered, Offered::Direct(ref why) if why.contains("ingest failed")));
-    assert!(!Claims::of_workspace(&config, 0).delivering(&event("u7").dedupe_key()));
+    assert!(claim.is_none());
+    let claims = Claims::of_workspace(&config.workspace_dir, 0);
+    assert_eq!(claims.delivering(&event("u7").dedupe_key()), Delivery::Run);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -137,7 +177,8 @@ async fn an_offer_without_a_direct_path_leaves_its_event_to_the_queues() {
     let (ambiguous, _bus) = ambiguous_client().await;
     let offered = offer(&config, &ambiguous, event("u8")).await;
     assert!(!offered.is_queued());
-    assert!(!Claims::of_workspace(&config, 0).delivering(&event("u8").dedupe_key()));
+    let claims = Claims::of_workspace(&config.workspace_dir, 0);
+    assert_eq!(claims.delivering(&event("u8").dedupe_key()), Delivery::Run);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -147,11 +188,15 @@ async fn an_ambiguous_offer_claims_its_event_in_its_own_workspace() {
     let (mine, other) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let config = config_in(&mine);
     let (ambiguous, _bus) = ambiguous_client().await;
-    let offered = offer_or_direct(&config, &ambiguous, event("u9")).await;
+    let (offered, claim) = offer_or_direct(&config, &ambiguous, event("u9")).await;
     assert!(matches!(offered, Offered::Direct(ref why) if why.contains("ingest failed")));
     let key = event("u9").dedupe_key();
-    assert!(Claims::of_workspace(&config, 0).delivering(&key));
-    assert!(!Claims::of_workspace(&config_in(&other), 0).delivering(&key));
+    let theirs = Claims::of_workspace(&config_in(&other).workspace_dir, 0);
+    let mine = Claims::of_workspace(&config.workspace_dir, 0);
+    assert_eq!(mine.delivering(&key), Delivery::Wait);
+    assert_eq!(theirs.delivering(&key), Delivery::Run);
+    claim.expect("the direct path is taken").finish(true);
+    assert_eq!(mine.delivering(&key), Delivery::Skip);
 }
 
 #[tokio::test]
@@ -160,9 +205,11 @@ async fn inactive_queues_send_a_direct_path_offer_down_it_without_a_claim() {
     let mut config = config_in(&workspace);
     config.inbound.enabled = false;
     let client = crate::modules::ops::client(config.clone());
-    let offered = offer_or_direct(&config, &client, event("u10")).await;
+    let (offered, claim) = offer_or_direct(&config, &client, event("u10")).await;
     assert!(matches!(offered, Offered::Direct(ref why) if why.contains("inactive")));
-    assert!(!Claims::of_workspace(&config, 0).delivering(&event("u10").dedupe_key()));
+    assert!(claim.is_none());
+    let claims = Claims::of_workspace(&config.workspace_dir, 0);
+    assert_eq!(claims.delivering(&event("u10").dedupe_key()), Delivery::Run);
 }
 
 /// The active config, over its own workspace.

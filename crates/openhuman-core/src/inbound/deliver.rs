@@ -42,10 +42,12 @@
 //! turn that was already accepted is accepted again without triage, so a
 //! redelivery that raced a slow answer never applies a second decision.
 //!
-//! An event its offer already ran on the caller's direct path (every
-//! `Ingest` attempt was ambiguous, yet the module persisted it,
-//! [`super::claims`]) is left out of its turn and dropped with the reason
-//! `handled_directly`; a turn left with no events is accepted as it is.
+//! An event its offer took for the caller's direct path (every `Ingest`
+//! attempt was ambiguous, yet the module persisted it, [`super::claims`])
+//! is not delivered twice: while the direct path runs the turn is retried
+//! later; once it handled the event, the event is left out of its turn and
+//! dropped with the reason `handled_directly`, and a turn left with no
+//! events is accepted as it is.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -56,7 +58,10 @@ use tinyeventqueues_bus::{
     DeliverStatus, InboundEvent, Lane, SalienceClass, Turn,
 };
 
-use super::claims::Claims;
+use super::claims::{Claims, Sorted};
+
+/// How long a turn waits for a direct path still running one of its events.
+const DIRECT_WAIT_MS: u64 = 60_000;
 use super::events::{digest_envelope, envelope_of};
 use super::pinned::{Delivered, Pinned};
 use super::results::Results;
@@ -165,9 +170,10 @@ pub struct Deliverer {
     inbound: tokio::sync::OnceCell<Arc<InboundConfig>>,
     /// What runs pinned sources' turns: given, or built on first use.
     pinned: tokio::sync::OnceCell<Option<Pinned>>,
-    /// Who ran events whose offers were ambiguous: the configured
-    /// workspace's claims, resolved on first use.
-    claims: tokio::sync::OnceCell<Arc<Claims>>,
+    /// Who runs events whose offers were ambiguous: given, or the current
+    /// workspace's, resolved on every delivery (the active workspace can
+    /// change without the core being rebuilt).
+    claims: Option<Arc<Claims>>,
 }
 
 impl std::fmt::Debug for Deliverer {
@@ -193,7 +199,7 @@ impl Deliverer {
                 .with_inbound(InboundConfig::default());
         // Given its settings, it reads no configuration: its claims are its
         // own unless given some (`Self::with_claims`).
-        deliverer.claims = tokio::sync::OnceCell::new_with(Some(Arc::new(Claims::default())));
+        deliverer.claims = Some(Arc::new(Claims::default()));
         deliverer
     }
 
@@ -223,7 +229,7 @@ impl Deliverer {
             accepted: Mutex::new(Accepted::default()),
             inbound: tokio::sync::OnceCell::new(),
             pinned: tokio::sync::OnceCell::new(),
-            claims: tokio::sync::OnceCell::new(),
+            claims: None,
         }
     }
 
@@ -245,7 +251,7 @@ impl Deliverer {
     /// Share `claims` with the offers of the events it delivers.
     #[must_use]
     pub fn with_claims(mut self, claims: Arc<Claims>) -> Self {
-        self.claims = tokio::sync::OnceCell::new_with(Some(claims));
+        self.claims = Some(claims);
         self
     }
 
@@ -418,31 +424,12 @@ impl Deliverer {
         }
     }
 
-    /// The configured workspace's claims, resolved on first use.
-    async fn claims(&self) -> &Claims {
-        self.claims
-            .get_or_init(|| async {
-                let config = match self.ctx.load_config().await {
-                    Ok(config) => config,
-                    Err(error) => {
-                        tracing::debug!(error = %error, "[inbound] config unavailable; the default workspace's claims");
-                        crate::config::Config::default()
-                    }
-                };
-                Claims::of_workspace(&config, (self.now_ms)())
-            })
-            .await
-    }
-
-    /// `turn` without the events their offers already ran directly, each
-    /// dropped; `None` when that left none (a turn that came with none is
-    /// returned as it is, to be rejected).
-    async fn without_direct(&self, mut turn: Turn) -> Option<Turn> {
-        if turn.events.is_empty() {
-            return Some(turn);
+    /// The given claims, or the current workspace's.
+    async fn claims(&self) -> Arc<Claims> {
+        match &self.claims {
+            Some(claims) => Arc::clone(claims),
+            None => Claims::of_ctx(&self.ctx, (self.now_ms)()).await,
         }
-        self.claims().await.leave_out_direct(&mut turn);
-        (!turn.events.is_empty()).then_some(turn)
     }
 
     fn classified(&self) -> std::sync::MutexGuard<'_, Classified> {
@@ -514,9 +501,19 @@ impl Deliverer {
             return DeliverResponse::new(DeliverStatus::Accepted);
         }
         let turn_id = turn.turn_id.clone();
-        let Some(turn) = self.without_direct(turn).await else {
-            self.accepted().remember(&turn_id);
-            return DeliverResponse::new(DeliverStatus::Accepted);
+        let turn = match self.claims().await.sort(turn) {
+            Sorted::Deliver(turn) => turn,
+            Sorted::Wait(turn) => {
+                return DeliverResponse::new(self.retry(
+                    &turn,
+                    Some(DIRECT_WAIT_MS),
+                    "the direct path is running an event of this turn",
+                ));
+            }
+            Sorted::Handled => {
+                self.accepted().remember(&turn_id);
+                return DeliverResponse::new(DeliverStatus::Accepted);
+            }
         };
         if let Some((name, source)) = self.pinned_source(&turn.events).await {
             let remaining = self.budget.saturating_sub(started.elapsed());

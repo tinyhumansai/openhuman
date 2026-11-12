@@ -22,6 +22,7 @@
 //! direct path otherwise, recorded so a later `Deliver` skips it. Callers
 //! run the hand-off in their own task, never on a bus subscriber's loop.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tinybus::module::{ModuleCallError, ModuleClient};
@@ -32,7 +33,7 @@ use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::modules::event_queues;
 
-use super::claims::Claims;
+use super::claims::{Claims, DirectClaim};
 
 /// What became of an offered event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,45 +108,48 @@ pub async fn offer(config: &Config, client: &ModuleClient, event: InboundEvent) 
 
 /// Offer `event` like [`offer`], for a caller that runs its direct path on
 /// [`Offered::Direct`]. When every attempt is ambiguous the event goes to
-/// the direct path only if the queues have not delivered it meanwhile, and
-/// is recorded so they skip it if they deliver it later.
+/// the direct path only if the queues have not delivered it and no other
+/// offer of it took the direct path; the [`DirectClaim`] then returned is
+/// the caller's to finish with what its direct path did, so the queues'
+/// copy is dropped or delivered accordingly.
 pub async fn offer_or_direct(
     config: &Config,
     client: &ModuleClient,
     event: InboundEvent,
-) -> Offered {
+) -> (Offered, Option<DirectClaim>) {
     if !super::active(config) {
-        return Offered::Direct("inbound event queues inactive".to_owned());
+        return (
+            Offered::Direct("inbound event queues inactive".to_owned()),
+            None,
+        );
     }
-    let claims = Claims::of_workspace(config, chrono::Utc::now().timestamp_millis());
+    let claims = Claims::of_workspace(&config.workspace_dir, chrono::Utc::now().timestamp_millis());
     offer_or_direct_with(client, event, &claims, &ATTEMPT_DEADLINES).await
 }
 
 async fn offer_or_direct_with(
     client: &ModuleClient,
     event: InboundEvent,
-    claims: &Claims,
+    claims: &Arc<Claims>,
     deadlines: &[Duration],
-) -> Offered {
-    let now_ms = || chrono::Utc::now().timestamp_millis();
+) -> (Offered, Option<DirectClaim>) {
     let key = event.dedupe_key();
     claims.open(&key);
     match hand_off(client, event, deadlines).await {
         HandOff::Settled(offered) => {
             claims.close(&key);
-            offered
+            (offered, None)
         }
-        HandOff::Ambiguous(why) => {
-            if claims.take_direct(&key, now_ms()) {
-                Offered::Direct(why)
-            } else {
+        HandOff::Ambiguous(why) => match claims.take_direct(&key) {
+            Some(claim) => (Offered::Direct(why), Some(claim)),
+            None => {
                 tracing::info!(
                     key = %key,
-                    "[inbound] ingest never answered, but the queues delivered the event; not taking the direct path"
+                    "[inbound] ingest never answered, but the queues or another offer have the event; not taking the direct path"
                 );
-                Offered::Queued(Disposition::Accepted)
+                (Offered::Queued(Disposition::Duplicate), None)
             }
-        }
+        },
     }
 }
 
@@ -163,7 +167,7 @@ async fn hand_off(client: &ModuleClient, event: InboundEvent, deadlines: &[Durat
                 answered = Some(response);
                 break;
             }
-            Attempt::Unsent(error) => {
+            Attempt::Unsent(error) if n == 0 => {
                 tracing::info!(
                     source = %source,
                     event_id = %event_id,
@@ -171,6 +175,18 @@ async fn hand_off(client: &ModuleClient, event: InboundEvent, deadlines: &[Durat
                     "[inbound] queues unavailable; taking the direct path"
                 );
                 return HandOff::Settled(Offered::Direct(format!("ingest failed: {error}")));
+            }
+            Attempt::Unsent(error) => {
+                // This attempt never reached the module, but an earlier one
+                // may have: the hand-off stays ambiguous.
+                tracing::warn!(
+                    source = %source,
+                    event_id = %event_id,
+                    attempt = n + 1,
+                    error = %error,
+                    "[inbound] queues unavailable after an unanswered ingest; the queues may hold the event"
+                );
+                return HandOff::Ambiguous(format!("ingest failed: {last}; then {error}"));
             }
             Attempt::Unknown(error) => {
                 tracing::warn!(
