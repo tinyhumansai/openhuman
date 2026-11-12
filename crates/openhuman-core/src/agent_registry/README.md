@@ -133,13 +133,18 @@ ranking works.
 fields an agent TOML may author beside the portable TinyAgents ones:
 `omit_identity`, `omit_memory_context`, `omit_safety_preamble`,
 `tokenjuice_compression`, `refresh_prompt_on_resume`, `memory_block`,
-`searches_connected_mcp`, and `scheduled_actions`.
+`searches_connected_mcp`, `scheduled_actions`, and `scheduled_workspace`.
 
 `scheduled_actions = true` lets a cron job that names this agent in `agent_id`
 use acting tools without a person's approval. It is honoured only with an
 explicit `[tools] named = [...]` scope (never the wildcard), outside SaaS mode,
 and only for the job's own root run; sub-agents stay read-only. Default `false`.
 See [`cron/README.md`](../cron/README.md#scheduled-actions-opt-in).
+
+`scheduled_workspace` roots a cron run of the agent at a directory of its own
+(relative paths resolve against `action_dir`), so its shell and file tools work
+there and a sandboxed shell asks for that root rather than the whole action
+dir. See [`cron/README.md`](../cron/README.md#scheduled-workspace).
 
 ## Called by
 
