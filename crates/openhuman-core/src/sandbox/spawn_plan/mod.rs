@@ -66,6 +66,13 @@ impl std::fmt::Display for PlanError {
 
 impl std::error::Error for PlanError {}
 
+/// The error for a denial the module returned: its own, unless the host can say
+/// why a `Path` refusal happened.
+fn refusal(denial: SandboxDenial2, policy: &SandboxPolicy, config: &Config) -> PlanError {
+    let _ = (policy, config);
+    PlanError::Refused(denial)
+}
+
 fn unavailable(reason: impl Into<String>) -> PlanError {
     PlanError::Unavailable(reason.into())
 }
