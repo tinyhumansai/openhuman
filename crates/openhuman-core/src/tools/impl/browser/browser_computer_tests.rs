@@ -17,7 +17,7 @@ fn browser_tools_are_deferred_and_task_is_bounded() {
     let client = Arc::new(BrowserClient::new(Arc::new(
         crate::config::Config::default(),
     )));
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 0);
+    let tool = BrowserTool::new(client, 0);
     assert_eq!(tool.exposure(), tinytools::ToolExposure::Deferred);
     assert_eq!(tool.max_steps, 1);
     let actions = tool.parameters_schema()["properties"]["action"]["enum"]
@@ -117,7 +117,6 @@ fn direct_actions_decode_through_the_bus_tool_args() {
 #[test]
 fn model_visible_browser_schema_is_the_bus_schema() {
     let tool = BrowserTool::new(
-        std::sync::Arc::new(crate::security::SecurityPolicy::default()),
         std::sync::Arc::new(BrowserClient::new(std::sync::Arc::new(
             crate::config::Config::default(),
         ))),
@@ -153,7 +152,7 @@ async fn needs_approval_view_is_held_behind_a_token_and_cleared_by_other_states(
     let client = Arc::new(BrowserClient::new(Arc::new(
         crate::config::Config::default(),
     )));
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+    let tool = BrowserTool::new(client, 3);
     let paused: TaskView = serde_json::from_value(json!({
         "id": "t-1",
         "status": {"state": "needs_approval", "action": "Send the message", "target": "Send"},
@@ -191,7 +190,7 @@ async fn confirm_pending_without_a_held_action_is_refused() {
     let client = Arc::new(BrowserClient::new(Arc::new(
         crate::config::Config::default(),
     )));
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+    let tool = BrowserTool::new(client, 3);
     let error = tool
         .run(&json!({"action":"confirm_pending","token":"x"}), None)
         .await
@@ -215,7 +214,7 @@ async fn task_without_allowed_websites_is_refused_before_the_module() {
         crate::config::Config::default(),
     )));
     if client.task_origins().is_empty() {
-        let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+        let tool = BrowserTool::new(client, 3);
         let error = tool
             .run(&json!({"action":"task","goal":"Read the news"}), None)
             .await
@@ -235,11 +234,11 @@ async fn a_second_turn_reuses_the_thread_session_and_close_removes_it() {
         key.clone(),
         session_entry(client.clone(), id.clone(), Instant::now()),
     );
-    let first = BrowserTool::new(Arc::new(SecurityPolicy::default()), client.clone(), 3);
+    let first = BrowserTool::new(client.clone(), 3);
     *first.thread_key.lock().unwrap() = Some(key.clone());
     assert_eq!(first.session().await.unwrap(), id);
     drop(first);
-    let second = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+    let second = BrowserTool::new(client, 3);
     *second.thread_key.lock().unwrap() = Some(key.clone());
     assert_eq!(second.session().await.unwrap(), id);
     // The module is absent in this test; close still removes the thread entry
@@ -256,7 +255,7 @@ async fn evicted_session_is_not_reused_by_the_same_tool() {
     let key = format!("test:{}", uuid::Uuid::new_v4());
     let old = SessionId::new("evicted-browser");
     let replacement = SessionId::new("replacement-browser");
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client.clone(), 3);
+    let tool = BrowserTool::new(client.clone(), 3);
     *tool.thread_key.lock().unwrap() = Some(key.clone());
     thread_sessions().lock().await.insert(
         key.clone(),
@@ -280,7 +279,7 @@ async fn stale_tool_close_preserves_a_newer_thread_session() {
         crate::config::Config::default(),
     )));
     let key = format!("test:{}", uuid::Uuid::new_v4());
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client.clone(), 3);
+    let tool = BrowserTool::new(client.clone(), 3);
     *tool.thread_key.lock().unwrap() = Some(key.clone());
     *tool.session.lock().await = Some(SessionId::new("old-browser"));
     thread_sessions().lock().await.insert(
@@ -327,7 +326,7 @@ async fn changed_browser_policy_retires_cached_session_for_same_thread() {
         key.clone(),
         session_entry(old_client, old_id.clone(), Instant::now()),
     );
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), new_client, 3);
+    let tool = BrowserTool::new(new_client, 3);
     *tool.thread_key.lock().unwrap() = Some(key.clone());
     *tool.session.lock().await = Some(old_id.clone());
     let result = tool.session().await;
@@ -412,7 +411,7 @@ async fn task_rejects_a_malformed_flow_before_the_module() {
     let client = Arc::new(BrowserClient::new(Arc::new(
         crate::config::Config::default(),
     )));
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+    let tool = BrowserTool::new(client, 3);
     let error = tool
         .run(
             &json!({"action":"task","goal":"Read the news","flow":{"steps":"not a list"}}),
@@ -478,7 +477,7 @@ async fn two_agents_on_one_thread_get_distinct_browser_session_keys() {
         let client = client.clone();
         async move {
             CoreContext::scope(ctx, async move {
-                let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+                let tool = BrowserTool::new(client, 3);
                 let _ = tool
                     .execute_with_context(
                         json!({}),

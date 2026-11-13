@@ -4,8 +4,6 @@ use crate::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE
 use crate::security::AuditSink;
 use crate::tools::ops::{all_tools, tool_group};
 use tempfile::TempDir;
-use tinytools::ToolContent;
-use tinytools::ToolResult;
 
 fn test_config(tmp: &TempDir) -> Config {
     let mut config = Config {
@@ -29,13 +27,6 @@ fn assert_contains_all(names: &[String], expected: &[&str]) {
             names.iter().any(|n| n == name),
             "expected tool `{name}` to be registered; got: {names:?}"
         );
-    }
-}
-
-fn only_json_content(result: &ToolResult) -> &serde_json::Value {
-    match result.content.as_slice() {
-        [ToolContent::Json { data }] => data,
-        other => panic!("expected a single JSON content block, got {other:?}"),
     }
 }
 
@@ -144,17 +135,6 @@ const PRODUCTIVITY_ALWAYS_ON: &[&str] = &[
 ];
 
 // ── Theme: Knowledge & memory ───────────────────────────────────────────────
-
-const KNOWLEDGE_TOOLS: &[&str] = &[
-    "list_workflows",
-    "describe_workflow",
-    "read_workflow_resource",
-    "list_workflow_runs",
-    "read_workflow_run_log",
-    "create_skill",
-    "install_workflow_from_url",
-    "uninstall_workflow",
-];
 
 fn knowledge_default_off() -> Vec<&'static str> {
     let mut tools: Vec<&'static str> = Vec::new();

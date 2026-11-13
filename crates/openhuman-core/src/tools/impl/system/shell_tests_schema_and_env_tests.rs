@@ -127,7 +127,7 @@ async fn shell_destructive_command_is_gated_not_run_inline() {
 /// This test constructs a `SecurityPolicy` whose `action_dir` is a
 /// fresh tempdir (distinct from `workspace_dir` and from `cwd`),
 /// runs `pwd`, and asserts the captured stdout canonicalises to the
-/// same path as `action_dir`. If `ShellTool::run_with_security`
+/// same path as `action_dir`. If `ShellTool::run_with_security_in_context`
 /// stops passing `&security.action_dir` as the module request's working
 /// directory, this
 /// test fails before the regression ships.
@@ -173,7 +173,7 @@ async fn shell_pwd_returns_action_dir_not_workspace_dir() {
         actual,
         expected,
         "pwd must report `action_dir`. got `{}`, expected `{}`. \
-         If this fails, `ShellTool::run_with_security` likely stopped \
+         If this fails, `ShellTool::run_with_security_in_context` likely stopped \
          passing `&security.action_dir` as the native shell request's cwd. See #3238.",
         actual.display(),
         expected.display(),

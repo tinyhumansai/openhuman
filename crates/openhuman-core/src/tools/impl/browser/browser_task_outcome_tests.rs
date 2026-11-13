@@ -11,7 +11,7 @@ fn tool() -> BrowserTool {
     let client = Arc::new(BrowserClient::new(Arc::new(
         crate::config::Config::default(),
     )));
-    BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3)
+    BrowserTool::new(client, 3)
 }
 
 fn view(status: Value, summary: &str) -> TaskView {

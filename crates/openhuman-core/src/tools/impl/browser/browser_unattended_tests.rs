@@ -268,7 +268,7 @@ async fn dispatch_click(origin: AgentTurnOrigin, actions: &[&str]) -> (String, S
             bound_origin: None,
         },
     );
-    let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+    let tool = BrowserTool::new(client, 3);
     *tool.thread_key.lock().unwrap() = Some(key.clone());
     let context = CoreContext::for_test(DomainSet::full(), None);
     let result = CoreContext::scope_with_turn_origin(
@@ -316,11 +316,8 @@ async fn a_cron_browser_call_passes_the_security_gate_to_reach_the_unattended_pa
         ..SecurityPolicy::default()
     });
     for origin in [cron(), automation(TrustedAutomationSource::CronActions)] {
-        let browser: Box<dyn Tool> = Box::new(BrowserTool::new(
-            Arc::new(SecurityPolicy::default()),
-            Arc::new(offline_client(&["click"])),
-            3,
-        ));
+        let browser: Box<dyn Tool> =
+            Box::new(BrowserTool::new(Arc::new(offline_client(&["click"])), 3));
         assert!(!browser.external_effect_with_args(&args));
         let gate = crate::agent::tinyagents::host::OpenHumanSecurityGate::new(
             policy.clone(),
