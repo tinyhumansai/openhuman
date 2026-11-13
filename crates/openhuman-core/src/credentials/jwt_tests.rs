@@ -8,22 +8,6 @@ fn jwt_with_payload(payload_json: &str) -> String {
 }
 
 #[test]
-fn bearer_value_trims_surrounding_whitespace_only() {
-    assert_eq!(bearer_authorization_value("my_token"), "Bearer my_token");
-    assert_eq!(
-        bearer_authorization_value("  spaced_token  "),
-        "Bearer spaced_token"
-    );
-    assert_eq!(bearer_authorization_value(""), "Bearer ");
-    assert_eq!(bearer_authorization_value("   "), "Bearer ");
-    // Interior whitespace is preserved — see the doc comment.
-    assert_eq!(
-        bearer_authorization_value("token with spaces"),
-        "Bearer token with spaces"
-    );
-}
-
-#[test]
 fn decode_jwt_payload_reads_claims_and_accepts_padded_base64() {
     let token = jwt_with_payload(r#"{"sub":"u1","exp":1700000000}"#);
     let payload = decode_jwt_payload(&token).unwrap();

@@ -94,7 +94,7 @@ impl Tool for CredentialListTool {
             .and_then(Value::as_str)
             .map(str::to_string);
         emit!(
-            credentials::list_provider_credentials(&self.config, provider).await,
+            credentials::ops::list_provider_credentials(&self.config, provider).await,
             "credential_list"
         )
     }
@@ -131,7 +131,7 @@ impl Tool for SessionStateTool {
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][credentials] session_state invoked");
         emit!(
-            credentials::auth_get_state(&self.config).await,
+            credentials::ops::auth_get_state(&self.config).await,
             "session_state"
         )
     }

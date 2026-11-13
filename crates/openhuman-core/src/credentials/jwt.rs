@@ -1,4 +1,4 @@
-//! Session JWT load and `Authorization` helpers for the TinyHumans API.
+//! Session JWT read helpers for the TinyHumans API.
 //!
 //! The backend issues a bare JWT as the session token. These helpers *read*
 //! it — they never verify it. The backend stays the authority on validity: a
@@ -11,22 +11,11 @@
 //! needs it on a core that has no TinyHumans connection at all.
 //!
 //! What stays OpenHuman-specific is *where the token lives*: the credentials
-//! store, keyring, and auth-profile names below.
+//! store, keyring and auth-profile names, which the parent module owns.
 
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-
-/// Format a token as an `Authorization: Bearer …` header value.
-///
-/// Surrounding whitespace is trimmed — tokens pasted by hand or read from a
-/// file routinely carry a trailing newline, and the backend rejects the header
-/// if it survives. Interior whitespace is left alone: it cannot appear in a
-/// well-formed JWT, so trimming it would mask a malformed token rather than
-/// fix one.
-pub fn bearer_authorization_value(token: &str) -> String {
-    format!("Bearer {}", token.trim())
-}
 
 /// Decode a JWT's payload without verifying the signature.
 ///
@@ -52,8 +41,6 @@ pub fn decode_jwt_exp_unix(token: &str) -> Option<i64> {
         .get("exp")
         .and_then(|value| value.as_i64().or_else(|| value.as_f64().map(|f| f as i64)))
 }
-
-pub use crate::credentials::{APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 
 /// Best-effort decode of a JWT's `exp` (expiry) claim into a UTC timestamp.
 ///

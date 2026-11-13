@@ -23,8 +23,6 @@ pub use http_creds::{
     HttpCredential, HttpCredentialScheme, HttpCredentialSummary, HttpCredentialsStore,
 };
 pub use jwt::user_id_from_profile_payload;
-pub use ops as rpc;
-pub use ops::*;
 pub use profiles::{AuthProfile, AuthProfileKind, TokenSet};
 // Direct-mode (BYO Composio API key) credential helpers.
 pub use ops::{

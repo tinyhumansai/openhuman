@@ -49,7 +49,8 @@ fn credential_schema_wire_contracts_are_preserved() {
 fn deserialize_params_parses_set_credential_request() {
     let mut m = Map::new();
     m.insert("token".into(), Value::String("abc".into()));
-    let parsed: crate::security::credentials::SetCredentialRequest = deserialize_params(m).unwrap();
+    let parsed: crate::security::credentials::ops::SetCredentialRequest =
+        deserialize_params(m).unwrap();
     assert_eq!(parsed.token, "abc");
     assert!(parsed.kind.is_none());
     assert!(parsed.user_id.is_none());
@@ -63,7 +64,7 @@ fn deserialize_params_honours_userid_camel_and_snake_case() {
         m.insert("token".into(), Value::String("abc".into()));
         m.insert(key.into(), Value::String("u1".into()));
         m.insert("kind".into(), Value::String("session".into()));
-        let parsed: crate::security::credentials::SetCredentialRequest =
+        let parsed: crate::security::credentials::ops::SetCredentialRequest =
             deserialize_params(m).unwrap();
         assert_eq!(parsed.user_id.as_deref(), Some("u1"), "{key}");
         assert_eq!(parsed.kind.as_deref(), Some("session"));
@@ -73,8 +74,9 @@ fn deserialize_params_honours_userid_camel_and_snake_case() {
 #[test]
 fn deserialize_params_reports_missing_required_fields() {
     // `token` is required — an empty object must fail.
-    let err = deserialize_params::<crate::security::credentials::SetCredentialRequest>(Map::new())
-        .unwrap_err();
+    let err =
+        deserialize_params::<crate::security::credentials::ops::SetCredentialRequest>(Map::new())
+            .unwrap_err();
     assert!(err.contains("invalid params"));
 }
 
