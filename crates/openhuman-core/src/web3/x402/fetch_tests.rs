@@ -293,3 +293,64 @@ fn the_payment_amount_must_not_exceed_the_caller_cap() {
     let error = ensure_within_cap(2501, 2500).expect_err("over cap");
     assert!(error.starts_with(REFUSED_PREFIX), "{error}");
 }
+
+fn loopback_target(server: &wiremock::MockServer, path: &str) -> ValidatedUrl {
+    ValidatedUrl {
+        url: format!("{}{path}", server.uri()),
+        host: "127.0.0.1".into(),
+        addrs: vec![*server.address()],
+    }
+}
+
+#[tokio::test]
+async fn the_sign_in_retry_adds_the_credential_and_keeps_the_post() {
+    use wiremock::matchers::{body_string, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/x-accounts/start"))
+        .and(header(SIGN_IN_HEADER, "siwx-credential"))
+        .and(header("Idempotency-Key", "k1"))
+        .and(body_string(r#"{"username":"teeny"}"#))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let params = FetchParams {
+        url: String::new(),
+        method: reqwest::Method::POST,
+        headers: vec![("Idempotency-Key".into(), "k1".into())],
+        body: Some(r#"{"username":"teeny"}"#.into()),
+        max_amount_atomic: 1,
+        network: None,
+        sign_in: true,
+    };
+    let target = loopback_target(&server, "/api/x-accounts/start");
+
+    let response = send(&target, &params, Some((SIGN_IN_HEADER, "siwx-credential")))
+        .await
+        .expect("the retry reaches the server");
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn the_first_attempt_carries_no_sign_in_credential() {
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+    let params = parse_params(params(json!({
+        "url": "https://twitr.test/x", "maxAmountAtomic": 1, "signIn": true
+    })))
+    .expect("params");
+    send(&loopback_target(&server, "/x"), &params, None)
+        .await
+        .expect("sent");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(!requests[0].headers.contains_key(SIGN_IN_HEADER));
+}
