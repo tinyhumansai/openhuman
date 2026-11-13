@@ -6,35 +6,29 @@
 // module's imports. Split out of `spawn_subagent_workflow.rs` to keep it under
 // the layout check's line limit.
 
-/// [`saved_flow_presence`] on the blocking pool. The `flows.get` handler
-/// reaches the flow catalog through the storage bridge, which waits
-/// synchronously (up to the catalog proxy's timeout); on the live spawn path
-/// that must not park an async worker. The probe runs under `ctx`. A task
-/// failure reads as `Unknown`, which keeps the note, like a lookup error.
+/// [`saved_flow_presence`] without parking an async worker. The `flows.get`
+/// handler reaches the flow catalog through the storage bridge, which waits
+/// synchronously (up to the catalog proxy's timeout). On a multi-threaded
+/// runtime the probe runs under `block_in_place`, which hands this worker's
+/// other tasks to another worker while it waits; the probe stays in this task,
+/// so it keeps `ctx`. A current-thread runtime (unit tests) has no other worker
+/// to hand off to, so the probe is simply awaited there.
 async fn saved_flow_presence_off_worker(
     ctx: &DispatchCtx,
     thread_id: &str,
     flow_id: &str,
 ) -> SavedFlowPresence {
-    let probe_ctx = ctx.clone();
-    let scope_ctx = ctx.clone();
-    let owned_flow_id = flow_id.to_string();
-    let handle = tokio::runtime::Handle::current();
-    let probe = tokio::task::spawn_blocking(move || {
-        handle.block_on(scope_ctx.enter(async move {
-            saved_flow_presence(&probe_ctx, &owned_flow_id).await
-        }))
-    })
-    .await;
-    match probe {
-        Ok(presence) => presence,
-        Err(error) => {
-            log::warn!(
-                "[spawn_subagent] saved-flow presence probe failed thread_id={thread_id} \
-                 flow_id={flow_id} error={error}"
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            log::trace!(
+                "[spawn_subagent] saved-flow presence probe in block_in_place \
+                 thread_id={thread_id} flow_id={flow_id}"
             );
-            SavedFlowPresence::Unknown
+            tokio::task::block_in_place(|| {
+                handle.block_on(ctx.enter(saved_flow_presence(ctx, flow_id)))
+            })
         }
+        _ => saved_flow_presence(ctx, flow_id).await,
     }
 }
 
