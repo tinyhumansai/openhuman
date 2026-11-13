@@ -204,6 +204,407 @@ fn record_agent_saved_workflow(
     }
 }
 
+/// A delivered workflow proposal in the parent thread: the proposal message
+/// id, the proposal name, the `draft_id` / `flow_id` the proposal payload
+/// carries when it derives from an existing draft or flow, and the flow id
+/// the card (or the agent) recorded on it (`saved_flow_id`, #8450) when it
+/// was saved. Listings are newest first; a later revision does not inherit
+/// an earlier save, so only messages with their own `saved_flow_id` count
+/// as saved.
+pub(crate) struct ThreadWorkflowProposal {
+    pub(crate) message_id: String,
+    pub(crate) name: String,
+    pub(crate) draft_id: Option<String>,
+    pub(crate) flow_id: Option<String>,
+    pub(crate) saved_flow_id: Option<String>,
+}
+
+impl ThreadWorkflowProposal {
+    /// Whether this proposal was saved from its card: it carries a
+    /// non-empty `saved_flow_id` of its own. A later revision does not
+    /// inherit an earlier save, so only its own id counts.
+    pub(crate) fn is_saved(&self) -> bool {
+        self.saved_flow_id
+            .as_deref()
+            .is_some_and(|id| !id.is_empty())
+    }
+}
+
+/// The workflow proposals in the parent thread, newest first. Best-effort:
+/// a store read failure returns an empty list and logs, like
+/// `record_agent_saved_workflow`, so a lookup failure never blocks a spawn.
+pub(crate) fn workflow_proposals_in_thread(
+    ctx: &DispatchCtx,
+    workspace_dir: &std::path::Path,
+    thread_id: &str,
+) -> Vec<ThreadWorkflowProposal> {
+    let messages = match conversations::get_messages(ctx, workspace_dir.to_path_buf(), thread_id) {
+        Ok(messages) => messages,
+        Err(error) => {
+            log::warn!(
+                "[spawn_subagent] saved-proposal lookup failed thread_id={thread_id} error={error}"
+            );
+            return Vec::new();
+        }
+    };
+    messages
+        .iter()
+        .rev()
+        .filter_map(|message| {
+            let meta = &message.extra_metadata;
+            if meta["scope"] != "workflow_proposal" {
+                return None;
+            }
+            let proposal = &meta["proposal"];
+            let name = proposal["name"].as_str()?;
+            if name.is_empty() {
+                return None;
+            }
+            let text_field = |field: &str| {
+                proposal
+                    .get(field)
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            };
+            Some(ThreadWorkflowProposal {
+                message_id: message.id.clone(),
+                name: name.to_string(),
+                draft_id: text_field("draft_id"),
+                flow_id: text_field("flow_id"),
+                saved_flow_id: meta
+                    .get("saved_flow_id")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string),
+            })
+        })
+        .collect()
+}
+
+/// The workflow proposals the user already saved from their cards, newest
+/// first (#8450). See [`workflow_proposals_in_thread`].
+pub(crate) fn already_saved_workflow_proposals(
+    ctx: &DispatchCtx,
+    workspace_dir: &std::path::Path,
+    thread_id: &str,
+) -> Vec<ThreadWorkflowProposal> {
+    workflow_proposals_in_thread(ctx, workspace_dir, thread_id)
+        .into_iter()
+        .filter(ThreadWorkflowProposal::is_saved)
+        .collect()
+}
+
+/// The proposal a `workflow_builder` hand-off is about, if the hand-off
+/// identifies one. Identity first: a `draft_id` or `flow_id` the hand-off
+/// carries, as the orchestrator is told to pass them. Then by exact name.
+/// Names are not unique, so a name match takes the longest proposal name the
+/// hand-off carries — a hand-off naming "Daily Report" must not match a saved
+/// "Daily" — and among same-length names the newest proposal wins: when the
+/// newest proposal with that name is still unsaved, the hand-off is about the
+/// newer one, not an older saved namesake.
+fn hand_off_proposal<'a>(
+    proposals: &'a [ThreadWorkflowProposal],
+    hand_off: &str,
+) -> Option<&'a ThreadWorkflowProposal> {
+    // A draft is the strongest identity: it distinguishes revisions even
+    // when they share a saved flow id. Resolve it across the full proposal
+    // list before considering a flow id.
+    for proposal in proposals {
+        if proposal
+            .draft_id
+            .as_deref()
+            .is_some_and(|id| contains_target_id(hand_off, id))
+        {
+            return Some(proposal);
+        }
+    }
+    for proposal in proposals {
+        if proposal
+            .flow_id
+            .as_deref()
+            .is_some_and(|id| contains_target_id(hand_off, id))
+        {
+            return Some(proposal);
+        }
+    }
+    let mut best: Option<&ThreadWorkflowProposal> = None;
+    let mut ambiguous = false;
+    for proposal in proposals {
+        if !contains_target_name(hand_off, proposal.name.as_str()) {
+            continue;
+        }
+        let longer = match best {
+            None => true,
+            Some(current) => proposal.name.len() > current.name.len(),
+        };
+        if longer {
+            best = Some(proposal);
+            ambiguous = false;
+        } else if best.is_some_and(|current| proposal.name.len() == current.name.len()) {
+            ambiguous = true;
+        }
+    }
+    if ambiguous { None } else { best }
+}
+
+/// Note appended to a `workflow_builder` save hand-off when the proposal it
+/// names was already saved from its card, so the builder reports it as
+/// already saved instead of calling `create_workflow` and duplicating the
+/// flow (#8459). The `save_workflow` escape hatch covers a graph that changed
+/// alongside the save. Scoped to saving this proposal as-is: an explicit
+/// request for a separate variant or copy still creates a new flow.
+fn already_saved_proposal_note(name: &str, flow_id: &str) -> String {
+    format!(
+        "Note: the workflow proposal \"{name}\" was already saved from its card as flow `{flow_id}`. \
+         This applies only to saving this proposal as-is. Report it as already saved as `{flow_id}`. \
+         Do not call `create_workflow` for it. \
+         If its graph changed and needs updating, use `save_workflow` with flow_id `{flow_id}` \
+         instead of creating a new flow. \
+         If the request instead asks for a separate variant or copy of it, create that as a new flow as requested."
+    )
+}
+
+/// What `flows.get` said about a recorded `saved_flow_id`. `Unknown` keeps the
+/// link: a catalog outage must not send the builder off to create a second copy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SavedFlowPresence {
+    Present,
+    Missing,
+    Unknown,
+}
+
+/// `flows.get` reports a deleted id as `flow '<id>' not found`. Anything else
+/// (flows feature off, catalog down, config unreadable) is not proof the flow
+/// is gone.
+pub(crate) fn flow_get_means_missing(error: &str) -> bool {
+    let error = error.trim();
+    error.starts_with("flow '") && error.ends_with("' not found")
+}
+
+/// Classify a `flows.get` result. A missing id is `Missing`; every other
+/// error is `Unknown`.
+pub(crate) fn presence_from_flow_get(
+    result: &Result<serde_json::Value, String>,
+) -> SavedFlowPresence {
+    match result {
+        Ok(_) => SavedFlowPresence::Present,
+        Err(error) if flow_get_means_missing(error) => SavedFlowPresence::Missing,
+        Err(_) => SavedFlowPresence::Unknown,
+    }
+}
+
+/// Ask the flows controller whether `flow_id` is still stored. No `flows::`
+/// import: this module is always compiled, and the flows domain stays a leaf.
+async fn saved_flow_presence(ctx: &DispatchCtx, flow_id: &str) -> SavedFlowPresence {
+    let result = crate::core::invoke::invoke_method(
+        ctx.clone(),
+        crate::core::invoke::default_state(),
+        "openhuman.flows_get",
+        json!({ "id": flow_id }),
+    )
+    .await;
+    let presence = presence_from_flow_get(&result);
+    if presence == SavedFlowPresence::Unknown {
+        log::debug!(
+            "[spawn_subagent] saved-flow lookup unavailable flow_id={flow_id} \
+             error={}",
+            result.err().unwrap_or_default()
+        );
+    }
+    presence
+}
+
+/// Append the already-saved note, or return `prompt` unchanged when the
+/// recorded flow is gone.
+pub(crate) fn append_saved_flow_note(
+    prompt: String,
+    thread_id: &str,
+    proposal_id: &str,
+    name: &str,
+    flow_id: &str,
+    presence: SavedFlowPresence,
+) -> String {
+    if presence == SavedFlowPresence::Missing {
+        log::debug!(
+            "[spawn_subagent] saved-flow carry skipped thread_id={thread_id} \
+             proposal_id={proposal_id} flow_id={flow_id} reason=flow-missing"
+        );
+        return format!(
+            "{prompt}\n\nThe previously saved flow could not be found. Ignore any earlier note saying this proposal was already saved; it is not currently saved as that flow. You may save the proposal again as a new flow."
+        );
+    }
+    log::debug!(
+        "[spawn_subagent] saved-flow carry applied thread_id={thread_id} \
+         proposal_id={proposal_id} flow_id={flow_id} presence={presence:?}"
+    );
+    format!("{prompt}\n\n{}", already_saved_proposal_note(name, flow_id))
+}
+
+struct SavedCarry {
+    proposal_id: String,
+    name: String,
+    flow_id: String,
+}
+
+/// The saved proposal a hand-off identifies, or `None` when the prompt should
+/// be returned unchanged. Logs the skip reason.
+fn saved_carry_for_hand_off(
+    ctx: &DispatchCtx,
+    workspace_dir: &std::path::Path,
+    thread_id: &str,
+    prompt: &str,
+    context: Option<&str>,
+) -> Option<SavedCarry> {
+    let proposals = workflow_proposals_in_thread(ctx, workspace_dir, thread_id);
+    let hand_off = match context {
+        Some(context) if !context.trim().is_empty() => format!("{prompt}\n{context}"),
+        _ => prompt.to_string(),
+    };
+    let Some(proposal) = hand_off_proposal(&proposals, &hand_off) else {
+        log::debug!(
+            "[spawn_subagent] saved-flow carry skipped thread_id={thread_id} reason=no-matching-proposal"
+        );
+        return None;
+    };
+    let Some(flow_id) = proposal
+        .saved_flow_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+    else {
+        log::debug!(
+            "[spawn_subagent] saved-flow carry skipped thread_id={thread_id} proposal_id={} reason=proposal-unsaved",
+            proposal.message_id
+        );
+        return None;
+    };
+    Some(SavedCarry {
+        proposal_id: proposal.message_id.clone(),
+        name: proposal.name.clone(),
+        flow_id: flow_id.to_string(),
+    })
+}
+
+/// Carry a card-saved proposal into a `workflow_builder` hand-off (#8459):
+/// when the parent thread holds a proposal already saved from its card
+/// (`saved_flow_id`, #8450) and the hand-off — prompt or context — identifies
+/// that proposal (see [`hand_off_proposal`]), append a note so the builder
+/// reports it as already saved instead of calling `create_workflow` and
+/// creating a second copy. The carry decision is logged with the thread and
+/// flow ids, never the prompt or the proposal name. Returns the prompt
+/// unchanged when there is no parent thread, no proposal is identified, or
+/// the identified proposal is still unsaved.
+///
+/// This does not check that the flow row still exists. The spawn path uses
+/// [`carry_saved_flow`], which drops the note when `flows.get` reports the id
+/// missing.
+pub(crate) fn carry_saved_flow_matched(
+    ctx: &DispatchCtx,
+    workspace_dir: &std::path::Path,
+    thread_id: &Option<String>,
+    prompt: String,
+    context: Option<&str>,
+) -> String {
+    let Some(thread_id) = thread_id.as_deref() else {
+        return prompt;
+    };
+    let Some(saved) = saved_carry_for_hand_off(ctx, workspace_dir, thread_id, &prompt, context)
+    else {
+        return prompt;
+    };
+    append_saved_flow_note(
+        prompt,
+        thread_id,
+        &saved.proposal_id,
+        &saved.name,
+        &saved.flow_id,
+        SavedFlowPresence::Present,
+    )
+}
+
+/// [`carry_saved_flow_matched`] for a live spawn: skip the note when the
+/// recorded flow has been deleted, so the builder can save the proposal again.
+/// A lookup that cannot tell (flows off, catalog error) still appends the note.
+pub(crate) async fn carry_saved_flow(
+    ctx: &DispatchCtx,
+    workspace_dir: &std::path::Path,
+    thread_id: &Option<String>,
+    prompt: String,
+    context: Option<&str>,
+) -> String {
+    let Some(thread_id) = thread_id.as_deref() else {
+        return prompt;
+    };
+    // The thread read is synchronous storage I/O; keep it off the async
+    // worker so a large thread or a slow store does not stall the runtime.
+    let lookup = {
+        let ctx = ctx.clone();
+        let workspace_dir = workspace_dir.to_path_buf();
+        let thread_id = thread_id.to_string();
+        let prompt = prompt.clone();
+        let context = context.map(str::to_string);
+        let task_ctx = ctx.clone();
+        task_ctx.spawn_blocking(move || {
+            saved_carry_for_hand_off(
+                &ctx,
+                &workspace_dir,
+                &thread_id,
+                &prompt,
+                context.as_deref(),
+            )
+        })
+        .await
+    };
+    let saved = match lookup {
+        Ok(Some(saved)) => saved,
+        Ok(None) => return prompt,
+        Err(error) => {
+            log::warn!(
+                "[spawn_subagent] saved-flow carry skipped thread_id={thread_id} \
+                 reason=lookup-task-failed error={error}"
+            );
+            return prompt;
+        }
+    };
+    let presence = saved_flow_presence_off_worker(ctx, thread_id, &saved.flow_id).await;
+    if presence == SavedFlowPresence::Missing {
+        // The note below invites the builder to save again; release the stale
+        // receipt so completion records the replacement flow on the proposal.
+        let task_ctx = ctx.clone();
+        let release_ctx = ctx.clone();
+        let workspace_dir = workspace_dir.to_path_buf();
+        let owned_thread_id = thread_id.to_string();
+        let proposal_id = saved.proposal_id.clone();
+        let flow_id = saved.flow_id.clone();
+        if let Err(error) = task_ctx
+            .spawn_blocking(move || {
+                release_missing_saved_flow(
+                    &release_ctx,
+                    &workspace_dir,
+                    &owned_thread_id,
+                    &proposal_id,
+                    &flow_id,
+                )
+            })
+            .await
+        {
+            log::warn!(
+                "[spawn_subagent] saved-flow receipt release task failed \
+                 thread_id={thread_id} flow_id={} error={error}",
+                saved.flow_id
+            );
+        }
+    }
+    append_saved_flow_note(
+        prompt,
+        thread_id,
+        &saved.proposal_id,
+        &saved.name,
+        &saved.flow_id,
+        presence,
+    )
+}
+
 /// Durably surface a workflow proposal found in a finished child's history:
 /// persist it as a parent-thread conversation message (metadata carries the
 /// full payload so the UI can rehydrate the proposal card after reload) and

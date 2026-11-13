@@ -210,8 +210,10 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
   /**
    * Record that the flow is persisted but not yet enabled, everywhere a
    * remount or reload reads it back from: this render, Redux, and the source
-   * message (`saved_flow_id`, merged into its metadata). Fire-and-forget for
-   * the message write: a failed mark only risks a duplicate on a later reload.
+   * message (`saved_flow_id`, merged into its metadata). The message write is
+   * what a later "save it" in chat reads, so a transient failure is retried.
+   * If it still fails, the link is gone and a later save can duplicate the
+   * flow; that is logged and does not fail the save the user already finished.
    */
   const markSaved = (flowId: string) => {
     setSavedFlowId(flowId);
@@ -224,13 +226,21 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
         sourceMessageId: proposal.sourceMessageId,
       })
     );
-    if (!proposal.sourceMessageId) return;
-    threadApi
-      .updateMessage(threadId, proposal.sourceMessageId, {
-        scope: 'workflow_proposal',
-        saved_flow_id: flowId,
-      })
-      .catch(e => log('markSaved message write failed (non-fatal): %o', e));
+    const messageId = proposal.sourceMessageId;
+    if (!messageId) return;
+    const writeSavedFlowId = (attempt: number) => {
+      threadApi
+        .updateMessage(threadId, messageId, { scope: 'workflow_proposal', saved_flow_id: flowId })
+        .catch(e => {
+          if (attempt < 3) {
+            log('markSaved message write failed (attempt %d), retrying', attempt);
+            writeSavedFlowId(attempt + 1);
+            return;
+          }
+          log('markSaved message write failed after retries (duplicate risk): %o', e);
+        });
+    };
+    writeSavedFlowId(1);
   };
 
   /**

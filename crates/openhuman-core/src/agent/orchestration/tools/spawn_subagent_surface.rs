@@ -372,6 +372,8 @@ include!("spawn_subagent_host_impl.rs");
 include!("spawn_subagent_request.rs");
 include!("spawn_subagent_projection.rs");
 include!("spawn_subagent_workflow.rs");
+include!("spawn_subagent_target_match.rs");
+include!("spawn_subagent_saved_flow_checks.rs");
 
 /// Format the user-facing acceptance text around a structured async sub-agent reference.
 ///
@@ -480,6 +482,10 @@ fn reusable_follow_up_message(prompt: &str, context: Option<&str>) -> String {
 #[cfg(test)]
 #[path = "spawn_subagent_async_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "spawn_subagent_saved_proposal_tests.rs"]
+mod saved_proposal_tests;
 
 #[cfg(test)]
 #[path = "spawn_subagent_tests.rs"]
