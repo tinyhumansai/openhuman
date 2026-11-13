@@ -341,21 +341,6 @@ fn test_provider_schema_exposes_the_dry_run_candidate_key() {
 }
 
 #[test]
-fn generate_silent_wav_produces_valid_wav_header() {
-    let wav = generate_silent_wav();
-    assert!(wav.len() >= 44, "WAV must have at least 44 bytes (header)");
-    assert_eq!(&wav[0..4], b"RIFF");
-    assert_eq!(&wav[8..12], b"WAVE");
-    assert_eq!(&wav[12..16], b"fmt ");
-    assert_eq!(&wav[36..40], b"data");
-    // 16kHz — the rate every routed STT engine takes without resampling.
-    let sample_rate = u32::from_le_bytes([wav[24], wav[25], wav[26], wav[27]]);
-    assert_eq!(sample_rate, 16_000, "fixture must be 16kHz");
-    // total size = header(44) + 1600 samples * 2 bytes = 3244
-    assert_eq!(wav.len(), 3244);
-}
-
-#[test]
 fn stt_dispatch_params_all_optional_except_audio() {
     let params = Map::from_iter([("audio_base64".to_string(), json!("AAAA"))]);
     let parsed = deserialize_params::<SttDispatchParams>(params).unwrap();
@@ -445,5 +430,34 @@ async fn validate_provider_key_prefers_the_candidate_over_an_absent_stored_key()
     assert!(
         with.contains("request failed"),
         "the candidate must carry the validator through to the provider request, got {with:?}"
+    );
+}
+
+/// The exact 44-byte header `EncodeWavPcm16` returns for the "Test STT" clip
+/// (the bytes the former in-core `generate_silent_wav` produced): 16kHz mono
+/// 16-bit PCM, 1600 samples, so RIFF size 3236, byte rate 32000, block align
+/// 2, data 3200. The body that follows is 3200 zero bytes.
+const SILENT_STT_WAV_HEADER: [u8; 44] = [
+    b'R', b'I', b'F', b'F', 0xa4, 0x0c, 0x00, 0x00, b'W', b'A', b'V', b'E', b'f', b'm', b't', b' ',
+    0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x80, 0x3e, 0x00, 0x00, 0x00, 0x7d, 0x00, 0x00,
+    0x02, 0x00, 0x10, 0x00, b'd', b'a', b't', b'a', 0x80, 0x0c, 0x00, 0x00,
+];
+
+#[test]
+fn silent_stt_clip_request_matches_the_pinned_wav_header() {
+    let le_u32 =
+        |at: usize| u32::from_le_bytes(SILENT_STT_WAV_HEADER[at..at + 4].try_into().unwrap());
+    let le_u16 =
+        |at: usize| u16::from_le_bytes(SILENT_STT_WAV_HEADER[at..at + 2].try_into().unwrap());
+    // 16kHz — the rate every routed STT engine takes without resampling.
+    assert_eq!(SILENT_CLIP_SAMPLE_RATE, 16_000, "fixture must be 16kHz");
+    assert_eq!(SILENT_CLIP_SAMPLES, 1_600, "0.1s of audio");
+    assert_eq!(le_u16(22), 1, "mono");
+    assert_eq!(le_u32(24), SILENT_CLIP_SAMPLE_RATE);
+    assert_eq!(le_u32(40) as usize, SILENT_CLIP_SAMPLES * 2, "data bytes");
+    assert_eq!(
+        le_u32(4) as usize,
+        36 + SILENT_CLIP_SAMPLES * 2,
+        "RIFF size"
     );
 }
