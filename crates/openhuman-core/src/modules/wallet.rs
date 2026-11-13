@@ -358,6 +358,17 @@ async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallErr
             )
         })?;
 
+    admit_attestation(record, &attestation, None)?;
+    Ok(proxy)
+}
+
+/// The decision [`attested_proxy`] makes once it holds an attestation.
+fn admit_attestation(
+    record: &super::ModuleRecord,
+    attestation: &tinybus::attest::Attestation,
+    host_code: Option<&str>,
+) -> Result<(), WalletCallError> {
+    let _ = host_code;
     if attestation.name.as_str() != record.bus_name {
         return Err(WalletCallError::Failed(format!(
             "the wallet module's attestation names '{}' rather than '{}'",
@@ -374,7 +385,7 @@ async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallErr
         ));
     }
 
-    Ok(proxy)
+    Ok(())
 }
 
 // Embedded library checksums verified from all 17 archives in the
