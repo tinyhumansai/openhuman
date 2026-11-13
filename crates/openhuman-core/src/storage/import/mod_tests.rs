@@ -214,42 +214,6 @@ fn an_import_claimed_by_another_process_waits_for_it_and_does_not_repeat_it() {
     assert!(dump(&backend, &source, "devices.paired").is_empty());
 }
 
-#[test]
-fn a_marker_row_an_older_build_wrote_counts_as_a_finished_import() {
-    let (_dir, config) = workspace();
-    legacy_device(&config, "chan-a", "Phone", false);
-    let backend = backend();
-    let source = devices();
-    let marker = marker_id(source.domain, &config.workspace_dir);
-    let scoped = backend.for_scope(&Scope::local()).unwrap();
-    let docs = Arc::clone(scoped.documents());
-    crate::storage::block_on(async move {
-        docs.ensure_collection(&tinystoragedrivers::CollectionSpec::new(MARKER_KIND))
-            .await?;
-        docs.put(
-            MARKER_KIND,
-            &marker,
-            serde_json::json!({ "version": 1, "found": 1, "written": 1 }),
-            Precondition::Absent,
-        )
-        .await
-    })
-    .unwrap();
-    // Boot moves the marker row into `tsd.migrations`.
-    let owned = scoped.clone();
-    crate::storage::block_on(async move {
-        crate::storage::import_state::migrate_legacy_markers(&owned).await
-    })
-    .unwrap();
-
-    assert!(is_done(&backend, &config, &source).unwrap());
-    assert_eq!(
-        outcome(run_with(&backend, &config, &[source])),
-        Outcome::AlreadyDone
-    );
-    assert!(dump(&backend, &source, "devices.paired").is_empty());
-}
-
 #[cfg(feature = "storage-sqlite")]
 #[tokio::test(flavor = "multi_thread")]
 async fn historical_profile_fixture_conversation_survives_layout_copy_and_owner_migration() {

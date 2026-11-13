@@ -11,10 +11,8 @@
 //! Each named value is one entry of tsd's key-value primitive
 //! (`tsd.kv`, owner `composio`, namespace `state`, [`tinystoragedrivers::Kv`]),
 //! keyed by the value name (`composio_identities.json`, ...), holding the
-//! serde value unwrapped. v1 kept it in a `composio_state` collection as
-//! `{"value": ...}`; [`migrate_legacy_state`] moves those at boot. The
-//! one-time import of a legacy `integrations/<name>` file is a
-//! `tsd.migrations` entry (owner `composio`,
+//! serde value unwrapped. The one-time import of a legacy
+//! `integrations/<name>` file is a `tsd.migrations` entry (owner `composio`,
 //! [`crate::storage::import_state`]), so the file itself is never touched.
 //!
 //! `Kv` has no read-modify-write, so [`Docs::update`] runs tsd's retrying
@@ -28,11 +26,10 @@ use anyhow::Result;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
-use tinystoragedrivers_types::{Capability, Query, StorageError};
 
 use crate::storage::documents::Repo;
 use crate::storage::import_state;
-use crate::storage::{state_kv::StateKv, DocumentStoreExt, Storage};
+use crate::storage::state_kv::StateKv;
 
 /// The `tsd.kv` owner and namespace of the state values.
 const KV_OWNER: &str = "composio";
@@ -41,8 +38,6 @@ const KV_NS: &str = "state";
 const IMPORT_OWNER: &str = "composio";
 /// The old marker collection, now the `kind` of an import's step.
 const IMPORT_KIND: &str = "composio_state_import";
-/// The v1 collection, `{"value": ...}` per document.
-const LEGACY_STATE: &str = "composio_state";
 const DOMAIN: &str = "composio::file_store";
 
 /// The document store for this call: the installed backend, else the
@@ -72,7 +67,7 @@ pub(super) struct Docs {
 
 impl Docs {
     #[cfg(test)]
-    pub(super) fn over(scoped: &Storage) -> Self {
+    pub(super) fn over(scoped: &crate::storage::Storage) -> Self {
         Self {
             repo: Repo::over(scoped, DOMAIN, Vec::new),
             state: StateKv::over(scoped, KV_OWNER, KV_NS),
@@ -151,52 +146,6 @@ impl Docs {
 
 fn import_step(name: &str) -> String {
     import_state::step_id(IMPORT_KIND, name)
-}
-
-/// Moves the v1 `composio_state` documents (`{"value": ...}`) into `tsd.kv`
-/// (owner `composio`, namespace `state`), then drops the collection. A value
-/// already in `tsd.kv` wins: it is newer. Returns the values moved.
-///
-/// A document step cannot write another owner's collection, so this is the
-/// boot-time importer that stands in for the step the catalogue lists for
-/// `composio_state` (schema-v2.md, host stores).
-///
-/// # Errors
-///
-/// A storage error; the values not yet moved stay in place for the next boot.
-pub(crate) async fn migrate_legacy_state(scoped: &Storage) -> Result<usize, StorageError> {
-    let docs = scoped.documents();
-    if !docs
-        .capabilities()
-        .contains(Capability::CollectionEnumeration)
-        || !docs
-            .collections("")
-            .await?
-            .iter()
-            .any(|name| name == LEGACY_STATE)
-    {
-        return Ok(0);
-    }
-    let store = StateKv::over(scoped, KV_OWNER, KV_NS);
-    let mut moved = 0;
-    for legacy in docs.query_all(LEGACY_STATE, &Query::all()).await? {
-        let Some(value) = legacy.doc.get("value") else {
-            continue;
-        };
-        if store
-            .get::<Value>(&legacy.id)
-            .map_err(|error| StorageError::backend(error.to_string()))?
-            .is_none()
-        {
-            store
-                .put(&legacy.id, value)
-                .map_err(|error| StorageError::backend(error.to_string()))?;
-            moved += 1;
-        }
-    }
-    docs.drop_collection(LEGACY_STATE).await?;
-    log::info!("[composio:store] moved {moved} legacy state values to tsd.kv");
-    Ok(moved)
 }
 
 #[cfg(test)]
