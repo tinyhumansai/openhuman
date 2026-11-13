@@ -127,6 +127,45 @@ fn events_named(sink: &Arc<Mutex<Vec<Value>>>, name: &str) -> Vec<Value> {
         .collect()
 }
 
+/// Approve every `spawn_subagent` approval card as it arrives, the way a user
+/// would under supervised autonomy. Only hand-off cards are answered, so a
+/// `create_workflow` card stays pending for the test to answer (or to assert
+/// was never raised). Abort the returned task at the end of the test.
+fn approve_handoff_cards(
+    events: &Arc<Mutex<Vec<Value>>>,
+    rpc_base: &str,
+) -> tokio::task::JoinHandle<()> {
+    let handoff_events = Arc::clone(events);
+    let handoff_base = rpc_base.to_string();
+    tokio::spawn(async move {
+        let mut answered = std::collections::HashSet::new();
+        let mut id = 1_000;
+        loop {
+            for card in events_named(&handoff_events, "approval_request") {
+                if card["tool_name"] != "spawn_subagent" {
+                    continue;
+                }
+                let Some(request_id) = card["request_id"].as_str() else {
+                    continue;
+                };
+                if !answered.insert(request_id.to_string()) {
+                    continue;
+                }
+                id += 1;
+                let decided = post_json_rpc(
+                    &handoff_base,
+                    id,
+                    "openhuman.approval_decide",
+                    json!({ "request_id": request_id, "decision": "approve_once" }),
+                )
+                .await;
+                assert_no_jsonrpc_error(&decided, "approval_decide for spawn_subagent");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+}
+
 /// Poll until `probe` returns `Some`, or panic with `what`.
 async fn wait_for<T, F, Fut>(what: &str, mut probe: F) -> T
 where
@@ -439,35 +478,7 @@ async fn chat_spawns_workflow_builder_and_saves_its_proposal() {
     // any external effect. This suite is about what follows the hand-off, so a
     // background user approves those cards; `create_workflow` stays for step 4,
     // which answers it itself.
-    let handoff_events = Arc::clone(&events);
-    let handoff_base = rpc_base.clone();
-    let handoff_task = tokio::spawn(async move {
-        let mut answered = std::collections::HashSet::new();
-        let mut id = 1_000;
-        loop {
-            for card in events_named(&handoff_events, "approval_request") {
-                if card["tool_name"] != "spawn_subagent" {
-                    continue;
-                }
-                let Some(request_id) = card["request_id"].as_str() else {
-                    continue;
-                };
-                if !answered.insert(request_id.to_string()) {
-                    continue;
-                }
-                id += 1;
-                let decided = post_json_rpc(
-                    &handoff_base,
-                    id,
-                    "openhuman.approval_decide",
-                    json!({ "request_id": request_id, "decision": "approve_once" }),
-                )
-                .await;
-                assert_no_jsonrpc_error(&decided, "approval_decide for spawn_subagent");
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    });
+    let handoff_task = approve_handoff_cards(&events, &rpc_base);
 
     // ── 1. the orchestrator spawns workflow_builder once and its turn ends ──
     let graph = three_step_graph();
@@ -906,6 +917,10 @@ async fn chat_card_save_then_agent_save_creates_no_second_flow() {
     )
     .await;
 
+    // Supervised autonomy asks before each hand-off; approve those like the
+    // agent-then-card test does, so the turns reach the behaviour under test.
+    let handoff_task = approve_handoff_cards(&events, &rpc_base);
+
     // ── 1. the orchestrator spawns workflow_builder once and its turn ends ──
     let graph = three_step_graph();
     push_forced_chat_completion_when(
@@ -1136,6 +1151,7 @@ async fn chat_card_save_then_agent_save_creates_no_second_flow() {
     );
 
     clear_forced_chat_completions();
+    handoff_task.abort();
     sse_task.abort();
     mock_join.abort();
     rpc_join.abort();
