@@ -93,8 +93,7 @@ pub use tinyinference_llm::model::ReasoningEffort;
 pub use openhuman_core::agent::tinyagents::host::LastTurnUsage;
 pub use openhuman_core::agent::{HostAttachment, HostTools, HostTurnTools, TurnContext};
 pub use openhuman_core::{
-    CoreBootMode, CoreBuilder, CoreRuntime, DaemonConfig, DomainSet, HostKind, ServiceSet,
-    TokenSource,
+    CoreBootMode, CoreBuilder, CoreRuntime, DomainSet, HostKind, ServiceSet, TokenSource,
 };
 /// Declarative execution requirements for host-owned tools, from the core's vendored contract.
 pub use tinytools::ToolPolicy;

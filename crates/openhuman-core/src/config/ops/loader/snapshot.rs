@@ -104,7 +104,6 @@ const DATA_KEYED_MAPS: &[&str] = &[
     "/inbound_debounce/by_channel",
     "/memory/agents",
     "/memory/engines",
-    "/reliability/model_fallbacks",
     "/runtime/reasoning_effort_by_model",
     "/search/providers",
     "/search/roles",

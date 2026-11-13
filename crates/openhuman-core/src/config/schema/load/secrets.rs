@@ -193,7 +193,6 @@ pub(crate) fn secret_slots(config: &mut Config) -> Vec<(String, SecretSlot<'_>)>
     let integrations = &mut config.integrations;
     for (name, toggle) in [
         ("google_places", &mut integrations.google_places),
-        ("parallel", &mut integrations.parallel),
         ("tinyfish", &mut integrations.tinyfish),
         ("stock_prices", &mut integrations.stock_prices),
     ] {
