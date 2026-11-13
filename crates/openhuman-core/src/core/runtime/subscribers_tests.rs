@@ -82,7 +82,7 @@ fn domain_subscriber_plan_harness_gates_by_owning_group() {
         !plan.hosted,
         "harness must skip hosted orchestration ingest"
     );
-    assert!(!plan.mcp, "harness must skip mcp_registry bus init");
+    assert!(!plan.mcp, "harness must skip mcp domain start");
 }
 
 #[test]

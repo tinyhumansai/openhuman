@@ -39,7 +39,7 @@ pub fn all_mcp_registry_registered_controllers() -> Vec<crate::core::all::Regist
 }
 
 // ---------------------------------------------------------------------------
-// Boot / lifecycle (mirrors `boot`, `bus`, `supervisor`)
+// Boot / lifecycle (mirrors `boot`, `supervisor`)
 // ---------------------------------------------------------------------------
 
 /// Boot-time spawn of installed local MCP servers.
@@ -52,16 +52,6 @@ pub mod boot {
     /// to "every server failed to spawn".
     pub async fn spawn_installed_servers(_config: &Config) {
         log::debug!("[mcp_registry] {DISABLED_MSG} — skipping installed-server spawn");
-    }
-}
-
-/// DomainEvent subscriber for MCP lifecycle logging.
-pub mod bus {
-    use super::*;
-
-    /// No-op: with no connection lifecycle there are no events to subscribe to.
-    pub fn init() {
-        log::debug!("[mcp_registry] {DISABLED_MSG} — event subscriber not registered");
     }
 }
 

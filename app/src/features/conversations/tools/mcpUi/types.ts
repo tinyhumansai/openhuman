@@ -1,6 +1,7 @@
 /**
  * The `mcp_ui` presentation the core attaches to a tool call that offered a
- * widget or a link (`crates/openhuman-core/src/mcp/ui/types.rs`).
+ * widget or a link (`tinymcp_bus::ui::McpUiPresentation`, used by
+ * `crates/openhuman-core/src/mcp/ui/`).
  */
 export type McpUiFlavor = 'mcp_apps' | 'apps_sdk' | 'host_inline';
 

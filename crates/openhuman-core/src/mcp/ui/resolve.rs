@@ -3,13 +3,9 @@
 //! The rules are `tinymcp_bus::ui`'s. This host keeps any widget document the
 //! result carried, so the frame can load it by id.
 
-pub use tinymcp_bus::ui::{
-    https_origins, is_ui_uri, resource_from_contents, view_from_envelope, view_from_raw_result,
-    MAX_STRUCTURED_BYTES, MAX_WIDGET_BYTES as MAX_RESOURCE_BYTES,
-};
+use tinymcp_bus::ui::{McpUiPresentation, UiCallView};
 
 use super::cache::{self, InlineEntry};
-use super::types::{McpUiPresentation, UiCallView};
 
 /// The presentation for one call, or `None` when it offered neither a widget
 /// nor a link. A document the result embedded is cached for the frame.

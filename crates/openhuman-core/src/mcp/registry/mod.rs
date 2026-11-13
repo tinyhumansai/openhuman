@@ -8,7 +8,6 @@
 //!
 //! # Modules
 //!
-//! - [`bus`] — the lifecycle subscriber that logs this domain's events.
 //! - [`ops`] — the `mcp_clients` RPC handlers, calling the module and
 //!   publishing this application's own events.
 //! - [`config_ops`] — the `config_get` / `config_set` handlers over the
@@ -32,8 +31,6 @@
 
 #[cfg(feature = "mcp")]
 pub mod action_tool;
-#[cfg(feature = "mcp")]
-pub mod bus;
 #[cfg(feature = "mcp")]
 pub mod config_ops;
 #[cfg(feature = "mcp")]
