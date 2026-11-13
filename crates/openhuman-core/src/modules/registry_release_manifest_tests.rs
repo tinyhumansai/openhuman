@@ -81,7 +81,7 @@ fn tinysecurity_registry_matches_the_published_release_manifest() {
 #[test]
 fn tinychannels_registry_matches_scoped_runtime_release() {
     let record = find("tinychannels").expect("compiled TinyChannels module");
-    assert_eq!(record.version, "0.2.0");
+    assert_eq!(record.version, "0.2.1");
     assert_eq!(tinychannels_bus::CONTRACT_VERSION, 33);
     assert_eq!(
         tinychannels_bus::module_relay::MODULE_OPERATION_VERSION,
