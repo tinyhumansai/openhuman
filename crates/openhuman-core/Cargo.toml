@@ -73,7 +73,7 @@ tinyflows-bus = { path = "../../vendor/tinyflows/crates/tinyflows-bus" }
 # `tinyagents-session` (durable session history + run ledger, previously gated
 # behind this crate's own `sqlite` feature — it is its own always-on crate now).
 # The `sqlite` feature is enabled on the harness now that openhuman's
-# direct rusqlite pin is aligned to 0.40, avoiding duplicate `links = "sqlite3"`
+# direct rusqlite pin is aligned to 0.41, avoiding duplicate `links = "sqlite3"`
 # native bindings. Durable graph checkpoints still use `SqlRunLedgerCheckpointer`
 # until the migration re-points those rows to the crate checkpointer.
 # The `repl` feature/`rhai` scripting engine no longer exists in the split crates

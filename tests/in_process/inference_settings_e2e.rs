@@ -37,6 +37,10 @@ async fn setup() -> TestHarness {
     ];
 
     let _ = openhuman_core::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins();
+    // The `openai_oauth_*` controllers are a hosted-layer extension
+    // (`openhuman_tinyhumans::provider_oauth`), registered by `install`. Under
+    // nextest this test owns its process, so nothing else boots it.
+    crate::tinyhumans_boot::boot();
 
     let (addr, join) = serve_rpc().await;
     TestHarness {

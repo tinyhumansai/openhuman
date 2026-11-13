@@ -161,27 +161,24 @@ async fn web_events_reach_client_and_thread_rooms_once_with_compat_aliases() {
     let (connected_tx, mut connected_rx) = tokio::sync::mpsc::unbounded_channel();
     io.ns("/", move |socket: SocketRef| {
         connected_tx.send(socket).expect("test receiver stays open");
+        std::future::ready(())
     });
 
     let (_initiator_tx, mut initiator_rx) = io.new_dummy_sock("/", ()).await;
     receive_connect(&mut initiator_rx).await;
     let initiator = connected_rx.recv().await.expect("initiator socket");
-    initiator.join("client-a").expect("join client room");
-    initiator.join("thread:thread-1").expect("join thread room");
+    initiator.join("client-a");
+    initiator.join("thread:thread-1");
 
     let (_reconnected_tx, mut reconnected_rx) = io.new_dummy_sock("/", ()).await;
     receive_connect(&mut reconnected_rx).await;
     let reconnected = connected_rx.recv().await.expect("reconnected peer socket");
-    reconnected
-        .join("thread:thread-1")
-        .expect("reconnected peer joins thread room");
+    reconnected.join("thread:thread-1");
 
     let (_unrelated_tx, mut unrelated_rx) = io.new_dummy_sock("/", ()).await;
     receive_connect(&mut unrelated_rx).await;
     let unrelated = connected_rx.recv().await.expect("unrelated peer socket");
-    unrelated
-        .join("thread:thread-2")
-        .expect("unrelated peer joins another thread");
+    unrelated.join("thread:thread-2");
 
     let done = next_scoped_event(WebChannelEvent::ChatDone {
         context: WebEventContext {
@@ -197,7 +194,7 @@ async fn web_events_reach_client_and_thread_rooms_once_with_compat_aliases() {
         parts: None,
     })
     .await;
-    emit_web_channel_event(&io, done);
+    emit_web_channel_event(&io, done).await;
 
     let initiator_packets = receive_messages(&mut initiator_rx, 2).await;
     let reconnected_packets = receive_messages(&mut reconnected_rx, 2).await;
@@ -234,7 +231,7 @@ async fn web_events_reach_client_and_thread_rooms_once_with_compat_aliases() {
         round: None,
     })
     .await;
-    emit_web_channel_event(&io, delta);
+    emit_web_channel_event(&io, delta).await;
 
     let initiator_delta = receive_messages(&mut initiator_rx, 1).await;
     let reconnected_delta = receive_messages(&mut reconnected_rx, 1).await;

@@ -91,3 +91,57 @@ fn payment_list_preserves_legacy_rpc_shape_and_rfc3339_values() {
         })
     );
 }
+
+#[test]
+fn fetch_controller_is_registered_with_its_schema() {
+    assert!(all_controller_schemas()
+        .iter()
+        .any(|schema| schema.namespace == "x402" && schema.function == "fetch"));
+    let registered = all_registered_controllers();
+    let fetch = registered
+        .iter()
+        .find(|controller| controller.schema.function == "fetch")
+        .expect("x402 fetch controller is registered");
+    let required: Vec<&str> = fetch
+        .schema
+        .inputs
+        .iter()
+        .filter(|field| field.required)
+        .map(|field| field.name)
+        .collect();
+    assert_eq!(required, vec!["url", "maxAmountAtomic"]);
+}
+
+#[test]
+fn update_budget_reads_every_input_the_schema_declares() {
+    let schema = schemas("update_budget");
+    let mut params = Map::new();
+    for (index, input) in schema.inputs.iter().enumerate() {
+        params.insert(input.name.to_string(), json!(100 * (index as u64 + 1)));
+    }
+    assert_eq!(params.len(), 3, "schema declares three limits");
+
+    let parsed = parse_update_budget(params).expect("schema param names parse");
+    assert_eq!(parsed.per_request_max, Some(100));
+    assert_eq!(parsed.daily_max, Some(200));
+    assert_eq!(parsed.monthly_max, Some(300));
+}
+
+#[test]
+fn fetch_schema_admits_the_network_pin_and_sign_in() {
+    let params = json!({
+        "url": "https://api.example.test/tools/x_read",
+        "method": "POST",
+        "maxAmountAtomic": 2_400,
+        "network": "eip155:8453",
+        "signIn": true,
+    });
+    crate::core::all::validate_params(&schemas("fetch"), params.as_object().unwrap())
+        .expect("x402.fetch declares network and signIn");
+
+    let wrong = json!({"url": "https://a.test", "maxAmountAtomic": 1, "signIn": "yes"});
+    assert!(
+        crate::core::all::validate_params(&schemas("fetch"), wrong.as_object().unwrap()).is_err(),
+        "signIn is a bool"
+    );
+}

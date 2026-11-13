@@ -48,10 +48,9 @@ pub fn offline_config() -> Config {
     // but unrelated to these tests' contracts and would race the final
     // ephemeral-workspace cleanup assertion.
     config.memory.conversations.enabled = false;
-    // Session-store dual writes and shadow reads are also deliberately
-    // fire-and-forget; leaving them on makes their detached filesystem work
-    // race the synchronous ephemeral cleanup.
-    config.agent.session_dual_write = false;
+    // Session-store shadow reads are also deliberately fire-and-forget;
+    // leaving them on makes their detached filesystem work race the
+    // synchronous ephemeral cleanup.
     config.agent.session_shadow_reads = false;
     config.default_temperature = 0.0;
     config

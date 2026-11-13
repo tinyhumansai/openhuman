@@ -419,6 +419,7 @@ impl OpenHumanSessionHost {
             .permanent_tool_names(merged_host_tools.permanent)
             .deferred_tools(target_def.map_or_else(Vec::new, |d| d.deferred_tools.clone()))
             .tool_dispatcher(tool_dispatcher)
+            .security_policy(Arc::clone(&security))
             .prompt_builder(prompt_builder)
             .config(effective_agent_config)
             .context_config(config.context.harness.clone())

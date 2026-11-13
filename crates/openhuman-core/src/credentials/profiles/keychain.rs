@@ -6,6 +6,8 @@ use anyhow::Context;
 pub(super) enum KeyringConsentError {
     Denied,
     Pending,
+    /// Not asked: see [`without_keyring`].
+    HeldBack,
 }
 
 impl std::fmt::Display for KeyringConsentError {
@@ -13,11 +15,34 @@ impl std::fmt::Display for KeyringConsentError {
         match self {
             Self::Denied => f.write_str("human denied this keyring operation"),
             Self::Pending => f.write_str("keyring operation approval timed out"),
+            Self::HeldBack => f.write_str("keyring not asked while no one can approve it"),
         }
     }
 }
 
 impl std::error::Error for KeyringConsentError {}
+
+tokio::task_local! {
+    /// Present while `future` given to [`without_keyring`] runs.
+    static KEYRING_HELD_BACK: ();
+}
+
+/// Run `future` without asking the keyring for anything. The keyring is
+/// TinySecurity's, so asking it while TinySecurity is still loading waits on
+/// that same load; and before the core serves RPC no prompt can be answered.
+/// Profiles held there read as unavailable instead, and a write is refused
+/// rather than moved into the document.
+pub(crate) async fn without_keyring<F: std::future::Future>(future: F) -> F::Output {
+    KEYRING_HELD_BACK.scope((), future).await
+}
+
+/// Refuses inside [`without_keyring`], before anything is asked or forgotten.
+fn refuse_held_back() -> anyhow::Result<()> {
+    match KEYRING_HELD_BACK.try_with(|_| ()) {
+        Ok(()) => Err(anyhow::Error::new(KeyringConsentError::HeldBack)),
+        Err(_) => Ok(()),
+    }
+}
 
 pub(super) fn is_consent_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<KeyringConsentError>().is_some()
@@ -80,6 +105,9 @@ where
         log::debug!("[auth] keyring read served from this process's cache");
         return Ok(Some(secrets));
     }
+    // Served from the cache above or not at all: waiting behind another
+    // read's gate could mean waiting on a prompt no one can answer.
+    refuse_held_back()?;
     let gate = Arc::clone(read_cache().gates.entry(name.to_owned()).or_default());
     let _turn = gate.lock().await;
     let generation = {
@@ -99,6 +127,16 @@ where
     Ok(secrets)
 }
 
+fn keychain_secrets_of(profile: &AuthProfile) -> KeychainSecrets {
+    let token_set = profile.token_set.as_ref();
+    KeychainSecrets {
+        token: profile.token.clone(),
+        access_token: token_set.map(|ts| ts.access_token.clone()),
+        refresh_token: token_set.and_then(|ts| ts.refresh_token.clone()),
+        id_token: token_set.and_then(|ts| ts.id_token.clone()),
+    }
+}
+
 impl AuthProfilesStore {
     /// Build a keychain key for an auth profile's combined secret payload.
     pub(super) fn keychain_key_for_profile(&self, profile_id: &str) -> String {
@@ -110,19 +148,10 @@ impl AuthProfilesStore {
     /// The secrets are serialized as a compact JSON object so a single
     /// keychain entry holds all token fields for the profile.
     pub(super) async fn keychain_store_secrets(&self, profile: &AuthProfile) -> anyhow::Result<()> {
+        // A refused write leaves the cached secret it never replaced.
+        refuse_held_back()?;
         let key = self.keychain_key_for_profile(&profile.id);
-        let secrets = KeychainSecrets {
-            token: profile.token.clone(),
-            access_token: profile.token_set.as_ref().map(|ts| ts.access_token.clone()),
-            refresh_token: profile
-                .token_set
-                .as_ref()
-                .and_then(|ts| ts.refresh_token.clone()),
-            id_token: profile
-                .token_set
-                .as_ref()
-                .and_then(|ts| ts.id_token.clone()),
-        };
+        let secrets = keychain_secrets_of(profile);
         let payload = serde_json::to_string(&secrets)
             .context("Failed to serialize auth secrets for keychain")?;
         let name = self.keyring_name(&key);
@@ -144,6 +173,13 @@ impl AuthProfilesStore {
             self.user_id
         );
         Ok(())
+    }
+
+    /// Whether the keyring holds `profile`'s secrets as this process last read
+    /// or wrote them. Never asks the keyring.
+    pub(super) fn keychain_holds(&self, profile: &AuthProfile) -> bool {
+        let name = self.keyring_name(&self.keychain_key_for_profile(&profile.id));
+        read_cache().secrets.get(&name) == Some(&keychain_secrets_of(profile))
     }
 
     /// Load auth secrets for a profile from the OS keychain.
@@ -195,6 +231,7 @@ impl AuthProfilesStore {
 
     /// Delete keychain secrets for a profile (called on profile removal).
     pub(super) async fn keychain_delete_secrets(&self, profile_id: &str) -> anyhow::Result<()> {
+        refuse_held_back()?;
         let key = self.keychain_key_for_profile(profile_id);
         let name = self.keyring_name(&key);
         read_cache().forget(&name);
@@ -225,6 +262,12 @@ impl AuthProfilesStore {
         &self,
         operation: tinysecurity_bus::KeyringOperation2,
     ) -> anyhow::Result<tinysecurity_bus::KeyringResponse2> {
+        refuse_held_back().inspect_err(|_| {
+            log::debug!(
+                "[auth] keyring operation held back user_id={}",
+                self.user_id
+            )
+        })?;
         let config = self
             .security_config
             .clone()

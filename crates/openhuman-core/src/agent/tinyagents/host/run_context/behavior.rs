@@ -33,6 +33,7 @@ impl OpenHumanRunContext {
             file_state_agent_id: None,
             tool_result_artifact_index: None,
             headless_descendant_settlement: false,
+            scheduled_actions: false,
             headless_descendant_owner: None,
             attachment_placeholders: Arc::new(Vec::new()),
             native_staged_parts: Vec::new(),
@@ -43,6 +44,7 @@ impl OpenHumanRunContext {
             command_environment: None,
             autonomous_iter_cap: None,
             sandbox_mode: None,
+            sandbox_filesystem_only: false,
             spawn_depth: 0,
             subagent_usage: Arc::new(Mutex::new(Vec::new())),
             parent_subagent_usage: None,
@@ -60,6 +62,7 @@ impl OpenHumanRunContext {
             tool_rules: None,
             context_middleware: None,
             session_sidecar: Arc::new(Mutex::new(SessionTurnSidecar::default())),
+            session_run_options: SessionRunOptions::default(),
             required_output: None,
             tool_dialect: tinyagents_harness::config::ToolDispatcher::Auto,
             memory_turn: None,
@@ -230,11 +233,16 @@ impl OpenHumanRunContext {
         child.subagent_usage = Arc::new(Mutex::new(Vec::new()));
         child.resolved_route = Arc::new(Mutex::new(None));
         child.memory_turn = None;
+        // The options belong to the session's thread; a child runs its own.
+        child.session_run_options = SessionRunOptions::default();
         child.native_staged_parts.clear();
         child.native_staged_lease = None;
         child.native_message_id = None;
         child.response_shape = None;
         child.shell_processes = crate::sandbox::shell_processes::ShellProcesses::new();
+        // The scheduled-actions lift belongs to the cron job's own root run;
+        // a delegate stays read-only under the inherited cron origin.
+        child.scheduled_actions = false;
         child
     }
 
@@ -293,6 +301,7 @@ impl OpenHumanRunContext {
             origin: self.origin.clone(),
             approval: self.approval.clone(),
             sandbox_mode: self.sandbox_mode,
+            sandbox_filesystem_only: self.sandbox_filesystem_only,
             parent_agent_id: self
                 .parent
                 .as_ref()

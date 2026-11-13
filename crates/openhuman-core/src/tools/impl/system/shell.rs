@@ -609,7 +609,7 @@ impl ShellTool {
                 )
             }
         };
-        let policy = crate::sandbox::policy::route_for_mode(
+        let mut policy = crate::sandbox::policy::route_for_mode(
             tinyagents_definition::SandboxMode::Sandboxed,
             action_dir,
             &self.security.workspace_dir,
@@ -617,6 +617,13 @@ impl ShellTool {
             &config.runtime,
             false,
         );
+        // The definition's own opt-in (`sandbox_filesystem_only`); the plan asks for
+        // files only when the spawn is the operator's agent with the host network.
+        policy.filesystem_only =
+            crate::agent::tinyagents::host::run_context::sandbox_filesystem_only_for_tool(context);
+        if policy.filesystem_only {
+            tracing::debug!("[shell] the agent opted into a files-only sandbox");
+        }
         let timeout = requested_timeout;
         run_in_policy(
             ctx, policy, command, timeout, come_back, action_dir, context, meter, audit,

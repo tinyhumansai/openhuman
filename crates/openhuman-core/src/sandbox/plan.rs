@@ -31,8 +31,8 @@ pub enum PlannedExecutor {
     Docker,
     /// The tenant's long-lived OpenShell box: no host mounts, no egress.
     OpenShell,
-    /// A box per command on the hosted agent37 service: no host mounts, no
-    /// egress, reached over HTTP through the TinyBox module.
+    /// The tenant's retained box on the hosted agent37 service: no host
+    /// mounts, no egress, reached over HTTP through the TinyBox module.
     Agent37,
     /// No jail: the operator disabled the sandbox and the module planned a run on the
     /// host. Only a `host_run` artifact maps here.
@@ -250,33 +250,40 @@ fn validate_resources(
     executor: PlannedExecutor,
 ) -> Result<(), PlanMappingError> {
     let limits = &artifact.limits;
-    if limits.cpu_time_ms.is_some() {
-        return Err(PlanMappingError::CpuTimeUnenforceable);
-    }
-    if limits.cpu_millicores.is_some() {
-        return Err(if executor == PlannedExecutor::Host {
-            PlanMappingError::HostResourceLimitUnenforceable
-        } else {
-            PlanMappingError::CpuLimitUnenforceable
-        });
-    }
-    if limits.disk_bytes.is_some() {
-        return Err(PlanMappingError::DiskLimitUnenforceable);
-    }
     if limits.cpu_millicores == Some(0)
         || limits.memory_bytes == Some(0)
         || limits.pids_max == Some(0)
     {
         return Err(PlanMappingError::ZeroLimit);
     }
+    if limits.cpu_time_ms.is_some() {
+        return Err(PlanMappingError::CpuTimeUnenforceable);
+    }
+    if limits.disk_bytes.is_some() {
+        return Err(PlanMappingError::DiskLimitUnenforceable);
+    }
+    if executor == PlannedExecutor::Docker {
+        // A container enforces CPU and memory bounds: `PlannedSpawn::apply`
+        // writes them into the Docker overrides, and TinyBox's RunDocker passes
+        // them as `--cpus` and `-m`. That request has no PID limit.
+        return if limits.pids_max.is_some() {
+            Err(PlanMappingError::PidsLimitUnenforceable)
+        } else {
+            Ok(())
+        };
+    }
+    if executor == PlannedExecutor::Host
+        && (limits.cpu_millicores.is_some()
+            || limits.memory_bytes.is_some()
+            || limits.pids_max.is_some())
+    {
+        return Err(PlanMappingError::HostResourceLimitUnenforceable);
+    }
+    if limits.cpu_millicores.is_some() {
+        return Err(PlanMappingError::CpuLimitUnenforceable);
+    }
     if limits.memory_bytes.is_some() || limits.pids_max.is_some() {
-        return Err(match executor {
-            PlannedExecutor::Host => PlanMappingError::HostResourceLimitUnenforceable,
-            PlannedExecutor::Docker if limits.pids_max.is_some() => {
-                PlanMappingError::PidsLimitUnenforceable
-            }
-            _ => PlanMappingError::NativeResourceLimitsUnenforceable,
-        });
+        return Err(PlanMappingError::NativeResourceLimitsUnenforceable);
     }
     Ok(())
 }

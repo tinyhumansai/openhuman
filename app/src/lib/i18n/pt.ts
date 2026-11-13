@@ -221,6 +221,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agentes e autonomia',
   'settings.devGroups.automationIntegrations': 'Automação e integrações',
   'settings.tokenUsage.title': 'Economia de tokens',
+  'settings.secretGrant.title': 'Permitir que o OpenHuman desbloqueie seus segredos salvos?',
+  'settings.secretGrant.subtitle':
+    'Salvar esta configuração requer sua aprovação única para criptografá-la. Negue para cancelar o salvamento.',
   'settings.tokenUsage.menuDesc':
     'Configurações de compressão e quantos tokens e dólares elas economizaram',
   'settings.tokenUsage.saving': 'Salvando…',
@@ -3931,6 +3934,8 @@ const messages: TranslationMap = {
     'Este turno passou do limite de tempo sem concluir e foi interrompido para não travar. Isso geralmente significa que uma chamada de ferramenta ou um subagente delegado travou. Você pode repetir sua pergunta neste tópico.',
   'chat_error.disk_full':
     'Seu disco está cheio, então esta conversa não pôde ser salva. Libere espaço em disco e envie sua mensagem novamente neste tópico.',
+  'chat_error.prompt_screened':
+    'O filtro de segurança do OpenHuman reteve esta mensagem, então ela não foi enviada ao modelo. Se ela cita instruções destinadas a um assistente (de uma página da web ou de um e-mail, por exemplo), remova-as e tente novamente. Se mensagens comuns estiverem sendo retidas, o módulo de segurança pode estar indisponível: reinicie o OpenHuman e tente novamente.',
   'chat_error.empty_response':
     'O modelo retornou uma resposta vazia. Tente novamente. Se continuar acontecendo, tente outro modelo ou confira a configuração dele em Conexões → Chaves de API → LLM.',
   'chat_error.chat_template_rejected':

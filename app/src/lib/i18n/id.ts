@@ -220,6 +220,9 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agen & Otonomi',
   'settings.devGroups.automationIntegrations': 'Otomasi & Integrasi',
   'settings.tokenUsage.title': 'Penghematan token',
+  'settings.secretGrant.title': 'Izinkan OpenHuman membuka rahasia tersimpan Anda?',
+  'settings.secretGrant.subtitle':
+    'Menyimpan pengaturan ini memerlukan persetujuan satu kali dari Anda untuk mengenkripsinya. Tolak untuk membatalkan penyimpanan.',
   'settings.tokenUsage.menuDesc':
     'Pengaturan kompresi dan berapa banyak token dan dolar yang telah dihemat',
   'settings.tokenUsage.saving': 'Menyimpan…',
@@ -3906,6 +3909,8 @@ const messages: TranslationMap = {
     'Giliran ini melewati batas waktunya tanpa selesai dan dihentikan agar tidak menggantung. Biasanya ini berarti panggilan alat atau sub-agen yang didelegasikan macet. Anda dapat mengulang pertanyaan Anda di utas ini.',
   'chat_error.disk_full':
     'Disk Anda penuh, sehingga percakapan ini tidak dapat disimpan. Kosongkan sebagian ruang disk, lalu kirim ulang pesan Anda di utas ini.',
+  'chat_error.prompt_screened':
+    'Pemeriksaan keamanan OpenHuman menahan pesan ini, jadi pesan tidak dikirim ke model. Jika pesan mengutip instruksi yang ditujukan untuk asisten (misalnya dari halaman web atau email), hapus instruksi itu lalu coba lagi. Jika pesan biasa juga ditahan, modul keamanan mungkin tidak tersedia: mulai ulang OpenHuman lalu coba lagi.',
   'chat_error.empty_response':
     'Model mengembalikan respons kosong. Silakan coba lagi. Jika terus terjadi, coba model lain atau periksa pengaturannya di Koneksi → Kunci API → LLM.',
   'chat_error.chat_template_rejected':

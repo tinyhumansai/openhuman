@@ -26,6 +26,9 @@ pub(super) fn run_config(
         .with_max_depth(super::super::super::budget::depth(run_context))
         .with_tag("openhuman")
         .with_tag(if observed { "observed" } else { "unobserved" });
+    // The session's discovery, result-expiry and reasoning-replay options ride
+    // the run context; without them the harness reads its empty overrides.
+    config = run_context.session_run_options.apply_to(config);
     // The loop stamps this cap onto every model request; it does not bake into
     // the primary or routed models.
     if let Some(cap) = max_output_tokens {

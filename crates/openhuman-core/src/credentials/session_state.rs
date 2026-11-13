@@ -246,6 +246,17 @@ pub async fn build_session_state(config: &Config) -> Result<AuthStateResponse, S
     Ok(session_state_from_profile(profile.as_ref()))
 }
 
+/// Binds the signed-in user the stored session names: the Sentry scope
+/// (#3135) and the identity slot prompt composition reads.
+pub async fn bind_session_user(config: &Config) -> Result<(), String> {
+    let state = build_session_state(config).await?;
+    if let Some(uid) = state.user_id.as_deref() {
+        crate::core::observability::sentry_scope::bind(uid);
+    }
+    super::identity::set_current_user(state.user);
+    Ok(())
+}
+
 pub async fn get_session_token(config: &Config) -> Result<Option<String>, String> {
     let profile = load_app_session_profile(config).await?;
     session_token_for_config(config, profile.as_ref())

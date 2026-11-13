@@ -13,6 +13,7 @@ use std::time::Duration;
 #[cfg(feature = "modules")]
 fn policy(workspace: &Path) -> SandboxPolicy {
     SandboxPolicy {
+        filesystem_only: false,
         backend: SandboxBackendKind::Docker,
         workspace_root: workspace.to_path_buf(),
         state_dir: PathBuf::from("/tmp/state"),

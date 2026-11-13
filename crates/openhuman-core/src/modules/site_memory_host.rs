@@ -374,7 +374,14 @@ fn method_error(error: impl std::fmt::Display) -> tinybus::Error {
 
 pub(super) async fn install(connection: &tinybus::Connection) -> tinybus::Result<()> {
     connection
-        .serve_at(ObjectPath::new(OBJECT_PATH)?, SiteMemoryHost)
+        .serve_at(
+            ObjectPath::new(OBJECT_PATH)?,
+            super::callback_owner::OwnedBy::new(
+                SiteMemoryHost,
+                connection,
+                tinycomputer_bus::names::INTERFACE,
+            ),
+        )
         .await?;
     // The module reaches the host by this name (`optional` in its manifest).
     connection.request_name(INTERFACE).await?;

@@ -1,4 +1,4 @@
-//! TinySecurity's Jev judge: on by default, wherever a credential exists.
+//! TinySecurity's Jev judge: on by default, wherever the host supplies a route.
 //!
 //! The judge can only turn a call that needs approval into a one-off allow,
 //! never override a deny, and whatever it cannot settle still goes to a person.
@@ -9,8 +9,7 @@
 use tinysecurity_bus::{JudgeConfig, JudgeProvider, Origin, Secret};
 
 use crate::config::schema::{JudgeMode, PrivacyMode, SecurityJudgeDialect, SecurityJudgeRoute};
-use crate::config::{Config, DecisionModel};
-use crate::modules::computer_config::{provider_key, tinyhumans_bearer};
+use crate::config::Config;
 
 /// The least confidence, in thousandths, that a call is intended and reversible.
 const THRESHOLD_MILLIS: u16 = 900;
@@ -31,16 +30,12 @@ const KEY_LENGTHS: std::ops::RangeInclusive<usize> = 4..=4096;
 /// The longest endpoint the module accepts.
 const MAX_ENDPOINT_BYTES: usize = 4096;
 
-/// The judge for `config`, if it should run and a credential for it exists.
-pub(in crate::modules) async fn resolve(config: &Config) -> Option<JudgeConfig> {
-    if !wanted(config) {
-        return None;
-    }
-    let route = match &config.security_judge {
-        Some(route) => route.clone(),
-        None => stored_route(config).await?,
-    };
-    build(config, route)
+/// The judge for `config`: only a route the host supplied. A stored
+/// credential is read through TinySecurity, and the judge is resolved while
+/// TinySecurity loads, so reading one there waits on that very load.
+// TODO(tinyhumansai/tinysecurity#54): fetch the stored credential lazily.
+pub(in crate::modules) fn resolve(config: &Config) -> Option<JudgeConfig> {
+    build(config, config.security_judge.clone()?)
 }
 
 /// Whether `config` lets the judge run at all.
@@ -49,26 +44,6 @@ fn wanted(config: &Config) -> bool {
         && config.security.judge == JudgeMode::On
         // The judge sends redacted call details to its endpoint.
         && config.privacy.mode != PrivacyMode::LocalOnly
-}
-
-/// The route the credentials `config` already holds give.
-async fn stored_route(config: &Config) -> Option<SecurityJudgeRoute> {
-    match config.computer.decision_model {
-        DecisionModel::Jev => {
-            let base = config.resolved_endpoints.control_plane_url.as_deref();
-            match (tinyhumans_bearer(config).await, base) {
-                (Some(bearer), Some(base)) => Some(SecurityJudgeRoute::tinyhumans(base, bearer)),
-                _ => provider_key(config, "openrouter", "OPENROUTER_API_KEY")
-                    .await
-                    .map(SecurityJudgeRoute::open_router),
-            }
-        }
-        DecisionModel::OpenJev => provider_key(config, "openjev", "OPENJEV_API_KEY")
-            .await
-            .map(SecurityJudgeRoute::open_jev),
-        // Sage is not a dialect the judge speaks.
-        DecisionModel::Sage => None,
-    }
 }
 
 /// Whether the module takes `key`.
@@ -111,7 +86,8 @@ fn build(config: &Config, route: SecurityJudgeRoute) -> Option<JudgeConfig> {
         return None;
     }
     Some(JudgeConfig {
-        credential: Secret(route.api_key),
+        // Supplied at init, so the module never needs `JudgeCredentialHost2`.
+        credential: Some(Secret(route.api_key)),
         endpoint: route.endpoint,
         provider: match route.dialect {
             SecurityJudgeDialect::OpenRouter => JudgeProvider::OpenRouter,

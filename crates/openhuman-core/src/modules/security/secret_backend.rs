@@ -109,16 +109,6 @@ impl SecretBackend {
         })
     }
 
-    /// Serve this backend only to the admitted TinySecurity module instance.
-    pub(crate) async fn serve(
-        self: std::sync::Arc<Self>,
-        binding: &tinybus::module::HostCallbackBinding,
-    ) -> tinybus::Result<()> {
-        binding
-            .serve_at(callback_names2::OBJECT_PATH.parse()?, self)
-            .await
-    }
-
     fn binding(&self, identity: &tinysecurity_bus::SecretBackendIdentity2) -> Option<Binding> {
         if identity.registration_id != self.registration_id {
             return None;
@@ -280,14 +270,67 @@ fn read_legacy_file(path: &std::path::Path) -> Result<Option<Vec<u8>>, ()> {
     }
 }
 
+/// The one `SecretBackend2` object on the admitted binding, routing each
+/// callback to the tenant backend of the registration it names. A callback
+/// for a registration the host did not register (or already retired) is
+/// denied without touching any tenant's storage.
+pub(crate) struct SecretBackends {
+    routes: parking_lot::Mutex<std::collections::HashMap<String, std::sync::Arc<SecretBackend>>>,
+}
+
+impl SecretBackends {
+    pub(crate) fn empty() -> Self {
+        Self {
+            routes: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Route `backend`'s registration to it; a registration keeps its backend.
+    pub(crate) fn add(&self, backend: std::sync::Arc<SecretBackend>) -> Result<(), &'static str> {
+        let mut routes = self.routes.lock();
+        match routes.get(&backend.registration_id) {
+            Some(existing) if std::sync::Arc::ptr_eq(existing, &backend) => Ok(()),
+            Some(_) => Err("secret backend already routed"),
+            None => {
+                routes.insert(backend.registration_id.clone(), backend);
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) fn remove(&self, registration_id: &str) {
+        self.routes.lock().remove(registration_id);
+    }
+
+    fn route(&self, registration_id: &str) -> Option<std::sync::Arc<SecretBackend>> {
+        self.routes.lock().get(registration_id).cloned()
+    }
+
+    /// Serve the router only to the admitted TinySecurity module instance.
+    pub(crate) async fn serve(
+        self: std::sync::Arc<Self>,
+        binding: &tinybus::module::HostCallbackBinding,
+    ) -> tinybus::Result<()> {
+        binding
+            .serve_at(callback_names2::OBJECT_PATH.parse()?, self)
+            .await
+    }
+}
+
 #[tinybus::interface(name = "ai.tinyhumans.tinysecurity.SecretBackend2")]
-impl SecretBackend {
+impl SecretBackends {
     #[tinybus(confidential)]
     async fn load(
         &self,
         request: SecretBackendLoadRequest2,
     ) -> tinybus::Result<SecretBackendLoadResponse2> {
-        Ok(self.load_request(request))
+        Ok(match self.route(&request.identity.registration_id) {
+            Some(backend) => backend.load_request(request),
+            None => SecretBackendLoadResponse2 {
+                identity: request.identity,
+                status: SecretBackendLoadStatus2::Denied,
+            },
+        })
     }
 
     #[tinybus(confidential)]
@@ -295,6 +338,12 @@ impl SecretBackend {
         &self,
         request: SecretBackendSetRequest2,
     ) -> tinybus::Result<SecretBackendSetResponse2> {
-        Ok(self.set_request(request))
+        Ok(match self.route(&request.identity.registration_id) {
+            Some(backend) => backend.set_request(request),
+            None => SecretBackendSetResponse2 {
+                identity: request.identity,
+                status: SecretBackendSetStatus2::Denied,
+            },
+        })
     }
 }

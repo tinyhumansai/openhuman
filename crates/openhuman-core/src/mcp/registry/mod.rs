@@ -446,6 +446,10 @@ pub mod oauth {
 /// logged and published with the *rule code* only — the offending text is never
 /// re-emitted, because the payload is the thing that was dangerous.
 ///
+/// The scan runs with the embedder's config, else the loaded one, so a `serve`
+/// host (which has no embedder config) still scans; it fails closed only when
+/// no config can be loaded or the scanner errors.
+///
 /// With security disabled (`crate::security::switch`) nothing is scanned and
 /// every tool is kept.
 #[cfg(feature = "mcp")]
@@ -455,10 +459,21 @@ pub(crate) async fn tools_safe_for_agent(
 ) -> Vec<tinymcp_bus::McpTool> {
     use crate::core::bus::BUS;
     use crate::core::events::DomainEvent;
-    let embedder_config = crate::core::runtime::CoreContext::current_embedder_config();
+    let embedder_config = crate::security::prompt_injection::tool_scan_config().await;
     if crate::security::switch::disabled_for(embedder_config.as_ref()).is_some() {
         return tools;
     }
+    // A test process has no booted host, so no embedder scope names a
+    // configuration to scan under. The test host supplies the one the real
+    // TinySecurity module is admitted with, as the prompt screen does
+    // (`enforce_prompt_input_with_config`); a process without the staged
+    // module still has none and fails closed below.
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let embedder_config =
+        embedder_config.or_else(crate::modules::security::test_host::screening_config);
     let mut safe = Vec::with_capacity(tools.len());
     for tool in tools {
         #[cfg(feature = "security-module")]
@@ -508,6 +523,14 @@ pub(crate) async fn tools_safe_for_agent(
     }
     safe
 }
+
+#[cfg(all(test, feature = "mcp"))]
+#[path = "scan_tests.rs"]
+mod scan_tests;
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod tests;
 
 // ---------------------------------------------------------------------------
 // Disabled facade — compiled only when the `mcp` feature is OFF.

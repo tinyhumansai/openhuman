@@ -24,6 +24,17 @@
 //! does not park: it allows a tool from an allowlisted group, whose reach the
 //! sandbox and path policy already bound, and refuses anything else
 //! ([`gate_verdict`]).
+//!
+//! One call is decided before that verdict: a tenant's own secret master
+//! grant (a forced `native_secret_grant` that unlocks the tenant's config
+//! secrets) with nobody to ask. The host approves it itself, as
+//! `saas_host_authorised`, only when the dispatch is bound to an
+//! authenticated tenant profile and the live secret registration it names is
+//! the `.secret_key` the profile layout places for that tenant; another
+//! tenant's scope, the operator's, an unknown registration or an unbound
+//! dispatch is refused. The approval still runs TinySecurity's `check` →
+//! `decide` round trip and is audited on the tenant's secret scope stream
+//! (`security/approval/gate_saas_grant.rs`, and the approval README).
 
 use std::path::Path;
 
@@ -223,7 +234,9 @@ fn current_named_tools(
 }
 
 /// The approval gate's answer in SaaS, where it never parks: `Ok` for a tool
-/// in an allowlisted group, otherwise the refusal.
+/// in an allowlisted group, otherwise the refusal. A tenant's own secret
+/// master grant is decided by the host before this verdict is asked (see the
+/// module docs).
 pub fn gate_verdict_with(tool: &str, groups: &[SaasToolGroup]) -> Result<(), String> {
     if admits_with(tool, false, groups) {
         return Ok(());
@@ -298,6 +311,7 @@ pub fn sandbox_policy_with(
         return Err("the sandbox cannot use the host network".to_string());
     }
     Ok(SandboxPolicy {
+        filesystem_only: false,
         backend: SandboxBackendKind::Docker,
         workspace_root: resolved,
         state_dir: state_dir.to_path_buf(),

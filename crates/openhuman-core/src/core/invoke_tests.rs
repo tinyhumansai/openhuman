@@ -3,8 +3,8 @@ use serde_json::json;
 
 use super::super::session_expiry::is_session_expired_error;
 use super::{
-    default_state, invoke_method, request_session_failure_is_actionable,
-    translate_local_session_error,
+    default_state, invoke_method, request_session_failure_is_actionable, session_failure_outcome,
+    translate_local_session_error, SessionFailureOutcome,
 };
 
 #[tokio::test]
@@ -228,6 +228,173 @@ fn rpc_expiry_requires_matching_request_time_credential_provenance() {
         Some(&request_fingerprint),
         Some("request-token"),
     ));
+}
+
+/// A signed-out core (no stored session, no API key) answers a hosted call
+/// with a local pre-flight refusal. No credential was sent, so there is no
+/// provenance to verify and nothing to sign out: the original error, with its
+/// sign-in hint, must reach the caller untouched and no expiry is published.
+#[test]
+fn signed_out_preflight_refusal_passes_through_untouched() {
+    for error in [
+        "no backend session token; run auth_store_session first",
+        "composio unavailable: no backend session token. Sign in or set a TinyHumans API key.",
+    ] {
+        assert!(is_session_expired_error(error), "{error}");
+        assert_eq!(
+            session_failure_outcome(error, false, false, None, None),
+            SessionFailureOutcome::PassThrough,
+            "{error}"
+        );
+    }
+}
+
+/// A credential that existed keeps the fail-closed rewrites: generic
+/// dispatch cannot prove which token received a downstream 401.
+#[test]
+fn stored_credentials_keep_session_failure_rewrites() {
+    let error = "SESSION_EXPIRED: backend rejected session token";
+    let reason_of = |outcome| match outcome {
+        SessionFailureOutcome::Replace { reason, message } => {
+            assert!(!is_session_expired_error(&message), "{message}");
+            reason
+        }
+        other => panic!("expected a replaced error, got {other:?}"),
+    };
+    assert_eq!(
+        reason_of(session_failure_outcome(
+            error,
+            false,
+            false,
+            None,
+            Some("header.payload.signature")
+        )),
+        "credential_provenance_unavailable"
+    );
+    assert_eq!(
+        reason_of(session_failure_outcome(error, false, true, None, None)),
+        "api_key_credential"
+    );
+    assert_eq!(
+        reason_of(session_failure_outcome(
+            error,
+            true,
+            false,
+            None,
+            Some("header.payload.local")
+        )),
+        "local_offline_credential"
+    );
+    let fingerprint =
+        crate::credentials::backend_credential::credential_fingerprint("request-token");
+    assert_eq!(
+        session_failure_outcome(
+            error,
+            false,
+            false,
+            Some(&fingerprint),
+            Some("request-token")
+        ),
+        SessionFailureOutcome::PublishExpiry
+    );
+}
+
+/// A memory engine 401 as the memory controller encodes it: a structured
+/// `UNAUTHORIZED` code the UI branches on, under a message the session-expiry
+/// classifier matches.
+fn structured_memory_unauthorized() -> String {
+    crate::core::StructuredRpcError {
+        message: "unauthorized: [UNAUTHORIZED] memory API memory/learn on api.tinyhumans.ai: \
+                  the session expired or the API key was rejected (HTTP 401 Unauthorized); \
+                  re-authenticate"
+            .to_string(),
+        data: Some(json!({ "kind": "UNAUTHORIZED", "code": "UNAUTHORIZED" })),
+        expected_user_state: true,
+    }
+    .encode()
+}
+
+fn replaced_message(outcome: SessionFailureOutcome) -> String {
+    match outcome {
+        SessionFailureOutcome::Replace { message, .. } => message,
+        other => panic!("expected a replaced error, got {other:?}"),
+    }
+}
+
+/// The rewrite drops the auth-expired message but keeps a structured code the
+/// renderer does not read as sign-out, so `memoryErrorCode` still sees
+/// `UNAUTHORIZED` instead of `data: null`.
+#[test]
+fn replaced_session_failure_keeps_non_signout_structured_code() {
+    let original = structured_memory_unauthorized();
+    assert!(is_session_expired_error(&original));
+    let cases = [
+        (
+            session_failure_outcome(&original, false, false, None, Some("header.payload.sig")),
+            "Backend request failed; credential provenance could not be verified",
+        ),
+        (
+            session_failure_outcome(&original, false, true, None, None),
+            "Backend request failed while using an API-key credential",
+        ),
+        (
+            session_failure_outcome(&original, true, false, None, Some("header.payload.local")),
+            crate::core::observability::BACKEND_UNAVAILABLE_PREFIX,
+        ),
+    ];
+    for (outcome, expected_message) in cases {
+        let message = replaced_message(outcome);
+        assert!(!is_session_expired_error(&message), "{message}");
+        let envelope = crate::core::StructuredRpcError::decode(&message)
+            .unwrap_or_else(|| panic!("structured envelope dropped: {message}"));
+        assert!(
+            envelope.message.starts_with(expected_message),
+            "{}",
+            envelope.message
+        );
+        assert_eq!(
+            envelope.data,
+            Some(json!({ "kind": "UNAUTHORIZED", "code": "UNAUTHORIZED" }))
+        );
+        assert!(envelope.expected_user_state);
+    }
+}
+
+/// A structured error whose data itself carries a sign-out marker must not
+/// reach the renderer through the rewrite, in any casing or field.
+#[test]
+fn replaced_session_failure_never_passes_through_a_signout_marker() {
+    for data in [
+        json!({ "kind": "SESSION_EXPIRED", "code": "SESSION_EXPIRED" }),
+        json!({ "code": "session_expired" }),
+        json!({ "code": "ENGINE", "detail": "Session expired; sign in again" }),
+        json!({ "code": "ENGINE", "detail": "no backend session token" }),
+        json!({ "code": "ENGINE", "detail": "session JWT required" }),
+    ] {
+        let original = crate::core::StructuredRpcError {
+            message: "SESSION_EXPIRED: backend rejected session token".to_string(),
+            data: Some(data.clone()),
+            expected_user_state: false,
+        }
+        .encode();
+        let message = replaced_message(session_failure_outcome(
+            &original,
+            false,
+            false,
+            None,
+            Some("header.payload.sig"),
+        ));
+        assert!(!is_session_expired_error(&message), "{message}");
+        let lower = message.to_ascii_lowercase();
+        assert!(
+            !lower.contains("session_expired") && !lower.contains("session expired"),
+            "{message}"
+        );
+        assert!(
+            crate::core::StructuredRpcError::decode(&message).is_none_or(|e| e.data.is_none()),
+            "{data} leaked: {message}"
+        );
+    }
 }
 
 /// #8081: a Memory tab on a plan without memory got `403 MEMORY_PLAN_REQUIRED`

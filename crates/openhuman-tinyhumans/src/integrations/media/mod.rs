@@ -39,6 +39,7 @@ pub(crate) fn register() {
                     ctx.action_dir,
                     Arc::clone(&ctx.security.media_artifact_paths),
                 )
+                .await
             })
         },
     );

@@ -7,9 +7,9 @@ icon: link
 
 # Hooks
 
-A hook is a script you own. OpenHuman runs it at a set moment, such as before a tool runs, after a file is edited or when a turn finishes, and the agent obeys its answer. Hooks let you enforce rules that live in your repository instead of in our code. You can block `rm -rf`, run the formatter after every edit, write an audit line per tool call, or refuse to read `.env`.
+A hook is a script you own. OpenHuman runs it at a set moment, such as before a tool runs, after a file is edited or when a turn finishes, and the agent obeys its answer. Hooks let you enforce your own rules instead of ours. You can block `rm -rf`, run the formatter after every edit, write an audit line per tool call, or refuse to read `.env`.
 
-The contract matches [Cursor's](https://cursor.com/docs/hooks): the same file name, event names, stdin envelope, stdout decision and exit codes. A hook script written for either host runs on the other unchanged.
+The contract matches [Cursor's](https://cursor.com/docs/hooks): the same file name, event names, stdin envelope, stdout decision and exit codes. A hook script written for either host runs on the other unchanged, though OpenHuman does not run command hooks from a project's own `hooks.json` (see [Which command hooks run](#which-command-hooks-run)).
 
 > "Hook" has a second, unrelated meaning in this codebase: the in-process Rust contracts from `tinyagents-hooks`. Embedding hosts register those through `openhuman-embed`. This page is about the file-based kind.
 
@@ -45,7 +45,17 @@ OpenHuman reads four locations and concatenates them. A more specific file canno
 | Workspace | `<workspace_dir>/hooks.json` |
 | Project | `<action_dir>/.openhuman/hooks.json` |
 
-Concatenation is safe because the strictest verdict wins. Across every hook that ran, deny beats ask, and ask beats allow. Adding a hook never loosens a policy that another hook set. A repository can therefore ship its own `hooks.json` onto a machine an operator has already locked down.
+Concatenation is safe because the strictest verdict wins. Across every hook that ran, deny beats ask, and ask beats allow. Adding a hook never loosens a policy that another hook set.
+
+### Which command hooks run
+
+Command hooks are admitted when the hook config loads. Each one that is left out is named in `hooks_reload`'s `warnings` and logged as `command hook <layer>:<name> disabled: <reason>`.
+
+- **Project layer:** command hooks do not run. A cloned repository controls `<action_dir>/.openhuman/hooks.json`, and a hook process cannot be isolated from the host yet. Prompt hooks from that layer still apply.
+- **System, user and workspace layers:** each `command` must pass TinySecurity's command check, the same check a scheduled shell job passes.
+  - With `[autonomy] enabled = false` (the default), only a command that references a protected path, such as `~/.ssh`, is refused.
+  - With the autonomy policy on, a command must also start with a program in `[autonomy] allowed_commands`, and must not use output redirection, `tee`, `&`, command substitution or a leading `NAME=value`.
+  - The check reads the `command` string, not the script it names.
 
 ### Fields
 
@@ -182,26 +192,28 @@ default_timeout_secs = 30 # for hooks that name no timeout of their own
 
 ## Example
 
-`.openhuman/hooks.json`:
+`~/.openhuman/hooks.json` (the user layer; a project's own `.openhuman/hooks.json` would not run these command hooks):
 
 ```json
 {
   "version": 1,
   "hooks": {
-    "beforeReadFile": [{ "command": "./.openhuman/no-secrets.sh", "matcher": "\\.env" }],
-    "afterFileEdit": [{ "command": "./.openhuman/fmt.sh", "matcher": "\\.rs$" }]
+    "beforeReadFile": [{ "command": "./no-secrets.sh", "matcher": "\\.env" }],
+    "afterFileEdit": [{ "command": "./fmt.sh", "matcher": "\\.rs$" }]
   }
 }
 ```
 
-`.openhuman/no-secrets.sh`:
+Each hook runs in the directory of its `hooks.json`, so the scripts sit beside it. With the autonomy policy on, add `no-secrets.sh` and `fmt.sh` to `[autonomy] allowed_commands`.
+
+`~/.openhuman/no-secrets.sh`:
 
 ```sh
 #!/bin/sh
 echo '{"permission":"deny","agent_message":"Secrets files are off limits. Ask the user for the value you need."}'
 ```
 
-`.openhuman/fmt.sh`:
+`~/.openhuman/fmt.sh`:
 
 ```sh
 #!/bin/sh

@@ -48,19 +48,29 @@ fn managed_credential_scope_mirrors_config_not_default_state_dir() {
 #[tokio::test]
 async fn managed_scope_resolves_signin_stored_app_session_token() {
     let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
+    let mut config = test_config(&tmp);
+    // Plaintext, so the scope-only reader needs no TinySecurity configuration
+    // to open it; the scope (dir and flag) is what this test pins.
+    config.secrets.encrypt = false;
 
-    // Sign-in writes the app-session token here.
-    AuthService::from_config(&config)
-        .store_provider_token(
-            APP_SESSION_PROVIDER,
-            "default",
-            "sess-tok-5356",
-            HashMap::new(),
-            true,
-        )
-        .await
-        .unwrap();
+    // Sign-in writes the app-session token under the config's state dir and
+    // encryption setting. `AuthService::from_config` would park it in the
+    // keychain, which a scope-only reader (the managed embedder's, built from
+    // just `(state_dir, encrypt)`) cannot see, so write it the way that reader
+    // reads it.
+    AuthService::new(
+        &crate::credentials::state_dir_from_config(&config),
+        config.secrets.encrypt,
+    )
+    .store_provider_token(
+        APP_SESSION_PROVIDER,
+        "default",
+        "sess-tok-5356",
+        HashMap::new(),
+        true,
+    )
+    .await
+    .unwrap();
 
     // The exact scope the managed branch uses must recover it.
     let dir = Some(crate::credentials::state_dir_from_config(&config));

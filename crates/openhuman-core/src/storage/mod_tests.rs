@@ -105,13 +105,80 @@ fn install_installed_and_clear() {
     let slot = Slot::default();
     assert!(slot.installed().is_none());
     let backend = test_support::memory_backend();
-    assert!(slot.install(Arc::clone(&backend)).is_none());
+    assert!(slot
+        .install_described(Arc::clone(&backend), None, None)
+        .is_none());
     assert!(slot
         .installed()
         .is_some_and(|got| Arc::ptr_eq(&got, &backend)));
-    assert!(slot.install(test_support::memory_backend()).is_some());
+    assert!(slot
+        .install_described(test_support::memory_backend(), None, None)
+        .is_some());
     assert!(slot.clear());
     assert!(!slot.clear());
+}
+
+/// The URL and driver are part of the installed state: replacing the backend
+/// replaces them, and clearing it forgets them.
+#[test]
+fn a_slot_keeps_the_url_and_driver_with_their_backend() {
+    let slot = Slot::default();
+    assert_eq!(slot.installed_url(), None);
+    slot.install_described(
+        test_support::memory_backend(),
+        Some("memory".into()),
+        Some("memory".into()),
+    );
+    assert_eq!(slot.installed_url().as_deref(), Some("memory"));
+    assert_eq!(slot.installed_driver().as_deref(), Some("memory"));
+
+    slot.install_described(test_support::memory_backend(), None, Some("sqlite".into()));
+    assert_eq!(slot.installed_url(), None, "the new backend has no URL");
+    assert_eq!(slot.installed_driver().as_deref(), Some("sqlite"));
+
+    assert!(slot.clear());
+    assert_eq!(slot.installed_url(), None);
+    assert_eq!(slot.installed_driver(), None);
+}
+
+/// Readers cannot observe a half-published installation at the publication
+/// boundary. The checkpoint pauses the writer while it holds the slot lock.
+#[test]
+fn readers_cannot_observe_an_installation_at_its_publication_boundary() {
+    let slot = Arc::new(Slot::default());
+    slot.install_described(
+        test_support::memory_backend(),
+        Some("memory://old".into()),
+        Some("memory".into()),
+    );
+    let entered = Arc::new(std::sync::Barrier::new(2));
+    let resume = Arc::new(std::sync::Barrier::new(2));
+    let writer = {
+        let slot = Arc::clone(&slot);
+        let entered = Arc::clone(&entered);
+        let resume = Arc::clone(&resume);
+        std::thread::spawn(move || {
+            slot.install_described_at_checkpoint(
+                test_support::memory_backend(),
+                Some("memory://new".into()),
+                Some("memory".into()),
+                || {
+                    entered.wait();
+                    resume.wait();
+                },
+            );
+        })
+    };
+
+    entered.wait();
+    assert_eq!(
+        slot.try_installed_url(),
+        Err(()),
+        "a reader must not inspect the slot during publication"
+    );
+    resume.wait();
+    writer.join().unwrap();
+    assert_eq!(slot.installed_url().as_deref(), Some("memory://new"));
 }
 
 #[test]
@@ -467,4 +534,30 @@ fn a_test_installed_slot_is_hidden_from_other_test_threads() {
         !other.join().unwrap(),
         "another test's thread must not see the installer's backend"
     );
+}
+
+/// A bridge call may wait on a bridge call made from another thread that is
+/// not on the storage runtime — a module runtime's blocking pool opening the
+/// workspace backend while the host's synchronous store awaits that module.
+/// The bridge must run both instead of queueing the second behind the first.
+#[test]
+fn a_bridge_call_can_wait_on_a_bridge_call_from_another_thread() {
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome = block_on(async move {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(block_on(async { Ok::<_, StorageError>(7) }));
+            });
+            let inner = rx
+                .await
+                .map_err(|error| StorageError::backend(error.to_string()))??;
+            Ok::<_, StorageError>(inner + 1)
+        });
+        let _ = done_tx.send(outcome);
+    });
+    let outcome = done_rx
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("a bridge call waiting on another thread's bridge call deadlocked");
+    assert_eq!(outcome.unwrap(), 8);
 }

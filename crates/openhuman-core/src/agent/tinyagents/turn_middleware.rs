@@ -266,6 +266,7 @@ pub(super) fn install_turn_middleware(
     // Capture context settings before `install` consumes `context_mw`.
     let autocompact_enabled = context_mw.autocompact_enabled;
     let compaction = context_mw.compaction;
+    let keep_recent_tokens = context_mw.keep_recent_tokens;
     // Captured for the same reason `autocompact_enabled` is — `install` consumes
     // `context_mw` — and used to site microcompact below, after compression.
     let microcompact_keep_recent = context_mw.microcompact_keep_recent;
@@ -478,6 +479,7 @@ pub(super) fn install_turn_middleware(
         autocompact_enabled,
         compaction.trigger_tokens,
         compaction.strategy,
+        keep_recent_tokens,
         microcompact_keep_recent,
         summarizer,
         pause_at_cap && subagent_scope.is_none(),

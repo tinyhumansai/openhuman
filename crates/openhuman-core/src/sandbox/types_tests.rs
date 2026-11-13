@@ -35,6 +35,7 @@ fn sandbox_backend_kind_default_is_none() {
 #[test]
 fn sandbox_policy_serializes_roundtrip() {
     let policy = SandboxPolicy {
+        filesystem_only: false,
         backend: SandboxBackendKind::Docker,
         workspace_root: PathBuf::from("/workspace"),
         state_dir: PathBuf::from("/tmp/state"),
@@ -70,4 +71,17 @@ fn the_openshell_kind_is_named_openshell_on_the_wire() {
     );
     let back: SandboxBackendKind = serde_json::from_value(serde_json::json!("openshell")).unwrap();
     assert_eq!(back, SandboxBackendKind::OpenShell);
+}
+
+#[test]
+fn the_openshell_and_agent37_backends_keep_a_box_between_commands() {
+    assert!(SandboxBackendKind::OpenShell.keeps_boxes());
+    assert!(SandboxBackendKind::Agent37.keeps_boxes());
+    for backend in [
+        SandboxBackendKind::None,
+        SandboxBackendKind::Local,
+        SandboxBackendKind::Docker,
+    ] {
+        assert!(!backend.keeps_boxes(), "{backend:?}");
+    }
 }

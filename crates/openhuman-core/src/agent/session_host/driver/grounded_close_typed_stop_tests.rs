@@ -186,6 +186,7 @@ async fn typed_cause_without_halt_note_still_closes_and_keeps_operation() {
         &outcome,
         None,
         None,
+        &SessionRunOptions::default(),
     )
     .await
     .expect("typed cause closes without a note");

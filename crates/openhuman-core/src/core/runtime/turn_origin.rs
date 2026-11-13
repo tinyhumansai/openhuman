@@ -100,8 +100,22 @@ pub enum AgentTurnOrigin {
 /// Sub-classification for [`AgentTurnOrigin::TrustedAutomation`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TrustedAutomationSource {
-    /// Cron job created and authorized by the user.
+    /// Cron job created and authorized by the user. Its turns are read-only:
+    /// the security gate refuses shell, acting and external-effect tools.
     Cron,
+    /// A cron job whose agent definition opted into scheduled actions
+    /// (`scheduled_actions = true` with an explicitly named tool scope; see
+    /// `cron::origin::scheduled_actions_enabled`). The approval engine treats
+    /// it as trusted automation, so its tools run without a person's approval.
+    ///
+    /// The lift is narrow: the security gate grants it only to the root run of
+    /// a session the scheduler built for that job (never to a sub-agent, which
+    /// stays read-only as under [`Self::Cron`]), and only past the cron stage.
+    /// The channel boundary, the autonomy tier, TinySecurity's command
+    /// analysis and protected-path floor, the agent's sandbox, the browser's
+    /// allowed-websites list and its forced checkpoint before payment all
+    /// still apply. Never produced in SaaS mode.
+    CronActions,
     /// Internal background job over locally-stored data (e.g. goals
     /// enrichment). No external content reaches its prompt.
     Background,
@@ -123,6 +137,14 @@ pub enum TrustedAutomationSource {
         /// actions regardless of the trust root above.
         require_approval: bool,
     },
+}
+
+impl TrustedAutomationSource {
+    /// Whether the turn was started by the cron scheduler, with or without the
+    /// scheduled-actions opt-in.
+    pub fn is_cron(&self) -> bool {
+        matches!(self, Self::Cron | Self::CronActions)
+    }
 }
 
 impl AgentTurnOrigin {

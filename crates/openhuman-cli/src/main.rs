@@ -38,7 +38,9 @@ fn main() -> std::process::ExitCode {
     match openhuman_rpc::host::cli(&args) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("{err}");
+            // The alternate form prints the whole context chain: the outermost
+            // context alone ("building session agent ...") hides the cause.
+            eprintln!("{err:#}");
             std::process::ExitCode::from(1)
         }
     }

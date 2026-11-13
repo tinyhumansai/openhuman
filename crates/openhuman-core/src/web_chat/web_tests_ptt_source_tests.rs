@@ -63,7 +63,6 @@ async fn ptt_source_turn_completes_without_publishing_a_voice_event() {
     config.files_dir_override = Some(files_dir);
     config.local_ai.runtime_enabled = false;
     config.memory.conversations.enabled = false;
-    config.agent.session_dual_write = false;
     config.agent.session_shadow_reads = false;
     config.components.mcp = false;
     config.components.memory = false;

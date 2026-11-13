@@ -53,6 +53,7 @@ pub async fn store_provider_credentials(
     // notify again). Credentials are keyed `provider:<slug>`; the auth-error
     // registry is keyed by the bare provider slug used by the chat factory.
     clear_provider_auth_error(&provider);
+    drop_memory_read_with(&provider);
     Ok(Outcome::single_log(
         summarize_auth_profile(&stored),
         "provider credentials stored",
@@ -65,6 +66,12 @@ pub async fn store_provider_credentials(
 fn clear_provider_auth_error(provider: &str) {
     let slug = provider.strip_prefix("provider:").unwrap_or(provider);
     crate::inference::auth_error_registry::clear(slug);
+}
+
+/// A change to the memory engine's API key leaves what memory was read with
+/// the old one behind, so it is dropped.
+fn drop_memory_read_with(provider: &str) {
+    crate::memory::engine::drop_memory_reads_for_provider(provider);
 }
 
 pub async fn remove_provider_credentials(
@@ -81,6 +88,7 @@ pub async fn remove_provider_credentials(
     // Removing the key clears any recorded BYO auth error for this provider —
     // there is no longer a key to be "rejected", so the stale notice must go.
     clear_provider_auth_error(provider);
+    drop_memory_read_with(provider);
     Ok(Outcome::single_log(
         json!({
             "removed": removed,
