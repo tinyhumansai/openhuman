@@ -100,6 +100,28 @@ $joined = $args -join ' '
 Assert-True ($joined -notmatch 'MSIINSTALLPERUSER') 'joined args omit MSIINSTALLPERUSER'
 Assert-True ($joined -notmatch 'ALLUSERS') 'joined args omit ALLUSERS'
 
+Write-Host "`n== Add-OpenHumanDirectoryToPathValue (#8497) ==" -ForegroundColor Cyan
+$openHumanDirectory = 'C:\Program Files\OpenHuman'
+$emptyPath = Add-OpenHumanDirectoryToPathValue -PathValue '' -Directory $openHumanDirectory
+Assert-Equal $openHumanDirectory $emptyPath 'adds the install directory to an empty PATH'
+$existingPath = 'C:\Windows;C:\Tools'
+$updatedPath = Add-OpenHumanDirectoryToPathValue -PathValue $existingPath -Directory $openHumanDirectory
+Assert-Equal "$existingPath;$openHumanDirectory" $updatedPath 'preserves existing PATH entries'
+$existingOpenHumanDirectory = 'C:\Tools;C:\Program Files\OpenHuman\'
+$existingPath = Add-OpenHumanDirectoryToPathValue -PathValue $existingOpenHumanDirectory -Directory 'c:\program files\openhuman'
+Assert-Equal $existingOpenHumanDirectory $existingPath 'avoids a case-insensitive duplicate with a trailing separator'
+$environmentPathEntry = '%ProgramFiles%\OpenHuman'
+$originalProgramFiles = $env:ProgramFiles
+try {
+  $env:ProgramFiles = 'C:\Program Files'
+  $existingPath = Add-OpenHumanDirectoryToPathValue -PathValue $environmentPathEntry -Directory "$env:ProgramFiles\OpenHuman" -ExpandEntries
+  Assert-Equal $environmentPathEntry $existingPath 'recognizes an existing environment-variable path entry'
+  $existingPath = Add-OpenHumanDirectoryToPathValue -PathValue $environmentPathEntry -Directory "$env:ProgramFiles\OpenHuman"
+  Assert-Equal "$environmentPathEntry;$env:ProgramFiles\OpenHuman" $existingPath 'keeps REG_SZ-style PATH entries literal'
+} finally {
+  $env:ProgramFiles = $originalProgramFiles
+}
+
 Write-Host "`n== Select-OpenHumanWindowsAssetFromRelease ==" -ForegroundColor Cyan
 $release = [pscustomobject]@{
   assets = @(

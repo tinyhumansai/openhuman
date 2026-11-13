@@ -23,8 +23,8 @@ What stays in OpenHuman:
 The file-era dual-write of transcripts into a second layout, its shadow read
 and the `OPENHUMAN_SESSION_DUAL_WRITE` / `OPENHUMAN_SESSION_SHADOW_READS` kill
 switches are gone: the backend is the only record. The
-`AgentConfig::session_dual_write` and `session_shadow_reads` fields remain so
-existing `config.toml` files still load; they have no effect.
+`AgentConfig::session_shadow_reads` field remains and has no effect; an old
+`session_dual_write` key is ignored on load.
 
 ## Further reading
 

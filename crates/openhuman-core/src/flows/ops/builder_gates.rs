@@ -194,6 +194,7 @@ pub(crate) async fn build_builder_proposal(
 
     let mut payload = json!({
         "type": "workflow_proposal",
+        "proposal_id": uuid::Uuid::new_v4().simple().to_string(),
         "revision": revision,
         // A proposal is NEVER a persisted flow — it is a candidate the user
         // still has to accept/save. Stamp this unconditionally so the payload

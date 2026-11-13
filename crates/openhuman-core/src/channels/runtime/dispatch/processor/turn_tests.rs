@@ -206,3 +206,211 @@ fn ordinary_text_console_preview_remains_readable() {
 
     assert_eq!(inbound_console_preview(&envelope, "hello"), "hello");
 }
+
+fn transient_reply_channel_with_error(
+    failures: usize,
+    error: Option<&str>,
+) -> (
+    std::sync::Arc<crate::channels::runtime::TestChannel>,
+    crate::channels::runtime::ChannelHandle,
+) {
+    let mut channel = crate::channels::runtime::TestChannel::new("telegram");
+    // `send_error` is the countdown's failure text: the first `failures`
+    // sends fail with it, then the countdown is spent and sends succeed.
+    // Pass None for the default transient text ("error sending request").
+    channel.send_error = error.map(str::to_owned);
+    channel
+        .send_failures_remaining
+        .store(failures, std::sync::atomic::Ordering::SeqCst);
+    let channel = std::sync::Arc::new(channel);
+    let handle = crate::channels::runtime::ChannelHandle::Test(std::sync::Arc::clone(&channel));
+    (channel, handle)
+}
+
+fn transient_reply_channel(
+    failures: usize,
+) -> (
+    std::sync::Arc<crate::channels::runtime::TestChannel>,
+    crate::channels::runtime::ChannelHandle,
+) {
+    transient_reply_channel_with_error(failures, None)
+}
+
+fn reply_message() -> SendMessage {
+    SendMessage::new("hello", "chat-1").with_idempotency_key("reply:telegram:msg-1")
+}
+
+/// #8590: a transient send failure is retried and the reply lands.
+#[tokio::test]
+async fn failed_reply_retries_transient_errors_then_succeeds() {
+    let (channel, handle) = transient_reply_channel(2);
+
+    send_reply_with_retry(&handle, &reply_message())
+        .await
+        .expect("reply must land after transient failures");
+
+    assert_eq!(
+        channel.send_count.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "two failed attempts plus the delivering one"
+    );
+    let sent = channel.sent.lock().expect("test send lock");
+    assert_eq!(sent.len(), 1, "exactly one reply is recorded");
+    assert_eq!(
+        sent[0].idempotency_key.as_deref(),
+        Some("reply:telegram:msg-1"),
+        "retries re-send the same message and key"
+    );
+}
+
+/// #8590: a persistently transient failure exhausts the retries.
+#[tokio::test]
+async fn failed_reply_gives_up_after_retries() {
+    let (channel, handle) = transient_reply_channel(usize::MAX);
+
+    let err = send_reply_with_retry(&handle, &reply_message())
+        .await
+        .expect_err("reply must fail once retries are exhausted");
+    assert!(
+        err.to_string().contains("error sending request"),
+        "last send error surfaces: {err}"
+    );
+
+    assert_eq!(
+        channel.send_count.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "no more than the bounded attempts are made"
+    );
+    assert!(
+        channel.sent.lock().expect("test send lock").is_empty(),
+        "no reply is recorded"
+    );
+}
+
+/// #8590: a permanent failure (provider 4xx) fails fast without retrying.
+#[tokio::test]
+async fn failed_reply_does_not_retry_permanent_errors() {
+    let mut test_channel = crate::channels::runtime::TestChannel::new("telegram");
+    test_channel.send_error =
+        Some("Telegram API error (400 Bad Request): chat not found".to_owned());
+    let channel = std::sync::Arc::new(test_channel);
+    let handle = crate::channels::runtime::ChannelHandle::Test(std::sync::Arc::clone(&channel));
+
+    send_reply_with_retry(&handle, &reply_message())
+        .await
+        .expect_err("permanent failure must surface");
+
+    assert_eq!(
+        channel.send_count.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "permanent errors are not retried"
+    );
+}
+
+fn inbound_message(reply_target: &str, id: &str) -> tinychannels_bus::ChannelMessage {
+    tinychannels_bus::ChannelMessage {
+        id: id.to_owned(),
+        sender: "sender-1".to_owned(),
+        reply_target: reply_target.to_owned(),
+        content: "hello".to_owned(),
+        channel: "telegram".to_owned(),
+        timestamp: 0,
+        thread_ts: None,
+        reply_to_id: None,
+        topic_id: None,
+        sender_name: None,
+    }
+}
+
+/// #8590 follow-up: provider message ids are only unique within a chat, so
+/// the reply key must scope to the conversation too.
+#[test]
+fn reply_idempotency_key_scopes_to_conversation() {
+    let first_chat = reply_idempotency_key(&inbound_message("chat-1", "1"));
+    let second_chat = reply_idempotency_key(&inbound_message("chat-2", "1"));
+    assert_ne!(
+        first_chat, second_chat,
+        "message 1 from two chats must not share a key"
+    );
+    assert_eq!(
+        first_chat,
+        reply_idempotency_key(&inbound_message("chat-1", "1")),
+        "the same inbound message keeps the same key across retries"
+    );
+}
+
+/// #8590 follow-up: a Telegram 500 is a transient server failure, so the
+/// reply is retried even though the shared classifier excludes 500.
+#[tokio::test]
+async fn failed_reply_retries_telegram_500_then_succeeds() {
+    let (channel, handle) = transient_reply_channel_with_error(
+        2,
+        Some("Telegram API error (500 Internal Server Error): server error"),
+    );
+
+    send_reply_with_retry(&handle, &reply_message())
+        .await
+        .expect("reply must land after transient 500s");
+
+    assert_eq!(
+        channel.send_count.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "two failed attempts plus the delivering one"
+    );
+    assert_eq!(
+        channel.sent.lock().expect("test send lock").len(),
+        1,
+        "exactly one reply is recorded"
+    );
+}
+
+/// #8590 follow-up: a failed module-call transport (relay connection
+/// closed mid-send) is transient, so the reply is retried.
+#[tokio::test]
+async fn failed_reply_retries_module_transport_failure_then_succeeds() {
+    let (channel, handle) = transient_reply_channel_with_error(
+        2,
+        Some("MODULE_CALL_REPORTED: module transport failed"),
+    );
+
+    send_reply_with_retry(&handle, &reply_message())
+        .await
+        .expect("reply must land after transient transport failures");
+
+    assert_eq!(
+        channel.send_count.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "two failed attempts plus the delivering one"
+    );
+    assert_eq!(
+        channel.sent.lock().expect("test send lock").len(),
+        1,
+        "exactly one reply is recorded"
+    );
+}
+
+/// #8590 follow-up: other sanitized module-call failures are not transport
+/// failures, so they still fail fast without retrying.
+#[tokio::test]
+async fn failed_reply_does_not_retry_module_fault_or_unavailable() {
+    for error in [
+        "MODULE_CALL_REPORTED: module execution failed",
+        "MODULE_CALL_REPORTED: module unavailable",
+        "MODULE_CALL_REPORTED: module incompatible contract",
+    ] {
+        let mut test_channel = crate::channels::runtime::TestChannel::new("telegram");
+        test_channel.send_error = Some(error.to_owned());
+        let channel = std::sync::Arc::new(test_channel);
+        let handle = crate::channels::runtime::ChannelHandle::Test(std::sync::Arc::clone(&channel));
+
+        send_reply_with_retry(&handle, &reply_message())
+            .await
+            .expect_err("non-transport module failure must surface");
+
+        assert_eq!(
+            channel.send_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "non-transport module failure must not be retried: {error}"
+        );
+    }
+}

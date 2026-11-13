@@ -172,7 +172,7 @@ pub async fn all_tools_with_runtime_and_pack_handle(
     #[cfg(feature = "flows")]
     tools.extend(crate::flows::registration::tools(config.clone(), security));
     #[cfg(feature = "web3")]
-    tools.extend(crate::web3::wallet::tools::all_agent_tools());
+    tools.extend(crate::web3::tools::wallet_agent_tools());
     tools.append(&mut vec![
         Box::new(crate::cron::tools::ScheduleTool::new(
             security.clone(),

@@ -470,37 +470,17 @@ impl Config {
             );
         }
 
-        if let Some(max_results) =
-            env.get_any(&["OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "WEB_SEARCH_MAX_RESULTS"])
-        {
-            if let Ok(max_results) = max_results.parse::<usize>() {
-                if (1..=10).contains(&max_results) {
-                    self.web_search.max_results = max_results;
-                    self.record_env_override(
-                        env,
-                        "web_search.max_results",
-                        &["OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "WEB_SEARCH_MAX_RESULTS"],
-                    );
-                }
-            }
-        }
-
-        if let Some(timeout_secs) = env.get_any(&[
+        for retired in [
+            "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
+            "WEB_SEARCH_MAX_RESULTS",
             "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
             "WEB_SEARCH_TIMEOUT_SECS",
-        ]) {
-            if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
-                if timeout_secs > 0 {
-                    self.web_search.timeout_secs = timeout_secs;
-                    self.record_env_override(
-                        env,
-                        "web_search.timeout_secs",
-                        &[
-                            "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-                            "WEB_SEARCH_TIMEOUT_SECS",
-                        ],
-                    );
-                }
+        ] {
+            if env.contains(retired) {
+                log::warn!(
+                    "[config] {retired} is deprecated and ignored; use \
+                     OPENHUMAN_SEARCH_MAX_RESULTS / OPENHUMAN_SEARCH_TIMEOUT_SECS."
+                );
             }
         }
     }

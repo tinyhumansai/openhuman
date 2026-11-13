@@ -69,10 +69,8 @@ pub struct LocalAiConfig {
     pub tts_provider: String,
     #[serde(default = "default_autosummary_debounce_ms")]
     pub autosummary_debounce_ms: u64,
-    #[serde(default)]
-    pub selected_tier: Option<String>,
     /// Explicit MVP opt-in marker. Bootstrap disables local AI unless this is
-    /// `true`, regardless of any prior `selected_tier` value. Existing installs
+    /// `true`, regardless of any prior tier selection. Existing installs
     /// (upgrading from pre-MVP) default to `false` and must re-opt-in from
     /// Settings. Set by `apply_preset` on any non-disabled tier.
     #[serde(default)]
@@ -123,7 +121,6 @@ impl std::fmt::Debug for LocalAiConfig {
             .field("tts_voice_id", &self.tts_voice_id)
             .field("tts_provider", &self.tts_provider)
             .field("autosummary_debounce_ms", &self.autosummary_debounce_ms)
-            .field("selected_tier", &self.selected_tier)
             .field("opt_in_confirmed", &self.opt_in_confirmed)
             .field("ollama_binary_path", &self.ollama_binary_path)
             .field("voice_llm_cleanup_enabled", &self.voice_llm_cleanup_enabled)
@@ -208,7 +205,6 @@ impl Default for LocalAiConfig {
             tts_voice_id: default_tts_voice_id(),
             tts_provider: default_tts_provider(),
             autosummary_debounce_ms: default_autosummary_debounce_ms(),
-            selected_tier: None,
             opt_in_confirmed: false,
             ollama_binary_path: None,
             voice_llm_cleanup_enabled: default_voice_llm_cleanup_enabled(),
