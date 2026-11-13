@@ -396,6 +396,38 @@ pub(crate) fn presence_from_flow_get(
 
 /// Ask the flows controller whether `flow_id` is still stored. No `flows::`
 /// import: this module is always compiled, and the flows domain stays a leaf.
+/// [`saved_flow_presence`] on the blocking pool. The `flows.get` handler
+/// reaches the flow catalog through the storage bridge, which waits
+/// synchronously (up to the catalog proxy's timeout); on the live spawn path
+/// that must not park an async worker. The probe runs under `ctx`. A task
+/// failure reads as `Unknown`, which keeps the note, like a lookup error.
+async fn saved_flow_presence_off_worker(
+    ctx: &DispatchCtx,
+    thread_id: &str,
+    flow_id: &str,
+) -> SavedFlowPresence {
+    let probe_ctx = ctx.clone();
+    let scope_ctx = ctx.clone();
+    let owned_flow_id = flow_id.to_string();
+    let handle = tokio::runtime::Handle::current();
+    let probe = tokio::task::spawn_blocking(move || {
+        handle.block_on(scope_ctx.enter(async move {
+            saved_flow_presence(&probe_ctx, &owned_flow_id).await
+        }))
+    })
+    .await;
+    match probe {
+        Ok(presence) => presence,
+        Err(error) => {
+            log::warn!(
+                "[spawn_subagent] saved-flow presence probe failed thread_id={thread_id} \
+                 flow_id={flow_id} error={error}"
+            );
+            SavedFlowPresence::Unknown
+        }
+    }
+}
+
 async fn saved_flow_presence(ctx: &DispatchCtx, flow_id: &str) -> SavedFlowPresence {
     let result = crate::core::invoke::invoke_method(
         ctx.clone(),
@@ -543,7 +575,8 @@ pub(crate) async fn carry_saved_flow(
         let thread_id = thread_id.to_string();
         let prompt = prompt.clone();
         let context = context.map(str::to_string);
-        tokio::task::spawn_blocking(move || {
+        let task_ctx = ctx.clone();
+        task_ctx.spawn_blocking(move || {
             saved_carry_for_hand_off(
                 &ctx,
                 &workspace_dir,
@@ -565,7 +598,7 @@ pub(crate) async fn carry_saved_flow(
             return prompt;
         }
     };
-    let presence = saved_flow_presence(ctx, &saved.flow_id).await;
+    let presence = saved_flow_presence_off_worker(ctx, thread_id, &saved.flow_id).await;
     append_saved_flow_note(
         prompt,
         thread_id,
