@@ -322,7 +322,9 @@ fn a_sub_workflow_object_nested_under_a_key_is_still_excluded() {
     // The sub_workflow object is a property value (`"node": {…}`), and its
     // `workflow_id` sits in another property value (`"config": {…}`): the
     // first key inside each object must still be read as a key.
-    let hand_off = r#"Save "Morning digest": {"node":{"type":"sub_workflow","name":"Fetch headlines and summarize","config":{"workflow_id":"flow-child"}}}"#;
+    // No quoted prose before the graph, so the scanner meets `"node": {`
+    // with nothing but JSON before it.
+    let hand_off = r#"Save the Morning digest proposal with {"node":{"type":"sub_workflow","name":"Fetch headlines and summarize","config":{"workflow_id":"flow-child"}}}"#;
     let proposals = [parent, child];
     let picked = hand_off_proposal(&proposals, hand_off).expect("the parent proposal");
     assert_eq!(picked.message_id, "parent");
