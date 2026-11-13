@@ -2,6 +2,7 @@ import { ExternalLink } from 'lucide-react';
 
 import { useUsageState } from '../../../hooks/useUsageState';
 import { useT } from '../../../lib/i18n/I18nContext';
+import { intlLocale } from '../../../lib/i18n/intlLocale';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import type { PlanTier } from '../../../types/api';
 import { BILLING_DASHBOARD_URL } from '../../../utils/links';
@@ -24,7 +25,7 @@ function planName(tier: PlanTier): string {
  * Security, Import, …) are reached through the sidebar, not from here.
  */
 const AccountPanel = () => {
-  const { t } = useT();
+  const { t, locale } = useT();
   const { snapshot } = useCoreState();
   const user = snapshot.currentUser;
   // The usage hook fetches the live plan; the snapshot's embedded
@@ -79,7 +80,7 @@ const AccountPanel = () => {
                   <div className="text-[11px] text-content-faint">
                     {t('settings.account.resetsOn').replace(
                       '{date}',
-                      resetsOn.toLocaleDateString()
+                      resetsOn.toLocaleDateString(intlLocale(locale))
                     )}
                   </div>
                 )}

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { LuPlay, LuRefreshCw } from 'react-icons/lu';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { intlLocale } from '../../lib/i18n/intlLocale';
 import {
   type JobsList,
   memoryErrorMessage,
@@ -26,7 +27,8 @@ import { JOB_OUTCOME_VARIANT, jobKindLabel, jobOutcomeLabel } from './memoryLife
 const log = debug('openhuman:memory:background');
 
 export default function MemoryBackgroundTab() {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
   const [jobs, setJobs] = useState<JobsList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -139,7 +141,7 @@ export default function MemoryBackgroundTab() {
         ) : (
           <ul className="divide-y divide-line-subtle">
             {jobs.pending.map(job => {
-              const queued = formatTimestamp(job.queued_at);
+              const queued = formatTimestamp(job.queued_at, intl);
               return (
                 <li
                   key={job.id}
@@ -193,7 +195,7 @@ export default function MemoryBackgroundTab() {
         ) : (
           <ul className="divide-y divide-line-subtle">
             {jobs.history.map(entry => {
-              const ranAt = formatTimestamp(entry.ran_at);
+              const ranAt = formatTimestamp(entry.ran_at, intl);
               return (
                 <li
                   key={`${entry.id}-${entry.ran_at}`}

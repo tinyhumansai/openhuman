@@ -3,6 +3,7 @@ import { RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import { intlLocale } from '../../../lib/i18n/intlLocale';
 import {
   type ApprovalAuditEntry,
   type ApprovalDecision,
@@ -19,17 +20,17 @@ import SettingsPanel from '../layout/SettingsPanel';
 const log = debug('ui:approval-history');
 
 /**
- * Render a decided timestamp as two lines — date over time — in the user's
- * locale; an unparseable value is shown raw on one line.
+ * Render a decided timestamp as two lines — date over time — in the app's
+ * active locale; an unparseable value is shown raw on one line.
  */
-const DateTimeCell = ({ value }: { value: string }) => {
+const DateTimeCell = ({ value, locale }: { value: string; locale: string }) => {
   const ts = Date.parse(value);
   if (Number.isNaN(ts)) return <>{value}</>;
   const date = new Date(ts);
   return (
-    <span className="flex flex-col leading-tight" title={date.toLocaleString()}>
-      <span className="text-content">{date.toLocaleDateString()}</span>
-      <span className="text-xs text-content-muted">{date.toLocaleTimeString()}</span>
+    <span className="flex flex-col leading-tight" title={date.toLocaleString(locale)}>
+      <span className="text-content">{date.toLocaleDateString(locale)}</span>
+      <span className="text-xs text-content-muted">{date.toLocaleTimeString(locale)}</span>
     </span>
   );
 };
@@ -57,7 +58,7 @@ const DECISION_ORDER: ApprovalDecision[] = [
 ];
 
 const ApprovalHistoryPanel = () => {
-  const { t } = useT();
+  const { t, locale } = useT();
 
   const [entries, setEntries] = useState<ApprovalAuditEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -126,7 +127,7 @@ const ApprovalHistoryPanel = () => {
       // `w-px` + nowrap: fixed-content columns shrink to fit, so the
       // tool/action column takes all the remaining width.
       className: 'w-px whitespace-nowrap tabular-nums',
-      cell: entry => <DateTimeCell value={entry.decided_at} />,
+      cell: entry => <DateTimeCell value={entry.decided_at} locale={intlLocale(locale)} />,
     },
     {
       id: 'tool',

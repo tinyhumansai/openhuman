@@ -6,6 +6,8 @@
  * belong in the element's `title`.
  */
 
+import { DEFAULT_INTL_LOCALE } from '../lib/i18n/intlLocale';
+
 export type RelativeTime =
   | { kind: 'justNow' }
   | { kind: 'minutes'; count: number }
@@ -18,7 +20,15 @@ const DAY_MS = 24 * HOUR_MS;
 /** Clock skew tolerated before a future time stops reading as "just now". */
 const FUTURE_SKEW_MS = 2 * MINUTE_MS;
 
-export function relativeTime(at: Date, now: Date, locale?: string): RelativeTime | null {
+/**
+ * `locale` is a BCP-47 tag — pass `intlLocale(locale)` from `useT()` so the
+ * rendering follows the app's active language instead of the host's.
+ */
+export function relativeTime(
+  at: Date,
+  now: Date,
+  locale: string = DEFAULT_INTL_LOCALE
+): RelativeTime | null {
   const time = at.getTime();
   if (Number.isNaN(time)) return null;
   const delta = now.getTime() - time;
@@ -35,7 +45,7 @@ export function relativeTime(at: Date, now: Date, locale?: string): RelativeTime
 }
 
 /** Full local date and time with the zone, for a tooltip. */
-export function fullTimestamp(at: Date, locale?: string): string {
+export function fullTimestamp(at: Date, locale: string = DEFAULT_INTL_LOCALE): string {
   if (Number.isNaN(at.getTime())) return '';
   // Explicit fields: `dateStyle`/`timeStyle` cannot be combined with
   // `timeZoneName`, and the zone is the point of the tooltip.

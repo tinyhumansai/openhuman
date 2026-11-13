@@ -19,7 +19,13 @@
  * names come from `Intl.DateTimeFormat` against the active locale instead of
  * a hand-translated array, so they're correctly ordered/named per locale
  * without adding translation surface.
+ *
+ * The `locale` those helpers take is a BCP-47 tag — pass
+ * `intlLocale(locale)` from `useT()` so it follows the app's active language
+ * (pinned for English) rather than the host's.
  */
+
+import { DEFAULT_INTL_LOCALE } from '../i18n/intlLocale';
 
 /** How often the schedule fires. */
 export type CronFreq = 'minutes' | 'hours' | 'daily';
@@ -188,9 +194,9 @@ function weekdayName(day: number, locale: string, style: 'short' | 'narrow'): st
   try {
     return new Intl.DateTimeFormat(locale, options).format(date);
   } catch {
-    // An unsupported/malformed locale tag falls back to English rather than
-    // throwing — the schedule field must still render.
-    return new Intl.DateTimeFormat('en', options).format(date);
+    // An unsupported/malformed locale tag falls back to the pinned default
+    // rather than throwing — the schedule field must still render.
+    return new Intl.DateTimeFormat(DEFAULT_INTL_LOCALE, options).format(date);
   }
 }
 

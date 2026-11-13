@@ -1,16 +1,6 @@
-const ONE_CENT = 0.01;
+import { DEFAULT_INTL_LOCALE } from '../../lib/i18n/intlLocale';
 
-/**
- * Locale used when no explicit one is supplied.
- *
- * `Intl` defaults to the **host** locale when it is called with `undefined`,
- * which makes every number in the cost dashboard change shape depending on
- * the operating system's language (a Turkish machine renders `$12,50`, an
- * English one `$12.50`). That is neither the app's active language nor a
- * stable contract, so the default is pinned instead and the dashboard passes
- * the app locale explicitly.
- */
-export const DEFAULT_INTL_LOCALE = 'en-US';
+const ONE_CENT = 0.01;
 
 function currencyFormatter(
   currency: string,

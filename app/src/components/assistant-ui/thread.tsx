@@ -34,6 +34,7 @@ import { onComposerPrefill } from '@/features/conversations/tools/mcpUi/composer
 import { McpWidgetStrip } from '@/features/conversations/tools/mcpUi/McpWidgetStrip';
 import { collectMessageWidgets } from '@/features/conversations/tools/mcpUi/messageWidgets';
 import { useT } from '@/lib/i18n/I18nContext';
+import { intlLocale } from '@/lib/i18n/intlLocale';
 import { CHAT_ERROR_METADATA_KEY } from '@/store/threadSlice';
 import { fullTimestamp, relativeTime } from '@/utils/relativeTime';
 import { useActionBarReload, useMessageError } from '@assistant-ui/core/react';
@@ -1414,7 +1415,7 @@ const MessageTimestamp: FC = () => {
   const createdAt = useAuiState(s => s.message.createdAt);
   const [now] = useState(() => new Date());
   if (!(createdAt instanceof Date)) return null;
-  const relative = relativeTime(createdAt, now, locale);
+  const relative = relativeTime(createdAt, now, intlLocale(locale));
   if (!relative) return null;
   const label =
     relative.kind === 'justNow'
@@ -1428,7 +1429,7 @@ const MessageTimestamp: FC = () => {
     <time
       data-testid="message-timestamp"
       dateTime={createdAt.toISOString()}
-      title={fullTimestamp(createdAt, locale)}
+      title={fullTimestamp(createdAt, intlLocale(locale))}
       className="text-muted-foreground/80 ms-1 self-center text-xs tabular-nums">
       {label}
     </time>

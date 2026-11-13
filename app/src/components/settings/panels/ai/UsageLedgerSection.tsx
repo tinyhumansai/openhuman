@@ -6,6 +6,7 @@
 import { RefreshCw } from 'lucide-react';
 
 import type { CreditTransaction, TeamUsage } from '../../../../services/api/creditsApi';
+import { DEFAULT_INTL_LOCALE } from '../../../../lib/i18n/intlLocale';
 import { Button, Card, EmptyState } from '../../../ui';
 import {
   formatCount,
@@ -38,6 +39,7 @@ export const UsageLedgerSection = ({
   projectedHoursLeft,
   scheduledCallsPerRemainingDollar,
   activeConnectionsCount,
+  locale = DEFAULT_INTL_LOCALE,
 }: {
   t: (key: string, fallback?: string) => string;
   loading: boolean;
@@ -61,6 +63,8 @@ export const UsageLedgerSection = ({
   projectedHoursLeft: number | null;
   scheduledCallsPerRemainingDollar: number | null;
   activeConnectionsCount: number;
+  /** BCP-47 tag (e.g. from `intlLocale(locale)`) used for date/time rendering. */
+  locale?: string;
 }) => (
   <div className="space-y-4">
     <Card
@@ -81,7 +85,7 @@ export const UsageLedgerSection = ({
         <MetricTile
           label={t('settings.ai.weekBudget')}
           value={usage ? formatUsd(usage.cycleBudgetUsd) : t('common.notAvailable')}
-          detail={t('settings.ai.resetsAt').replace('{time}', formatDateTime(usage?.cycleEndsAt))}
+          detail={t('settings.ai.resetsAt').replace('{time}', formatDateTime(usage?.cycleEndsAt, locale))}
         />
         <MetricTile
           label={t('settings.ai.cycleRemaining')}
@@ -131,7 +135,7 @@ export const UsageLedgerSection = ({
         <div className="px-4 py-3 text-xs text-content-secondary">
           {t('settings.ai.latestSpend')
             .replace('{amount}', formatUsd(formatSpendAmount(latestSpend)))
-            .replace('{time}', new Date(latestSpend.createdAt).toLocaleString())
+            .replace('{time}', new Date(latestSpend.createdAt).toLocaleString(locale))
             .replace('{action}', latestSpend.action)}
         </div>
       )}

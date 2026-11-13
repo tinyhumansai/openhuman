@@ -66,6 +66,7 @@ import type { FlowNode } from '../../../lib/flows/graphAdapter';
 import { NodeKindTile } from '../../../lib/flows/nodeKindIcons';
 import { describeNode } from '../../../lib/flows/nodeSummary';
 import { useT } from '../../../lib/i18n/I18nContext';
+import { intlLocale } from '../../../lib/i18n/intlLocale';
 import { Badge, type BadgeVariant, Button } from '../../ui';
 import { useCanvasActions } from './canvasActions';
 import { useStepNumber } from './stepNumbers';
@@ -122,7 +123,13 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNode>) {
     (data.config?.provider === 'openhuman' ||
       (typeof data.config?.slug === 'string' && data.config.slug.startsWith('oh:')));
   const kindLabel = t(`flows.nodeKind.${data.kind}`, data.kind);
-  const summary = describeNode(data.kind, data.config ?? {}, data.outputPorts, t, locale);
+  const summary = describeNode(
+    data.kind,
+    data.config ?? {},
+    data.outputPorts,
+    t,
+    intlLocale(locale)
+  );
 
   // Only label ports when there's something to disambiguate: more than one port,
   // or a single explicitly-named (non-`main`) port. A lone implicit `main` shows

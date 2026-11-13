@@ -2,6 +2,7 @@ import { History, Pause, Pencil, Play, Trash2, Zap } from 'lucide-react';
 import { Fragment, type ReactNode, useMemo, useState } from 'react';
 
 import { useT } from '../../../../lib/i18n/I18nContext';
+import { intlLocale } from '../../../../lib/i18n/intlLocale';
 import type { CoreCronJob, CoreCronRun } from '../../../../utils/tauriCommands';
 import Badge, { type BadgeVariant } from '../../../ui/Badge';
 import Button from '../../../ui/Button';
@@ -37,15 +38,15 @@ function statusVariant(status: string): BadgeVariant {
   return 'neutral';
 }
 
-/** Date over time, in the user's locale; raw value when unparseable. */
-const DateTimeCell = ({ value }: { value: string }) => {
+/** Date over time, in the app's active locale; raw value when unparsable. */
+const DateTimeCell = ({ value, locale }: { value: string; locale: string }) => {
   const ts = Date.parse(value);
   if (Number.isNaN(ts)) return <span className="text-content-muted">{value}</span>;
   const date = new Date(ts);
   return (
-    <span className="flex flex-col leading-tight" title={date.toLocaleString()}>
-      <span className="text-content">{date.toLocaleDateString()}</span>
-      <span className="text-xs text-content-muted">{date.toLocaleTimeString()}</span>
+    <span className="flex flex-col leading-tight" title={date.toLocaleString(locale)}>
+      <span className="text-content">{date.toLocaleDateString(locale)}</span>
+      <span className="text-xs text-content-muted">{date.toLocaleTimeString(locale)}</span>
     </span>
   );
 };
@@ -72,7 +73,8 @@ const CoreJobList = ({
   actions,
   error,
 }: CoreJobListProps) => {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
   const [query, setQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<ReadonlySet<string>>(new Set());
 
@@ -165,7 +167,7 @@ const CoreJobList = ({
       id: 'next',
       header: t('settings.cron.jobs.nextRun'),
       className: 'w-px whitespace-nowrap tabular-nums',
-      cell: job => <DateTimeCell value={job.next_run} />,
+      cell: job => <DateTimeCell value={job.next_run} locale={intl} />,
     },
     {
       id: 'last',
@@ -248,7 +250,7 @@ const CoreJobList = ({
           </p>
           <ul className="flex flex-wrap gap-2">
             {runs.map(run => {
-              const finishedAt = new Date(run.finished_at).toLocaleString();
+              const finishedAt = new Date(run.finished_at).toLocaleString(intl);
               // Split on the placeholders (rather than assuming
               // "{status} at {time}" order) so a locale that reorders the
               // phrase still renders correctly.

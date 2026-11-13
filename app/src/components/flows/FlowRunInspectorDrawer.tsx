@@ -32,6 +32,7 @@ import { type FlowRunItem, normalizeItems } from '../../lib/flows/runItems';
 import { summarizeStep } from '../../lib/flows/runStepSummary';
 import { formatRunTimestamp } from '../../lib/flows/runTimestamp';
 import { useT } from '../../lib/i18n/I18nContext';
+import { intlLocale } from '../../lib/i18n/intlLocale';
 import type { FlowRunStep } from '../../services/api/flowsApi';
 import { Alert, AlertDescription, Badge, Button, CenteredLoadingState } from '../ui';
 import { FlowRunPendingApprovalCard } from './FlowRunPendingApprovalCard';
@@ -202,7 +203,8 @@ export function FlowRunInspectorDrawer({
   onFixWithAgent,
   variant = 'drawer',
 }: Props) {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
   const { run, loading, error } = useFlowRunPoller(runId);
   // Live per-node status overlay (Phase 3e): the socket feed makes the poller's
   // durable step list feel live without replacing it as the source of truth.
@@ -251,8 +253,8 @@ export function FlowRunInspectorDrawer({
 
   if (!runId) return null;
 
-  const startedAt = formatRunTimestamp(run?.started_at, { withSeconds: true });
-  const finishedAt = formatRunTimestamp(run?.finished_at, { withSeconds: true });
+  const startedAt = formatRunTimestamp(run?.started_at, { withSeconds: true, locale: intl });
+  const finishedAt = formatRunTimestamp(run?.finished_at, { withSeconds: true, locale: intl });
 
   const content = (
     <>

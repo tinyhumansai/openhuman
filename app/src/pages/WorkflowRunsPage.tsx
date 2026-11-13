@@ -24,6 +24,7 @@ import {
 } from '../hooks/useRunsPendingApprovalSet';
 import { cn } from '../lib/cn';
 import { useT } from '../lib/i18n/I18nContext';
+import { intlLocale } from '../lib/i18n/intlLocale';
 import {
   type Flow,
   type FlowRun,
@@ -37,15 +38,15 @@ interface RunRow {
   name: string;
 }
 
-/** Date over time, in the user's locale; raw value when unparseable. */
-const DateTimeCell = ({ value }: { value: string }) => {
+/** Date over time, in the app's active locale; raw value when unparsable. */
+const DateTimeCell = ({ value, locale }: { value: string; locale: string }) => {
   const ts = Date.parse(value);
   if (Number.isNaN(ts)) return <span>{value}</span>;
   const date = new Date(ts);
   return (
-    <span className="flex flex-col leading-tight" title={date.toLocaleString()}>
-      <span className="text-content">{date.toLocaleDateString()}</span>
-      <span className="text-xs text-content-muted">{date.toLocaleTimeString()}</span>
+    <span className="flex flex-col leading-tight" title={date.toLocaleString(locale)}>
+      <span className="text-content">{date.toLocaleDateString(locale)}</span>
+      <span className="text-xs text-content-muted">{date.toLocaleTimeString(locale)}</span>
     </span>
   );
 };
@@ -64,7 +65,7 @@ function formatDuration(startedAt: string, finishedAt?: string | null): string {
 }
 
 export default function WorkflowRunsPage() {
-  const { t } = useT();
+  const { t, locale } = useT();
   const navigate = useNavigate();
   const { runs, loading, error, refreshSilently } = useFlowRunsQuery({ scope: { kind: 'all' } });
   const [flowNames, setFlowNames] = useState<Record<string, string>>({});
@@ -179,7 +180,7 @@ export default function WorkflowRunsPage() {
       id: 'started',
       header: t('flows.allRuns.columnStarted'),
       className: 'w-px whitespace-nowrap tabular-nums',
-      cell: row => <DateTimeCell value={row.run.started_at} />,
+      cell: row => <DateTimeCell value={row.run.started_at} locale={intlLocale(locale)} />,
     },
     {
       id: 'duration',

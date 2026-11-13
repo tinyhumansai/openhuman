@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { LuPlus, LuRefreshCw } from 'react-icons/lu';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { intlLocale } from '../../lib/i18n/intlLocale';
 import {
   memoryErrorMessage,
   memorySourcesAdd,
@@ -32,7 +33,8 @@ const log = debug('openhuman:memory:synced-sources');
 const SYNC_POLL_MS = 5_000;
 
 export default function MemorySyncedSources() {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
   const [sources, setSources] = useState<Source[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -189,7 +191,7 @@ export default function MemorySyncedSources() {
         ) : (
           <ul className="divide-y divide-line-subtle">
             {sources.map(source => {
-              const lastSync = formatTimestamp(source.last_sync_at);
+              const lastSync = formatTimestamp(source.last_sync_at, intl);
               return (
                 <li
                   key={source.id}

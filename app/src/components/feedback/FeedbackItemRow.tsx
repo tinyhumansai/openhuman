@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { DEFAULT_INTL_LOCALE, intlLocale } from '../../lib/i18n/intlLocale';
 import type { FeedbackItem } from '../../types/feedback';
 import { Button } from '../ui';
 import { AvatarFallback, AvatarRoot } from '../ui/Avatar';
@@ -33,11 +34,12 @@ function avatarTint(id: string): string {
   return AVATAR_TINTS[hash];
 }
 
-function formatDate(value: string): string {
+/** Short date ("5 Oct") in the app's active locale; empty when unparseable. */
+function formatDate(value: string, locale: string = DEFAULT_INTL_LOCALE): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? ''
-    : date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    : date.toLocaleDateString(locale, { day: 'numeric', month: 'short' });
 }
 
 export default function FeedbackItemRow({
@@ -46,7 +48,8 @@ export default function FeedbackItemRow({
   onChange,
   onCommentAdded,
 }: FeedbackItemRowProps) {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
   const [expanded, setExpanded] = useState(false);
 
   const typeLabel = item.type === 'bug' ? t('feedback.type.bug') : t('feedback.type.feature');
@@ -96,7 +99,7 @@ export default function FeedbackItemRow({
             <span className="font-medium text-content-muted">{authorName}</span>
           </span>
           <span>·</span>
-          <span>{formatDate(item.createdAt)}</span>
+          <span>{formatDate(item.createdAt, intl)}</span>
           <Button
             variant="tertiary"
             size="xs"

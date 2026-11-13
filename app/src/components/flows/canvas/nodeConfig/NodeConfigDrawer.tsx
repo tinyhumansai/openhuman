@@ -23,6 +23,7 @@ import type { FlowEdge, FlowNode } from '../../../../lib/flows/graphAdapter';
 import { NodeKindTile } from '../../../../lib/flows/nodeKindIcons';
 import { describeNode } from '../../../../lib/flows/nodeSummary';
 import { useT } from '../../../../lib/i18n/I18nContext';
+import { intlLocale } from '../../../../lib/i18n/intlLocale';
 import type { FlowConnection } from '../../../../services/api/flowsApi';
 import { Button, Input as UiInput } from '../../../ui';
 import { JsonField } from './nodeConfigFields';
@@ -163,7 +164,7 @@ function NodeConfigDrawer({
     node.data.config ?? {},
     node.data.outputPorts,
     t,
-    locale
+    intlLocale(locale)
   );
 
   return (

@@ -8,6 +8,7 @@ import debug from 'debug';
 import { useEffect, useId, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { DEFAULT_INTL_LOCALE, intlLocale } from '../../lib/i18n/intlLocale';
 import {
   type Hit,
   memoryErrorMessage,
@@ -32,8 +33,17 @@ interface MemoryItemDialogProps {
   onForgotten: (id: string) => void;
 }
 
-/** Every metadata field the item carries, labelled, in a fixed order. */
-export function metaRows(meta: MemoryMeta, t: Translate): Array<[string, string]> {
+/**
+ * Every metadata field the item carries, labelled, in a fixed order.
+ *
+ * `locale` is a BCP-47 tag for the observed-at rendering — pass
+ * `intlLocale(locale)` from `useT()`.
+ */
+export function metaRows(
+  meta: MemoryMeta,
+  t: Translate,
+  locale: string = DEFAULT_INTL_LOCALE
+): Array<[string, string]> {
   const rows: Array<[string, string | null | undefined]> = [
     [facetLabel('source', t), meta.source?.kind],
     [facetLabel('source_id', t), meta.source?.id],
@@ -59,13 +69,14 @@ export function metaRows(meta: MemoryMeta, t: Translate): Array<[string, string]
         : null,
     ],
     [facetLabel('tag', t), meta.tags && meta.tags.length > 0 ? meta.tags.join(', ') : null],
-    [t('memoryPage.explorer.meta.observedAt'), formatTimestamp(meta.observed_at)],
+    [t('memoryPage.explorer.meta.observedAt'), formatTimestamp(meta.observed_at, locale)],
   ];
   return rows.filter((row): row is [string, string] => Boolean(row[1]));
 }
 
 export default function MemoryItemDialog({ id, onClose, onForgotten }: MemoryItemDialogProps) {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
   const titleId = useId();
   const [item, setItem] = useState<Hit | null>(null);
   const [missing, setMissing] = useState(false);
@@ -161,7 +172,7 @@ export default function MemoryItemDialog({ id, onClose, onForgotten }: MemoryIte
               {item.text}
             </pre>
             <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
-              {metaRows(item.meta, t).map(([label, value]) => (
+              {metaRows(item.meta, t, intl).map(([label, value]) => (
                 <div key={label} className="contents">
                   <dt className="font-medium text-content-secondary">{label}</dt>
                   <dd className="break-all font-mono text-content">{value}</dd>

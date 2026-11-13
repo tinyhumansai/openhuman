@@ -6,6 +6,7 @@ import evmIcon from '../../../assets/icons/chains/evm.svg';
 import solanaIcon from '../../../assets/icons/chains/solana.svg';
 import tronIcon from '../../../assets/icons/chains/trx.svg';
 import { useT } from '../../../lib/i18n/I18nContext';
+import { intlLocale } from '../../../lib/i18n/intlLocale';
 import { revealRecoveryPhrase, type WalletStatus } from '../../../services/walletApi';
 import { Alert } from '../../ui/Alert';
 import Button from '../../ui/Button';
@@ -39,7 +40,7 @@ const RecoveryPhraseViewMode = ({
   onGenerateClick,
   onImportClick,
 }: RecoveryPhraseViewModeProps) => {
-  const { t } = useT();
+  const { t, locale } = useT();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [mnemonic, setMnemonic] = useState<string | null>(null);
   const [isRevealing, setIsRevealing] = useState(false);
@@ -153,7 +154,7 @@ const RecoveryPhraseViewMode = ({
                   {t('mnemonic.walletLastUpdated')}
                 </span>
                 <span className="text-sm font-medium text-content">
-                  {new Date(walletStatus.updatedAtMs).toLocaleDateString()}
+                  {new Date(walletStatus.updatedAtMs).toLocaleDateString(intlLocale(locale))}
                 </span>
               </div>
             )}

@@ -1,14 +1,24 @@
 import { useT } from '../../lib/i18n/I18nContext';
+import { DEFAULT_INTL_LOCALE, intlLocale } from '../../lib/i18n/intlLocale';
 import type { CatalogPage, ParsedRegistryError } from '../../services/api/skillRegistryApi';
 import { Alert, AlertDescription } from '../ui';
 import Button from '../ui/Button';
 
 const UNREACHABLE_KINDS = new Set(['timeout', 'unavailable', 'transport']);
 
-function formatFetchedAt(fetchedAt: number | null): string | null {
+/**
+ * A registry snapshot timestamp, as a full local date-time.
+ *
+ * `locale` is a BCP-47 tag — pass `intlLocale(locale)` from `useT()` so the
+ * rendering follows the app's active language instead of the host's.
+ */
+function formatFetchedAt(
+  fetchedAt: number | null,
+  locale: string = DEFAULT_INTL_LOCALE
+): string | null {
   if (fetchedAt == null) return null;
   try {
-    return new Date(fetchedAt * 1000).toLocaleString();
+    return new Date(fetchedAt * 1000).toLocaleString(locale);
   } catch {
     return null;
   }
@@ -70,7 +80,7 @@ export function RegistryStatusNotice({
   firstLoad: boolean;
   onRetry: () => void;
 }) {
-  const { t } = useT();
+  const { t, locale } = useT();
   if (firstLoad) {
     return (
       <Alert variant="info" density="compact" data-testid="registry-first-load">
@@ -82,7 +92,7 @@ export function RegistryStatusNotice({
 
   const offline = page.lastError != null || page.freshness === 'local_fallback';
   if (offline) {
-    const time = formatFetchedAt(page.fetchedAt);
+    const time = formatFetchedAt(page.fetchedAt, intlLocale(locale));
     const text = time
       ? t('skills.registry.offline').replace('{time}', time)
       : t('skills.registry.offlineNoTime');

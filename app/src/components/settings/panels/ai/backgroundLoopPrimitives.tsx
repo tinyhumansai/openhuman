@@ -3,6 +3,7 @@
  * background-loop controls (loop map + usage ledger section).
  */
 import type { ComposioConnection } from '../../../../lib/composio/types';
+import { DEFAULT_INTL_LOCALE } from '../../../../lib/i18n/intlLocale';
 import type { CreditTransaction } from '../../../../services/api/creditsApi';
 
 export const USD = new Intl.NumberFormat('en-US', {
@@ -31,11 +32,20 @@ export const formatCount = (value: number): string =>
     Number.isFinite(value) ? value : 0
   );
 
-export const formatDateTime = (value: string | null | undefined): string => {
+/**
+ * A timestamp as a short local date-time.
+ *
+ * `locale` is a BCP-47 tag — pass `intlLocale(locale)` from `useT()` so the
+ * rendering follows the app's active language instead of the host's.
+ */
+export const formatDateTime = (
+  value: string | null | undefined,
+  locale: string = DEFAULT_INTL_LOCALE
+): string => {
   if (!value) return 'n/a';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'n/a';
-  return date.toLocaleString([], {
+  return date.toLocaleString(locale, {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
@@ -66,14 +76,23 @@ export function summarizeSpendByAction(
     .slice(0, 4);
 }
 
-export function summarizeSpendByHour(transactions: CreditTransaction[]): Array<[string, number]> {
+/**
+ * Spend grouped into the local hour buckets it happened in.
+ *
+ * The bucket label is locale-dependent, so `locale` (a BCP-47 tag) is threaded
+ * through — pass `intlLocale(locale)` from `useT()`.
+ */
+export function summarizeSpendByHour(
+  transactions: CreditTransaction[],
+  locale: string = DEFAULT_INTL_LOCALE
+): Array<[string, number]> {
   const byHour = new Map<string, number>();
   for (const tx of transactions) {
     if (tx.type !== 'SPEND') continue;
     const date = new Date(tx.createdAt);
     if (Number.isNaN(date.getTime())) continue;
     date.setMinutes(0, 0, 0);
-    const key = date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric' });
+    const key = date.toLocaleString(locale, { month: 'short', day: 'numeric', hour: 'numeric' });
     byHour.set(key, (byHour.get(key) ?? 0) + spendAmount(tx));
   }
   return Array.from(byHour.entries())

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
 import type { ComposioConnection } from '../../../../lib/composio/types';
+import { intlLocale } from '../../../../lib/i18n/intlLocale';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import {
   creditsApi,
@@ -41,7 +42,8 @@ export const BackgroundLoopControls = ({
   view?: BackgroundLoopControlsView;
   hideHeader?: boolean;
 }) => {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
   const [usage, setUsage] = useState<TeamUsage | null>(null);
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
   const [connections, setConnections] = useState<ComposioConnection[]>([]);
@@ -92,7 +94,7 @@ export const BackgroundLoopControls = ({
   const spendSample = summarizeSpendSample(transactions);
   const spendRows = spendSample.rows;
   const actionSummary = summarizeSpendByAction(transactions);
-  const hourSummary = summarizeSpendByHour(transactions);
+  const hourSummary = summarizeSpendByHour(transactions, intl);
   const latestSpend = spendRows[0] ?? null;
   const activeConnections = connections.filter(activeConnection);
   const composioPeriodicTicksPerWeek = Math.ceil(WEEK_MINUTES / COMPOSIO_PERIODIC_TICK_MINUTES);
@@ -114,7 +116,7 @@ export const BackgroundLoopControls = ({
   const projectionAnchorMs = latestSpend ? new Date(latestSpend.createdAt).getTime() : Number.NaN;
   const projectedExhaustAt =
     projectedHoursLeft !== null && Number.isFinite(projectionAnchorMs)
-      ? new Date(projectionAnchorMs + projectedHoursLeft * 3_600_000).toLocaleString([], {
+      ? new Date(projectionAnchorMs + projectedHoursLeft * 3_600_000).toLocaleString(intl, {
           month: 'short',
           day: 'numeric',
           hour: 'numeric',
@@ -192,6 +194,7 @@ export const BackgroundLoopControls = ({
       {showLedger && (
         <UsageLedgerSection
           t={t}
+          locale={intl}
           loading={loading}
           onRefresh={() => void refresh()}
           usage={usage}

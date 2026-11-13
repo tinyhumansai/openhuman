@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useUser } from '../../hooks/useUser';
 import { useT } from '../../lib/i18n/I18nContext';
+import { DEFAULT_INTL_LOCALE, intlLocale } from '../../lib/i18n/intlLocale';
 import { feedbackApi } from '../../services/api/feedbackApi';
 import { messageForApiError } from '../../services/apiError';
 import type { FeedbackComment } from '../../types/feedback';
@@ -18,11 +19,12 @@ interface FeedbackCommentsProps {
   onCommentAdded: () => void;
 }
 
-function formatDate(value: string): string {
+/** Short date ("5 Oct") in the app's active locale; empty when unparseable. */
+function formatDate(value: string, locale: string = DEFAULT_INTL_LOCALE): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? ''
-    : date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    : date.toLocaleDateString(locale, { day: 'numeric', month: 'short' });
 }
 
 /** Short, stable label for an author whose id we have but whose name we don't. */
@@ -31,7 +33,8 @@ function authorLabel(userId: string): string {
 }
 
 export default function FeedbackComments({ feedbackId, onCommentAdded }: FeedbackCommentsProps) {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
   const { user } = useUser();
   const [comments, setComments] = useState<FeedbackComment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -103,7 +106,7 @@ export default function FeedbackComments({ feedbackId, onCommentAdded }: Feedbac
                       : comment.userName?.trim() || authorLabel(comment.user)}
                   </span>
                   <span>·</span>
-                  <span>{formatDate(comment.createdAt)}</span>
+                  <span>{formatDate(comment.createdAt, intl)}</span>
                 </div>
                 <p className="mt-1 whitespace-pre-wrap wrap-break-word text-sm text-content-secondary">
                   {comment.body}

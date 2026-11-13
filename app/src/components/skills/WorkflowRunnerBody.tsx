@@ -17,6 +17,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import { SCHEDULE_PRESETS } from '../../lib/cron/schedulePresets';
 import { useT } from '../../lib/i18n/I18nContext';
+import { intlLocale } from '../../lib/i18n/intlLocale';
 import {
   type RunLogSlice,
   type ScannedRun,
@@ -241,7 +242,8 @@ interface SkillsRunnerBodyProps {
 }
 
 const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) => {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
 
   // Skill catalog (loaded once on mount)
   const [skills, setSkills] = useState<WorkflowSummary[]>([]);
@@ -1419,7 +1421,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                                               {open ? '▾' : '▸'}
                                             </span>
                                             <span className="text-content-secondary">
-                                              {new Date(r.started_at).toLocaleString()}
+                                              {new Date(r.started_at).toLocaleString(intl)}
                                             </span>
                                           </div>
                                           <div className="flex items-center gap-2">

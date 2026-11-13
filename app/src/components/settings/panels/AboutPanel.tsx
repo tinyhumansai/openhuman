@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 import { GitHubStarCard } from '../../../features/star/GitHubStarCard';
 import { useAppUpdate } from '../../../hooks/useAppUpdate';
 import { useT } from '../../../lib/i18n/I18nContext';
+import { intlLocale } from '../../../lib/i18n/intlLocale';
 import { useAppSelector } from '../../../store/hooks';
 import { APP_VERSION, LATEST_APP_DOWNLOAD_URL } from '../../../utils/config';
 import { isTauriEnvironment } from '../../../utils/configPersistence';
@@ -22,7 +23,7 @@ import SettingsPanel from '../layout/SettingsPanel';
 import SystemDiagnostics from './SystemDiagnostics';
 
 const AboutPanel = () => {
-  const { t } = useT();
+  const { t, locale } = useT();
   // The auto-cadence is already running via the global <AppUpdatePrompt />;
   // disable it here so opening the panel doesn't double-trigger probes.
   const { phase, info, error, check } = useAppUpdate({ autoCheck: false });
@@ -97,7 +98,7 @@ const AboutPanel = () => {
               {lastCheckedAt && (
                 <span className="text-content-faint">
                   {' · '}
-                  {t('settings.about.lastChecked')} {formatRelative(lastCheckedAt, t)}
+                  {t('settings.about.lastChecked')} {formatRelative(lastCheckedAt, t, intlLocale(locale))}
                 </span>
               )}
             </p>
@@ -207,14 +208,18 @@ function summaryFor(
   }
 }
 
-function formatRelative(date: Date, t: (key: string) => string): string {
+function formatRelative(
+  date: Date,
+  t: (key: string) => string,
+  locale: string
+): string {
   const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
   if (seconds < 60) return t('notifications.justNow');
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return t('notifications.minAgo').replace('{n}', String(minutes));
   const hours = Math.round(minutes / 60);
   if (hours < 24) return t('notifications.hrAgo').replace('{n}', String(hours));
-  return date.toLocaleString();
+  return date.toLocaleString(locale);
 }
 
 export default AboutPanel;

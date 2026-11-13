@@ -38,6 +38,7 @@
  * job).
  */
 import { useT } from '../../lib/i18n/I18nContext';
+import { intlLocale } from '../../lib/i18n/intlLocale';
 import type { CoreCronJob } from '../../utils/tauriCommands/cron';
 import { Badge, Switch } from '../ui';
 import { formatSchedule } from './scheduledCronFormat';
@@ -98,7 +99,8 @@ export default function ScheduledCronCard({
   actions,
   children,
 }: ScheduledCronCardProps) {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
   const isActive = job.enabled;
   const heading = title ?? job.name ?? job.id;
   const rootId = testIdRoot ?? `scheduled-cron-${job.id}`;
@@ -138,12 +140,12 @@ export default function ScheduledCronCard({
       <div
         data-testid={`${rootId}-schedule`}
         className="mt-0.5 text-xs text-content-secondary">
-        {formatSchedule(job)}
+        {formatSchedule(job, intl)}
       </div>
       <div className="mt-1 text-[11px] text-content-muted dark:text-content-faint">
         {job.last_run && (
           <span>
-            {t('skills.dashboard.lastRun')}: {new Date(job.last_run).toLocaleString()}
+            {t('skills.dashboard.lastRun')}: {new Date(job.last_run).toLocaleString(intl)}
             {job.last_status && (
               <Badge
                 variant={job.last_status === 'ok' ? 'success' : 'danger'}
@@ -157,7 +159,7 @@ export default function ScheduledCronCard({
         {job.last_run && job.next_run && <span className="mx-1">·</span>}
         {job.next_run && (
           <span>
-            {t('skills.dashboard.nextRun')}: {new Date(job.next_run).toLocaleString()}
+            {t('skills.dashboard.nextRun')}: {new Date(job.next_run).toLocaleString(intl)}
           </span>
         )}
       </div>

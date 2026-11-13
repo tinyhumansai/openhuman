@@ -38,6 +38,7 @@ import {
 } from '../../hooks/useRunsPendingApprovalSet';
 import { formatRunTimestamp } from '../../lib/flows/runTimestamp';
 import { useT } from '../../lib/i18n/I18nContext';
+import { intlLocale } from '../../lib/i18n/intlLocale';
 import { Button, CenteredLoadingState, EmptyState, ErrorBanner } from '../ui';
 import { type FlowRepairRequest, FlowRunInspectorDrawer } from './FlowRunInspectorDrawer';
 import { FlowRunStatus, flowRunStatusLabel } from './FlowRunStatus';
@@ -60,7 +61,8 @@ interface Props {
  * `FlowRunInspectorDrawer`).
  */
 function FlowRunsDrawer({ flowId, flowName, onClose, onFixWithAgent }: Props) {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
   const { runs, loading, error, refreshSilently } = useFlowRunsQuery({
     scope: { kind: 'flow', flowId },
   });
@@ -162,7 +164,7 @@ function FlowRunsDrawer({ flowId, flowName, onClose, onFixWithAgent }: Props) {
             {!loading && !error && runs.length > 0 && (
               <ul className="space-y-2" data-testid="flow-runs-list">
                 {runs.map(run => {
-                  const startedAt = formatRunTimestamp(run.started_at);
+                  const startedAt = formatRunTimestamp(run.started_at, { locale: intl });
                   const displayStatus = resolveDisplayStatus(run, pendingRunIds);
                   return (
                     <li key={run.id}>

@@ -22,6 +22,7 @@ import { useNavigate } from 'react-router-dom';
 import { formatResetTime } from '../../features/conversations/utils/format';
 import { useUsageState } from '../../hooks/useUsageState';
 import { useT } from '../../lib/i18n/I18nContext';
+import { intlLocale } from '../../lib/i18n/intlLocale';
 import { applyOpenRouterFreeModels } from '../../services/api/openrouterFreeModels';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { selectActiveUserErrors } from '../../store/userErrorsSelectors';
@@ -103,7 +104,8 @@ export function peakSeverity(notices: readonly AppNotice[]): NoticeSeverity | nu
 const nowMs = (): number => Date.now();
 
 export function useAppNotices(): AppNotice[] {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const active = useAppSelector(selectActiveUserErrors);
@@ -163,7 +165,7 @@ export function useAppNotices(): AppNotice[] {
         body: entry.detail ? `${t(entry.bodyKey)}\n\n${entry.detail}` : t(entry.bodyKey),
         meta: [
           t(`userErrors.scope.${entry.scope}`, entry.scope),
-          new Date(entry.lastSeenAt).toLocaleTimeString(),
+          new Date(entry.lastSeenAt).toLocaleTimeString(intl),
           entry.count > 1 ? `×${entry.count}` : null,
         ]
           .filter(Boolean)
@@ -255,6 +257,7 @@ export function useAppNotices(): AppNotice[] {
     dismiss,
     dismissed,
     dispatch,
+    intl,
     isAtLimit,
     isFreeTier,
     isNearLimit,

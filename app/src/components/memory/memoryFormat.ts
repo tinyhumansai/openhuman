@@ -2,6 +2,7 @@
  * Small, pure formatting helpers shared by the Memory page's tabs.
  */
 import type { ItemKind, MemoryMeta } from '../../services/api/memoryApi';
+import { DEFAULT_INTL_LOCALE } from '../../lib/i18n/intlLocale';
 import type { BadgeVariant } from '../ui';
 
 type Translate = (key: string, fallback?: string) => string;
@@ -60,12 +61,20 @@ export function metaFacts(meta: MemoryMeta | null | undefined, t: Translate): Me
   return facts;
 }
 
-/** A timestamp as a short local date-time, or `null` for a missing/invalid one. */
-export function formatTimestamp(value: string | null | undefined): string | null {
+/**
+ * A timestamp as a short local date-time, or `null` for a missing/invalid one.
+ *
+ * `locale` is a BCP-47 tag — pass `intlLocale(locale)` from `useT()` so the
+ * rendering follows the app's active language instead of the host's.
+ */
+export function formatTimestamp(
+  value: string | null | undefined,
+  locale: string = DEFAULT_INTL_LOCALE
+): string | null {
   if (!value) return null;
   const ms = Date.parse(value);
   if (Number.isNaN(ms)) return null;
-  return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return new Date(ms).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 /** A relevance score rendered to two decimals. */

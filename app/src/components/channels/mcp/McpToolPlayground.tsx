@@ -35,6 +35,7 @@ import {
 } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import { DEFAULT_INTL_LOCALE, intlLocale } from '../../../lib/i18n/intlLocale';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import Button from '../../ui/Button';
 import { ModalShell } from '../../ui/ModalShell';
@@ -100,11 +101,12 @@ const stringifyResult = (value: unknown): string => {
   }
 };
 
-const formatTimestamp = (date: Date): string =>
-  date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+/** Wall-clock time of an invocation, in the app's active locale. */
+const formatTimestamp = (date: Date, locale: string = DEFAULT_INTL_LOCALE): string =>
+  date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) => {
-  const { t } = useT();
+  const { t, locale } = useT();
   const [argsJson, setArgsJson] = useState<string>(EMPTY_ARGS);
   const [parseError, setParseError] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -163,7 +165,7 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
     // the prior result is gone.
     setCopyStatus('idle');
     const submittedArgs = argsJson;
-    const timestamp = formatTimestamp(new Date());
+    const timestamp = formatTimestamp(new Date(), intlLocale(locale));
     try {
       const callResult = await mcpClientsApi.toolCall({
         server_id: serverId,
@@ -193,7 +195,7 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
     } finally {
       setIsRunning(false);
     }
-  }, [argsJson, isRunning, serverId, t, tool.name]);
+  }, [argsJson, isRunning, locale, serverId, t, tool.name]);
 
   // Cmd/Ctrl+Enter from the textarea triggers Run. We do NOT propagate
   // the keydown to the document Esc listener — only the Enter+modifier

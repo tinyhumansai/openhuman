@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../../lib/i18n/I18nContext';
+import { intlLocale } from '../../../../lib/i18n/intlLocale';
 import {
   describeProviderVerificationFailure,
   type ModelRegistryEntry,
@@ -53,7 +54,8 @@ export const CustomRoutingDialog = ({
   onClose,
   onSubmit,
 }: CustomRoutingDialogProps) => {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const intl = intlLocale(locale);
   // Non-openhuman cloud providers + local-ollama (if available) are the
   // "Custom" options. OpenHuman is its own Managed path; Default serializes
   // to the backend's `cloud` sentinel. Claude Code is excluded here — it has
@@ -211,7 +213,7 @@ export const CustomRoutingDialog = ({
     setTestBusy(true);
     setTestReply(null);
     setTestError(null);
-    setTestStartedAt(new Date().toLocaleTimeString());
+    setTestStartedAt(new Date().toLocaleTimeString(intl));
     try {
       const result = await testProviderModel(workload.id, currentProviderString, 'Hello world');
       if (testRequestIdRef.current !== requestId) return;
