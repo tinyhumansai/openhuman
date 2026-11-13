@@ -16,7 +16,8 @@
 //!
 //! The phrase only goes to a recipient tinybus has attested, and
 //! [`attested_proxy`] additionally insists the attested digest is one
-//! `registry.rs` pinned — see there for why both checks are worth having.
+//! `registry.rs` pinned, or this executable's own when the wallet is linked
+//! into it — see there for why both checks are worth having.
 //!
 //! # The split flow — still here, still correct for some hosts
 //!
@@ -341,6 +342,19 @@ where
 ///
 /// Both are belt-and-braces over a check that already exists. That is the right
 /// posture for the one code path that hands over a recovery phrase.
+///
+/// # Linked code is accepted as host code
+///
+/// A wallet linked into the executable (`[modules] source = "linked"`, built
+/// through `openhuman-modules-linked`) has no release artifact. tinybus attests
+/// it with the digest of the executable that contains it, so it can never match
+/// a release pin, and refusing it would make a linked wallet unusable for the
+/// very calls linking exists to serve. That code is part of this binary: it is
+/// exactly as trusted as the core making this check, and anything able to swap
+/// it could swap the check too. So the running executable's own digest is also
+/// accepted, but only when this binary registered a linked tinywallet factory
+/// (see [`linked_host_code`]). The name must still match, and any digest that is
+/// neither pinned nor this executable's is still refused.
 async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallError> {
     let (runtime, record) = ready(config).await?;
     let proxy = proxy(runtime, record)?;
@@ -358,6 +372,19 @@ async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallErr
             )
         })?;
 
+    admit_attestation(record, &attestation, linked_host_code())?;
+    Ok(proxy)
+}
+
+/// The decision [`attested_proxy`] makes once it holds an attestation.
+///
+/// `host_code` is the running executable's digest when this binary links its
+/// own tinywallet, and `None` otherwise (see [`linked_host_code`]).
+fn admit_attestation(
+    record: &super::ModuleRecord,
+    attestation: &tinybus::attest::Attestation,
+    host_code: Option<&str>,
+) -> Result<(), WalletCallError> {
     if attestation.name.as_str() != record.bus_name {
         return Err(WalletCallError::Failed(format!(
             "the wallet module's attestation names '{}' rather than '{}'",
@@ -366,15 +393,55 @@ async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallErr
         )));
     }
 
-    if !digest_is_pinned(record, &attestation.sha256) {
-        return Err(WalletCallError::Failed(
-            "the loaded wallet module is not one of the artifacts this build pinned, so it will \
-             not be sent key material"
-                .to_string(),
-        ));
+    if digest_is_pinned(record, &attestation.sha256) {
+        return Ok(());
     }
 
-    Ok(proxy)
+    if host_code.is_some_and(|digest| digest.eq_ignore_ascii_case(&attestation.sha256)) {
+        log::debug!("[modules:wallet] attestation admitted as linked host code module={MODULE_ID}");
+        return Ok(());
+    }
+
+    Err(WalletCallError::Failed(
+        "the loaded wallet module is not one of the artifacts this build pinned, so it will not \
+         be sent key material"
+            .to_string(),
+    ))
+}
+
+/// The digest a wallet linked into this executable is attested with, if this
+/// binary links one.
+///
+/// Only a binary that registered a tinywallet factory
+/// (`openhuman-modules-linked::install`) can serve the wallet as linked code,
+/// so only such a binary recognizes the executable's digest. tinybus documents
+/// that a sender of a secret must recognize linked registration explicitly
+/// before accepting that digest (`Attestation::sha256`); this is that check. In
+/// every other build this is `None` and the executable is never hashed.
+fn linked_host_code() -> Option<&'static str> {
+    if !super::source::linked_factory_available(MODULE_ID) {
+        return None;
+    }
+    host_executable_digest()
+}
+
+/// SHA-256 of the running executable, as tinybus attests linked code.
+///
+/// `ModuleHost::attach_linked_with_config` hashes `std::env::current_exe()`
+/// with `tinybus::module::sha256_file` and records that as the linked module's
+/// attestation. This is the same function on the same file, so the two agree
+/// on encoding by construction. Hashed once per process, like tinybus does; a
+/// failure is not cached, also like tinybus, so a transient read error does not
+/// disable the wallet for the life of the process. A failure leaves `None`,
+/// which fails closed.
+fn host_executable_digest() -> Option<&'static str> {
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(digest) = DIGEST.get() {
+        return Some(digest.as_str());
+    }
+    let executable = std::env::current_exe().ok()?;
+    let digest = tinybus::module::sha256_file(executable).ok()?;
+    Some(DIGEST.get_or_init(|| digest).as_str())
 }
 
 // Embedded library checksums verified from all 17 archives in the
