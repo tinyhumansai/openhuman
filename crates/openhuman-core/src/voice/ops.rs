@@ -3,8 +3,9 @@
 //! Each public function follows the `Outcome<T>` pattern used by other
 //! domain modules (billing, health, etc.).
 
-use chrono::Utc;
 use log::{debug, warn};
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Instant;
 
 use crate::config::Config;
@@ -12,12 +13,57 @@ use crate::core::Outcome;
 use crate::inference::host_runtime as local_ai;
 use tinyinference_local::models as model_ids;
 
-use super::factory::{create_stt_provider, effective_stt_provider};
+use super::factory::{create_stt_provider, effective_stt_provider, effective_tts_provider};
 use super::postprocess;
 use super::types::{VoiceSpeechResult, VoiceStatus, VoiceTtsResult};
 use crate::modules::voice::{is_hallucinated, HallucinationMode};
 
 const LOG_PREFIX: &str = "[voice]";
+const HALLUCINATION_SCREEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Decides whether a raw transcript is a hallucination rather than speech.
+///
+/// A plain `fn` so the transcription pipelines take it as a parameter and
+/// tests can substitute a fixed verdict for the TinyVoice module.
+pub(crate) type HallucinationScreen =
+    for<'a> fn(&'a Config, &'a str) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+
+/// The production screen: ask TinyVoice.
+///
+/// Falls OPEN when the module cannot be reached: passing a stock phrase
+/// through costs the user one bad transcription they can see and redo,
+/// whereas defaulting to "hallucinated" would silently delete real speech.
+/// Only one of those is recoverable.
+fn screen_with_tinyvoice<'a>(
+    config: &'a Config,
+    text: &'a str,
+) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+    Box::pin(async move {
+        screen_with_timeout(
+            is_hallucinated(config, text, HallucinationMode::Conversation),
+            HALLUCINATION_SCREEN_TIMEOUT,
+        )
+        .await
+    })
+}
+
+async fn screen_with_timeout<F, E>(screen: F, timeout: std::time::Duration) -> bool
+where
+    F: Future<Output = Result<bool, E>>,
+    E: std::fmt::Display,
+{
+    match tokio::time::timeout(timeout, screen).await {
+        Ok(Ok(verdict)) => verdict,
+        Ok(Err(error)) => {
+            warn!("{LOG_PREFIX} hallucination filter unavailable ({error}); passing text through");
+            false
+        }
+        Err(_) => {
+            warn!("{LOG_PREFIX} hallucination filter timed out; passing text through");
+            false
+        }
+    }
+}
 
 /// Check availability of the STT engine and the TTS binary/model without
 /// executing them.
@@ -66,11 +112,9 @@ pub async fn voice_status(config: &Config) -> Result<Outcome<VoiceStatus>, Strin
         stt_error,
     );
 
-    let tts_provider = if config.local_ai.tts_provider.trim().is_empty() {
-        "cloud".to_string()
-    } else {
-        config.local_ai.tts_provider.clone()
-    };
+    // The provider synthesis actually uses: the top-level `tts_provider`
+    // override wins over the legacy `local_ai.tts_provider`.
+    let tts_provider = effective_tts_provider(config);
 
     let status = VoiceStatus {
         stt_available,
@@ -98,6 +142,24 @@ pub async fn voice_transcribe(
     context: Option<&str>,
     skip_cleanup: bool,
 ) -> Result<Outcome<VoiceSpeechResult>, String> {
+    transcribe_path_with(
+        config,
+        audio_path,
+        context,
+        skip_cleanup,
+        screen_with_tinyvoice,
+    )
+    .await
+}
+
+/// [`voice_transcribe`] with the hallucination screen as a parameter.
+pub(crate) async fn transcribe_path_with(
+    config: &Config,
+    audio_path: &str,
+    context: Option<&str>,
+    skip_cleanup: bool,
+    screen: HallucinationScreen,
+) -> Result<Outcome<VoiceSpeechResult>, String> {
     let started = Instant::now();
     debug!("{LOG_PREFIX} transcribing audio_path={audio_path}");
 
@@ -112,39 +174,25 @@ pub async fn voice_transcribe(
     )
     .await
     .map_err(|e| e.to_string())?;
-    let transcribe_elapsed = transcribe_started.elapsed();
-
-    let raw_text = output.text.clone();
     debug!(
         "{LOG_PREFIX} transcription completed, text length={}, stt_elapsed_ms={}",
-        raw_text.len(),
-        transcribe_elapsed.as_millis()
+        output.text.len(),
+        transcribe_started.elapsed().as_millis()
     );
 
-    let cleanup_started = Instant::now();
-    let text = if skip_cleanup {
-        raw_text.clone()
-    } else {
-        postprocess::cleanup_transcription(config, &raw_text, context).await
-    };
-    let cleanup_elapsed = cleanup_started.elapsed();
-    debug!(
-        "{LOG_PREFIX} voice_transcribe complete (cleanup_elapsed_ms={}, total_elapsed_ms={})",
-        cleanup_elapsed.as_millis(),
-        started.elapsed().as_millis()
-    );
-
-    Ok(Outcome::single_log(
-        VoiceSpeechResult {
-            text,
-            raw_text,
-            model_id: output.model_id,
-        },
-        "voice transcription completed",
-    ))
+    Ok(finish_transcription(
+        config,
+        output.text,
+        output.model_id,
+        context,
+        skip_cleanup,
+        screen,
+        started,
+    )
+    .await)
 }
 
-/// Transcribe audio from raw bytes. Writes to a temp file, transcribes, cleans up.
+/// Transcribe audio from raw bytes.
 ///
 /// If `context` is provided, the raw transcription is post-processed through
 /// a local LLM.
@@ -155,6 +203,26 @@ pub async fn voice_transcribe_bytes(
     context: Option<&str>,
     skip_cleanup: bool,
 ) -> Result<Outcome<VoiceSpeechResult>, String> {
+    transcribe_bytes_with(
+        config,
+        audio_bytes,
+        extension,
+        context,
+        skip_cleanup,
+        screen_with_tinyvoice,
+    )
+    .await
+}
+
+/// [`voice_transcribe_bytes`] with the hallucination screen as a parameter.
+pub(crate) async fn transcribe_bytes_with(
+    config: &Config,
+    audio_bytes: &[u8],
+    extension: Option<String>,
+    context: Option<&str>,
+    skip_cleanup: bool,
+    screen: HallucinationScreen,
+) -> Result<Outcome<VoiceSpeechResult>, String> {
     let started = Instant::now();
     let ext = normalize_extension(extension)?;
     debug!(
@@ -163,77 +231,52 @@ pub async fn voice_transcribe_bytes(
     );
 
     let service = local_ai::global(config);
-
-    let voice_dir = std::env::temp_dir().join("openhuman_voice_input");
-    tokio::fs::create_dir_all(&voice_dir)
-        .await
-        .map_err(|e| format!("failed to create voice input directory: {e}"))?;
-
-    let filename = format!(
-        "voice-{}-{}.{}",
-        Utc::now().timestamp_millis(),
-        uuid::Uuid::new_v4(),
-        ext
-    );
-    let file_path = voice_dir.join(filename);
-    let write_started = Instant::now();
-    tokio::fs::write(&file_path, audio_bytes)
-        .await
-        .map_err(|e| format!("failed to write audio file: {e}"))?;
-    let write_elapsed = write_started.elapsed();
-
     let transcribe_started = Instant::now();
-    // Context is forwarded as a vocabulary-bias hint where the engine has one.
-    let output = local_ai::service::transcribe_with_prompt(
-        service.as_ref(),
-        config,
-        file_path.to_string_lossy().as_ref(),
-        context,
-    )
-    .await;
-    let transcribe_elapsed = transcribe_started.elapsed();
-    if let Err(e) = tokio::fs::remove_file(&file_path).await {
-        warn!(
-            "{LOG_PREFIX} failed to clean up temp audio file {}: {e}",
-            file_path.display()
-        );
-    }
-
-    let output = output.map_err(|e| e.to_string())?;
-    let raw_text = output.text.clone();
-
+    // The hosted engines take no vocabulary-bias prompt (see
+    // `transcribe_with_prompt`), so `context` only feeds the LLM cleanup.
+    let output =
+        local_ai::service::transcribe_bytes(service.as_ref(), config, audio_bytes, Some(&ext))
+            .await?;
     debug!(
-        "{LOG_PREFIX} transcribe_bytes completed, text length={}, write_elapsed_ms={}, stt_elapsed_ms={}",
-        raw_text.len(),
-        write_elapsed.as_millis(),
-        transcribe_elapsed.as_millis()
+        "{LOG_PREFIX} transcribe_bytes completed, text length={}, stt_elapsed_ms={}",
+        output.text.len(),
+        transcribe_started.elapsed().as_millis()
     );
 
+    Ok(finish_transcription(
+        config,
+        output.text,
+        output.model_id,
+        context,
+        skip_cleanup,
+        screen,
+        started,
+    )
+    .await)
+}
+
+/// The shared tail of both transcription entry points: drop hallucinated
+/// output, then run the optional LLM cleanup.
+async fn finish_transcription(
+    config: &Config,
+    raw_text: String,
+    model_id: String,
+    context: Option<&str>,
+    skip_cleanup: bool,
+    screen: HallucinationScreen,
+    started: Instant,
+) -> Outcome<VoiceSpeechResult> {
     // Filter hallucinated output before spending time on LLM cleanup.
-    //
-    // Falls OPEN when the module cannot be reached: passing a stock phrase
-    // through costs the user one bad transcription they can see and redo,
-    // whereas defaulting to "hallucinated" would silently delete real speech.
-    // Only one of those is recoverable.
-    let hallucinated = match is_hallucinated(config, &raw_text, HallucinationMode::Conversation)
-        .await
-    {
-        Ok(verdict) => verdict,
-        Err(error) => {
-            warn!("{LOG_PREFIX} hallucination filter unavailable ({error}); passing text through");
-            false
-        }
-    };
-    if hallucinated {
-        debug!("{LOG_PREFIX} transcribe_bytes: hallucination detected, returning empty result");
-        return Ok(Outcome::single_log(
+    if screen(config, &raw_text).await {
+        debug!("{LOG_PREFIX} hallucination detected, returning empty result");
+        return Outcome::single_log(
             VoiceSpeechResult {
                 text: String::new(),
                 raw_text,
-                model_id: output.model_id,
+                model_id,
             },
             "voice transcription filtered (hallucination)",
-        ));
+        );
     }
 
     let cleanup_started = Instant::now();
@@ -242,21 +285,20 @@ pub async fn voice_transcribe_bytes(
     } else {
         postprocess::cleanup_transcription(config, &raw_text, context).await
     };
-    let cleanup_elapsed = cleanup_started.elapsed();
     debug!(
-        "{LOG_PREFIX} transcribe_bytes pipeline complete (cleanup_elapsed_ms={}, total_elapsed_ms={})",
-        cleanup_elapsed.as_millis(),
+        "{LOG_PREFIX} transcription pipeline complete (cleanup_elapsed_ms={}, total_elapsed_ms={})",
+        cleanup_started.elapsed().as_millis(),
         started.elapsed().as_millis()
     );
 
-    Ok(Outcome::single_log(
+    Outcome::single_log(
         VoiceSpeechResult {
             text,
             raw_text,
-            model_id: output.model_id,
+            model_id,
         },
         "voice transcription completed",
-    ))
+    )
 }
 
 /// Synthesize speech from text using piper.

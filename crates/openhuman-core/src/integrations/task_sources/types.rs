@@ -42,6 +42,33 @@ pub fn provider_can_fetch(provider: ProviderSlug) -> bool {
     }
 }
 
+/// Every provider a task source can name. The vocabulary enum offers no
+/// iterator, so the exhaustive `match` below stops this list from silently
+/// falling behind a new variant: it fails to compile instead.
+const PROVIDERS: [ProviderSlug; 4] = [
+    ProviderSlug::Github,
+    ProviderSlug::Notion,
+    ProviderSlug::Linear,
+    ProviderSlug::Clickup,
+];
+const _: fn(ProviderSlug) = |provider| match provider {
+    ProviderSlug::Github | ProviderSlug::Notion | ProviderSlug::Linear | ProviderSlug::Clickup => {}
+};
+
+/// Whether **any** provider can fetch tasks: the single gate for the
+/// domain's always-on surface, i.e. the `task_source_*` agent tools, the
+/// periodic poller and the Composio-connect hook (senamakel/openhuman#324).
+///
+/// While it is `false` none of them is registered or started, so the model
+/// cannot add a source that would never ingest. It derives from
+/// [`provider_can_fetch`] alone: the moment one provider grows a real fetch,
+/// all three come back with no other change. The RPC namespace and the
+/// `[task_sources]` config are deliberately not gated here.
+#[must_use]
+pub fn any_provider_can_fetch() -> bool {
+    PROVIDERS.into_iter().any(provider_can_fetch)
+}
+
 /// A persisted task source configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

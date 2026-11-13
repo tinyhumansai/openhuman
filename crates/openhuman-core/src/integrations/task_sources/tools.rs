@@ -516,9 +516,24 @@ impl Tool for TaskSourceRemoveTool {
 }
 
 /// Build this domain's tools in their persisted catalogue order.
+/// The domain's agent tools: none while no provider can fetch
+/// ([`super::types::any_provider_can_fetch`]).
 pub(crate) fn registered_tools(
     config: std::sync::Arc<crate::config::Config>,
 ) -> Vec<Box<dyn tinytools::Tool>> {
+    registered_tools_when(config, super::types::any_provider_can_fetch())
+}
+
+/// [`registered_tools`] with the fetch gate as a parameter, so tests can flip
+/// it without a provider gaining a real fetch.
+fn registered_tools_when(
+    config: std::sync::Arc<crate::config::Config>,
+    fetchable: bool,
+) -> Vec<Box<dyn tinytools::Tool>> {
+    if !fetchable {
+        tracing::debug!("[task_sources:tools] no provider can fetch tasks; tools not registered");
+        return Vec::new();
+    }
     vec![
         Box::new(TaskSourceListTool::new(config.clone())),
         Box::new(TaskSourceGetTool::new(config.clone())),

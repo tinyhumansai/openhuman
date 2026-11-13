@@ -52,8 +52,25 @@ that has no agent turn to approve a payment through.
 Params: `url` (required, `https://` only; local and private hosts are refused
 by the `http_request` URL guard, including names that resolve to them),
 `method` (`GET` default, or `POST`), `headers` (string map; `PAYMENT-SIGNATURE`
-and `X-PAYMENT` are refused), `body` (string, `POST` only), and
-`maxAmountAtomic` (required, greater than zero: the most this request may pay).
+`X-PAYMENT` and `SIGN-IN-WITH-X` are refused), `body` (string, `POST` only),
+`maxAmountAtomic` (required, greater than zero: the most this request may
+pay), `network` (optional: a CAIP-2 id such as `eip155:8453`, or a namespace
+such as `eip155` or `solana`; TinyWallet pays only an option on that network
+and refuses a challenge with none), and `signIn` (optional, default false).
+
+With `signIn: true` a 402 is answered with a Sign-In-With-X (CAIP-122)
+credential instead of a payment: TinyWallet's `X402SignIn` builds and signs
+the message with the EVM key and refuses a challenge whose domain or URI is
+not the requested host, so this never signs arbitrary text. The host retries
+once with the `SIGN-IN-WITH-X` header. Nothing is paid: the response has
+`payment: null` and `signedInAs` (the signing address). This is for a
+service's free, wallet-identified endpoints (for example twitr.sh's account
+linking), where the wallet is the account.
+
+An `upto` challenge (x402's metered scheme, Permit2 on EVM) is paid like an
+`exact` one: `maxAmountAtomic` and the per-request budget are compared with
+the signed maximum, and the module ledger records the amount the
+settlement receipt reports, which may be lower or zero.
 
 The request runs with a 30 s timeout, no redirects, and connections pinned to
 the vetted addresses; the privacy mode's egress check applies. A response other

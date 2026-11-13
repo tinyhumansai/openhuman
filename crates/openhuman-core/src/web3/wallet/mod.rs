@@ -58,9 +58,6 @@ pub mod automation_tools;
 mod schemas;
 #[cfg(all(test, feature = "web3"))]
 pub(crate) mod test_support;
-/// Wallet agent tool adapters over the declarations in `tinywallet-bus`.
-#[cfg(feature = "web3")]
-pub mod tools;
 
 #[cfg(feature = "web3")]
 pub use endpoints::solana_cluster;
