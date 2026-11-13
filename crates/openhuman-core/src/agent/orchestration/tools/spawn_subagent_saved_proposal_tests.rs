@@ -280,6 +280,45 @@ fn nested_subworkflow_id_does_not_select_the_saved_child_proposal() {
 }
 
 #[test]
+fn nested_subworkflow_name_does_not_select_the_saved_child_proposal() {
+    let parent = ThreadWorkflowProposal {
+        message_id: "parent".into(),
+        name: "Morning digest".into(),
+        draft_id: None,
+        flow_id: None,
+        saved_flow_id: None,
+    };
+    let child = ThreadWorkflowProposal {
+        message_id: "saved-child".into(),
+        name: "Fetch headlines and summarize".into(),
+        draft_id: None,
+        flow_id: Some("flow-child".into()),
+        saved_flow_id: Some("flow-child".into()),
+    };
+    // The child's name is longer than the parent's, so a name match anywhere
+    // in the text would pick the saved child over the unsaved parent.
+    let hand_off = r#"Save "Morning digest" with this graph: {"nodes":[{"id":"n1","type":"sub_workflow","name":"Fetch headlines and summarize","config":{"workflow_id":"flow-child"}}]}"#;
+    let proposals = [parent, child];
+    let picked = hand_off_proposal(&proposals, hand_off).expect("the parent proposal");
+    assert_eq!(picked.message_id, "parent");
+}
+
+#[test]
+fn a_name_outside_the_graph_still_selects_its_proposal() {
+    let saved = ThreadWorkflowProposal {
+        message_id: "saved".into(),
+        name: "Fetch headlines and summarize".into(),
+        draft_id: None,
+        flow_id: Some("flow-1".into()),
+        saved_flow_id: Some("flow-1".into()),
+    };
+    let hand_off = r#"Save "Fetch headlines and summarize": {"nodes":[{"id":"n1","type":"agent","name":"Fetch headlines and summarize"}]}"#;
+    let proposals = [saved];
+    let picked = hand_off_proposal(&proposals, hand_off).expect("the named proposal");
+    assert_eq!(picked.message_id, "saved");
+}
+
+#[test]
 fn carry_saved_flow_skips_ambiguous_same_name_proposals() {
     let temp = thread_with_delivered_proposal_extra("Daily", r#", "draft_id":"draft-old""#);
     mark_proposal_saved_from_card(&temp, "flow-old");
