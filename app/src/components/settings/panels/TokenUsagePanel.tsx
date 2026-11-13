@@ -141,7 +141,7 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
         setSaving(false);
       }
     },
-    [t]
+    [t, setMinTokensInput]
   );
 
   const commitMinTokens = useCallback(() => {
@@ -152,7 +152,7 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
     }
     if (parsed === savedMinTokensRef.current) return;
     void patch({ ccr_min_tokens: parsed });
-  }, [minTokensInput, patch]);
+  }, [minTokensInput, patch, setMinTokensInput]);
 
   const onReset = useCallback(async () => {
     try {
