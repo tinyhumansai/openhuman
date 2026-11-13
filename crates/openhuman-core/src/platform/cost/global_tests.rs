@@ -64,9 +64,10 @@ fn global_tracker() -> std::sync::Arc<crate::platform::cost::tracker::CostTracke
     try_global().expect("init_global must leave a tracker installed")
 }
 
-/// Records written by this test only. Every test in this file shares one
-/// tracker and one `costs.jsonl`, and libtest runs them in parallel, so each
-/// test filters by a model name no other test uses.
+/// Records written by this test process only. The process-global tracker
+/// may point at whatever earlier test initialised it (first-wins), and the
+/// shared store accumulates rows from every invocation of this suite, so
+/// filter by this tracker's own `session_id` rather than by model alone.
 fn records_for_model(
     tracker: &crate::platform::cost::tracker::CostTracker,
     model: &str,
@@ -75,7 +76,7 @@ fn records_for_model(
         .get_recent_records(2, 1000)
         .expect("reading recent cost records must succeed")
         .into_iter()
-        .filter(|record| record.usage.model == model)
+        .filter(|record| record.session_id == tracker.session_id() && record.usage.model == model)
         .collect()
 }
 
