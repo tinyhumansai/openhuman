@@ -11,8 +11,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
 import type { ComposioConnection } from '../../../../lib/composio/types';
-import { intlLocale } from '../../../../lib/i18n/intlLocale';
 import { useT } from '../../../../lib/i18n/I18nContext';
+import { intlLocale } from '../../../../lib/i18n/intlLocale';
 import {
   creditsApi,
   type CreditTransaction,

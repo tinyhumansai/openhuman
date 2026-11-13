@@ -697,7 +697,10 @@ async fn managed_construction_ledger_collapses_repeat_disclosures() {
     build(&EgressLedger::none());
 
     let sentinel = "egress-ledger-factory-sentinel";
-    crate::security::egress::emit_external_transfer(None, crate::security::egress::EgressDescriptor::network_fetch(sentinel));
+    crate::security::egress::emit_external_transfer(
+        None,
+        crate::security::egress::EgressDescriptor::network_fetch(sentinel),
+    );
     let mut disclosures = 0;
     loop {
         match rx.recv().await {

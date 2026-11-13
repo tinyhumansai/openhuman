@@ -24,7 +24,6 @@
  * `intlLocale(locale)` from `useT()` so it follows the app's active language
  * (pinned for English) rather than the host's.
  */
-
 import { DEFAULT_INTL_LOCALE } from '../i18n/intlLocale';
 
 /** How often the schedule fires. */

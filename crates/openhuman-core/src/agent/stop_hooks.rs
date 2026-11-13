@@ -19,8 +19,8 @@
 //! The per-turn tool budget ([`tool_call_limit`]) also lives here; a host
 //! narrows it through `HostTurnEnv::tool_call_limit`.
 
-use tinyagents_harness::cost::TurnCost;
 use async_trait::async_trait;
+use tinyagents_harness::cost::TurnCost;
 
 use tinyagents_harness::middleware::{StopDecision, StopHook, TurnState};
 

@@ -338,16 +338,15 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
             }
             let model_override =
                 (!effective_model.trim().is_empty()).then_some(effective_model.as_str());
-            let (backend, pinned_model) =
-                match resolve_managed_backend_with_model_override(
-                    role,
-                    config,
-                    model_override,
-                    egress,
-                ) {
-                    Ok(result) => result,
-                    Err(error) => return Some(Err(error)),
-                };
+            let (backend, pinned_model) = match resolve_managed_backend_with_model_override(
+                role,
+                config,
+                model_override,
+                egress,
+            ) {
+                Ok(result) => result,
+                Err(error) => return Some(Err(error)),
+            };
             return Some(Ok((
                 Arc::new(backend.with_native_tool_calling(native_tool_calling)),
                 pinned_model,

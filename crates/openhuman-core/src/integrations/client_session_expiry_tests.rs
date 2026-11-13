@@ -95,7 +95,10 @@ async fn get_401_session_jwt_classifies_as_session_expired() {
     let base = start_mock_backend(app).await;
     let client = client_for(base);
     let err = client
-        .get::<serde_json::Value>(&Default::default(), "/agent-integrations/composio/connections")
+        .get::<serde_json::Value>(
+            &Default::default(),
+            "/agent-integrations/composio/connections",
+        )
         .await
         .expect_err("401 must surface as Err");
     let msg = format!("{err:#}");
@@ -137,7 +140,10 @@ async fn non_401_4xx_does_not_classify_as_session_expired() {
     let base = start_mock_backend(app).await;
     let client = client_for(base);
     let err = client
-        .get::<serde_json::Value>(&Default::default(), "/agent-integrations/composio/connections")
+        .get::<serde_json::Value>(
+            &Default::default(),
+            "/agent-integrations/composio/connections",
+        )
         .await
         .expect_err("403 must surface as Err");
     let msg = format!("{err:#}");
@@ -247,7 +253,10 @@ async fn get_401_composio_triggers_keeps_sentinel_for_in_place_cta() {
     let base = start_mock_backend(app).await;
     let client = client_for(base);
     let err = client
-        .get::<serde_json::Value>(&Default::default(), "/agent-integrations/composio/triggers/available?toolkit=gmail")
+        .get::<serde_json::Value>(
+            &Default::default(),
+            "/agent-integrations/composio/triggers/available?toolkit=gmail",
+        )
         .await
         .expect_err("401 must surface as Err");
     let msg = format!("{err:#}");

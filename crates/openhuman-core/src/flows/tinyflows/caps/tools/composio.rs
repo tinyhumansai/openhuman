@@ -172,7 +172,8 @@ impl ToolBackend for ComposioToolBackend {
         let (outcome, audit_id) = if tier_decision == GateDecision::Allow {
             (crate::security::approval::GateOutcome::Allow, None)
         } else {
-            super::super::gate_call_for_tier(ctx.approval, tier_decision, slug, &summary, redacted).await
+            super::super::gate_call_for_tier(ctx.approval, tier_decision, slug, &summary, redacted)
+                .await
         };
         if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
             tracing::warn!(

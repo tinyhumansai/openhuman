@@ -42,13 +42,28 @@ use tinyagents_definition::{SandboxMode, ToolScope};
 /// host's policy and never widens it.
 pub struct HostOnlyToolPolicy {
     allowed: HashSet<String>,
-    host: Option<Arc<dyn tinyagents_harness::middleware::ToolCallPolicy<crate::agent::tinyagents::host::OpenHumanRunContext>>>,
+    host: Option<
+        Arc<
+            dyn tinyagents_harness::middleware::ToolCallPolicy<
+                crate::agent::tinyagents::host::OpenHumanRunContext,
+            >,
+        >,
+    >,
 }
 
 impl HostOnlyToolPolicy {
     /// Admit exactly `allowed`, subject to `host`'s own decision.
     #[must_use]
-    pub fn new(allowed: HashSet<String>, host: Option<Arc<dyn tinyagents_harness::middleware::ToolCallPolicy<crate::agent::tinyagents::host::OpenHumanRunContext>>>) -> Self {
+    pub fn new(
+        allowed: HashSet<String>,
+        host: Option<
+            Arc<
+                dyn tinyagents_harness::middleware::ToolCallPolicy<
+                    crate::agent::tinyagents::host::OpenHumanRunContext,
+                >,
+            >,
+        >,
+    ) -> Self {
         Self { allowed, host }
     }
 }
@@ -59,7 +74,11 @@ impl ToolCallPolicy<OpenHumanRunContext> for HostOnlyToolPolicy {
         "host_only"
     }
 
-    async fn check(&self, ctx: &RunContext<OpenHumanRunContext>, call: &ToolCall) -> PolicyDecision {
+    async fn check(
+        &self,
+        ctx: &RunContext<OpenHumanRunContext>,
+        call: &ToolCall,
+    ) -> PolicyDecision {
         if !self.allowed.contains(&call.name) {
             log::debug!(
                 "[agent::host_only] denied tool outside the host belt: {}",
@@ -90,8 +109,20 @@ pub(super) fn empty_belt() -> HashSet<String> {
 pub(super) fn session_policy(
     host_only: bool,
     tools: &[Box<dyn tinytools::Tool>],
-    host: Option<Arc<dyn tinyagents_harness::middleware::ToolCallPolicy<crate::agent::tinyagents::host::OpenHumanRunContext>>>,
-) -> Option<Arc<dyn tinyagents_harness::middleware::ToolCallPolicy<crate::agent::tinyagents::host::OpenHumanRunContext>>> {
+    host: Option<
+        Arc<
+            dyn tinyagents_harness::middleware::ToolCallPolicy<
+                crate::agent::tinyagents::host::OpenHumanRunContext,
+            >,
+        >,
+    >,
+) -> Option<
+    Arc<
+        dyn tinyagents_harness::middleware::ToolCallPolicy<
+            crate::agent::tinyagents::host::OpenHumanRunContext,
+        >,
+    >,
+> {
     if !host_only {
         return host;
     }

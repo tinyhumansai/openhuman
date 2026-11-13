@@ -212,7 +212,7 @@ mod subagent_tests;
 mod tenant_tests;
 #[path = "gate_triage_tests.rs"]
 mod triage_tests;
-#[path = "gate_turn_context_tests.rs"]
-mod turn_context_tests;
 #[path = "gate_ttl_and_triage_tests.rs"]
 mod ttl_and_triage_tests;
+#[path = "gate_turn_context_tests.rs"]
+mod turn_context_tests;

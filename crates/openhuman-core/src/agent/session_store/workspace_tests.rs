@@ -118,10 +118,16 @@ fn releasing_defaults_lets_the_next_call_open_afresh() {
     let ws = scratch();
     let before = fallback_provider(ws.path());
     let cached = fallback_provider(ws.path());
-    assert!(Arc::ptr_eq(&before, &cached), "a repeat call reuses the provider");
+    assert!(
+        Arc::ptr_eq(&before, &cached),
+        "a repeat call reuses the provider"
+    );
     release_workspace_defaults();
     let after = fallback_provider(ws.path());
-    assert!(!Arc::ptr_eq(&before, &after), "release drops the cached provider");
+    assert!(
+        !Arc::ptr_eq(&before, &after),
+        "release drops the cached provider"
+    );
 }
 
 #[test]

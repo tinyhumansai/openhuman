@@ -16,8 +16,8 @@ use tinyinference_llm::message::Message;
 use tinyinference_llm::model::{ModelRequest, ModelResponse, ResolvedModelRoute};
 use tinytools::{ToolPolicy as TaToolPolicy, ToolResult as TaToolResult};
 
-use crate::agent::tinyagents::payload_summarizer::DynPayloadSummarizer;
 use crate::agent::harness::tool_result_artifacts::HostArtifactStore;
+use crate::agent::tinyagents::payload_summarizer::DynPayloadSummarizer;
 use tinyagents_harness::turn_outcome::ToolCallOutcome;
 use tinyjuice_bus::types::AgentTokenjuiceCompression;
 

@@ -484,7 +484,9 @@ fn handle_prepare_transfer(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let parsed: PrepareTransferParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
-        prepare_transfer(parsed, None).await?.into_cli_compatible_json()
+        prepare_transfer(parsed, None)
+            .await?
+            .into_cli_compatible_json()
     })
 }
 
@@ -492,7 +494,9 @@ fn handle_execute_prepared(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let parsed: ExecutePreparedParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
-        execute_prepared(parsed, None).await?.into_cli_compatible_json()
+        execute_prepared(parsed, None)
+            .await?
+            .into_cli_compatible_json()
     })
 }
 

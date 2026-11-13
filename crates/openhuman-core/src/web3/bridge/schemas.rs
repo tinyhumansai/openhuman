@@ -94,9 +94,14 @@ pub fn schema(function: &str) -> ControllerSchema {
 fn handle_quote(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        let quote = web3_service::quote(&config, None, methods::WEB3_BRIDGE_QUOTE, Value::Object(params))
-            .await
-            .map_err(|error| error.to_string())?;
+        let quote = web3_service::quote(
+            &config,
+            None,
+            methods::WEB3_BRIDGE_QUOTE,
+            Value::Object(params),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
         Outcome::new(quote, vec!["web3 bridge prepared".to_string()]).into_cli_compatible_json()
     })
 }

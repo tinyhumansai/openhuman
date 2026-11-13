@@ -144,9 +144,14 @@ impl OpenHumanMemory {
         let tier_decision = enforce_node_tier_gate(&self.security, CommandClass::Write, op)?;
         let summary = summarize_action(&tool_name, action);
         let redacted = redact_args(action);
-        let (outcome, audit_id) =
-            gate_call_for_tier(&self.approval, tier_decision, &tool_name, &summary, redacted)
-                .await;
+        let (outcome, audit_id) = gate_call_for_tier(
+            &self.approval,
+            tier_decision,
+            &tool_name,
+            &summary,
+            redacted,
+        )
+        .await;
         if let GateOutcome::Deny { reason } = outcome {
             tracing::warn!(target: "flows", op, "{LOG_PREFIX} write: approval gate denied");
             return Err(EngineError::Capability(reason));

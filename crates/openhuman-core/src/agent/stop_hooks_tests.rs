@@ -14,7 +14,8 @@ fn host_tool_cap_only_narrows_the_default_and_keeps_zero() {
 
 #[test]
 fn host_tool_cap_and_stop_hooks_flow_into_the_run_context_and_its_children() {
-    let hook: Arc<dyn StopHook<tinyagents_harness::cost::TurnCost>> = Arc::new(BudgetStopHook::new(1.0));
+    let hook: Arc<dyn StopHook<tinyagents_harness::cost::TurnCost>> =
+        Arc::new(BudgetStopHook::new(1.0));
     let mut hooks = crate::agent::hooks::HookScope::default();
     hooks.push_stop(Arc::clone(&hook));
     let env = crate::agent::turn_env::HostTurnEnv {

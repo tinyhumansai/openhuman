@@ -66,7 +66,7 @@ async fn transcripts_come_from_the_store_only_when_one_is_in_effect() {
 
 #[tokio::test]
 async fn without_a_store_transcripts_are_workspace_files() {
-#[cfg(unix)]
+    #[cfg(unix)]
     let dir = std::path::Path::new("/nonexistent-openhuman-workspace");
     #[cfg(windows)]
     let dir = std::path::Path::new(r"C:\nonexistent-openhuman-workspace");

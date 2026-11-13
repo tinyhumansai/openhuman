@@ -74,7 +74,11 @@ struct OpenHumanTurnPrelude {
     /// Host prompt/utilisation state, shared by the runtime hooks. It is not
     /// generic conversation state and the runtime never persists it.
     context: Arc<std::sync::Mutex<crate::agent::context::ContextManager>>,
-    tool_policy: Arc<dyn tinyagents_harness::middleware::ToolCallPolicy<crate::agent::tinyagents::host::OpenHumanRunContext>>,
+    tool_policy: Arc<
+        dyn tinyagents_harness::middleware::ToolCallPolicy<
+            crate::agent::tinyagents::host::OpenHumanRunContext,
+        >,
+    >,
     tool_dispatcher: Arc<dyn tinytools_agent::dialect::ToolDialect>,
     workspace_dir: std::path::PathBuf,
     action_dir: std::path::PathBuf,
@@ -278,9 +282,7 @@ impl OpenHumanTurnPrelude {
             .filter(|spec| !withheld.contains(&spec.name))
             .filter(|spec| {
                 self.thread_id.is_some()
-                    || !crate::agent::tinyagents::tool_registration::is_thread_goal_tool(
-                        &spec.name,
-                    )
+                    || !crate::agent::tinyagents::tool_registration::is_thread_goal_tool(&spec.name)
             })
             .map(|spec| spec.as_ref().clone())
             .collect::<Vec<_>>();

@@ -80,4 +80,3 @@ fn generators_without_a_router_are_returned_as_they_are() {
     assert!(Arc::ptr_eq(&generators.image, &routed.image));
     assert!(Arc::ptr_eq(&generators.video, &routed.video));
 }
-

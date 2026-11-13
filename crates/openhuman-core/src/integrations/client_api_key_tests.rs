@@ -44,7 +44,10 @@ async fn json_requests_send_the_api_key_as_x_api_key_and_no_bearer() {
     let client = api_key_client(start_mock_backend(app).await);
     assert!(client.uses_api_key());
     client
-        .get::<serde_json::Value>(&Default::default(), "/agent-integrations/composio/connections")
+        .get::<serde_json::Value>(
+            &Default::default(),
+            "/agent-integrations/composio/connections",
+        )
         .await
         .expect("an API-key client reaches composio");
 
@@ -69,7 +72,10 @@ async fn binary_download_sends_the_api_key_as_x_api_key() {
     );
     let client = api_key_client(start_mock_backend(app).await);
     let (bytes, _, _) = client
-        .get_bytes(&Default::default(), "/agent-integrations/file-storage/files/f1/download")
+        .get_bytes(
+            &Default::default(),
+            "/agent-integrations/file-storage/files/f1/download",
+        )
         .await
         .expect("download with an API key");
     assert_eq!(&bytes[..], b"bytes");
@@ -108,7 +114,10 @@ async fn presigned_download_redirect_does_not_forward_api_key() {
     );
     let client = api_key_client(start_mock_backend(backend).await);
     let (bytes, _, _) = client
-        .get_bytes(&Default::default(), "/agent-integrations/file-storage/files/f1/download")
+        .get_bytes(
+            &Default::default(),
+            "/agent-integrations/file-storage/files/f1/download",
+        )
         .await
         .unwrap();
     assert_eq!(&bytes[..], b"stored bytes");

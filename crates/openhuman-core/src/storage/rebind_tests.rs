@@ -49,7 +49,9 @@ fn a_different_workspace_reopens_the_default_backend_there() {
         [super::super::config::default_url(second.path())]
     );
     assert!(
-        rebound.to.ends_with(&format!("{}storage", std::path::MAIN_SEPARATOR)),
+        rebound
+            .to
+            .ends_with(&format!("{}storage", std::path::MAIN_SEPARATOR)),
         "{}",
         rebound.to
     );

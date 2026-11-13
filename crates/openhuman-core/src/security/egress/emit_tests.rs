@@ -58,7 +58,10 @@ async fn local_transfer_does_not_publish() {
     // A local (non-external) transfer must NOT emit; a following external one
     // must. If we reach the sentinel without having seen the local marker, the
     // local transfer was correctly suppressed.
-    emit_external_transfer(None, EgressDescriptor::inference("ollama", local_marker, false));
+    emit_external_transfer(
+        None,
+        EgressDescriptor::inference("ollama", local_marker, false),
+    );
     emit_external_transfer(None, EgressDescriptor::network_fetch(sentinel_marker));
 
     loop {

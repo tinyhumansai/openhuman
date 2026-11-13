@@ -151,14 +151,12 @@ pub(super) fn create_turn_chat_model_with_native_tools_and_route_inner(
             return result
                 .map(|(chat, resolved_model)| (chat, provider_name.clone(), resolved_model));
         }
-        if let Some(result) =
-            try_create_cloud_slug_chat_model_with_native_tools(
-                role,
-                config,
-                native_tool_calling,
-                egress,
-            )
-        {
+        if let Some(result) = try_create_cloud_slug_chat_model_with_native_tools(
+            role,
+            config,
+            native_tool_calling,
+            egress,
+        ) {
             return result
                 .map(|(chat, resolved_model)| (chat, provider_name.clone(), resolved_model));
         }

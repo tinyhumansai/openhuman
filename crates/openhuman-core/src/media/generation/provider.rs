@@ -39,8 +39,11 @@ use crate::security::credentials::session_support::{
 pub const OPENROUTER_PROXY_PATH: &str = "/agent-integrations/openrouter";
 
 /// Rebuilds the generators so their egress disclosures reach `chat`.
-type GeneratorRouter =
-    Arc<dyn Fn(Option<ApprovalChatContext>) -> (Arc<dyn ImageGenerator>, Arc<dyn VideoGenerator>) + Send + Sync>;
+type GeneratorRouter = Arc<
+    dyn Fn(Option<ApprovalChatContext>) -> (Arc<dyn ImageGenerator>, Arc<dyn VideoGenerator>)
+        + Send
+        + Sync,
+>;
 
 /// The image and video generators for this process.
 pub struct MediaGenerators {

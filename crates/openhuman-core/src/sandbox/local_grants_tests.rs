@@ -67,10 +67,7 @@ mod with_module {
         #[cfg(windows)]
         let home = std::path::Path::new(r"C:\home\op");
         let request = grant_request(Some(home), &jail);
-        assert_eq!(
-            request.home.as_deref(),
-            Some(home.to_str().unwrap())
-        );
+        assert_eq!(request.home.as_deref(), Some(home.to_str().unwrap()));
         assert!(!request.config.toolchain_homes && request.config.allow_proc);
         assert_eq!(request.config.extra_read_only, ["~/a"]);
         assert_eq!(request.config.extra_read_write, ["~/b"]);

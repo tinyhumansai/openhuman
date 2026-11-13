@@ -34,11 +34,7 @@ fn run_capture(binary: &Path, args: &[&str]) -> Result<String, String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if stderr.is_empty() {
-            format!(
-                "{} exited with status {}",
-                binary.display(),
-                output.status
-            )
+            format!("{} exited with status {}", binary.display(), output.status)
         } else {
             stderr
         });

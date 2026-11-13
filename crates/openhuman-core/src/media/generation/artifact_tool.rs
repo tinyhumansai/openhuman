@@ -63,9 +63,8 @@ pub struct MediaArtifactTool<T: Tool> {
     per_call: Option<PerCallInner<T>>,
 }
 
-type PerCallInner<T> = std::sync::Arc<
-    dyn Fn(ProgressFn, Option<&ApprovalChatContext>) -> T + Send + Sync,
->;
+type PerCallInner<T> =
+    std::sync::Arc<dyn Fn(ProgressFn, Option<&ApprovalChatContext>) -> T + Send + Sync>;
 
 impl<T: Tool> MediaArtifactTool<T> {
     /// `kind` is the artifact category to file every generated output
@@ -146,8 +145,16 @@ impl<T: Tool> MediaArtifactTool<T> {
             else {
                 continue;
             };
-            self.file_one(entry, &src_path, args, index, total, call_id.as_deref(), chat)
-                .await;
+            self.file_one(
+                entry,
+                &src_path,
+                args,
+                index,
+                total,
+                call_id.as_deref(),
+                chat,
+            )
+            .await;
         }
         result
     }
@@ -199,14 +206,21 @@ impl<T: Tool> MediaArtifactTool<T> {
                         }
                     }
                     Err(err) => {
-                        let _ = fail_artifact(&self.workspace_dir, &self.files_dir, &meta.id, &err, chat)
-                            .await;
+                        let _ = fail_artifact(
+                            &self.workspace_dir,
+                            &self.files_dir,
+                            &meta.id,
+                            &err,
+                            chat,
+                        )
+                        .await;
                         set_artifact_error(entry, &err);
                     }
                 }
             }
             Err(err) => {
-                let _ = fail_artifact(&self.workspace_dir, &self.files_dir, &meta.id, &err, chat).await;
+                let _ =
+                    fail_artifact(&self.workspace_dir, &self.files_dir, &meta.id, &err, chat).await;
                 tracing::warn!(
                     target: "media_generation",
                     err = %err,

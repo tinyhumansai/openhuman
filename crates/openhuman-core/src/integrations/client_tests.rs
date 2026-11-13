@@ -86,10 +86,17 @@ async fn product_identity_seen_by_backend() -> ProductIdentitySeen {
 
     let client = client_for(base);
     let sdk_result = client
-        .post::<serde_json::Value>(&Default::default(), "/agent-integrations/composio/execute", &json!({}))
+        .post::<serde_json::Value>(
+            &Default::default(),
+            "/agent-integrations/composio/execute",
+            &json!({}),
+        )
         .await;
     let download_result = client
-        .get_bytes(&Default::default(), "/agent-integrations/file-storage/files/f1/download")
+        .get_bytes(
+            &Default::default(),
+            "/agent-integrations/file-storage/files/f1/download",
+        )
         .await;
 
     sdk_result.expect("mock backend returns a success envelope");

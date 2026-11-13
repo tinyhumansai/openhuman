@@ -64,13 +64,7 @@ pub fn http_request_tool(
     max_response_size: usize,
     timeout_secs: u64,
 ) -> HttpRequestTool {
-    http_request_tool_for(
-        gate,
-        None,
-        allowed_domains,
-        max_response_size,
-        timeout_secs,
-    )
+    http_request_tool_for(gate, None, allowed_domains, max_response_size, timeout_secs)
 }
 
 /// [`http_request_tool`] whose x402 quotes are owned by `chat`.

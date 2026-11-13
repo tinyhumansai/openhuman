@@ -158,7 +158,10 @@ const UsageLogPanel = () => {
                 {t('settings.costDashboard.filteredTotal')
                   .replace('{shown}', String(records.length))
                   .replace('{loaded}', String(data.records.length))
-                  .replace('{cost}', formatCurrency(filteredCost, data.currency, { locale: numberLocale }))}
+                  .replace(
+                    '{cost}',
+                    formatCurrency(filteredCost, data.currency, { locale: numberLocale })
+                  )}
               </span>
             )}
             <Button

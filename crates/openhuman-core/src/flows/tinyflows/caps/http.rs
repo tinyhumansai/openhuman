@@ -184,8 +184,7 @@ impl HttpClient for OpenHumanHttp {
         let summary = crate::security::approval::summarize_action(TOOL_NAME, &request);
         let redacted = crate::security::approval::redact_args(&request);
         let (outcome, audit_id) =
-            gate_call_for_tier(&self.approval, tier_decision, TOOL_NAME, &summary, redacted)
-                .await;
+            gate_call_for_tier(&self.approval, tier_decision, TOOL_NAME, &summary, redacted).await;
         if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
             return Err(EngineError::Capability(reason));
         }

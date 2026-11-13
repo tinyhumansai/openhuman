@@ -25,10 +25,10 @@ mod workspace;
 
 pub use rebound::{rebind_all, ReboundSessionStores};
 pub use workspace::{
-    artifact_blobs_for, attachment_stash_for, current_documents_for, default_turn_states_for, ledger_for,
-    provider_for_workspace, release_workspace_defaults, require_ledger, status_store_for,
-    stores_for, stores_or_ephemeral, turn_states_for, with_ledger, with_ledger_async,
-    WorkspaceSessionStores,
+    artifact_blobs_for, attachment_stash_for, current_documents_for, default_turn_states_for,
+    ledger_for, provider_for_workspace, release_workspace_defaults, require_ledger,
+    status_store_for, stores_for, stores_or_ephemeral, turn_states_for, with_ledger,
+    with_ledger_async, WorkspaceSessionStores,
 };
 
 static PROVIDER: LazyLock<RwLock<Option<Arc<dyn SessionStoreProvider>>>> =

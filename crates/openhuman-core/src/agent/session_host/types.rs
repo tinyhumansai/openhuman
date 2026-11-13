@@ -448,7 +448,11 @@ pub struct OpenHumanSessionHost {
     /// Pre-execution policy hook for tool calls in this session. The
     /// default policy allows all calls so existing agents keep their
     /// behaviour unless a caller opts into stricter policy.
-    pub(super) tool_policy: Arc<dyn tinyagents_harness::middleware::ToolCallPolicy<crate::agent::tinyagents::host::OpenHumanRunContext>>,
+    pub(super) tool_policy: Arc<
+        dyn tinyagents_harness::middleware::ToolCallPolicy<
+            crate::agent::tinyagents::host::OpenHumanRunContext,
+        >,
+    >,
     /// Hash of the Composio connection set this OpenHumanSessionHost last reconciled
     /// against. Compared at top-of-turn to a fresh hash computed from
     /// [`crate::integrations::composio::cached_active_integrations`]; on
@@ -633,7 +637,13 @@ pub struct SessionHostBuilder {
     /// Per-agent TokenJuice tool-output compression profile.
     pub(super) tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression,
     /// Optional pre-execution tool policy. Defaults to allow-all.
-    pub(super) tool_policy: Option<Arc<dyn tinyagents_harness::middleware::ToolCallPolicy<crate::agent::tinyagents::host::OpenHumanRunContext>>>,
+    pub(super) tool_policy: Option<
+        Arc<
+            dyn tinyagents_harness::middleware::ToolCallPolicy<
+                crate::agent::tinyagents::host::OpenHumanRunContext,
+            >,
+        >,
+    >,
 }
 
 impl Default for SessionHostBuilder {

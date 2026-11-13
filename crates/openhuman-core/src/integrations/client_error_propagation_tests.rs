@@ -182,14 +182,22 @@ async fn verb_methods_block_user_data_egress_under_local_only() {
     assert_blocked(
         "upload_multipart",
         client
-            .upload_multipart::<serde_json::Value>(&Default::default(), path, reqwest::multipart::Form::new())
+            .upload_multipart::<serde_json::Value>(
+                &Default::default(),
+                path,
+                reqwest::multipart::Form::new(),
+            )
             .await
             .unwrap_err()
             .to_string(),
     );
     assert_blocked(
         "get_bytes",
-        client.get_bytes(&Default::default(), path).await.unwrap_err().to_string(),
+        client
+            .get_bytes(&Default::default(), path)
+            .await
+            .unwrap_err()
+            .to_string(),
     );
 }
 
@@ -250,7 +258,10 @@ async fn verb_methods_never_expose_admin_or_webhook_routes() {
     );
     assert_blocked(
         "get_bytes",
-        client.get_bytes(&Default::default(), "/webhooks/core").await.unwrap_err(),
+        client
+            .get_bytes(&Default::default(), "/webhooks/core")
+            .await
+            .unwrap_err(),
     );
 }
 
@@ -394,7 +405,10 @@ async fn local_only_rejects_user_data_verb_before_transport() {
     //     gate and DOES reach transport (surfaces the mock's 403) — proving the
     //     gate is selective, not a blanket network kill.
     let err = client
-        .get::<serde_json::Value>(&Default::default(), "/agent-integrations/composio/connections")
+        .get::<serde_json::Value>(
+            &Default::default(),
+            "/agent-integrations/composio/connections",
+        )
         .await
         .expect_err("control-plane reaches transport and surfaces the mock 403");
     let msg = format!("{err:#}");
@@ -419,7 +433,10 @@ async fn get_403_propagates_backend_error_envelope_message() {
     let base = start_mock_backend(app).await;
     let client = client_for(base);
     let err = client
-        .get::<serde_json::Value>(&Default::default(), "/agent-integrations/composio/connections")
+        .get::<serde_json::Value>(
+            &Default::default(),
+            "/agent-integrations/composio/connections",
+        )
         .await
         .expect_err("403 must surface as Err");
     let msg = format!("{err:#}");

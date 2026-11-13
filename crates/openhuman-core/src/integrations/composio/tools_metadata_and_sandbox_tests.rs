@@ -198,7 +198,12 @@ async fn connect_tool_validates_before_gating_in_chat_context() {
         client_id: "c-test".into(),
         request_id: None,
     };
-    let result = tool.execute_with_context(serde_json::json!({ "toolkit": "google_drive" }), tinytools::ToolCallOptions::default(), Some(&chat_tool_context(ctx)))
+    let result = tool
+        .execute_with_context(
+            serde_json::json!({ "toolkit": "google_drive" }),
+            tinytools::ToolCallOptions::default(),
+            Some(&chat_tool_context(ctx)),
+        )
         .await
         .unwrap();
     assert!(result.is_error);

@@ -35,9 +35,12 @@ impl CoreContext {
 
     /// Test-only: given `[components]` switches.
     pub(crate) fn for_test_with_components(c: crate::core::runtime::ComponentSet) -> Arc<Self> {
-        let mut ctx = Arc::try_unwrap(Self::for_test(crate::core::runtime::DomainSet::full(), None))
-            .ok()
-            .unwrap();
+        let mut ctx = Arc::try_unwrap(Self::for_test(
+            crate::core::runtime::DomainSet::full(),
+            None,
+        ))
+        .ok()
+        .unwrap();
         ctx.components = c;
         Arc::new(ctx)
     }

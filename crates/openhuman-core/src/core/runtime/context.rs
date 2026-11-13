@@ -538,7 +538,9 @@ impl CoreContext {
     /// it would turn a labelled turn into an unlabelled one the approval gate
     /// refuses.
     pub async fn scope<F: Future>(ctx: Arc<CoreContext>, fut: F) -> F::Output {
-        CURRENT_CONTEXT.scope(Self::keeping_turn_origin(ctx), fut).await
+        CURRENT_CONTEXT
+            .scope(Self::keeping_turn_origin(ctx), fut)
+            .await
     }
 
     /// [`scope`](Self::scope) for a synchronous closure.

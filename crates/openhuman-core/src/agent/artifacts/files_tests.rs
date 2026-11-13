@@ -15,9 +15,16 @@ async fn create_ready(
     title: &str,
     bytes: &[u8],
 ) -> ArtifactMeta {
-    let (meta, path) = create_artifact(workspace, files_dir, ArtifactKind::Document, title, "txt", None)
-        .await
-        .expect("create_artifact");
+    let (meta, path) = create_artifact(
+        workspace,
+        files_dir,
+        ArtifactKind::Document,
+        title,
+        "txt",
+        None,
+    )
+    .await
+    .expect("create_artifact");
     tokio::fs::write(&path, bytes).await.unwrap();
     finalize_artifact(workspace, &meta.id, bytes.len() as u64, None)
         .await

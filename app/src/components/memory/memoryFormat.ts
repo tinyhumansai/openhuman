@@ -1,8 +1,8 @@
 /**
  * Small, pure formatting helpers shared by the Memory page's tabs.
  */
-import type { ItemKind, MemoryMeta } from '../../services/api/memoryApi';
 import { DEFAULT_INTL_LOCALE } from '../../lib/i18n/intlLocale';
+import type { ItemKind, MemoryMeta } from '../../services/api/memoryApi';
 import type { BadgeVariant } from '../ui';
 
 type Translate = (key: string, fallback?: string) => string;

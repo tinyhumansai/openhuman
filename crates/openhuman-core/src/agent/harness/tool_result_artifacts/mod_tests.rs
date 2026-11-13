@@ -37,7 +37,10 @@ async fn threshold_persists_to_blobs_and_file_read_serves_the_key() {
     assert!(out.contains(&format!("artifact_path: {key}\n")), "{out}");
     assert!(out.contains("[preview]"));
     assert!(!out.contains(secret));
-    assert!(!root.exists(), "nothing is on disk until a read asks for it");
+    assert!(
+        !root.exists(),
+        "nothing is on disk until a read asks for it"
+    );
     assert_eq!(std::fs::read_dir(&project).unwrap().count(), 0);
 
     // The model's `file_read {"path": key}` is recognised and pointed at the
@@ -46,7 +49,10 @@ async fn threshold_persists_to_blobs_and_file_read_serves_the_key() {
     let read = artifact_read_target(Some(&store), "file_read", &args).expect("artifact read");
     store.resolve_read(&mut args, &read).await;
     let pointer = args["path"].as_str().unwrap().to_string();
-    assert_eq!(std::path::Path::new(&pointer), root.join("session_one/shell/call-1.txt"));
+    assert_eq!(
+        std::path::Path::new(&pointer),
+        root.join("session_one/shell/call-1.txt")
+    );
 
     let cfg = crate::config::AutonomyConfig {
         enabled: true,

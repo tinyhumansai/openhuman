@@ -5,8 +5,8 @@
  */
 import { RefreshCw } from 'lucide-react';
 
-import type { CreditTransaction, TeamUsage } from '../../../../services/api/creditsApi';
 import { DEFAULT_INTL_LOCALE } from '../../../../lib/i18n/intlLocale';
+import type { CreditTransaction, TeamUsage } from '../../../../services/api/creditsApi';
 import { Button, Card, EmptyState } from '../../../ui';
 import {
   formatCount,
@@ -85,7 +85,10 @@ export const UsageLedgerSection = ({
         <MetricTile
           label={t('settings.ai.weekBudget')}
           value={usage ? formatUsd(usage.cycleBudgetUsd) : t('common.notAvailable')}
-          detail={t('settings.ai.resetsAt').replace('{time}', formatDateTime(usage?.cycleEndsAt, locale))}
+          detail={t('settings.ai.resetsAt').replace(
+            '{time}',
+            formatDateTime(usage?.cycleEndsAt, locale)
+          )}
         />
         <MetricTile
           label={t('settings.ai.cycleRemaining')}

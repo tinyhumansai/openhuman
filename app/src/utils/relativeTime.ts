@@ -5,7 +5,6 @@
  * the year only when it differs from now). The full local date, time and zone
  * belong in the element's `title`.
  */
-
 import { DEFAULT_INTL_LOCALE } from '../lib/i18n/intlLocale';
 
 export type RelativeTime =

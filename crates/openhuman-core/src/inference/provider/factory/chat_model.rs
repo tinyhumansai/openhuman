@@ -72,24 +72,31 @@ pub(super) fn create_chat_model_with_model_id_inner(
         if resolves_to_managed_backend(role, config) {
             return make_openhuman_backend_model(role, config);
         }
-        if let Some(result) = try_create_claude_agent_sdk_chat_model(role, config, &EgressLedger::none()) {
+        if let Some(result) =
+            try_create_claude_agent_sdk_chat_model(role, config, &EgressLedger::none())
+        {
             return result;
         }
-        if let Some(result) = try_create_claude_code_chat_model(role, config, None, &EgressLedger::none()) {
+        if let Some(result) =
+            try_create_claude_code_chat_model(role, config, None, &EgressLedger::none())
+        {
             return result;
         }
         // Local OpenAI-compatible runtimes (Ollama / LM Studio / MLX / OMLX /
         // local-openai) → crate-native `ChatModel` (issue #4727 Motion B) instead
         // of a crate-adapted host provider. Cloud/BYOK/bespoke providers
         // return `None` here and fall through to the `Provider` path below.
-        if let Some(result) = try_create_local_runtime_chat_model(role, config, &EgressLedger::none()) {
+        if let Some(result) =
+            try_create_local_runtime_chat_model(role, config, &EgressLedger::none())
+        {
             return result;
         }
         // Wire-equivalent BYOK cloud slugs (Anthropic / None / plain-Bearer, no
         // codex-oauth or `/v1/responses` fallback) → crate-native `ChatModel`
         // (issue #4727 Phase 3, conservative subset). `openai`/codex, custom
         // proxy slugs, and the managed entry return `None` and fall through.
-        if let Some(result) = try_create_cloud_slug_chat_model(role, config, &EgressLedger::none()) {
+        if let Some(result) = try_create_cloud_slug_chat_model(role, config, &EgressLedger::none())
+        {
             return result;
         }
     }
@@ -229,35 +236,29 @@ pub(super) fn create_chat_model_from_string_with_model_id_inner(
         if resolved == PROVIDER_OPENHUMAN {
             return make_openhuman_backend_model(role, config);
         }
-        if let Some(result) =
-            try_create_claude_agent_sdk_chat_model_from_string(
-                role,
-                &resolved,
-                config,
-                &EgressLedger::none(),
-            )
-        {
+        if let Some(result) = try_create_claude_agent_sdk_chat_model_from_string(
+            role,
+            &resolved,
+            config,
+            &EgressLedger::none(),
+        ) {
             return result;
         }
-        if let Some(result) =
-            try_create_claude_code_chat_model_from_string(
-                role,
-                &resolved,
-                config,
-                None,
-                &EgressLedger::none(),
-            )
-        {
+        if let Some(result) = try_create_claude_code_chat_model_from_string(
+            role,
+            &resolved,
+            config,
+            None,
+            &EgressLedger::none(),
+        ) {
             return result;
         }
-        if let Some(result) =
-            try_create_local_runtime_chat_model_from_string(
-                role,
-                &resolved,
-                config,
-                &EgressLedger::none(),
-            )
-        {
+        if let Some(result) = try_create_local_runtime_chat_model_from_string(
+            role,
+            &resolved,
+            config,
+            &EgressLedger::none(),
+        ) {
             return result;
         }
         if let Some(result) = try_create_cloud_slug_chat_model_from_string(
@@ -265,8 +266,7 @@ pub(super) fn create_chat_model_from_string_with_model_id_inner(
             &resolved,
             config,
             &EgressLedger::none(),
-        )
-        {
+        ) {
             return result;
         }
     }

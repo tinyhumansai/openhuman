@@ -358,7 +358,10 @@ fn invalid_ownership_paths_are_rejected_with_the_host_message() {
     let abs_claim = "/etc/passwd";
     #[cfg(windows)]
     let abs_claim = r"C:\etc\passwd";
-    for raw in [format!("files: {abs_claim}"), "files: ../outside.rs".to_string()] {
+    for raw in [
+        format!("files: {abs_claim}"),
+        "files: ../outside.rs".to_string(),
+    ] {
         let definition = definition_with_tool_scope(
             "writer",
             ToolScope::Named(vec!["write_fixture".into()]),

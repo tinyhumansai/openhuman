@@ -580,7 +580,9 @@ pub async fn fail_artifact(
 /// non-chat callers (CLI, cron, sub-agent runners) so artifact emit hooks
 /// degrade gracefully: the event is still published but the web subscriber
 /// drops it for lack of a routing target.
-fn chat_route(chat: Option<&ApprovalChatContext>) -> (Option<String>, Option<String>, Option<String>) {
+fn chat_route(
+    chat: Option<&ApprovalChatContext>,
+) -> (Option<String>, Option<String>, Option<String>) {
     match chat {
         Some(ctx) => (
             Some(ctx.thread_id.clone()),

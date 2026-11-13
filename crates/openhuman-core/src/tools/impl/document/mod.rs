@@ -291,7 +291,14 @@ impl DocumentTool {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let reason = format!("failed to write generated document ({filename}): {err}");
-            let _ = fail_artifact(&self.workspace_dir, &self.files_dir, &meta.id, &reason, chat).await;
+            let _ = fail_artifact(
+                &self.workspace_dir,
+                &self.files_dir,
+                &meta.id,
+                &reason,
+                chat,
+            )
+            .await;
             tracing::warn!(
                 target: "document",
                 err = %err,
@@ -303,7 +310,8 @@ impl DocumentTool {
         }
 
         let size_bytes = bytes.len() as u64;
-        let updated = match finalize_artifact(&self.workspace_dir, &meta.id, size_bytes, chat).await {
+        let updated = match finalize_artifact(&self.workspace_dir, &meta.id, size_bytes, chat).await
+        {
             Ok(updated) => updated,
             Err(err) => {
                 let reason = format!("failed to finalize artifact: {err}");
@@ -312,8 +320,14 @@ impl DocumentTool {
                 // stuck `Pending` spinner. Fail-artifact errors are
                 // swallowed — they can only recur if the same ledger backend
                 // is unavailable.
-                let _ =
-                    fail_artifact(&self.workspace_dir, &self.files_dir, &meta.id, &reason, chat).await;
+                let _ = fail_artifact(
+                    &self.workspace_dir,
+                    &self.files_dir,
+                    &meta.id,
+                    &reason,
+                    chat,
+                )
+                .await;
                 tracing::warn!(
                     target: "document",
                     err = %err,

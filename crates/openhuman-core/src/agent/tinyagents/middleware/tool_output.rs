@@ -21,9 +21,7 @@ use crate::agent::harness::tool_result_artifacts::{
 };
 use crate::agent::tinyagents::payload_summarizer::DynPayloadSummarizer;
 use crate::inference::tokenjuice::generate::GenerateTicket;
-use tinyagents_harness::artifacts::tool_results::{
-    ArtifactRead, ToolResultArtifactOutcome,
-};
+use tinyagents_harness::artifacts::tool_results::{ArtifactRead, ToolResultArtifactOutcome};
 use tinyagents_harness::middleware::library::{
     plan_output_stages, run_output_ladder, CompactedOutput, OutputCapPolicy, OutputLadderInput,
     OutputProcessor,
@@ -447,11 +445,7 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for Too
             }
         }
         if let Some(read) =
-            artifact_read_target(
-            self.artifact_store.as_deref(),
-            &call.name,
-            &call.arguments,
-        )
+            artifact_read_target(self.artifact_store.as_deref(), &call.name, &call.arguments)
         {
             tracing::debug!(
                 tool = %call.name,

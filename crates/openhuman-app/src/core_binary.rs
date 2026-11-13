@@ -81,10 +81,7 @@ pub fn resolve_core_binary() -> Result<PathBuf, String> {
             )
         })?;
 
-        log::debug!(
-            "[core_binary] dev binary found at {}",
-            candidate.display()
-        );
+        log::debug!("[core_binary] dev binary found at {}", candidate.display());
         return Ok(candidate);
     }
 
@@ -112,9 +109,6 @@ pub fn resolve_core_binary() -> Result<PathBuf, String> {
         ));
     }
 
-    log::debug!(
-        "[core_binary] release binary at {}",
-        candidate.display()
-    );
+    log::debug!("[core_binary] release binary at {}", candidate.display());
     Ok(candidate)
 }

@@ -63,7 +63,11 @@ impl StorageListFilesTool {
         approval: &crate::security::approval::ApprovalTurnContext,
     ) -> anyhow::Result<ToolResult> {
         tracing::debug!("[file_storage] listing files");
-        match self.client.get::<ListFilesResponse>(approval, FILES_PATH).await {
+        match self
+            .client
+            .get::<ListFilesResponse>(approval, FILES_PATH)
+            .await
+        {
             Ok(resp) => {
                 let mut lines = vec![format!(
                     "{} file(s), using {} of {} bytes:",

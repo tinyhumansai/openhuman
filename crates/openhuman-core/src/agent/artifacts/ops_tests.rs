@@ -371,7 +371,9 @@ async fn get_returns_the_files_folder_path() {
     .await
     .unwrap();
     std::fs::write(&path, b"plan").unwrap();
-    finalize_artifact(tmp.path(), &meta.id, 4, None).await.unwrap();
+    finalize_artifact(tmp.path(), &meta.id, 4, None)
+        .await
+        .unwrap();
 
     let value = ai_get_artifact(&config, &meta.id)
         .await
@@ -403,7 +405,9 @@ async fn get_reports_a_ready_file_removed_outside_openhuman() {
     .await
     .unwrap();
     std::fs::write(&path, b"plan").unwrap();
-    finalize_artifact(tmp.path(), &meta.id, 4, None).await.unwrap();
+    finalize_artifact(tmp.path(), &meta.id, 4, None)
+        .await
+        .unwrap();
     std::fs::remove_file(&path).unwrap();
 
     let err = ai_get_artifact(&config, &meta.id).await.unwrap_err();

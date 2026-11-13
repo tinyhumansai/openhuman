@@ -4,10 +4,7 @@ use super::*;
 /// string / fail with a fixed message.
 #[cfg(target_os = "windows")]
 fn shell() -> (&'static str, &'static [&'static str]) {
-    (
-        "powershell",
-        &["-NoProfile", "-NonInteractive", "-Command"],
-    )
+    ("powershell", &["-NoProfile", "-NonInteractive", "-Command"])
 }
 
 #[cfg(not(target_os = "windows"))]

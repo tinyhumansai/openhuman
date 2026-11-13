@@ -105,7 +105,8 @@ impl StorageSetVisibilityTool {
         tracing::debug!("[file_storage] setting visibility={visibility} for file_id={file_id}");
         match self
             .client
-            .patch::<FileMeta>(approval, 
+            .patch::<FileMeta>(
+                approval,
                 &file_path(&file_id, ""),
                 &json!({ "visibility": visibility }),
             )

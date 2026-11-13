@@ -98,7 +98,8 @@ const AboutPanel = () => {
               {lastCheckedAt && (
                 <span className="text-content-faint">
                   {' · '}
-                  {t('settings.about.lastChecked')} {formatRelative(lastCheckedAt, t, intlLocale(locale))}
+                  {t('settings.about.lastChecked')}{' '}
+                  {formatRelative(lastCheckedAt, t, intlLocale(locale))}
                 </span>
               )}
             </p>
@@ -208,11 +209,7 @@ function summaryFor(
   }
 }
 
-function formatRelative(
-  date: Date,
-  t: (key: string) => string,
-  locale: string
-): string {
+function formatRelative(date: Date, t: (key: string) => string, locale: string): string {
   const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
   if (seconds < 60) return t('notifications.justNow');
   const minutes = Math.round(seconds / 60);

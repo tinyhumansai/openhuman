@@ -37,7 +37,9 @@ async fn ready_artifact(workspace: &Path, files_dir: &Path) -> String {
     .await
     .unwrap();
     std::fs::write(&path, b"deck").unwrap();
-    finalize_artifact(workspace, &meta.id, 4, None).await.unwrap();
+    finalize_artifact(workspace, &meta.id, 4, None)
+        .await
+        .unwrap();
     meta.id
 }
 

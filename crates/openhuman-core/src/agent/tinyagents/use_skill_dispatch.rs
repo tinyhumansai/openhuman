@@ -31,8 +31,8 @@ use tinyagents_harness::context::RunContext;
 use tinyagents_harness::tool::{ToolDispatch, ToolExecutionContext};
 use tinytools::{Tool, ToolCallOptions, ToolResult};
 
-use super::tool_registration::typed_dispatch_for;
 use super::host::OpenHumanRunContext;
+use super::tool_registration::typed_dispatch_for;
 use crate::tools::toolpacks::registry::CATALOG;
 use tinyagents_harness::tool::packs::{named_tool, PackRegistryHandle};
 
@@ -96,9 +96,8 @@ impl ToolDispatch<(), OpenHumanRunContext> for UseSkillDispatch {
             .get("args")
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
-        let Some(inner_adapter) =
-            super::tool_registration::shared_tool_adapter(vec![tools], name)
-                .map(|adapter| Arc::new(adapter) as Arc<dyn Tool>)
+        let Some(inner_adapter) = super::tool_registration::shared_tool_adapter(vec![tools], name)
+            .map(|adapter| Arc::new(adapter) as Arc<dyn Tool>)
         else {
             // Freeze the not-found result too: a target appearing after
             // authorization must not turn a rejected call into an execution.
@@ -167,9 +166,8 @@ impl ToolDispatch<(), OpenHumanRunContext> for UseSkillDispatch {
         // adapter is equivalent to the one that would have been registered
         // had the model reached `name` directly instead of through
         // `use_skill`.
-        let Some(inner_adapter) =
-            super::tool_registration::shared_tool_adapter(vec![tools], &name)
-                .map(|adapter| Arc::new(adapter) as Arc<dyn Tool>)
+        let Some(inner_adapter) = super::tool_registration::shared_tool_adapter(vec![tools], &name)
+            .map(|adapter| Arc::new(adapter) as Arc<dyn Tool>)
         else {
             return self
                 .tool
