@@ -199,7 +199,13 @@ async fn a_recreated_flow_replaces_the_deleted_saved_flow_receipt() {
         "call-create",
         r#"{"type":"workflow_created","flow_id":"flow-new","name":"Friday Inbox Wrap-up"}"#,
     );
-    record_agent_saved_workflow(&ctx, temp.path(), "thread-parent", "task-save", &[recreated]);
+    record_agent_saved_workflow(
+        &ctx,
+        temp.path(),
+        "thread-parent",
+        "task-save",
+        &[recreated],
+    );
     let proposals = workflow_proposals_in_thread(&ctx, temp.path(), "thread-parent");
     assert_eq!(proposals.len(), 1);
     assert_eq!(proposals[0].saved_flow_id.as_deref(), Some("flow-new"));

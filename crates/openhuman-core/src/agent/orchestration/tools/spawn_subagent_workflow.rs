@@ -428,6 +428,51 @@ async fn saved_flow_presence_off_worker(
     }
 }
 
+/// Drop a proposal's receipt for a flow that no longer exists (its
+/// `saved_flow_id`, and the `consumed` mark a card save sets), so the proposal
+/// reads as unsaved again and [`record_agent_saved_workflow`] can record the
+/// flow the builder recreates. Only a receipt still naming `flow_id` is
+/// released, so a save that landed meanwhile is kept. Best-effort: failures
+/// are logged.
+fn release_missing_saved_flow(
+    ctx: &DispatchCtx,
+    workspace_dir: &std::path::Path,
+    thread_id: &str,
+    proposal_id: &str,
+    flow_id: &str,
+) {
+    let still_names_it = workflow_proposals_in_thread(ctx, workspace_dir, thread_id)
+        .iter()
+        .any(|p| p.message_id == proposal_id && p.saved_flow_id.as_deref() == Some(flow_id));
+    if !still_names_it {
+        log::debug!(
+            "[spawn_subagent] saved-flow receipt already changed thread_id={thread_id} \
+             proposal_id={proposal_id} flow_id={flow_id}"
+        );
+        return;
+    }
+    let patch = conversations::ConversationMessagePatch {
+        merge_extra_metadata: Some(json!({ "saved_flow_id": null, "consumed": null })),
+        ..Default::default()
+    };
+    match conversations::update_message(
+        ctx,
+        workspace_dir.to_path_buf(),
+        thread_id,
+        proposal_id,
+        patch,
+    ) {
+        Ok(_) => log::info!(
+            "[spawn_subagent] released missing saved-flow receipt thread_id={thread_id} \
+             proposal_id={proposal_id} flow_id={flow_id}"
+        ),
+        Err(error) => log::warn!(
+            "[spawn_subagent] could not release saved-flow receipt thread_id={thread_id} \
+             proposal_id={proposal_id} flow_id={flow_id} error={error}"
+        ),
+    }
+}
+
 async fn saved_flow_presence(ctx: &DispatchCtx, flow_id: &str) -> SavedFlowPresence {
     let result = crate::core::invoke::invoke_method(
         ctx.clone(),
@@ -599,6 +644,34 @@ pub(crate) async fn carry_saved_flow(
         }
     };
     let presence = saved_flow_presence_off_worker(ctx, thread_id, &saved.flow_id).await;
+    if presence == SavedFlowPresence::Missing {
+        // The note below invites the builder to save again; release the stale
+        // receipt so completion records the replacement flow on the proposal.
+        let task_ctx = ctx.clone();
+        let release_ctx = ctx.clone();
+        let workspace_dir = workspace_dir.to_path_buf();
+        let owned_thread_id = thread_id.to_string();
+        let proposal_id = saved.proposal_id.clone();
+        let flow_id = saved.flow_id.clone();
+        if let Err(error) = task_ctx
+            .spawn_blocking(move || {
+                release_missing_saved_flow(
+                    &release_ctx,
+                    &workspace_dir,
+                    &owned_thread_id,
+                    &proposal_id,
+                    &flow_id,
+                )
+            })
+            .await
+        {
+            log::warn!(
+                "[spawn_subagent] saved-flow receipt release task failed \
+                 thread_id={thread_id} flow_id={} error={error}",
+                saved.flow_id
+            );
+        }
+    }
     append_saved_flow_note(
         prompt,
         thread_id,
