@@ -335,21 +335,20 @@ fn contains_target_id(text: &str, token: &str) -> bool {
                 value_at += 1;
             }
             let mut deserializer = serde_json::Deserializer::from_str(&text[value_at..]);
-            if String::deserialize(&mut deserializer).is_ok() {
+            if <String as serde::Deserialize>::deserialize(&mut deserializer).is_ok() {
                 nested_ranges.push(value_at..value_at + deserializer.byte_offset());
             }
         }
         search_from = field_at + 1;
     }
-    contains_token(text, token)
-        && !text.match_indices(token).any(|(at, _)| {
+    text.match_indices(token).any(|(at, _)| {
             let is_id_char = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
             let before_ok = at == 0 || !text[..at].chars().last().is_some_and(is_id_char);
             let after_at = at + token.len();
             let after_ok = after_at == text.len()
                 || !text[after_at..].chars().next().is_some_and(is_id_char);
             before_ok && after_ok && !nested_ranges.iter().any(|range| range.contains(&at))
-        }) == false
+        })
 }
 
 /// The proposal a `workflow_builder` hand-off is about, if the hand-off

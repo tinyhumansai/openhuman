@@ -389,7 +389,9 @@ fn a_deleted_flow_drops_the_note_and_any_other_lookup_error_keeps_it() {
         "flow-1",
         SavedFlowPresence::Missing,
     );
-    assert_eq!(missing, prompt);
+    assert!(missing.starts_with(&prompt));
+    assert!(missing.contains("Ignore any earlier note"));
+    assert!(missing.contains("may save the proposal again"));
     let unknown = append_saved_flow_note(
         prompt.clone(),
         "thread-parent",
