@@ -373,6 +373,7 @@ include!("spawn_subagent_request.rs");
 include!("spawn_subagent_projection.rs");
 include!("spawn_subagent_workflow.rs");
 include!("spawn_subagent_target_match.rs");
+include!("spawn_subagent_saved_flow_checks.rs");
 
 /// Format the user-facing acceptance text around a structured async sub-agent reference.
 ///
