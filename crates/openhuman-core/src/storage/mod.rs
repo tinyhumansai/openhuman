@@ -62,7 +62,9 @@ pub use scope::{
 };
 
 use std::future::Future;
-use std::sync::{mpsc, Arc, LazyLock, Mutex, OnceLock, RwLock};
+#[cfg(test)]
+use std::sync::Mutex;
+use std::sync::{mpsc, Arc, LazyLock, OnceLock, RwLock};
 
 /// SQLite bindings re-exported by the storage driver crate, for the two
 /// consumers that open a SQLite file that is not a storage backend: the
@@ -205,25 +207,86 @@ use crate::config::Config;
 /// The environment variable that overrides `[storage] url`.
 pub const STORAGE_URL_VAR: &str = "OPENHUMAN_STORAGE_URL";
 
+/// An installed backend with what the host said about it. The three change
+/// together under the [`Slot`]'s lock, so a reader never pairs one backend
+/// with another's URL or driver.
+struct Installed {
+    backend: Arc<dyn StorageBackend>,
+    /// The URL it was opened from, when installed by URL ([`install_for_url`]).
+    /// [`rebind`] compares against it; a backend installed without one (a
+    /// test's, an embedder's own) is never rebound.
+    url: Option<String>,
+    /// Its driver name, when the host said which one it installed. Unlike
+    /// `url` it is also known for a backend installed with
+    /// [`install_with_driver`], and it never makes [`rebind`] manage the
+    /// backend.
+    driver: Option<String>,
+}
+
 /// A holder for one backend. The process has exactly one ([`BACKEND`]);
 /// tests make their own, so they never change what other tests in the same
 /// process see.
 #[derive(Default)]
-struct Slot(RwLock<Option<Arc<dyn StorageBackend>>>);
+struct Slot(RwLock<Option<Installed>>);
 
 impl Slot {
-    fn install(&self, backend: Arc<dyn StorageBackend>) -> Option<Arc<dyn StorageBackend>> {
-        self.0
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .replace(backend)
+    /// Replaces the backend, its URL and its driver in one write.
+    fn install_described(
+        &self,
+        backend: Arc<dyn StorageBackend>,
+        url: Option<String>,
+        driver: Option<String>,
+    ) -> Option<Arc<dyn StorageBackend>> {
+        self.install_described_at_checkpoint(backend, url, driver, || {})
     }
 
-    fn installed(&self) -> Option<Arc<dyn StorageBackend>> {
+    fn install_described_at_checkpoint(
+        &self,
+        backend: Arc<dyn StorageBackend>,
+        url: Option<String>,
+        driver: Option<String>,
+        checkpoint: impl FnOnce(),
+    ) -> Option<Arc<dyn StorageBackend>> {
+        let mut installed = self
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        checkpoint();
+        installed
+            .replace(Installed {
+                backend,
+                url,
+                driver,
+            })
+            .map(|previous| previous.backend)
+    }
+
+    fn read<T>(&self, field: impl FnOnce(&Installed) -> Option<T>) -> Option<T> {
         self.0
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+            .as_ref()
+            .and_then(field)
+    }
+
+    fn installed(&self) -> Option<Arc<dyn StorageBackend>> {
+        self.read(|installed| Some(Arc::clone(&installed.backend)))
+    }
+
+    fn installed_url(&self) -> Option<String> {
+        self.read(|installed| installed.url.clone())
+    }
+
+    fn installed_driver(&self) -> Option<String> {
+        self.read(|installed| installed.driver.clone())
+    }
+
+    #[cfg(test)]
+    fn try_installed_url(&self) -> Result<Option<String>, ()> {
+        self.0
+            .try_read()
+            .map(|slot| slot.as_ref().and_then(|installed| installed.url.clone()))
+            .map_err(|_| ())
     }
 
     fn clear(&self) -> bool {
@@ -282,17 +345,6 @@ fn is_test_thread(name: &str) -> bool {
     name.contains("::")
 }
 
-/// The URL the installed backend was opened from, when the host installed it
-/// by URL ([`install_for_url`]). [`rebind`] compares against it; a backend
-/// installed without one (a test's, an embedder's own) is never rebound.
-static INSTALLED_URL: Mutex<Option<String>> = Mutex::new(None);
-
-fn set_installed_url(url: Option<String>) {
-    *INSTALLED_URL
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = url;
-}
-
 /// The URL the installed backend was opened from, if the host installed it by
 /// URL.
 pub fn installed_url() -> Option<String> {
@@ -300,22 +352,7 @@ pub fn installed_url() -> Option<String> {
     if !slot_visible_here() {
         return None;
     }
-    INSTALLED_URL
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
-}
-
-/// The driver of the installed backend, however it was installed. Unlike
-/// [`INSTALLED_URL`] it is also known for a backend a host opened from a URL
-/// and installed with [`install`], and it never makes [`rebind`] manage the
-/// backend.
-static INSTALLED_DRIVER: Mutex<Option<String>> = Mutex::new(None);
-
-fn set_installed_driver(driver: Option<String>) {
-    *INSTALLED_DRIVER
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = driver;
+    BACKEND.installed_url()
 }
 
 /// The driver name of the installed backend (`mongodb`, `sqlite`, `memory`,
@@ -325,10 +362,7 @@ pub fn installed_driver() -> Option<String> {
     if !slot_visible_here() {
         return None;
     }
-    INSTALLED_DRIVER
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+    BACKEND.installed_driver()
 }
 
 /// The storage URL a host opens at startup: [`STORAGE_URL_VAR`], else
@@ -429,11 +463,19 @@ where
 
 /// Makes `backend` the process's storage backend; returns the previous one.
 pub fn install(backend: Arc<dyn StorageBackend>) -> Option<Arc<dyn StorageBackend>> {
+    install_described(backend, None, None)
+}
+
+/// [`install`] with the URL and driver recorded in the same write as the
+/// backend, so a concurrent [`rebind`] never sees the backend without its URL.
+fn install_described(
+    backend: Arc<dyn StorageBackend>,
+    url: Option<String>,
+    driver: Option<String>,
+) -> Option<Arc<dyn StorageBackend>> {
     #[cfg(test)]
     set_slot_owner(std::thread::current().name().map(str::to_owned));
-    set_installed_url(None);
-    set_installed_driver(None);
-    let previous = BACKEND.install(backend);
+    let previous = BACKEND.install_described(backend, url, driver);
     // What was recorded described the previous backend.
     agents::reset_recorded();
     // Agents derived before the backend existed still need recording.
@@ -447,10 +489,8 @@ pub fn install_for_url(
     url: &str,
     backend: Arc<dyn StorageBackend>,
 ) -> Option<Arc<dyn StorageBackend>> {
-    let previous = install(backend);
-    set_installed_url(Some(url.to_string()));
-    set_installed_driver(StorageUrl::parse(url).ok().map(|u| u.driver().to_string()));
-    previous
+    let driver = StorageUrl::parse(url).ok().map(|u| u.driver().to_string());
+    install_described(backend, Some(url.to_string()), driver)
 }
 
 /// [`install`] for a backend `driver` opened, remembering the driver name so
@@ -461,9 +501,7 @@ pub fn install_with_driver(
     driver: &str,
     backend: Arc<dyn StorageBackend>,
 ) -> Option<Arc<dyn StorageBackend>> {
-    let previous = install(backend);
-    set_installed_driver(Some(driver.to_string()));
-    previous
+    install_described(backend, None, Some(driver.to_string()))
 }
 
 /// The installed backend, when the host configured one.
@@ -477,8 +515,6 @@ pub fn installed() -> Option<Arc<dyn StorageBackend>> {
 
 /// Removes the installed backend; returns whether there was one.
 pub fn clear() -> bool {
-    set_installed_url(None);
-    set_installed_driver(None);
     agents::reset_recorded();
     let cleared = BACKEND.clear();
     // Only after the backend is gone, so other tests never see it in between.
