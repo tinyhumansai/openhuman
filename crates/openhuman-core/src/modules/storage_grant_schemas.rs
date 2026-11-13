@@ -166,6 +166,8 @@ pub(super) fn grant_for(module_id: &str) -> Option<StorageGrant> {
 fn read_collections(owner: &str) -> Vec<String> {
     match owner {
         "connectors" => tinyconnectors_bus::storage::storage_needs().collections,
+        // TinyWallet's x402 ledger migrates its v1 budget holds on first open.
+        "wallet" => vec![tinywallet::LEGACY_BUDGET_COLLECTION.to_owned()],
         _ => Vec::new(),
     }
 }
