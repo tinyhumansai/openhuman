@@ -313,53 +313,109 @@ fn contains_token(text: &str, token: &str) -> bool {
     })
 }
 
-/// Whether `token` appears as an id token outside a nested-workflow reference.
-/// A hand-off may include the requested graph, whose
-/// `sub_workflow.config.workflow_id` values identify child workflows rather
-/// than the proposal being handed off.
-fn contains_target_id(text: &str, token: &str) -> bool {
-    if token.is_empty() {
-        return false;
-    }
-    let mut nested_ranges = Vec::new();
-    let mut search_from = 0;
-    while let Some(field_at) = text[search_from..].find("\"workflow_id\"") {
-        let field_at = search_from + field_at;
-        let mut value_at = field_at + "\"workflow_id\"".len();
-        while text.as_bytes().get(value_at).is_some_and(u8::is_ascii_whitespace) {
-            value_at += 1;
-        }
-        if text.as_bytes().get(value_at) == Some(&b':') {
-            value_at += 1;
-            while text.as_bytes().get(value_at).is_some_and(u8::is_ascii_whitespace) {
-                value_at += 1;
-            }
-            if text.as_bytes().get(value_at) == Some(&b'"') {
-                let mut end = value_at + 1;
+/// Byte ranges of `text` that describe nested workflows rather than the
+/// proposal being handed off. A hand-off may include the requested graph:
+/// every JSON object whose `"type"` is `"sub_workflow"` (the node, its name
+/// and config) and every `"workflow_id": "…"` value identifies a child
+/// workflow. One string-aware pass over the text; malformed JSON simply
+/// yields fewer ranges.
+fn nested_workflow_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = text.as_bytes();
+    let mut ranges = Vec::new();
+    // Open objects: (start offset, whether it is a sub_workflow node).
+    let mut objects: Vec<(usize, bool)> = Vec::new();
+    // The last two string literals, to recognise `"key": "value"` pairs.
+    let mut last_key: Option<(usize, usize)> = None;
+    let mut awaiting_value_of: Option<(usize, usize)> = None;
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'"' => {
+                let start = at;
+                let mut end = at + 1;
                 let mut escaped = false;
-                while let Some(byte) = text.as_bytes().get(end) {
+                while end < bytes.len() {
+                    let byte = bytes[end];
                     if escaped {
                         escaped = false;
-                    } else if *byte == b'\\' {
+                    } else if byte == b'\\' {
                         escaped = true;
-                    } else if *byte == b'"' {
-                        nested_ranges.push(value_at..end + 1);
+                    } else if byte == b'"' {
                         break;
                     }
                     end += 1;
                 }
+                let literal = start..(end + 1).min(bytes.len());
+                if let Some((key_start, key_end)) = awaiting_value_of.take() {
+                    let key = &text[key_start..key_end];
+                    let value = &text[literal.clone()];
+                    if key == "\"workflow_id\"" {
+                        ranges.push(literal.clone());
+                    } else if key == "\"type\"" && value == "\"sub_workflow\"" {
+                        if let Some(open) = objects.last_mut() {
+                            open.1 = true;
+                        }
+                    }
+                } else {
+                    last_key = Some((literal.start, literal.end));
+                }
+                at = literal.end;
+                continue;
             }
+            b':' => awaiting_value_of = last_key.take(),
+            b'{' => {
+                objects.push((at, false));
+                last_key = None;
+            }
+            b'}' => {
+                if let Some((start, true)) = objects.pop() {
+                    ranges.push(start..at + 1);
+                }
+                last_key = None;
+                awaiting_value_of = None;
+            }
+            b',' | b'[' | b']' => {
+                last_key = None;
+                awaiting_value_of = None;
+            }
+            _ => {}
         }
-        search_from = field_at + 1;
+        at += 1;
     }
+    ranges
+}
+
+/// Whether `at` falls inside one of the nested-workflow `ranges`.
+fn in_nested_workflow(ranges: &[std::ops::Range<usize>], at: usize) -> bool {
+    ranges.iter().any(|range| range.contains(&at))
+}
+
+/// Whether `token` appears as an id token outside a nested-workflow reference
+/// (see [`nested_workflow_ranges`]).
+fn contains_target_id(text: &str, token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let nested = nested_workflow_ranges(text);
     text.match_indices(token).any(|(at, _)| {
-            let is_id_char = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
-            let before_ok = at == 0 || !text[..at].chars().last().is_some_and(is_id_char);
-            let after_at = at + token.len();
-            let after_ok = after_at == text.len()
-                || !text[after_at..].chars().next().is_some_and(is_id_char);
-            before_ok && after_ok && !nested_ranges.iter().any(|range| range.contains(&at))
-        })
+        let is_id_char = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+        let before_ok = at == 0 || !text[..at].chars().last().is_some_and(is_id_char);
+        let after_at = at + token.len();
+        let after_ok =
+            after_at == text.len() || !text[after_at..].chars().next().is_some_and(is_id_char);
+        before_ok && after_ok && !in_nested_workflow(&nested, at)
+    })
+}
+
+/// Whether `name` appears in `text` outside a nested-workflow reference, so a
+/// graph node naming a child workflow cannot select that child's proposal.
+fn contains_target_name(text: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let nested = nested_workflow_ranges(text);
+    text.match_indices(name)
+        .any(|(at, _)| !in_nested_workflow(&nested, at))
 }
 
 /// The proposal a `workflow_builder` hand-off is about, if the hand-off
@@ -398,7 +454,7 @@ fn hand_off_proposal<'a>(
     let mut best: Option<&ThreadWorkflowProposal> = None;
     let mut ambiguous = false;
     for proposal in proposals {
-        if !hand_off.contains(proposal.name.as_str()) {
+        if !contains_target_name(hand_off, proposal.name.as_str()) {
             continue;
         }
         let longer = match best {
@@ -602,9 +658,35 @@ pub(crate) async fn carry_saved_flow(
     let Some(thread_id) = thread_id.as_deref() else {
         return prompt;
     };
-    let Some(saved) = saved_carry_for_hand_off(ctx, workspace_dir, thread_id, &prompt, context)
-    else {
-        return prompt;
+    // The thread read is synchronous storage I/O; keep it off the async
+    // worker so a large thread or a slow store does not stall the runtime.
+    let lookup = {
+        let ctx = ctx.clone();
+        let workspace_dir = workspace_dir.to_path_buf();
+        let thread_id = thread_id.to_string();
+        let prompt = prompt.clone();
+        let context = context.map(str::to_string);
+        tokio::task::spawn_blocking(move || {
+            saved_carry_for_hand_off(
+                &ctx,
+                &workspace_dir,
+                &thread_id,
+                &prompt,
+                context.as_deref(),
+            )
+        })
+        .await
+    };
+    let saved = match lookup {
+        Ok(Some(saved)) => saved,
+        Ok(None) => return prompt,
+        Err(error) => {
+            log::warn!(
+                "[spawn_subagent] saved-flow carry skipped thread_id={thread_id} \
+                 reason=lookup-task-failed error={error}"
+            );
+            return prompt;
+        }
     };
     let presence = saved_flow_presence(ctx, &saved.flow_id).await;
     append_saved_flow_note(
