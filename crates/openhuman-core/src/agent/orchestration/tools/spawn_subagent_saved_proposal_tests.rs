@@ -154,7 +154,7 @@ async fn carry_saved_flow_runs_its_lookups_off_the_worker_and_keeps_the_note() {
         append_saved_flow_note(
             prompt.clone(),
             "thread-parent",
-            &proposal_message_id(&temp),
+            "workflow-proposal:sub-propose",
             "Friday Inbox Wrap-up",
             "flow-1",
             presence,
