@@ -169,6 +169,6 @@ fn agents_on_one_workspace_keep_their_own_state() {
             );
         })
         .await
-        .expect("test task");
+        .unwrap_or_else(|error| panic!("test task: {error:?}"));
     });
 }
