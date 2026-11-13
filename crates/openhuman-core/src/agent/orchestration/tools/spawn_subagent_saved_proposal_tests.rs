@@ -137,9 +137,11 @@ fn carry_saved_flow_appends_the_note_only_for_the_named_proposal() {
 }
 
 /// The live spawn path (`carry_saved_flow`) runs the thread read and the
-/// `flows.get` presence probe off the async worker. It must still return the
-/// note from a multi-threaded runtime without a nested-runtime panic. With no
-/// flow catalog in this test the probe cannot tell, which keeps the note.
+/// `flows.get` presence probe off the async worker. From a multi-threaded
+/// runtime it must still find the saved proposal and append a note, without a
+/// nested-runtime panic. `flow-1` is in no flow catalog here, so the probe
+/// answers `Missing` (or `Unknown` when flows are compiled out); either way
+/// the result is exactly what `append_saved_flow_note` gives for it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn carry_saved_flow_runs_its_lookups_off_the_worker_and_keeps_the_note() {
     let temp = thread_with_delivered_proposal("Friday Inbox Wrap-up");
@@ -148,9 +150,22 @@ async fn carry_saved_flow_runs_its_lookups_off_the_worker_and_keeps_the_note() {
     let thread = Some("thread-parent".to_string());
     let prompt = "Save the delivered proposal \"Friday Inbox Wrap-up\" as-is.".to_string();
     let carried = carry_saved_flow(&ctx, temp.path(), &thread, prompt.clone(), None).await;
-    assert!(carried.starts_with(&prompt), "{carried}");
-    assert!(carried.contains("flow-1"), "{carried}");
-    assert!(carried.contains("already saved"), "{carried}");
+    let expected = |presence| {
+        append_saved_flow_note(
+            prompt.clone(),
+            "thread-parent",
+            &proposal_message_id(&temp),
+            "Friday Inbox Wrap-up",
+            "flow-1",
+            presence,
+        )
+    };
+    assert_ne!(carried, prompt, "the saved proposal must be found");
+    assert!(
+        carried == expected(SavedFlowPresence::Missing)
+            || carried == expected(SavedFlowPresence::Unknown),
+        "{carried}"
+    );
 }
 
 #[test]
