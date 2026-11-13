@@ -276,7 +276,7 @@ fn nested_subworkflow_id_does_not_select_the_saved_child_proposal() {
         saved_flow_id: Some("flow-child".into()),
     };
     let hand_off = r#"Build a new proposal from this graph: {"nodes":[{"type":"sub_workflow","config":{"workflow_id":"flow-child"}}]}"#;
-    assert_eq!(hand_off_proposal(&[saved], hand_off), None);
+    assert!(hand_off_proposal(&[saved], hand_off).is_none());
 }
 
 #[test]

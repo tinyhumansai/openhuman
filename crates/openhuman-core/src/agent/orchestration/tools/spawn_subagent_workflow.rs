@@ -334,9 +334,20 @@ fn contains_target_id(text: &str, token: &str) -> bool {
             while text.as_bytes().get(value_at).is_some_and(u8::is_ascii_whitespace) {
                 value_at += 1;
             }
-            let mut deserializer = serde_json::Deserializer::from_str(&text[value_at..]);
-            if <String as serde::Deserialize>::deserialize(&mut deserializer).is_ok() {
-                nested_ranges.push(value_at..value_at + deserializer.byte_offset());
+            if text.as_bytes().get(value_at) == Some(&b'"') {
+                let mut end = value_at + 1;
+                let mut escaped = false;
+                while let Some(byte) = text.as_bytes().get(end) {
+                    if escaped {
+                        escaped = false;
+                    } else if *byte == b'\\' {
+                        escaped = true;
+                    } else if *byte == b'"' {
+                        nested_ranges.push(value_at..end + 1);
+                        break;
+                    }
+                    end += 1;
+                }
             }
         }
         search_from = field_at + 1;
