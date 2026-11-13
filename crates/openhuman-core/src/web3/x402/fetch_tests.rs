@@ -381,3 +381,16 @@ fn a_signed_in_response_matches_the_declared_fetch_outputs() {
     );
     assert_eq!(object["payment"], Value::Null);
 }
+
+#[test]
+fn params_treat_a_null_sign_in_and_network_as_unset() {
+    let parsed = parse_params(params(json!({
+        "url": "https://api.example.test/resource",
+        "maxAmountAtomic": 2500,
+        "signIn": null,
+        "network": null,
+    })))
+    .expect("null optionals are accepted, as the schema advertises");
+    assert!(!parsed.sign_in);
+    assert_eq!(parsed.network, None);
+}

@@ -70,7 +70,7 @@ struct RawFetchParams {
     #[serde(default)]
     network: Option<String>,
     #[serde(default)]
-    sign_in: bool,
+    sign_in: Option<bool>,
 }
 
 /// A `network` pin is a CAIP-2 id or a bare namespace: ASCII letters,
@@ -158,7 +158,7 @@ pub(super) fn parse_params(params: Map<String, Value>) -> Result<FetchParams, St
         body: raw.body,
         max_amount_atomic: raw.max_amount_atomic,
         network,
-        sign_in: raw.sign_in,
+        sign_in: raw.sign_in.unwrap_or(false),
     })
 }
 
