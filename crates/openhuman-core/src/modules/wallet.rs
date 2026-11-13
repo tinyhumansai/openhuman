@@ -358,17 +358,19 @@ async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallErr
             )
         })?;
 
-    admit_attestation(record, &attestation, None)?;
+    admit_attestation(record, &attestation, linked_host_code())?;
     Ok(proxy)
 }
 
 /// The decision [`attested_proxy`] makes once it holds an attestation.
+///
+/// `host_code` is the running executable's digest when this binary links its
+/// own tinywallet, and `None` otherwise (see [`linked_host_code`]).
 fn admit_attestation(
     record: &super::ModuleRecord,
     attestation: &tinybus::attest::Attestation,
     host_code: Option<&str>,
 ) -> Result<(), WalletCallError> {
-    let _ = host_code;
     if attestation.name.as_str() != record.bus_name {
         return Err(WalletCallError::Failed(format!(
             "the wallet module's attestation names '{}' rather than '{}'",
