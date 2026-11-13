@@ -241,11 +241,11 @@ export function ProviderModelPickerDialog({
 
   // The search box narrows the MODEL list of the selected source. Providers
   // are a handful of fixed rows and stay put; a query only ever hides models.
-  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const normalizedQuery = query.trim().toLowerCase();
   const matchesQuery = (candidate: ModelInfo) =>
     normalizedQuery === '' ||
-    candidate.id.toLocaleLowerCase().includes(normalizedQuery) ||
-    (candidate.display_name ?? '').toLocaleLowerCase().includes(normalizedQuery);
+    candidate.id.toLowerCase().includes(normalizedQuery) ||
+    (candidate.display_name ?? '').toLowerCase().includes(normalizedQuery);
   const modelTitle = (candidate: ModelInfo) => candidate.display_name?.trim() || candidate.id;
   const visibleCatalog = catalog
     .filter(matchesQuery)

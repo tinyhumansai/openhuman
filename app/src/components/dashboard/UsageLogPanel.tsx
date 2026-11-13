@@ -55,15 +55,15 @@ const UsageLogPanel = () => {
     [data]
   );
   const records = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
+    const needle = query.trim().toLowerCase();
     return (data?.records ?? []).filter(
       record =>
         (category === ALL || record.category === category) &&
         (provider === ALL || (record.provider ?? '') === provider) &&
         (source === ALL || record.cost_source === source) &&
         (!needle ||
-          record.model.toLocaleLowerCase().includes(needle) ||
-          record.session_id.toLocaleLowerCase().includes(needle))
+          record.model.toLowerCase().includes(needle) ||
+          record.session_id.toLowerCase().includes(needle))
     );
   }, [data, category, provider, source, query]);
   const filteredCost = records.reduce((sum, record) => sum + record.cost_usd, 0);
