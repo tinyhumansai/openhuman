@@ -406,6 +406,46 @@ fn a_sub_workflow_object_nested_under_a_key_is_still_excluded() {
 }
 
 #[test]
+fn a_name_with_quotes_matches_its_json_escaped_form_in_context() {
+    let saved = ThreadWorkflowProposal {
+        message_id: "saved".into(),
+        name: r#"Say "Hello""#.into(),
+        draft_id: None,
+        flow_id: None,
+        saved_flow_id: Some("flow-hello".into()),
+    };
+    // The orchestrator passes the proposal as serialized JSON context, where
+    // the name's quotes are escaped.
+    let hand_off = r#"Save the delivered proposal as-is.
+{"name":"Say \"Hello\"","nodes":[{"id":"n1","kind":"agent","name":"Greet"}]}"#;
+    let proposals = [saved];
+    let picked = hand_off_proposal(&proposals, hand_off).expect("the escaped name");
+    assert_eq!(picked.message_id, "saved");
+}
+
+#[test]
+fn an_escaped_name_inside_a_sub_workflow_node_is_still_excluded() {
+    let parent = ThreadWorkflowProposal {
+        message_id: "parent".into(),
+        name: "Morning digest".into(),
+        draft_id: None,
+        flow_id: None,
+        saved_flow_id: None,
+    };
+    let child = ThreadWorkflowProposal {
+        message_id: "saved-child".into(),
+        name: r#"Say "Hello" to everyone"#.into(),
+        draft_id: None,
+        flow_id: None,
+        saved_flow_id: Some("flow-child".into()),
+    };
+    let hand_off = r#"Save the Morning digest proposal with {"nodes":[{"id":"n1","kind":"sub_workflow","name":"Say \"Hello\" to everyone","config":{"workflow_id":"flow-child"}}]}"#;
+    let proposals = [parent, child];
+    let picked = hand_off_proposal(&proposals, hand_off).expect("the parent proposal");
+    assert_eq!(picked.message_id, "parent");
+}
+
+#[test]
 fn a_name_outside_the_graph_still_selects_its_proposal() {
     let saved = ThreadWorkflowProposal {
         message_id: "saved".into(),
