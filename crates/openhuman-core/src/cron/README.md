@@ -241,7 +241,7 @@ scheduled_workspace = "state/workbench"
 the run's workspace descriptor (`set_workspace_descriptor`, the mechanism
 `agent.chat`'s `cwd` and sub-agent worktrees use). The shell and file tools then
 resolve relative paths there and grant it read-write
-(`security_for_tool_context`), and a sandboxed shell asks TinySecurity for that
+(`FsGate::scoped_to_workspace`), and a sandboxed shell asks TinySecurity for that
 root instead of `action_dir`. This is what lets a deployment whose action dir
 holds the core workspace (a checkout with the brain inside it) run a sandboxed
 shell from cron at all: TinySecurity refuses any grant that overlaps

@@ -5,11 +5,30 @@
 use super::gate::security_scoped_to_root;
 use crate::security::policy::TrustedAccess;
 use crate::security::SecurityPolicy;
-use crate::tools::implementations::system::security_for_tool_context;
 use std::path::Path;
 use tinyagents_harness::context::{RunConfig, RunContext};
 use tinyagents_harness::tool::ToolExecutionContext;
 use tinytools::WorkspaceDescriptor;
+
+/// Scope `security` to the run's workspace descriptor, if any — the per-call
+/// grant production applies through `FsGate::scoped_to_workspace`.
+fn security_for_tool_context(
+    security: &SecurityPolicy,
+    context: Option<&dyn tinytools::ToolRunContext>,
+    tool: &str,
+) -> SecurityPolicy {
+    if let Some(workspace) = context.and_then(|ctx| ctx.workspace()) {
+        tracing::debug!(
+            tool,
+            workspace_root = %workspace.root.display(),
+            policy_id = %workspace.policy_id,
+            "[tools:system] granting TinyAgents workspace descriptor as action dir + trusted root"
+        );
+        security_scoped_to_root(security, &workspace.root)
+    } else {
+        security.clone()
+    }
+}
 
 /// A run context carrying a workspace descriptor rooted at `root`, exactly as
 /// the session builder / sub-agent runner / `cwd` RPC param produce one.

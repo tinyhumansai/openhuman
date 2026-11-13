@@ -1,5 +1,4 @@
 use super::*;
-use crate::security::AutonomyLevel;
 use tempfile::TempDir;
 
 async fn test_setup() -> (TempDir, Config, Arc<SecurityPolicy>) {
@@ -127,6 +126,7 @@ async fn once_and_pause_resume_aliases_work() {
 #[tokio::test]
 async fn the_host_stage_blocks_mutating_actions_in_readonly_mode() {
     use crate::agent::tinyagents::host::security_gate_test_support::{authorize_one, is_denied};
+    use crate::security::AutonomyLevel;
     let tmp = TempDir::new().unwrap();
     let config = Config {
         workspace_dir: tmp.path().join("workspace"),

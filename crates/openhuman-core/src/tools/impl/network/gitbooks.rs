@@ -31,7 +31,7 @@ impl GitbooksSearchTool {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "modules"))]
     fn with_client(endpoint: String, timeout_secs: u64, client: ModuleClient) -> Self {
         Self {
             endpoint,
@@ -124,7 +124,7 @@ impl GitbooksGetPageTool {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "modules"))]
     fn with_client(endpoint: String, timeout_secs: u64, client: ModuleClient) -> Self {
         Self {
             endpoint,

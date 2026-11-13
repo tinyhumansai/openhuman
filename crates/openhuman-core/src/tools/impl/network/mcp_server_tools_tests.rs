@@ -34,16 +34,8 @@ fn config() -> Config {
 #[test]
 fn module_prepared_static_tool_keeps_its_contract_and_exposure() {
     let config = config();
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
-    let mut tools = configured_server_tools_from_presentations(
-        &config,
-        vec![presentation("weather", true)],
-        &security,
-    );
+    let mut tools =
+        configured_server_tools_from_presentations(&config, vec![presentation("weather", true)]);
     assert_eq!(tools.len(), 1);
     let tool = tools.pop().expect("prepared tool");
     assert_eq!(tool.name(), "mcp_weather_forecast");
@@ -59,15 +51,9 @@ fn module_prepared_static_tool_keeps_its_contract_and_exposure() {
 #[test]
 fn module_presentation_for_an_unconfigured_server_is_not_executable() {
     let config = config();
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
     assert!(configured_server_tools_from_presentations(
         &config,
         vec![presentation("removed-server", false)],
-        &security,
     )
     .is_empty());
 }

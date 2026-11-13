@@ -8,17 +8,18 @@
 //!
 //! Business logic lives one directory per domain family under `src/`, listed
 //! below in the order they are declared (module declarations are kept
-//! alphabetical, with the `rpc` re-export sitting between `platform` and
-//! `runtime` — keep new modules sorted the same way): `agent`, `agent_registry`, `api`, `artifacts`, `attachments`,
-//! `channels`, `config`, `core`, `cron`, `desktop`, `doctor`, `flows` (feature
-//! `flows`), `hooks`, `hosting` (feature `hosting`),
-//! `inference`, `integrations`,
-//! `mcp`, `media` (feature `media`), `memory`, `modules` (feature
-//! `modules`), `platform`, `runtime`, `sandbox`, `search`, `security`,
-//! `skills`, `test_support` (feature `e2e-test-support`), `threads`, `tools`,
-//! `util`, `voice`, `web3`, `web_chat`. `channels`, `mcp`,
-//! `skills`, `voice` and `web3` are always declared but gate most of their
-//! contents inside their own `mod.rs` behind the feature of the same name.
+//! alphabetical — keep new modules sorted the same way): `agent`,
+//! `agent_registry`, `agent_runs`, `artifacts`, `attachments`, `channels`,
+//! `commands`, `config`, `core`, `credentials`, `cron`, `desktop`, `doctor`,
+//! `flows` (feature `flows`), `hooks`, `hosting` (feature `hosting`),
+//! `inbound` (feature `inbound-queues`), `inbound_debounce`, `inference`,
+//! `integrations`, `mcp`, `media` (feature `media`), `memory`, `modules`,
+//! `plan_review`, `platform`, `profiles`, `progress`, `prompts`, `sandbox`,
+//! `search`, `security`, `sessions`, `skills`, `storage`, `test_support`
+//! (feature `e2e-test-support`), `threads`, `tools`, `triage`, `util`,
+//! `voice`, `web3`, `web_chat`. `channels`, `mcp`, `modules`, `skills`,
+//! `voice` and `web3` are always declared but gate most of their contents
+//! inside their own `mod.rs` behind the feature of the same name.
 //! `core/` is not a domain: it holds transport, dispatch, the controller
 //! registry (`core::all`), auth, the CLI, the event bus, and runtime
 //! composition (`core::runtime`). See `README.md` and AGENTS.md ("Rust domain
@@ -50,6 +51,8 @@
 #![recursion_limit = "256"]
 // These modules define the public API surface for agent features.
 // Many types/functions are intended for future use or integration with the frontend.
+// TODO(#335): hundreds of items across most modules still rely on this; `tools`
+// opts back into the lint below. Remove it module by module.
 #![allow(dead_code)]
 
 pub mod agent;
@@ -106,6 +109,8 @@ pub mod test_support;
 // is handled separately.
 #[allow(deprecated)]
 pub mod threads;
+// `tools` is kept dead-code clean: re-enable the lint the crate-wide allow silences.
+#[warn(dead_code)]
 pub mod tools;
 pub mod triage;
 pub mod util;
