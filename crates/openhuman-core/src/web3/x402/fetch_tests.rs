@@ -17,6 +17,55 @@ fn params_default_to_get_with_no_headers_or_body() {
     assert!(parsed.headers.is_empty());
     assert_eq!(parsed.body, None);
     assert_eq!(parsed.max_amount_atomic, 2500);
+    assert_eq!(parsed.network, None);
+    assert!(!parsed.sign_in);
+}
+
+#[test]
+fn params_accept_a_network_pin_and_sign_in() {
+    for network in [
+        "eip155:8453",
+        "eip155",
+        "solana",
+        "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    ] {
+        let parsed = parse_params(params(json!({
+            "url": "https://api.example.test/resource",
+            "maxAmountAtomic": 1,
+            "network": network,
+            "signIn": true,
+        })))
+        .expect("valid params");
+        assert_eq!(parsed.network.as_deref(), Some(network));
+        assert!(parsed.sign_in);
+    }
+    let blank = parse_params(params(json!({
+        "url": "https://api.example.test/resource",
+        "maxAmountAtomic": 1,
+        "network": " ",
+    })))
+    .expect("a blank pin is no pin");
+    assert_eq!(blank.network, None);
+}
+
+#[test]
+fn params_reject_a_malformed_network_pin() {
+    for network in [
+        "eip155:8453:1",
+        ":8453",
+        "eip155:",
+        "eip 155",
+        "eip155;drop",
+        &"a".repeat(65),
+    ] {
+        let error = parse_params(params(json!({
+            "url": "https://api.example.test/resource",
+            "maxAmountAtomic": 1,
+            "network": network,
+        })))
+        .expect_err("malformed network is refused");
+        assert!(error.contains("network"), "{error}");
+    }
 }
 
 #[test]
@@ -79,6 +128,8 @@ fn params_reject_caller_supplied_payment_headers() {
         "payment-signature",
         "X-PAYMENT",
         "x-Payment",
+        "SIGN-IN-WITH-X",
+        "sign-in-with-x",
     ] {
         let error = parse_params(params(json!({
             "url": "https://api.example.test/resource",
@@ -156,6 +207,43 @@ fn a_refused_authorization_is_reported_with_the_refusal_prefix() {
 }
 
 #[test]
+fn module_refusals_before_signing_are_reported_with_the_refusal_prefix() {
+    // The module's own refusals reach the host as one opaque failed call whose
+    // text is the module's message; the host callback was never consulted.
+    for message in [
+        "ai.tinyhumans.tinywallet.Error.X402OperationFailed: x402 daily budget exceeded: 9000000/10000000 atomic units",
+        "ai.tinyhumans.tinywallet.Error.X402OperationFailed: x402 monthly budget exceeded: 99000000/100000000 atomic units",
+        "ai.tinyhumans.tinywallet.Error.X402OperationFailed: x402 amount 2000000 exceeds per-request cap 1000000",
+        "ai.tinyhumans.tinywallet.Error.X402OperationFailed: x402 network solana:unknown is not supported; payments are accepted only in USDC on known networks",
+        "ai.tinyhumans.tinywallet.Error.X402OperationFailed: x402 asset 0xabc is not the USDC accepted on eip155:8453",
+        "ai.tinyhumans.tinywallet.Error.X402OperationFailed: no supported payment option (Solana exact or EVM exact) in 402 challenge",
+    ] {
+        let error = prepare_error(
+            crate::modules::x402_service::X402RpcPermitOutcome::Unused,
+            message,
+        );
+        assert!(error.starts_with(REFUSED_PREFIX), "{error}");
+        assert!(error.contains(message), "the module's reason is kept: {error}");
+    }
+}
+
+#[test]
+fn failures_that_are_not_refusals_keep_the_payment_failed_wording() {
+    for message in [
+        "x402 service handle is unavailable",
+        "x402 pending-payment capacity reached",
+        "transport: connection closed",
+    ] {
+        let error = prepare_error(
+            crate::modules::x402_service::X402RpcPermitOutcome::Unused,
+            message,
+        );
+        assert!(!error.starts_with(REFUSED_PREFIX), "{error}");
+        assert!(error.starts_with("x402_fetch: payment failed:"), "{error}");
+    }
+}
+
+#[test]
 fn an_unpaid_response_has_a_null_payment() {
     assert_eq!(
         response_value(200, Some("text/plain".into()), "ok".into(), false, None),
@@ -204,4 +292,105 @@ fn the_payment_amount_must_not_exceed_the_caller_cap() {
     assert!(ensure_within_cap(2500, 2500).is_ok());
     let error = ensure_within_cap(2501, 2500).expect_err("over cap");
     assert!(error.starts_with(REFUSED_PREFIX), "{error}");
+}
+
+fn loopback_target(server: &wiremock::MockServer, path: &str) -> ValidatedUrl {
+    ValidatedUrl {
+        url: format!("{}{path}", server.uri()),
+        host: "127.0.0.1".into(),
+        addrs: vec![*server.address()],
+    }
+}
+
+#[tokio::test]
+async fn the_sign_in_retry_adds_the_credential_and_keeps_the_post() {
+    use wiremock::matchers::{body_string, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/x-accounts/start"))
+        .and(header(SIGN_IN_HEADER, "siwx-credential"))
+        .and(header("Idempotency-Key", "k1"))
+        .and(body_string(r#"{"username":"teeny"}"#))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let params = FetchParams {
+        url: String::new(),
+        method: reqwest::Method::POST,
+        headers: vec![("Idempotency-Key".into(), "k1".into())],
+        body: Some(r#"{"username":"teeny"}"#.into()),
+        max_amount_atomic: 1,
+        network: None,
+        sign_in: true,
+    };
+    let target = loopback_target(&server, "/api/x-accounts/start");
+
+    let response = send(&target, &params, Some((SIGN_IN_HEADER, "siwx-credential")))
+        .await
+        .expect("the retry reaches the server");
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn the_first_attempt_carries_no_sign_in_credential() {
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+    let params = parse_params(params(json!({
+        "url": "https://twitr.test/x", "maxAmountAtomic": 1, "signIn": true
+    })))
+    .expect("params");
+    send(&loopback_target(&server, "/x"), &params, None)
+        .await
+        .expect("sent");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(!requests[0].headers.contains_key(SIGN_IN_HEADER));
+}
+
+#[test]
+fn a_signed_in_response_matches_the_declared_fetch_outputs() {
+    let value = with_signed_in_as(
+        response_value(
+            200,
+            Some("application/json".into()),
+            "{}".into(),
+            false,
+            None,
+        ),
+        "0x0000000000000000000000000000000000000001".into(),
+    );
+    let declared = super::super::schemas::schemas("fetch").outputs;
+    let object = value.as_object().expect("object response");
+    for key in object.keys() {
+        assert!(
+            declared.iter().any(|field| field.name == key),
+            "response key {key} is not declared in x402.fetch outputs"
+        );
+    }
+    assert_eq!(
+        object["signedInAs"],
+        "0x0000000000000000000000000000000000000001"
+    );
+    assert_eq!(object["payment"], Value::Null);
+}
+
+#[test]
+fn params_treat_a_null_sign_in_and_network_as_unset() {
+    let parsed = parse_params(params(json!({
+        "url": "https://api.example.test/resource",
+        "maxAmountAtomic": 2500,
+        "signIn": null,
+        "network": null,
+    })))
+    .expect("null optionals are accepted, as the schema advertises");
+    assert!(!parsed.sign_in);
+    assert_eq!(parsed.network, None);
 }

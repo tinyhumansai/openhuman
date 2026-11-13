@@ -59,10 +59,11 @@ async fn flows_boot_reconcile_uses_the_runtime_captured_config() {
     );
 }
 
-/// desktop() must enable every bootstrap job.
+/// desktop() must enable every bootstrap job (the task-source poller once a
+/// provider can fetch).
 #[test]
 fn desktop_plan_enables_every_job() {
-    let plan = bootstrap_job_plan(&ServiceSet::desktop());
+    let plan = bootstrap_job_plan_with(&ServiceSet::desktop(), true);
     assert_eq!(
         plan,
         BootstrapJobPlan {
@@ -108,7 +109,7 @@ fn each_concern_flag_enables_exactly_its_job() {
 fn disabling_one_concern_disables_only_its_job() {
     let mut services = ServiceSet::desktop();
     services.integrations = false;
-    let plan = bootstrap_job_plan(&services);
+    let plan = bootstrap_job_plan_with(&services, true);
     assert!(!plan.module_preload);
     assert!(plan.memory_jobs);
     assert!(plan.task_source_pollers);
@@ -187,4 +188,25 @@ fn service_tasks_start_only_once() {
     assert!(!tasks.begin(), "a second start is a no-op");
     tasks.stop();
     assert!(tasks.begin(), "after a stop the services may start again");
+}
+
+/// No provider can fetch tasks today (senamakel/openhuman#324): even the
+/// preset that runs every job must not start the task-source poller.
+#[test]
+fn task_source_poller_stays_off_while_no_provider_can_fetch() {
+    let plan = bootstrap_job_plan(&ServiceSet::desktop());
+    assert!(
+        !plan.task_source_pollers,
+        "the poller must not start with no fetch-capable provider: {plan:?}"
+    );
+}
+
+/// Flipping the fetch gate brings the poller back with no other change, and
+/// the `cron` concern flag still governs it.
+#[test]
+fn task_source_poller_returns_once_a_provider_can_fetch() {
+    assert!(bootstrap_job_plan_with(&ServiceSet::desktop(), true).task_source_pollers);
+    let mut services = ServiceSet::desktop();
+    services.cron = false;
+    assert!(!bootstrap_job_plan_with(&services, true).task_source_pollers);
 }

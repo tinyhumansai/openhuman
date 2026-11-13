@@ -31,24 +31,13 @@ fn config_schema_defaults_cover_dashboard_capability_memory_and_security_shapes(
     assert!(dashboard.model_health.enabled);
     assert_eq!(dashboard.model_health.min_tasks_for_rating, 10);
     assert_eq!(dashboard.model_health.evaluation_window_tasks, 50);
-    assert!(dashboard.diagram_viewer.enabled);
-    assert_eq!(
-        dashboard.diagram_viewer.source_url,
-        "http://localhost:8787/workspace/diagrams/latest.png"
-    );
-    assert_eq!(dashboard.diagram_viewer.refresh_interval_seconds, 10);
     let partial_dashboard: DashboardConfig = serde_json::from_value(json!({
         "event_stream": {},
-        "model_health": {},
-        "diagram_viewer": {}
+        "model_health": {}
     }))
     .expect("partial dashboard config should fill serde defaults");
     assert!(partial_dashboard.event_stream.enabled);
     assert_eq!(partial_dashboard.model_health.hallucination_threshold, 0.10);
-    assert_eq!(
-        partial_dashboard.diagram_viewer.refresh_interval_seconds,
-        10
-    );
     let event_stream: EventStreamConfig =
         serde_json::from_value(json!({})).expect("event stream defaults");
     assert_eq!(event_stream.new_entries, "top");
@@ -73,8 +62,6 @@ fn config_schema_defaults_cover_dashboard_capability_memory_and_security_shapes(
     let sandbox = SandboxConfig::default();
     assert!(sandbox.enabled.is_none());
     assert!(sandbox.firejail_args.is_empty());
-    let security = SecurityConfig::default();
-    assert!(security.audit.enabled);
     let audit = AuditConfig::default();
     assert_eq!(audit.log_path, "audit.log");
     assert_eq!(audit.max_size_mb, 100);
@@ -194,7 +181,7 @@ fn config_schema_defaults_cover_dashboard_capability_memory_and_security_shapes(
 }
 
 #[test]
-fn config_active_user_and_daemon_public_helpers_cover_path_branches() {
+fn config_active_user_public_helpers_cover_path_branches() {
     let tmp = tempdir().expect("tempdir");
     let root = tmp.path().join(".openhuman");
 
@@ -218,14 +205,6 @@ fn config_active_user_and_daemon_public_helpers_cover_path_branches() {
     clear_active_user(&root).expect("clear active user");
     clear_active_user(&root).expect("clearing missing active user is idempotent");
     assert_eq!(read_active_user_id(&root), None);
-
-    let daemon = DaemonConfig::from_app_data_dir(tmp.path());
-    assert_eq!(daemon.data_dir, tmp.path().join("openhuman"));
-    assert_eq!(
-        daemon.workspace_dir,
-        tmp.path().join("openhuman").join("workspace")
-    );
-    assert!(daemon.security.audit.enabled);
 }
 
 #[test]
@@ -479,46 +458,11 @@ async fn config_loaders_resolve_user_workspace_markers_and_ignore_workspace_when
 }
 
 #[tokio::test]
-async fn config_default_path_loader_ignores_workspace_override_and_projects_dir_trims() {
+async fn config_projects_dir_env_override_trims() {
     let _lock = env_lock_async().await;
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path().join("home");
-    let root = home.join(".openhuman");
-    let user_dir = root.join("users").join("default-loader-user");
-    let workspace_override = tmp.path().join("workspace-override");
-    let _guards = [
-        EnvVarGuard::set_to_path("HOME", &home),
-        EnvVarGuard::unset(APP_ENV_VAR),
-        EnvVarGuard::unset(VITE_APP_ENV_VAR),
-        EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace_override),
-        EnvVarGuard::set("OPENHUMAN_MODEL", " default-loader-model "),
-    ];
-
-    let missing = Config::load_from_default_paths()
-        .await
-        .expect("load default paths without an existing config");
-    assert_eq!(
-        missing.config_path,
-        root.join("users").join("local").join("config.toml")
-    );
-    assert_eq!(missing.workspace_dir, workspace_override.join("workspace"));
-    assert_eq!(
-        missing.default_model.as_deref(),
-        Some("default-loader-model")
-    );
-
-    write_active_user_id(&root, "default-loader-user").expect("write active user");
-    write_min_config(&user_dir);
-    write_min_config(&workspace_override);
-    let loaded = Config::load_from_default_paths()
-        .await
-        .expect("load default active-user config while workspace override is set");
-    assert_eq!(loaded.config_path, user_dir.join("config.toml"));
-    assert_eq!(loaded.workspace_dir, workspace_override.join("workspace"));
-    assert_eq!(
-        loaded.default_model.as_deref(),
-        Some("default-loader-model")
-    );
+    let _home = EnvVarGuard::set_to_path("HOME", &home);
 
     let custom_projects = tmp.path().join("OpenHuman Projects");
     {
@@ -564,8 +508,6 @@ async fn config_env_overlay_public_loader_applies_runtime_and_tool_overrides() {
         EnvVarGuard::set("OPENHUMAN_SEARCH_MAX_RESULTS", "11"),
         EnvVarGuard::set("OPENHUMAN_SEARCH_TIMEOUT_SECS", "8"),
         EnvVarGuard::set("OPENHUMAN_WEB_SEARCH_ENABLED", "0"),
-        EnvVarGuard::set("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "7"),
-        EnvVarGuard::set("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "6"),
         EnvVarGuard::set("OPENHUMAN_PROXY_ENABLED", "true"),
         EnvVarGuard::set("OPENHUMAN_HTTP_PROXY", " http://proxy.example:8080 "),
         EnvVarGuard::set("OPENHUMAN_NO_PROXY", " localhost,example.test "),
@@ -625,7 +567,6 @@ async fn config_env_overlay_public_loader_applies_runtime_and_tool_overrides() {
     assert!(config.search.querit.has_key());
     assert!(config.search.exa.has_key());
     assert_eq!(config.search.max_results, 11);
-    assert_eq!(config.web_search.max_results, 7);
     assert!(config.proxy.enabled);
     assert_eq!(config.proxy.scope, ProxyScope::Services);
     assert!(config.proxy.should_apply_to_service("tool.browser"));

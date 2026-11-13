@@ -10,9 +10,6 @@
 //! redaction passes content through unchanged. A build without the
 //! `security-module` feature behaves as `off` whatever this says, because there
 //! is no module to ask (`crate::security::switch`).
-//!
-//! This is not the daemon's [`SecurityConfig`](super::SecurityConfig), which
-//! configures sandboxing, resource limits and the audit sink.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

@@ -783,6 +783,7 @@ export interface WorkflowProposalStep {
 export interface WorkflowProposal {
   /** Proposed flow name. */
   name: string;
+  proposalId?: string;
   /** The validated tinyflows WorkflowGraph, ready to hand to `flows_create` as-is. */
   graph: unknown;
   /** Whether the flow should require approval on every outbound action once saved. */
@@ -840,9 +841,9 @@ export interface WorkflowProposal {
  * replaced proposal is ignored instead of landing on the new one.
  */
 export function workflowProposalKey(
-  proposal: Pick<WorkflowProposal, 'name' | 'sourceMessageId'>
+  proposal: Pick<WorkflowProposal, 'name' | 'proposalId' | 'sourceMessageId'>
 ): string {
-  return `${proposal.sourceMessageId ?? ''}|${proposal.name}`;
+  return `${proposal.proposalId ?? proposal.sourceMessageId ?? ''}|${proposal.name}`;
 }
 
 /** Payload of the save/completion updates, naming the proposal they belong to. */
@@ -850,6 +851,7 @@ interface WorkflowProposalSaveUpdate {
   threadId: string;
   flowId: string;
   name: string;
+  proposalId?: string;
   sourceMessageId?: string;
 }
 

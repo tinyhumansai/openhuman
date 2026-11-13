@@ -85,19 +85,19 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Update x402 spending budget limits (atomic USDC units: 1 USDC = 1_000_000).",
             inputs: vec![
                 FieldSchema {
-                    name: "per_request_max",
+                    name: "perRequestMax",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
                     comment: "Max atomic USDC per single request.",
                     required: false,
                 },
                 FieldSchema {
-                    name: "daily_max",
+                    name: "dailyMax",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
                     comment: "Max atomic USDC per day.",
                     required: false,
                 },
                 FieldSchema {
-                    name: "monthly_max",
+                    name: "monthlyMax",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
                     comment: "Max atomic USDC per month.",
                     required: false,
@@ -152,6 +152,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Most this request may pay, in token atomic units.",
                     required: true,
                 },
+                FieldSchema {
+                    name: "network",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Pay only on this CAIP-2 network (eip155:8453) or family (eip155, solana).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "signIn",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                    comment: "Answer the 402 with a Sign-In-With-X credential instead of a payment.",
+                    required: false,
+                },
             ],
             outputs: vec![
                 FieldSchema {
@@ -183,6 +195,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
                     comment: "Null when unpaid, else paymentId, amountAtomic, asset, recipient, network, settled and settlementResponse.",
                     required: true,
+                },
+                FieldSchema {
+                    name: "signedInAs",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "With signIn, the wallet address the Sign-In-With-X credential named.",
+                    required: false,
                 },
             ],
         },
@@ -246,10 +264,14 @@ struct UpdateBudgetParams {
     monthly_max: Option<u64>,
 }
 
+fn parse_update_budget(params: Map<String, Value>) -> Result<UpdateBudgetParams, String> {
+    serde_json::from_value(Value::Object(params))
+        .map_err(|e| format!("x402 update_budget params: {e}"))
+}
+
 fn handle_update_budget(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let p: UpdateBudgetParams = serde_json::from_value(Value::Object(params))
-            .map_err(|e| format!("x402 update_budget params: {e}"))?;
+        let p = parse_update_budget(params)?;
 
         let config = ctx
             .load_config()

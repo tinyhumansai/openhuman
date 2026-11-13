@@ -332,7 +332,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -343,7 +343,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -383,7 +383,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
  "x11rb",
 ]
 
@@ -521,8 +521,7 @@ dependencies = [
 [[package]]
 name = "async-imap"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f97b87216c9f0ccc63c516263169085fa34bba25633f6d96c6a9b9ca1fd5f70a"
+source = "git+https://github.com/async-email/async-imap?rev=d1f2606421c9211f992c1c565a32d8f770476aeb#d1f2606421c9211f992c1c565a32d8f770476aeb"
 dependencies = [
  "async-channel 2.5.0",
  "async-compression",
@@ -534,7 +533,6 @@ dependencies = [
  "log",
  "nom 8.0.0",
  "pin-project",
- "pin-utils",
  "self_cell",
  "stop-token",
  "thiserror 1.0.69",
@@ -1232,7 +1230,7 @@ dependencies = [
  "cap-primitives",
  "cap-std",
  "io-lifetimes 3.0.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1249,7 +1247,7 @@ dependencies = [
  "maybe-owned",
  "rustix 1.1.5",
  "rustix-linux-procfs",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
  "winx",
 ]
 
@@ -2425,7 +2423,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.3",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2721,7 +2719,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4525,9 +4523,9 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.38.2"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
+checksum = "14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3"
 dependencies = [
  "cc",
  "pkg-config",
@@ -5120,7 +5118,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5720,7 +5718,7 @@ dependencies = [
  "serde_path_to_error",
  "sha2 0.10.9",
  "starship-battery",
- "sysinfo",
+ "sysinfo 0.33.1",
  "tar",
  "tempfile",
  "thiserror 2.0.21",
@@ -6494,12 +6492,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "pin-utils"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13bee6c73da26345c729282832b60b0363cf3dd9f4bfd81d8551b7a1c889a113"
-
-[[package]]
 name = "piper"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6923,7 +6915,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7457,9 +7449,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.40.2"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
+checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
 dependencies = [
  "bitflags 2.13.2",
  "fallible-iterator",
@@ -7568,7 +7560,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7666,7 +7658,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8364,7 +8356,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -8488,7 +8480,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -8767,6 +8759,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sysinfo"
+version = "0.38.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92ab6a2f8bfe508deb3c6406578252e491d299cbbf3bc0529ecc3313aee4a52f"
+dependencies = [
+ "libc",
+ "memchr",
+ "ntapi",
+ "objc2-core-foundation",
+ "objc2-io-kit",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "system-configuration"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8839,7 +8845,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8852,7 +8858,7 @@ dependencies = [
  "parking_lot",
  "rustix 1.1.5",
  "signal-hook",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -9479,7 +9485,7 @@ dependencies = [
 
 [[package]]
 name = "tinychannels"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-imap",
@@ -9529,7 +9535,7 @@ dependencies = [
 
 [[package]]
 name = "tinychannels-bus"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64 0.23.1",
  "schemars",
@@ -9540,7 +9546,7 @@ dependencies = [
 
 [[package]]
 name = "tinychannels-module"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9567,7 +9573,7 @@ dependencies = [
 
 [[package]]
 name = "tinychannels-runtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9630,7 +9636,7 @@ dependencies = [
  "log",
  "serde_json",
  "sha2 0.10.9",
- "sysinfo",
+ "sysinfo 0.33.1",
  "thiserror 2.0.21",
  "tinycomputer-bus",
  "tinycomputer-core",
@@ -10298,7 +10304,7 @@ dependencies = [
 
 [[package]]
 name = "tinymemory-api"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -10312,7 +10318,7 @@ dependencies = [
 
 [[package]]
 name = "tinymemory-integrations"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -10337,7 +10343,7 @@ dependencies = [
 
 [[package]]
 name = "tinymemory-tools"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "async-lock",
  "async-trait",
@@ -10357,7 +10363,7 @@ dependencies = [
 
 [[package]]
 name = "tinyredact"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "log",
  "regex",
@@ -10429,7 +10435,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "tinystoragedrivers-api",
  "tinystoragedrivers-blob",
@@ -10443,7 +10449,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-api"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "bytes",
@@ -10456,7 +10462,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-blob"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "bytes",
@@ -10467,7 +10473,7 @@ dependencies = [
  "object_store",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.1",
  "tinystoragedrivers-api",
  "tinystoragedrivers-connect",
  "tinystoragedrivers-types",
@@ -10475,7 +10481,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-bus"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -10485,7 +10491,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-busproxy"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "bytes",
@@ -10502,7 +10508,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-connect"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "lapin",
  "mongodb",
@@ -10517,7 +10523,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-document"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "data-encoding",
@@ -10537,15 +10543,15 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-fence"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "libc",
- "sysinfo",
+ "sysinfo 0.38.4",
 ]
 
 [[package]]
 name = "tinystoragedrivers-kv"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -10561,7 +10567,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-queue"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "data-encoding",
@@ -10578,7 +10584,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-secrets"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "atomicwrites",
@@ -10603,7 +10609,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-testkit"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "bytes",
@@ -10623,7 +10629,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-types"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -10747,7 +10753,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet"
-version = "0.29.0"
+version = "0.30.1"
 dependencies = [
  "bitcoin",
  "bs58",
@@ -10769,7 +10775,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-bus"
-version = "0.29.0"
+version = "0.30.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -10778,7 +10784,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-crypto"
-version = "0.29.0"
+version = "0.30.1"
 dependencies = [
  "async-trait",
  "bech32 0.12.0",
@@ -10794,7 +10800,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-module"
-version = "0.29.0"
+version = "0.30.1"
 dependencies = [
  "async-trait",
  "bitcoin",
@@ -10823,7 +10829,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-web3"
-version = "0.29.0"
+version = "0.30.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -10842,7 +10848,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-x402"
-version = "0.29.0"
+version = "0.30.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -12222,7 +12228,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

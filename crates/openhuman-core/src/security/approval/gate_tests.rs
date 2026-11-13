@@ -231,6 +231,8 @@ mod gate_origin_class_tests;
 mod host_grant_tests;
 #[path = "gate_origin_intercept_tests.rs"]
 mod origin_intercept_tests;
+#[path = "gate_orphan_tests.rs"]
+mod orphan_tests;
 #[path = "gate_rpc_decide_tests.rs"]
 mod rpc_decide_tests;
 #[path = "gate_saas_grant_tests.rs"]
