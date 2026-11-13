@@ -16,7 +16,8 @@
 //!
 //! The phrase only goes to a recipient tinybus has attested, and
 //! [`attested_proxy`] additionally insists the attested digest is one
-//! `registry.rs` pinned — see there for why both checks are worth having.
+//! `registry.rs` pinned, or this executable's own when the wallet is linked
+//! into it — see there for why both checks are worth having.
 //!
 //! # The split flow — still here, still correct for some hosts
 //!
