@@ -247,7 +247,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
 
   // Skill catalog (loaded once on mount)
   const [skills, setSkills] = useState<WorkflowSummary[]>([]);
-  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsLoading, setSkillsLoading] = useState(true);
   const [skillsError, setSkillsError] = useState<string | null>(null);
   // Edit-this-workflow modal (only meaningful when locked to a workflow).
   const [editOpen, setEditOpen] = useState(false);
@@ -437,6 +437,10 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
     const urlSkillId = searchParams.get('workflow') ?? '';
     if (urlSkillId !== selectedSkillId) {
       log('URL drift detected: url=%s picker=%s — following URL', urlSkillId, selectedSkillId);
+      // URL is the source of truth for back/forward nav; this must be a
+      // synchronous sync setState, not a render-time adjustment (see the
+      // sync effect above for why the two-way binding can't be derived).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedSkillId(urlSkillId);
     }
     // Only re-run when the URL changes; selectedSkillId is the read of
@@ -460,8 +464,6 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
   // ── Initial load: skills_list ──────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-    setSkillsLoading(true);
-    setSkillsError(null);
     skillsApi
       // Include `skills/`-root installs so registry-installed skills are runnable here.
       .listWorkflows({ includeSkills: true })
@@ -489,6 +491,10 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
   // ── On selection: skills_describe ──────────────────────────────────
   useEffect(() => {
     if (!selectedSkillId) {
+      // Reset derived state when the selection empties — the documented
+      // "reset state on prop change" case; a render-time adjustment would
+      // duplicate the picker-sync logic just above.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDescription(null);
       setFormValues({});
       return;
@@ -621,6 +627,10 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
   // ── Recent runs: load on mount + on skill change + on demand ───────
   useEffect(() => {
     let cancelled = false;
+    // Flipping the spinner on before the fetch starts must happen on every
+    // deps change (including the background post-run refresh); a render-time
+    // adjustment would duplicate the whole effect's key.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRecentRunsLoading(true);
     skillsApi
       .recentRuns(selectedSkillId || undefined, 10)
@@ -673,6 +683,10 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
   }, [selectedSkillId]);
 
   useEffect(() => {
+    // loadScheduledJobs marks the spinner synchronously before its first
+    // await; wrapping it in rAF/promise would leave the list unflagged
+    // mid-refresh for no user-visible gain.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadScheduledJobs();
   }, [loadScheduledJobs]);
 
