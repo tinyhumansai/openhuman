@@ -34,6 +34,152 @@ function Get-OpenHumanMsiexecInstallArgumentList {
   return @('/i', ('"{0}"' -f $MsiPath), '/qn', '/norestart')
 }
 
+function Add-OpenHumanDirectoryToPathValue {
+  param(
+    [AllowEmptyString()]
+    [string]$PathValue,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Directory,
+
+    [switch]$ExpandEntries
+  )
+
+  $trimCharacters = [char[]]@('\', '/')
+  $normalizedDirectory = [Environment]::ExpandEnvironmentVariables($Directory.Trim().Trim('"')).TrimEnd($trimCharacters)
+  foreach ($entry in $PathValue -split ';') {
+    if ([string]::IsNullOrWhiteSpace($entry)) {
+      continue
+    }
+
+    $normalizedEntry = $entry.Trim().Trim('"')
+    if ($ExpandEntries) {
+      $normalizedEntry = [Environment]::ExpandEnvironmentVariables($normalizedEntry)
+    }
+    $normalizedEntry = $normalizedEntry.TrimEnd($trimCharacters)
+    if ([string]::Equals($normalizedEntry, $normalizedDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+      return $PathValue
+    }
+  }
+
+  if ([string]::IsNullOrEmpty($PathValue)) {
+    return $Directory
+  }
+
+  return "$PathValue;$Directory"
+}
+
+function Send-OpenHumanEnvironmentChangeNotification {
+  if (-not ('OpenHumanInstallerNativeMethods' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class OpenHumanInstallerNativeMethods
+{
+    [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    public static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd,
+        UInt32 Msg,
+        UIntPtr wParam,
+        string lParam,
+        UInt32 fuFlags,
+        UInt32 uTimeout,
+        out UIntPtr lpdwResult);
+}
+'@ | Out-Null
+  }
+
+  [UIntPtr]$messageResult = [UIntPtr]::Zero
+  $result = [OpenHumanInstallerNativeMethods]::SendMessageTimeout(
+    [IntPtr]0xffff,
+    [UInt32]0x001A,
+    [UIntPtr]::Zero,
+    'Environment',
+    [UInt32]0x0002,
+    [UInt32]5000,
+    [ref]$messageResult
+  )
+  return $result -ne [IntPtr]::Zero
+}
+
+function Add-OpenHumanDirectoryToUserPath {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Directory
+  )
+
+  $environmentKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+  if (-not $environmentKey) {
+    throw 'Could not open the current user environment settings.'
+  }
+
+  try {
+    try {
+      $pathValueKind = $environmentKey.GetValueKind('Path')
+    } catch {
+      $pathValueKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    }
+
+    if ($Directory.Contains(';') -or $Directory.Contains('%')) {
+      throw "The install directory cannot be stored safely in PATH: $Directory"
+    }
+
+    $pathWasAdded = $false
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+      $existingUserPath = [string]$environmentKey.GetValue(
+        'Path',
+        '',
+        [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+      )
+      $updatedUserPath = Add-OpenHumanDirectoryToPathValue -PathValue $existingUserPath -Directory $Directory -ExpandEntries:($pathValueKind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString)
+      $pathWasAdded = -not [string]::Equals($existingUserPath, $updatedUserPath, [StringComparison]::Ordinal)
+      if (-not $pathWasAdded) {
+        break
+      }
+
+      if ($pathValueKind -notin @(
+        [Microsoft.Win32.RegistryValueKind]::String,
+        [Microsoft.Win32.RegistryValueKind]::ExpandString
+      )) {
+        throw "The current user's PATH has an unsupported registry type: $pathValueKind."
+      }
+
+      $latestUserPath = [string]$environmentKey.GetValue(
+        'Path',
+        '',
+        [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+      )
+      if (-not [string]::Equals($existingUserPath, $latestUserPath, [StringComparison]::Ordinal)) {
+        continue
+      }
+      $environmentKey.SetValue('Path', $updatedUserPath, $pathValueKind)
+      break
+    }
+
+    if ($pathWasAdded -and [string]::Equals($existingUserPath, $latestUserPath, [StringComparison]::Ordinal) -eq $false) {
+      throw "The current user's PATH changed repeatedly while OpenHuman was being added. Please run the installer again."
+    }
+  } finally {
+    $environmentKey.Dispose()
+  }
+
+  $env:Path = Add-OpenHumanDirectoryToPathValue -PathValue $env:Path -Directory $Directory
+  $notificationError = $null
+  try {
+    $environmentNotified = Send-OpenHumanEnvironmentChangeNotification
+  } catch {
+    $environmentNotified = $false
+    $notificationError = $_.Exception.Message
+  }
+
+  return [pscustomobject]@{
+    Added = $pathWasAdded
+    Notified = [bool]$environmentNotified
+    NotificationError = $notificationError
+  }
+}
+
 function Test-OpenHumanWindowsProcessElevated {
   <#
   .SYNOPSIS
@@ -266,16 +412,37 @@ Examples:
     throw "Unsupported Windows installer type: $assetName"
   }
 
-  $expectedPaths = @(
-    "$env:LOCALAPPDATA\Programs\OpenHuman\OpenHuman.exe",
-    "$env:ProgramFiles\OpenHuman\OpenHuman.exe"
-  )
+  $expectedPaths = if ($assetName -like '*.msi') {
+    @("$env:ProgramFiles\OpenHuman\OpenHuman.exe", "$env:LOCALAPPDATA\Programs\OpenHuman\OpenHuman.exe")
+  } else {
+    @("$env:LOCALAPPDATA\Programs\OpenHuman\OpenHuman.exe", "$env:ProgramFiles\OpenHuman\OpenHuman.exe")
+  }
   $launchPath = $expectedPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
 
   Write-Output ""
   Write-Output "OpenHuman is ready."
   if ($launchPath) {
     Write-Output "Launch: `"$launchPath`""
+    try {
+      $pathUpdate = Add-OpenHumanDirectoryToUserPath -Directory (Split-Path -Parent $launchPath)
+      if ($pathUpdate.Added) {
+        Write-Ok 'Added OpenHuman to your user PATH.'
+      } else {
+        Write-Ok 'OpenHuman is already in your user PATH.'
+      }
+      if (-not $pathUpdate.Notified) {
+        Write-WarnMsg 'The PATH change was saved, but Windows did not notify other applications.'
+        if ($pathUpdate.NotificationError) {
+          Write-Info "Environment notification failed: $($pathUpdate.NotificationError)"
+        }
+        Write-Info 'If a new terminal does not find OpenHuman, sign out and back in.'
+      } else {
+        Write-Info 'Open a new terminal before running OpenHuman.'
+      }
+    } catch {
+      Write-WarnMsg "Could not add OpenHuman to your user PATH: $($_.Exception.Message)"
+      Write-Info "To launch it directly: `"$launchPath`""
+    }
     Write-Output "Uninstall: Settings -> Apps -> Installed apps -> OpenHuman"
   } else {
     Write-WarnMsg "Could not locate installed executable automatically."
