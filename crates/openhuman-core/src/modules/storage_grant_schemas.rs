@@ -216,6 +216,8 @@ pub(super) mod tinywallet {
     pub(crate) const MODULE_ID: &str = "tinywallet";
     /// The v1 payments stream the importer writes.
     pub(crate) const PAYMENTS_STREAM: &str = "x402.payments";
+    /// The v1 budget-hold collection the module's x402 ledger migration reads.
+    pub(crate) const LEGACY_BUDGET_COLLECTION: &str = "x402_budget";
 }
 
 pub(super) mod tinybox {
