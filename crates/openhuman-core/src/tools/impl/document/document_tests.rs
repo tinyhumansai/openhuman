@@ -185,6 +185,45 @@ async fn execute_happy_path_returns_artifact_metadata() {
     assert!(md.contains("1-section"));
 }
 
+#[tokio::test]
+async fn configured_tool_runs_against_its_own_config_not_the_user_config() {
+    // #323: the engine used to call `Config::load_or_init` on every document,
+    // ignoring the config the tool was built with. Point the ambient config at
+    // a fresh directory, where `load_or_init` would initialise a default config
+    // with modules on. The given config turns modules off, so only a tool that
+    // honours it reports the module as disabled.
+    let ambient = workspace();
+    let _env = crate::config::test_env::EnvVarGuard::workspace_async(ambient.path()).await;
+
+    let ws = workspace();
+    let mut config = crate::config::Config::default();
+    config.workspace_dir = ws.path().to_path_buf();
+    config.modules.enabled = false;
+    config.modules.allow_download = false;
+    let tool = DocumentTool::with_config(
+        ws.path().to_path_buf(),
+        ws.path().join("Files"),
+        test_security(ws.path()),
+        config,
+    );
+
+    let result = tool
+        .execute(minimal_input_json())
+        .await
+        .expect("execute returns Ok");
+
+    let text = format!("{:?}", result.content);
+    assert!(
+        result.is_error && text.contains("disabled"),
+        "the tool ignored its own config (modules disabled): {text}"
+    );
+    // The failed card is recorded under the given workspace.
+    let (_, total) = crate::artifacts::store::list_artifacts(ws.path(), 0, 10, None)
+        .await
+        .expect("list artifacts in the given workspace");
+    assert_eq!(total, 1, "the artifact belongs to the given workspace");
+}
+
 #[test]
 fn truncate_stderr_caps_payload_with_suffix() {
     let raw = "y".repeat(2000);

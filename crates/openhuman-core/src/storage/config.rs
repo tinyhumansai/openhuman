@@ -99,6 +99,19 @@ pub fn default_url(workspace_dir: &Path) -> String {
     }
 }
 
+/// Whether the default store [`default_url`] names already exists on disk.
+/// Read-only callers use this to treat a never-opened store as absent instead
+/// of opening (and so creating) it.
+pub fn default_store_exists(workspace_dir: &Path) -> bool {
+    match ProfileLayout::of_workspace(workspace_dir) {
+        Some(layout) => match layout.version {
+            LayoutVersion::V2 => layout.storage_db.exists(),
+            LayoutVersion::V1 => layout.workspace_dir.join(DEFAULT_DIR).exists(),
+        },
+        None => workspace_dir.join(DEFAULT_DIR).exists(),
+    }
+}
+
 /// Creates what [`default_url`] opens into: the profile directory for a V2
 /// `storage.db`, `<workspace>/storage` for V1.
 ///

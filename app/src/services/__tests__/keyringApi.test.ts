@@ -57,15 +57,26 @@ describe('keyringApi', () => {
     });
   });
 
-  it('lists pending keyring operations and tolerates a non-array result', async () => {
+  it('lists pending keyring operations from the bare array the core sends', async () => {
     const pending = [{ request_id: 'request-1' }];
-    mockRpc.mockResolvedValueOnce({ result: pending });
+    mockRpc.mockResolvedValueOnce(pending);
     await expect(listPendingKeyringOperations()).resolves.toEqual(pending);
     expect(mockRpc).toHaveBeenCalledWith({
       method: 'openhuman.keyring_consent_list_pending_operations',
     });
-
-    mockRpc.mockResolvedValueOnce({ result: null });
-    await expect(listPendingKeyringOperations()).resolves.toEqual([]);
   });
+
+  it('accepts a { result } envelope around the pending operations', async () => {
+    const pending = [{ request_id: 'request-1' }];
+    mockRpc.mockResolvedValueOnce({ result: pending });
+    await expect(listPendingKeyringOperations()).resolves.toEqual(pending);
+  });
+
+  it.each([null, undefined, {}, { result: null }, 'pending'])(
+    'treats a malformed pending-operations answer (%j) as none',
+    async answer => {
+      mockRpc.mockResolvedValueOnce(answer);
+      await expect(listPendingKeyringOperations()).resolves.toEqual([]);
+    }
+  );
 });

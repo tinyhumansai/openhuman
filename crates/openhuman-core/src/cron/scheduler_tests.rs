@@ -159,6 +159,8 @@ mod headless_descendants_tests;
 mod host_agent_tests;
 #[path = "scheduler_transcript_isolation_tests.rs"]
 mod transcript_isolation_tests;
+#[path = "scheduler_workspace_root_tests.rs"]
+mod workspace_root_tests;
 
 // ── A6: the retry loop must honour its own permanent-failure classifiers ─────
 //
@@ -321,11 +323,17 @@ async fn security_policy_block_halts_without_spending_the_retry_budget() {
         "a read-only policy must refuse before the command is spawned; the command ran {} times",
         attempt_count(&counter)
     );
-    if !output.starts_with("blocked by security policy:") {
+    if output == crate::security::policy::Refusal::Unavailable.to_string() {
         // A test runner without the TinySecurity module exercises its
-        // fail-closed path. Module startup latency is outside this retry test.
+        // fail-closed path, which stays retryable (the module may come back).
         return;
     }
+    // Any other refusal is the policy's answer: final, whichever text it has
+    // (a read-only refusal used to read "[policy-blocked] …" and be retried).
+    assert!(
+        output.starts_with("blocked by security policy:"),
+        "a policy refusal must be marked final for the retry loop; got {output}"
+    );
     assert!(
         elapsed < std::time::Duration::from_millis(config.reliability.provider_backoff_ms) * 2,
         "the loop slept for {elapsed:?} on a deterministic policy refusal. A security block is \
@@ -413,5 +421,41 @@ async fn a_pipeline_reports_its_last_stage_rather_than_pipefail() {
         success,
         "`false | true` is a success under a plain `-lc`; pipefail would make it \
          a failure and re-status every existing job with a pipeline in it: {output}"
+    );
+}
+
+/// `[cron] shell_timeout_secs` bounds a scheduled shell job instead of the
+/// former fixed 120 seconds: a command that outlives it is killed and the
+/// run fails as timed out after the configured limit.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_shell_job_honours_the_configured_timeout() {
+    let tmp = TempDir::new().unwrap();
+    // A shell job needs no inference credential, so this skips the managed
+    // key `test_config` stores.
+    let ws = tmp.path().join("workspace");
+    let mut config = Config {
+        workspace_dir: ws.clone(),
+        action_dir: ws.clone(),
+        config_path: tmp.path().join("config.toml"),
+        ..Config::default()
+    };
+    config.secrets.encrypt = false;
+    config.modules.source = crate::config::schema::ModuleSourceMode::Source;
+    tokio::fs::create_dir_all(&ws).await.unwrap();
+    config.cron.shell_timeout_secs = 1;
+    let security =
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    assert!(security.can_act(), "the fixture policy must permit acting");
+
+    let job = test_job("sleep 30");
+    let started = std::time::Instant::now();
+    let (success, output) = run_job_command_in_test_context(&config, &security, &job).await;
+
+    assert!(!success, "the job must fail on timeout: {output}");
+    assert!(output.contains("job timed out after 1s"), "{output}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "the configured 1s limit, not the old 120s default, ended the run"
     );
 }

@@ -117,6 +117,9 @@ url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "native-tls"] }
 
 [dev-dependencies]
+# `test-keyring-consent` lets the suite answer TinySecurity's prompts as
+# openhuman-cli's does; dev-dependency features never reach a shipped build.
+openhuman-core = { path = "../openhuman-core", package = "openhuman", default-features = false, features = ["test-keyring-consent"] }
 # Library-runtime tests use the embed facade's in-memory session provider.
 openhuman-embed = { path = "../openhuman-embed", features = ["testkit", "storage-sqlite"] }
 # The core's own axum feature set: axum's defaults would switch on extra axum,

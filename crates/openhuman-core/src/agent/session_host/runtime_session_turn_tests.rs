@@ -60,3 +60,17 @@ fn a_later_runtime_cancellation_is_not_reclassified_from_a_stale_sidecar() {
         .is_none());
     assert_eq!(error.to_string(), "session turn cancelled");
 }
+
+#[test]
+fn a_resumed_session_with_no_rows_starts_its_thread() {
+    // The store created the session but has written nothing to it.
+    assert!(starts_thread(false, &[]));
+    assert!(starts_thread(true, &[]));
+}
+
+#[test]
+fn a_session_with_imported_rows_does_not_start_a_thread() {
+    use tinyagents_session::transcript::TranscriptMessage;
+    let imported = [TranscriptMessage::user("legacy question")];
+    assert!(!starts_thread(false, &imported));
+}

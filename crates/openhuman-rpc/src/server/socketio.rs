@@ -30,6 +30,7 @@ use serde::Serialize;
 use serde_json::json;
 use serde_json::Value;
 use socketioxide::extract::{AckSender, Data, SocketRef, TryData};
+use socketioxide::handler::ConnectHandler as _;
 use socketioxide::SocketIo;
 
 use crate::core_host::web_chat::{GuardrailPayload, ScopedWebEvent};
@@ -269,75 +270,31 @@ pub(crate) fn attach_socketio_with_preflight(
         io.config().engine_config.req_path
     );
 
-    let handshake_gate = preflight_gate.clone();
     io.ns(
         "/",
-        move |socket: SocketRef, TryData(handshake): TryData<HandshakeAuth>| {
+        // CONNECT reaches the client after the middleware and before this
+        // handler (socketioxide 0.18 `Namespace::connect`). A socket the
+        // middleware refused has no handlers and no auth mark; drop it here.
+        (move |socket: SocketRef| {
             let client_id = socket.id.to_string();
-
-            if handshake_gate.as_ref().is_some_and(|gate| gate.is_active()) {
-                log::info!("[socketio] rejecting connect during startup preflight client={client_id}");
+            if !socket_is_authed(&socket) {
+                log::warn!("[socketio] disconnecting unauthorized socket client={client_id}");
                 let _ = socket.clone().disconnect();
-                return;
+                return std::future::ready(());
             }
-
-            // Reject cross-origin browser pages before the handshake completes.
-            // Native clients (Tauri shell, CLI) do not set an `Origin` header and
-            // are accepted; only browser pages from origins outside the local
-            // app surface are dropped here. See `origin_is_allowed`.
-            let origin = socket
-                .req_parts()
-                .headers
-                .get(axum::http::header::ORIGIN)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string());
-            if !origin_is_allowed(origin.as_deref()) {
-                log::warn!(
-                    "[socketio] rejecting connect: bad origin {:?} client={}",
-                    origin,
-                    client_id
-                );
-                let _ = socket.clone().disconnect();
-                return;
-            }
-
-            // Verify the handshake bearer matches the per-process RPC token.
-            // `TryData` lets us treat a missing/malformed `auth` payload as a
-            // soft failure (no panic) and reject the connect cleanly.
-            let supplied = handshake.ok().and_then(|h| h.token).unwrap_or_default();
-            if !crate::core_host::core::auth::verify_bearer_token(&supplied) {
-                log::warn!(
-                    "[socketio] rejecting connect: missing or invalid bearer client={}",
-                    client_id
-                );
-                let _ = socket.clone().disconnect();
-                return;
-            }
-            socket.extensions.insert(AuthedConnection);
-            let Some(tenant) = socket_tenant_from_request_extensions(
-                &socket.req_parts().extensions,
-            ) else {
-                log::warn!("[socketio] rejecting socket without a tenant scope in SaaS mode");
-                let _ = socket.clone().disconnect();
-                return;
-            };
-            socket.extensions.insert(tenant);
 
             log::info!("[socketio] client connected id={client_id} (authenticated)");
             // Join a room named after the client ID for targeted event delivery.
-            let _ = join_room_logged(&socket, &client_id, &client_id);
+            join_room_logged(&socket, &client_id, &client_id);
             // Also auto-join the "system" room so every connected client
             // receives broadcast-style events that aren't tied to a
             // specific chat thread. Today this covers proactive messages
             // (welcome agent, morning briefing, cron-driven announcements)
             // which `web_chat::proactive::WebProactiveSubscriber` emits with
             // `client_id = "system"` — see `emit_web_channel_event`.
-            // If this join fails the welcome message silently disappears,
-            // so we log both success and failure for diagnosability.
-            let _ = join_room_logged(&socket, "system", &client_id);
-            let ready_payload = json!({ "sid": client_id });
-            log::debug!("[socketio] emit event=ready to_client={}", socket.id);
-            let _ = socket.emit("ready", &ready_payload);
+            // Without this join the welcome message silently disappears,
+            // so it is logged for diagnosability.
+            join_room_logged(&socket, "system", &client_id);
 
             // Seed this client with the workspace that is current (#5966).
             // The `workspace_changed` bridge in `spawn_web_channel_bridge`
@@ -346,10 +303,10 @@ pub(crate) fn attach_socketio_with_preflight(
             // would otherwise have no idea which workspace is active and
             // could not scope anything.
             //
-            // Spawned because this handler is synchronous and the resolve is
-            // not. Emitting to `socket` rather than broadcasting keeps a
-            // late-joining client from re-announcing a workspace every other
-            // client already knows about.
+            // Spawned so `ready` goes out without waiting on the resolve.
+            // Emitting to `socket` rather than
+            // broadcasting keeps a late-joining client from re-announcing a
+            // workspace every other client already knows about.
             {
                 let socket = socket.clone();
                 let client_id = client_id.clone();
@@ -379,231 +336,21 @@ pub(crate) fn attach_socketio_with_preflight(
                 });
             }
 
-            // Handler for JSON-RPC over WebSocket.
-            let rpc_gate = preflight_gate.clone();
-            socket.on(
-                "rpc:request",
-                move |socket: SocketRef, Data(payload): Data<SocketRpcRequest>| {
-                    let rpc_gate = rpc_gate.clone();
-                    async move {
-                    if rpc_gate.as_ref().is_some_and(|gate| gate.is_active()) {
-                        let _ = socket.emit(
-                            "rpc:error",
-                            &json!({
-                                "id": payload.id,
-                                "error": {
-                                    "code": -32003,
-                                    "message": "RPC is unavailable during startup approval preflight"
-                                }
-                            }),
-                        );
-                        return;
-                    }
-                    if !socket_is_authed(&socket) {
-                        drop_unauthed(&socket, "rpc:request from unauthenticated socket");
-                        return;
-                    }
-                    let client_id = socket.id.to_string();
-                    log::info!(
-                        "[socketio] rpc:request method={} id={} client={}",
-                        payload.method,
-                        payload.id,
-                        client_id
-                    );
-
-                    // Invoke the method through the same logic used by the HTTP RPC endpoint.
-                    let response = match crate::core_host::core::invoke::invoke_method(
-                        // A Socket.IO event is not scoped to a request, so it
-                        // runs under the process default context.
-                        crate::core_host::core::runtime::DispatchCtx::process_default(),
-                        crate::core_host::core::invoke::default_state(),
-                        payload.method.as_str(),
-                        payload.params,
-                    )
-                    .await
-                    {
-                        Ok(result) => (
-                            "rpc:response",
-                            json!({ "id": payload.id, "result": result }),
-                        ),
-                        Err(message) => (
-                            "rpc:error",
-                            json!({
-                                "id": payload.id,
-                                "error": { "code": -32000, "message": message }
-                            }),
-                        ),
-                    };
-
-                    let _ = socket.emit(response.0, &response.1);
-                    }
-                },
-            );
-
-            // Handler for starting a chat turn.
-            socket.on(
-                "chat:start",
-                |socket: SocketRef, Data(payload): Data<ChatStartPayload>| async move {
-                    if !socket_is_authed(&socket) {
-                        drop_unauthed(&socket, "chat:start from unauthenticated socket");
-                        return;
-                    }
-                    let client_id = socket.id.to_string();
-                    let thread_id = payload.thread_id.clone();
-                    let model_override = payload.model_override.or(payload.model);
-                    log::debug!(
-                    "[socketio] recv event=chat:start client_id={} thread_id={} message_bytes={}",
-                    client_id,
-                    thread_id,
-                    payload.message.len()
-                );
-                    if let Some(run_mode) = payload.run_mode.as_deref() {
-                        match crate::core_host::agent::tinyagents::run_mode::parse_mode_label(run_mode) {
-                            Some(mode) => {
-                                crate::core_host::agent::tinyagents::run_mode::set_mode(
-                                    &crate::core_host::core::runtime::DispatchCtx::host_default(),
-                                    &thread_id,
-                                    mode,
-                                );
-                            }
-                            None => log::warn!(
-                                "[socketio] chat:start thread_id={thread_id} ignoring unrecognized run_mode={run_mode}"
-                            ),
-                        }
-                    }
-
-                    // Trigger the web channel's chat logic.
-                    match crate::core_host::web_chat::start_chat(
-                        // Outside SaaS the host's one context; in SaaS the socket task's own scope.
-                        &crate::core_host::core::runtime::DispatchCtx::host_default(),
-                        &client_id,
-                        &payload.thread_id,
-                        &payload.message,
-                        model_override,
-                        payload.temperature,
-                        payload.locale,
-                        payload.queue_mode,
-                        crate::core_host::web_chat::ChatRequestMetadata::default(),
-                    )
-                    .await
-                    {
-                        Ok(request_id) => {
-                            let accepted_payload = json!({
-                                "event": "chat_accepted",
-                                "client_id": client_id,
-                                "thread_id": thread_id,
-                                "request_id": request_id,
-                            });
-                            emit_with_aliases(&socket, "chat_accepted", &accepted_payload);
-                        }
-                        Err(error) => {
-                            let mut error_payload = json!({
-                                "event": "chat_error",
-                                "client_id": client_id,
-                                "thread_id": thread_id,
-                                "request_id": "",
-                                "message": error.to_string(),
-                                "error_type": "inference",
-                            });
-                            // A guardrail rejection is structured (verdict/
-                            // score/reasons), not just a user-facing message —
-                            // surface it the same way the frontend classifies
-                            // every other `chat_error`: by `error_type`, plus
-                            // a typed `guardrail` payload it doesn't have to
-                            // parse out of `message`.
-                            if let crate::core_host::web_chat::StartChatError::Guardrail {
-                                verdict,
-                                score,
-                                reasons,
-                            } = &error
-                            {
-                                error_payload["error_type"] = json!("guardrail");
-                                error_payload["guardrail"] = json!(GuardrailPayload {
-                                    verdict: verdict.clone(),
-                                    score: *score,
-                                    reasons: reasons.clone(),
-                                });
-                            }
-                            emit_with_aliases(&socket, "chat_error", &error_payload);
-                        }
-                    }
-                },
-            );
-
-            // Handler for cancelling an active chat turn.
-            socket.on(
-                "chat:cancel",
-                |socket: SocketRef, Data(payload): Data<ChatCancelPayload>| async move {
-                    if !socket_is_authed(&socket) {
-                        drop_unauthed(&socket, "chat:cancel from unauthenticated socket");
-                        return;
-                    }
-                    let client_id = socket.id.to_string();
-                    log::debug!(
-                        "[socketio] recv event=chat:cancel client_id={} thread_id={}",
-                        client_id,
-                        payload.thread_id
-                    );
-                    let _ = crate::core_host::web_chat::cancel_chat_scoped(
-                        &crate::core_host::core::runtime::DispatchCtx::host_default(),
-                        &client_id,
-                        &payload.thread_id,
-                        payload.request_id.as_deref(),
-                    )
-                    .await;
-                },
-            );
-
-            // Handler for subscribing this socket to a thread's room.
-            //
-            // Chat-stream events are delivered to BOTH the initiating client's
-            // own room AND a per-thread room (`thread:<id>`). After a socket
-            // reconnects it has a NEW client_id, so it would miss an in-flight
-            // turn's remaining stream (delivered to the OLD client_id room). The
-            // frontend emits this on connect/reconnect for the active thread, so
-            // the new socket re-joins the thread room and keeps receiving the
-            // stream. Membership is dropped automatically on disconnect.
-            //
-            // The join is acknowledged so a client can *order* work against it.
-            // A reconnecting client re-reads the thread to pick up a reply that
-            // landed while it was away (#6034); firing that read before the join
-            // is processed leaves a window where the read misses the row and the
-            // turn's `chat_done` is emitted to a room this socket has not joined
-            // yet, so the reply stays invisible until a manual reload. The ack
-            // closes it. Clients that ignore the ack are unaffected — an unused
-            // acknowledgement is inert.
-            socket.on(
-                "thread:subscribe",
-                |socket: SocketRef, Data(payload): Data<ThreadSubscribePayload>, ack: AckSender| async move {
-                    if !socket_is_authed(&socket) {
-                        drop_unauthed(&socket, "thread:subscribe from unauthenticated socket");
-                        return;
-                    }
-                    let thread_id = payload.thread_id.trim();
-                    if thread_id.is_empty() {
-                        // Still acknowledge: a client awaiting this must not be
-                        // left hanging on its own malformed payload.
-                        ack.send(&ThreadSubscribeAck { joined: false }).ok();
-                        return;
-                    }
-                    let room = format!("thread:{thread_id}");
-                    // Report what actually happened. Acknowledging a join that
-                    // failed is worse than not acknowledging at all: the client
-                    // stops queueing the thread for retry and reads on the
-                    // strength of a room it is not in.
-                    let joined = join_room_logged(&socket, &room, &socket.id.to_string());
-                    // Hand this socket whatever the approval gate still has
-                    // parked on the thread, BEFORE acknowledging the join, so a
-                    // client that orders its recovery reads against the ack
-                    // already holds the card.
-                    if joined {
-                        replay_parked_approval(&socket, thread_id);
-                        replay_parked_plan_review(&socket, thread_id);
-                    }
-                    ack.send(&ThreadSubscribeAck { joined }).ok();
-                },
-            );
-        },
+            // `ready` goes out last, after the rooms are joined; every event
+            // handler was registered by the middleware before CONNECT.
+            let ready_payload = json!({ "sid": client_id });
+            log::debug!("[socketio] emit event=ready to_client={}", socket.id);
+            let _ = socket.emit("ready", &ready_payload);
+            std::future::ready(())
+        })
+        .with(move |socket: SocketRef, TryData(handshake): TryData<HandshakeAuth>| {
+            let gate = preflight_gate.clone();
+            async move {
+                let token = handshake.ok().and_then(|h| h.token);
+                events::authorize_and_register(&socket, token, gate);
+                Ok::<(), std::convert::Infallible>(())
+            }
+        }),
     );
 
     (layer, io)
@@ -613,8 +360,13 @@ pub(crate) fn attach_socketio_with_preflight(
 ///
 /// This function sets up event bridges:
 /// 1. **Web Channel Bridge**: Forwards chat-related events (messages, tool calls) to specific clients.
-/// 3. **Overlay Bridge**: Forwards attention bubble events to all clients.
-/// 4. **Core Notification Bridge**: Forwards core notification events to all clients.
+/// 2. **Companion State Bridge**: Forwards shell companion state to all clients.
+/// 3. **Core Notification Bridge**: Forwards core notification events to all clients.
+/// 4. **Domain Event Bridges**: Forward session expiry, workspace switches, flow
+///    runs and channel connection changes from the event bus to all clients.
+///
+/// Every broadcast is awaited: since socketioxide 0.16 a broadcast returns a
+/// future, and one that is dropped sends nothing.
 pub fn spawn_web_channel_bridge(io: SocketIo) {
     // 1. Web channel events → per-client rooms.
     let io_web = io.clone();
@@ -630,7 +382,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
 
-            emit_web_channel_event(&io_web, event);
+            emit_web_channel_event(&io_web, event).await;
         }
         log::debug!("[socketio] web_channel bridge stopped");
     });
@@ -659,8 +411,8 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
             log::debug!("[socketio] broadcast companion:state_changed");
-            let _ = io_companion.emit("companion:state_changed", &payload);
-            let _ = io_companion.emit("companion_state_changed", &payload);
+            let _ = io_companion.emit("companion:state_changed", &payload).await;
+            let _ = io_companion.emit("companion_state_changed", &payload).await;
         }
         log::debug!("[socketio] companion state bridge stopped");
     });
@@ -687,8 +439,8 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     event.id,
                     event.category
                 );
-                let _ = io_notify.emit("core_notification", &payload);
-                let _ = io_notify.emit("core:notification", &payload);
+                let _ = io_notify.emit("core_notification", &payload).await;
+                let _ = io_notify.emit("core:notification", &payload).await;
             }
         }
         log::debug!("[socketio] core_notification bridge stopped");
@@ -788,8 +540,8 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                 // server-side and we don't want auth-error strings in the
                 // renderer console). Just send the source slug.
                 let payload = serde_json::json!({ "source": source });
-                let _ = io_auth.emit("auth:session_expired", &payload);
-                let _ = io_auth.emit("auth_session_expired", &payload);
+                let _ = io_auth.emit("auth:session_expired", &payload).await;
+                let _ = io_auth.emit("auth_session_expired", &payload).await;
             }
         }
         log::debug!("[socketio] auth session_expired bridge stopped");
@@ -844,8 +596,8 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     "[socketio] broadcast workspace_changed workspace={handle} revision={revision}"
                 );
                 let payload = serde_json::json!({ "workspace": handle, "revision": revision });
-                let _ = io_workspace.emit("workspace_changed", &payload);
-                let _ = io_workspace.emit("workspace:changed", &payload);
+                let _ = io_workspace.emit("workspace_changed", &payload).await;
+                let _ = io_workspace.emit("workspace:changed", &payload).await;
             }
         }
         log::debug!("[socketio] workspace_changed bridge stopped");
@@ -901,8 +653,8 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                         node_id,
                         status
                     );
-                    let _ = io_memory_sync.emit("flow:run_progress", &payload);
-                    let _ = io_memory_sync.emit("flow_run_progress", &payload);
+                    let _ = io_memory_sync.emit("flow:run_progress", &payload).await;
+                    let _ = io_memory_sync.emit("flow_run_progress", &payload).await;
                 }
                 // A `flow_runs` row was just persisted, before execution begins
                 // (issue B35, runs-rail live refresh). Broadcast so an open
@@ -920,8 +672,8 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                         flow_id,
                         run_id
                     );
-                    let _ = io_memory_sync.emit("flow:run_started", &payload);
-                    let _ = io_memory_sync.emit("flow_run_started", &payload);
+                    let _ = io_memory_sync.emit("flow:run_started", &payload).await;
+                    let _ = io_memory_sync.emit("flow_run_started", &payload).await;
                 }
                 // The terminal companion to `FlowRunStarted` above (issue B35
                 // follow-up). Published once `flows::ops::finish_flow_run_row`
@@ -945,8 +697,8 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                         run_id,
                         status
                     );
-                    let _ = io_memory_sync.emit("flow:run_finished", &payload);
-                    let _ = io_memory_sync.emit("flow_run_finished", &payload);
+                    let _ = io_memory_sync.emit("flow:run_finished", &payload).await;
+                    let _ = io_memory_sync.emit("flow_run_finished", &payload).await;
                 }
                 // A saved flow's definition changed (create/update/delete/
                 // enable). Broadcast so an open Workflows list/canvas refetches
@@ -969,8 +721,8 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                         kind,
                         actor
                     );
-                    let _ = io_memory_sync.emit("flow:changed", &payload);
-                    let _ = io_memory_sync.emit("flow_changed", &payload);
+                    let _ = io_memory_sync.emit("flow:changed", &payload).await;
+                    let _ = io_memory_sync.emit("flow_changed", &payload).await;
                 }
                 // A Workflow-origin tool call parked in the `ApprovalGate`
                 // (flow-approval-surface, PR2/PR3). Broadcast — not
@@ -1000,14 +752,18 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                         run_id,
                         tool_name
                     );
-                    let _ = io_memory_sync.emit("flow_approval_request", &payload);
+                    let _ = io_memory_sync.emit("flow_approval_request", &payload).await;
                 }
                 crate::core_host::core::events::DomainEvent::KeyringAccessApprovalRequested(
                     request,
                 ) => {
                     let payload = keyring_access_approval_payload(&request);
-                    let _ = io_memory_sync.emit("keyring:access_approval_requested", &payload);
-                    let _ = io_memory_sync.emit("keyring_access_approval_requested", &payload);
+                    let _ = io_memory_sync
+                        .emit("keyring:access_approval_requested", &payload)
+                        .await;
+                    let _ = io_memory_sync
+                        .emit("keyring_access_approval_requested", &payload)
+                        .await;
                 }
                 _ => {}
             }
@@ -1079,8 +835,12 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             };
             if let Some(payload) = payload {
                 // Emit both colon and underscore variants for FE compatibility.
-                let _ = io_channel_status.emit("channel:connection-updated", &payload);
-                let _ = io_channel_status.emit("channel_connection_updated", &payload);
+                let _ = io_channel_status
+                    .emit("channel:connection-updated", &payload)
+                    .await;
+                let _ = io_channel_status
+                    .emit("channel_connection_updated", &payload)
+                    .await;
             }
         }
         log::debug!("[socketio] channel_status bridge stopped");
@@ -1139,41 +899,27 @@ pub(crate) fn channel_connection_update_payload(
     payload
 }
 
-/// Join `socket` to `room`, logging the result.
+/// Join `socket` to `room`, logging the join.
 ///
-/// `socket.join()` returns a `Result` that historically was discarded
-/// with `let _ = …`. Silent failure on the `"system"` room in
-/// particular makes proactive-message delivery vanish without a trace,
-/// so both the happy and error paths are logged with enough context
-/// (room name + client id) to diagnose missing welcome messages from
-/// logs alone.
-///
-/// Returns whether the socket is actually in the room. Callers that only log
-/// may ignore it; a caller that *tells the client* it joined must not — a
-/// client told it is in a room it never joined reads the thread, waits for
-/// events that will never be routed to it, and reproduces the invisible-reply
-/// bug this room exists to prevent (#6034).
-fn join_room_logged(socket: &SocketRef, room: &str, client_id: &str) -> bool {
-    match socket.join(room.to_string()) {
-        Ok(()) => {
-            log::debug!("[socketio] joined room '{room}' for client {client_id}");
-            true
-        }
-        Err(e) => {
-            log::warn!("[socketio] failed to join room '{room}' for client {client_id}: {e}");
-            false
-        }
-    }
+/// A missing `"system"` room membership makes proactive-message delivery
+/// vanish without a trace, so every join is logged with the room name and
+/// client id to diagnose missing welcome messages from logs alone. Since
+/// socketioxide 0.18 a local-adapter join cannot fail.
+fn join_room_logged(socket: &SocketRef, room: &str, client_id: &str) {
+    socket.join(room.to_string());
+    log::debug!("[socketio] joined room '{room}' for client {client_id}");
 }
 
-fn emit_web_channel_event(io: &SocketIo, event: ScopedWebEvent) {
+/// Delivers a web-channel event to its client's room and, when it carries a
+/// thread id, to that thread's room, under its name and its compat alias.
+async fn emit_web_channel_event(io: &SocketIo, event: ScopedWebEvent) {
     let name = event.event_name();
     // Deliver to the initiating client's own room AND the per-thread room. The
     // thread room lets a socket that reconnected with a new client_id (after
     // re-subscribing via `thread:subscribe`) keep receiving an in-flight turn's
     // stream.
     //
-    // ⚠️ socketioxide (0.15.2) does NOT de-duplicate a socket present in
+    // ⚠️ socketioxide (0.15.2 through 0.18.7) does NOT de-duplicate a socket present in
     // multiple target rooms: `LocalAdapter::apply_opts` flattens each room's
     // sid-set and collects WITHOUT a dedup pass, so `io.to([a, b]).emit()`
     // delivers TWICE to a socket in both `a` and `b`. The initiating client is
@@ -1202,21 +948,23 @@ fn emit_web_channel_event(io: &SocketIo, event: ScopedWebEvent) {
                 .unwrap_or_default()
         );
         // Primary: the client_id room.
-        let _ = io.to(primary.clone()).emit(name, &payload);
+        let _ = io.to(primary.clone()).emit(name, &payload).await;
         if let Some(alias) = event_alias(name) {
-            let _ = io.to(primary.clone()).emit(alias, &payload);
+            let _ = io.to(primary.clone()).emit(alias, &payload).await;
         }
         // Thread room minus the client_id room (dedup — see note above).
         if let Some(tr) = thread_room {
             let _ = io
                 .to(tr.clone())
                 .except(primary.clone())
-                .emit(name, &payload);
+                .emit(name, &payload)
+                .await;
             if let Some(alias) = event_alias(name) {
                 let _ = io
                     .to(tr.clone())
                     .except(primary.clone())
-                    .emit(alias, &payload);
+                    .emit(alias, &payload)
+                    .await;
             }
         }
     }
@@ -1356,3 +1104,6 @@ fn stamp_replay_timestamp(event: &mut crate::core_host::web_chat::WebChannelEven
 #[cfg(test)]
 #[path = "socketio_tests.rs"]
 mod tests;
+
+#[path = "socketio_events.rs"]
+mod events;

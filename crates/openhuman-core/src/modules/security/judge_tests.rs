@@ -14,7 +14,10 @@ pub(in crate::modules::security) fn a_judge() -> JudgeConfig {
 fn a_route_turns_the_judge_on_by_default() {
     let judge = build(&Config::default(), route()).expect("on by default");
 
-    assert_eq!(judge.credential.0, "a-working-key");
+    assert_eq!(
+        judge.credential.as_ref().map(|secret| secret.0.as_str()),
+        Some("a-working-key")
+    );
     assert_eq!(judge.endpoint, "https://openrouter.ai/api/v1/systemone");
     assert_eq!(judge.provider, JudgeProvider::OpenRouter);
 }
@@ -111,25 +114,20 @@ fn openjev_keeps_its_own_dialect() {
     assert_eq!(judge.provider, JudgeProvider::OpenJev);
 }
 
-#[tokio::test]
-async fn the_hosts_own_route_wins_over_any_stored_credential() {
-    let config = Config {
+#[test]
+fn only_the_hosts_own_route_turns_the_judge_on() {
+    let hosted = Config {
         security_judge: Some(SecurityJudgeRoute::open_jev("a-hosts-key")),
         ..Config::default()
     };
-
-    let judge = resolve(&config).await.expect("the host supplied a route");
-
-    assert_eq!(judge.credential.0, "a-hosts-key");
+    let judge = resolve(&hosted).expect("the host supplied a route");
+    assert_eq!(
+        judge.credential.as_ref().map(|secret| secret.0.as_str()),
+        Some("a-hosts-key")
+    );
     assert_eq!(judge.provider, JudgeProvider::OpenJev);
-}
-
-#[tokio::test]
-async fn sage_is_a_decision_model_the_judge_cannot_use() {
-    let mut config = Config::default();
-    config.computer.decision_model = crate::config::DecisionModel::Sage;
-
-    assert!(resolve(&config).await.is_none());
+    // Without one it reads no stored credential: the judge stays off.
+    assert!(resolve(&Config::default()).is_none());
 }
 
 fn with_endpoint(endpoint: &str) -> SecurityJudgeRoute {

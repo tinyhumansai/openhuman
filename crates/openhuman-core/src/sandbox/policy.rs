@@ -15,7 +15,7 @@ use tinyagents_definition::SandboxMode;
 
 /// The executor `sandbox` and `runtime` name, if any. `remote` marks a channel, cron or
 /// remote session, which has always asked for a container.
-fn named_backend(
+pub(crate) fn named_backend(
     sandbox: &SandboxConfig,
     runtime: &RuntimeConfig,
     remote: bool,
@@ -74,6 +74,7 @@ pub fn route_for_mode(
         "[sandbox] spawn policy"
     );
     SandboxPolicy {
+        filesystem_only: false,
         backend,
         workspace_root: action_dir.to_path_buf(),
         state_dir: state_dir.to_path_buf(),

@@ -31,6 +31,14 @@ pub(crate) struct AttachmentAccessScope {
 
 const REQUEST_SCOPE_KEY: &str = "__openhuman_attachment_access_scope";
 pub(super) const SOURCE_MISSING_MARKER: &str = "[attachment-source-missing]";
+/// Proxy service key that attachment fetch clients are built under.
+const FETCH_PROXY_SERVICE: &str = "inference.attachment";
+
+/// The HTTP client attachment sources are fetched with. It follows the
+/// attachment proxy service, never a model provider's.
+pub(crate) fn fetch_client() -> reqwest::Client {
+    crate::config::build_runtime_proxy_client_with_timeouts(FETCH_PROXY_SERVICE, 30, 10)
+}
 
 pub(crate) fn attach_request_scope(
     request: &mut tinyinference_llm::model::ModelRequest,
@@ -202,9 +210,10 @@ pub(crate) async fn thread_action_dir(
     let Some(thread_id) = thread_id.filter(|id| !id.is_empty()) else {
         return Ok(config.action_dir.clone());
     };
-    let bound = crate::threads::ops::thread_working_dir(ctx, threads_dir.to_path_buf(), thread_id)
-        .await
-        .map_err(anyhow::Error::msg)?;
+    let bound =
+        crate::threads::ops::thread_working_dir(ctx, config, threads_dir.to_path_buf(), thread_id)
+            .await
+            .map_err(anyhow::Error::msg)?;
     Ok(bound.unwrap_or_else(|| config.action_dir.clone()))
 }
 
@@ -413,7 +422,7 @@ pub(crate) async fn stage(
     {
         anyhow::bail!("attachment count exceeds configured limit");
     }
-    let client = crate::config::build_runtime_proxy_client_with_timeouts("provider.ollama", 30, 10);
+    let client = fetch_client();
     let mut out = String::new();
     let mut rest = message;
     loop {

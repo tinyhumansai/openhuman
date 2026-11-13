@@ -27,6 +27,8 @@ async fn no_config_profile_store_uses_its_encrypted_document_without_keyring_byp
 
 #[tokio::test]
 async fn config_backed_profile_store_uses_tinysecurity_and_existing_namespaced_key() {
+    let _env =
+        crate::config::test_env::EnvVarGuard::locked_unset_async("OPENHUMAN_KEYRING_BACKEND").await;
     let tmp = TempDir::new().unwrap();
     let config = crate::config::Config::default();
     let store = AuthProfilesStore::new_with_config(tmp.path(), true, &config);
@@ -39,10 +41,48 @@ async fn config_backed_profile_store_uses_tinysecurity_and_existing_namespaced_k
     );
 }
 
+/// An operator who picks a file keyring (a headless core: no OS keyring and
+/// no one to answer TinySecurity's per-operation prompt) keeps profile
+/// secrets in the encrypted profile document. Asking the keyring instead
+/// waited out the 120 s prompt and refused the write.
+#[tokio::test]
+async fn file_keyring_backend_stores_profile_secrets_without_asking_the_keyring() {
+    for backend in ["file", "encrypted_file", "memory"] {
+        let _env = crate::config::test_env::EnvVarGuard::locked_set_async(
+            "OPENHUMAN_KEYRING_BACKEND",
+            backend,
+        )
+        .await;
+        let tmp = TempDir::new().unwrap();
+        let config = crate::config::Config::default();
+        let store = AuthProfilesStore::new_with_config(tmp.path(), false, &config);
+        let profile = AuthProfile::new_token("memory-cortexdb", "default", "ck-test".into());
+
+        // Inside `without_keyring` any keyring call is refused like an
+        // unanswered prompt, so this write succeeds only if none is made.
+        super::super::keychain::without_keyring(store.upsert_profile(profile, true))
+            .await
+            .unwrap_or_else(|e| panic!("backend={backend}: {e:#}"));
+
+        assert!(!store.use_keychain, "backend={backend}");
+        let loaded = store.load().await.unwrap();
+        assert_eq!(
+            loaded.profiles["memory-cortexdb:default"].token.as_deref(),
+            Some("ck-test"),
+            "backend={backend}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn unavailable_keyring_keeps_keyring_only_oauth_metadata_in_place() {
     let tmp = TempDir::new().unwrap();
-    let config = crate::config::Config::default();
+    // Make the keyring unavailable on every host: with modules disabled
+    // TinySecurity cannot load, a non-consent failure. Left to the host, a
+    // machine with a working session keyring answers a miss instead, and a
+    // miss rightly purges the record this test needs to keep.
+    let mut config = crate::config::Config::default();
+    config.modules.enabled = false;
     let store = AuthProfilesStore::new_with_config(tmp.path(), true, &config);
     let profile = AuthProfile::new_oauth(
         "openai-codex",

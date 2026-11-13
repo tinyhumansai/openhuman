@@ -3,12 +3,10 @@
 //! This module serves as the primary gateway for all configuration-related functionality.
 //! It re-exports types and functions from submodules to provide a unified API for:
 //! - Loading and saving user settings (`Config`).
-//! - Managing the core daemon's lifecycle and options (`DaemonConfig`).
 //! - Defining the RPC surface for configuration management.
 //! - Handling the schema definitions for all agent and system settings.
 
 pub mod app_env;
-pub mod daemon;
 pub mod enrichers;
 pub mod migrations;
 pub mod ops;
@@ -20,8 +18,6 @@ pub(crate) mod user_scope;
 pub mod workspace;
 pub mod workspace_handle;
 
-#[allow(unused_imports)]
-pub use daemon::DaemonConfig;
 pub use enrichers::{
     register_enricher, register_enricher_in, run_enrichers, unregister_enricher, ConfigEnricher,
 };
@@ -46,32 +42,32 @@ pub use schema::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, device_time_zone, normalize_time_zone,
     output_language_directive, runtime_proxy_config, set_runtime_proxy_config,
-    Agent37RuntimeConfig, AgentConfig, AuditConfig, AutonomyConfig, BrowserComputerUseConfig,
-    BrowserConfig, BudgetAction, BudgetPeriod, BudgetPolicy, BudgetScope, CapabilityProviderConfig,
+    Agent37RuntimeConfig, AgentConfig, AuditConfig, AutonomyConfig, BrowserConfig, BudgetAction,
+    BudgetPeriod, BudgetPolicy, BudgetScope, CapabilityProviderConfig,
     CapabilityProviderTrustState, ChannelVoiceConfig, ChannelVoiceOverride, ChannelsConfig,
     CompactionSettings, CompactionStrategy, ComposioConfig, ComposioDirectBaseUrls,
     ComposioHostCredential, ComputerConfig, Config, ContextConfig, ContextSettings, CostConfig,
-    CronConfig, CurlConfig, DashboardConfig, DecisionModel, DiagramViewerConfig, DiscordConfig,
-    DockerRuntimeConfig, EmailConfig, EmbeddingRouteConfig, GitbooksConfig, HttpHeader,
-    HttpRequestConfig, IMessageConfig, IntegrationToggle, IntegrationsConfig, LarkConfig,
-    LegacySearchInputs, LinqConfig, LocalAiConfig, LocalJailConfig, McpAuthConfig, McpClientConfig,
+    CronConfig, CurlConfig, DashboardConfig, DecisionModel, DiscordConfig, DockerRuntimeConfig,
+    EmailConfig, EmbeddingRouteConfig, GitbooksConfig, HttpHeader, HttpRequestConfig,
+    IMessageConfig, IntegrationToggle, IntegrationsConfig, LarkConfig, LegacySearchInputs,
+    LinqConfig, LocalAiConfig, LocalJailConfig, McpAuthConfig, McpClientConfig,
     McpClientIdentityConfig, McpServerConfig, McpToolExposure, MemoryConfig, MemoryLayoutMode,
     ModelRouteConfig, MultimodalConfig, MultimodalFileConfig, ObservabilityConfig,
     OpenShellRuntimeConfig, OrchestratorModelConfig, PresentationMode, PrivacyConfig, PrivacyMode,
-    ProviderRoute, ProxyConfig, ProxyScope, ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig,
-    SandboxBackend, SandboxConfig, SchedulerConfig, SchedulerGateConfig, SchedulerGateMode,
-    SearchConfig, SearchEngineCredentials, SearchHostCredential, SearchProviderSettings,
-    SearxngConfig, SecretsConfig, SecurityConfig, ShellConfig, SlackConfig, StreamMode, SttEngine,
-    TeamModelConfig, TelegramConfig, TokenjuiceConfig, UnknownKeyedSearchProvider, UpdateConfig,
-    UpdateRestartStrategy, VoiceServerConfig, WebSearchConfig, YuanbaoConfig,
-    MANAGED_SEARCH_PROVIDERS, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA,
-    SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY,
-    SEARCH_PROVIDERS, SEARCH_ROLES, SEARCH_ROLE_ANSWER, SEARCH_ROLE_CONTENTS, SEARCH_ROLE_SEARCH,
+    ProviderRoute, ProxyConfig, ProxyScope, ReliabilityConfig, RuntimeConfig, SandboxBackend,
+    SandboxConfig, SchedulerConfig, SchedulerGateConfig, SchedulerGateMode, SearchConfig,
+    SearchEngineCredentials, SearchHostCredential, SearchProviderSettings, SearxngConfig,
+    SecretsConfig, ShellConfig, SlackConfig, StreamMode, SttEngine, TeamModelConfig,
+    TelegramConfig, TokenjuiceConfig, UnknownKeyedSearchProvider, UpdateConfig,
+    UpdateRestartStrategy, VoiceServerConfig, YuanbaoConfig, MANAGED_SEARCH_PROVIDERS,
+    SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED,
+    SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY, SEARCH_PROVIDERS,
+    SEARCH_ROLES, SEARCH_ROLE_ANSWER, SEARCH_ROLE_CONTENTS, SEARCH_ROLE_SEARCH,
 };
 // Kept as a separate re-export (issue #4117) so the large alphabetized group
 // above stays byte-identical and rustfmt-stable.
 pub use schema::RequiredOutputContract;
-pub use schema::SummarizerSettings;
+pub use schema::{ContextOverrides, ReasoningReplay, SummarizerSettings};
 pub use schema::{InboundDebounceConfig, InboundDebounceOverride};
 pub use schema::{SecurityMode, SecurityModeConfig};
 pub use schemas::{

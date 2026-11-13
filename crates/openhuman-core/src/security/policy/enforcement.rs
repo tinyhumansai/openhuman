@@ -7,6 +7,21 @@ use std::sync::Arc;
 use tinytools::status::POLICY_BLOCKED_MARKER;
 
 impl SecurityPolicy {
+    /// In a test build, ask the test host for the answers a host gate caches.
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    fn prime_from_test_host(&self) {
+        crate::modules::security::test_host::prime_policy(self);
+    }
+
+    #[cfg(not(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    )))]
+    fn prime_from_test_host(&self) {}
+
     /// Whether the tier, class gate and action budget are skipped: the autonomy
     /// policy is disabled (`[autonomy] enabled = false`), or security as a whole
     /// is (`crate::security::switch`), so there is no module to keep a budget.
@@ -110,6 +125,7 @@ impl SecurityPolicy {
         if self.unchecked() {
             return true;
         }
+        self.prime_from_test_host();
         let Ok(snapshot) = self.budget_snapshot.lock() else {
             return false;
         };
@@ -120,6 +136,70 @@ impl SecurityPolicy {
         )
     }
 
+    /// Whether `other` sets what the tools' own gates act on (the tier, path
+    /// scope, forbidden paths and privacy) the same way. When it does not, the
+    /// autonomy settings changed after this instance was built, and tools
+    /// holding it would validate against settings no longer in force.
+    ///
+    /// Trusted roots are left out: the session's own policy adds the working
+    /// folder and the projects home as roots, so they differ legitimately.
+    pub(crate) fn decides_tools_like(&self, other: &SecurityPolicy) -> bool {
+        self.enabled == other.enabled
+            && self.autonomy == other.autonomy
+            && self.privacy_mode == other.privacy_mode
+            && self.workspace_only == other.workspace_only
+            && self.forbidden_paths == other.forbidden_paths
+    }
+
+    /// Take `governing`'s cached TinySecurity answers (budget and class gates),
+    /// so the sync tool gates holding this instance read the decision the host
+    /// gate made on `governing`. When `governing` is unchecked it allows
+    /// everything, which is what this instance's tools are told too.
+    ///
+    /// Each [`from_config`](Self::from_config) owns its cells, so the session
+    /// policy the tools hold and the live or agent policy the host gate answers
+    /// against are separate. Without this, an enabled tool policy never gets an
+    /// answer and refuses as read-only.
+    pub(crate) fn adopt_answers_from(&self, governing: &SecurityPolicy) {
+        use super::types::{CommandClass, GateDecision};
+        // Read before writing, so cells shared by a clone never lock twice.
+        let (budget, gates) = if governing.unchecked() {
+            let all = [
+                CommandClass::Read,
+                CommandClass::Write,
+                CommandClass::Network,
+                CommandClass::Install,
+                CommandClass::Destructive,
+            ];
+            (
+                Some(tinysecurity_bus::BudgetDecision2::Allow),
+                all.map(|class| (class, GateDecision::Allow)).to_vec(),
+            )
+        } else {
+            let budget = governing
+                .budget_snapshot
+                .lock()
+                .map(|snapshot| snapshot.clone())
+                .unwrap_or(None);
+            let gates = governing
+                .class_gate_snapshot
+                .lock()
+                .map(|snapshot| snapshot.clone())
+                .unwrap_or_default();
+            (budget, gates)
+        };
+        log::debug!(
+            "[openhuman:policy] tool policy adopted the host gate's answers: budget={budget:?} classes={}",
+            gates.len()
+        );
+        if let Ok(mut snapshot) = self.budget_snapshot.lock() {
+            *snapshot = budget;
+        }
+        if let Ok(mut snapshot) = self.class_gate_snapshot.lock() {
+            *snapshot = gates;
+        }
+    }
+
     /// Cached class decision from TinySecurity for synchronous tool adapters.
     /// The async host gate refreshes it before the tool is dispatched; an
     /// enabled policy with no answer fails closed.
@@ -128,6 +208,7 @@ impl SecurityPolicy {
         if self.unchecked() {
             return GateDecision::Allow;
         }
+        self.prime_from_test_host();
         let Ok(snapshot) = self.class_gate_snapshot.lock() else {
             return GateDecision::Block;
         };
@@ -195,6 +276,7 @@ impl SecurityPolicy {
         if self.unchecked() {
             return false;
         }
+        self.prime_from_test_host();
         let Ok(snapshot) = self.budget_snapshot.lock() else {
             return true;
         };
@@ -244,8 +326,9 @@ impl SecurityPolicy {
         }
 
         // `auto_approve` is the user's "Always allow" allowlist: the
-        // `ApprovalGate` reads it via `live_policy::current()` and skips the
-        // interactive prompt for any tool named in it. Tier + `CommandClass`
+        // `ApprovalGate` hands it (via `live_policy`) to the native engine,
+        // which imports each tool once as a TinySecurity grant that skips the
+        // interactive prompt. Tier + `CommandClass`
         // (and the unconditional read-only / forbidden-path / high-risk denials)
         // still run *before* the gate, so the allowlist can only suppress the
         // human prompt — it can never override a hard policy denial.

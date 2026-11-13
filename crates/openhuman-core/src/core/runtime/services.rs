@@ -391,9 +391,22 @@ pub(crate) struct BootstrapJobPlan {
 /// `channels` gates NO bootstrap job (its remaining meaning is exactly
 /// `spawn_channels_service`).
 pub(crate) fn bootstrap_job_plan(services: &ServiceSet) -> BootstrapJobPlan {
+    bootstrap_job_plan_with(
+        services,
+        crate::integrations::task_sources::types::any_provider_can_fetch(),
+    )
+}
+
+/// [`bootstrap_job_plan`] with the task-source fetch gate as a parameter, so
+/// tests can flip it. The poller only starts when some provider can fetch
+/// (senamakel/openhuman#324): with none, every tick would skip every source.
+pub(crate) fn bootstrap_job_plan_with(
+    services: &ServiceSet,
+    task_sources_fetchable: bool,
+) -> BootstrapJobPlan {
     BootstrapJobPlan {
         memory_jobs: services.memory_sync,
-        task_source_pollers: services.cron,
+        task_source_pollers: services.cron && task_sources_fetchable,
         // Module preload is background boot work and rides the integrations
         // flag.
         module_preload: services.integrations,
@@ -441,7 +454,9 @@ pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
         log::debug!("[runtime.bootstrap] starting task-source poller");
         crate::integrations::task_sources::start_periodic_poll();
     } else {
-        log::debug!("[runtime.bootstrap] task-source polling disabled by ServiceSet");
+        log::debug!(
+            "[runtime.bootstrap] task-source polling disabled (ServiceSet, or no provider can fetch)"
+        );
     }
 
     log::debug!("[runtime.bootstrap] bootstrap job dispatch complete");

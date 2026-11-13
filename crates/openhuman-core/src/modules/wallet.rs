@@ -16,7 +16,8 @@
 //!
 //! The phrase only goes to a recipient tinybus has attested, and
 //! [`attested_proxy`] additionally insists the attested digest is one
-//! `registry.rs` pinned — see there for why both checks are worth having.
+//! `registry.rs` pinned, or this executable's own when the wallet is linked
+//! into it — see there for why both checks are worth having.
 //!
 //! # The split flow — still here, still correct for some hosts
 //!
@@ -341,6 +342,19 @@ where
 ///
 /// Both are belt-and-braces over a check that already exists. That is the right
 /// posture for the one code path that hands over a recovery phrase.
+///
+/// # Linked code is accepted as host code
+///
+/// A wallet linked into the executable (`[modules] source = "linked"`, built
+/// through `openhuman-modules-linked`) has no release artifact. tinybus attests
+/// it with the digest of the executable that contains it, so it can never match
+/// a release pin, and refusing it would make a linked wallet unusable for the
+/// very calls linking exists to serve. That code is part of this binary: it is
+/// exactly as trusted as the core making this check, and anything able to swap
+/// it could swap the check too. So the running executable's own digest is also
+/// accepted, but only when this binary registered a linked tinywallet factory
+/// (see [`linked_host_code`]). The name must still match, and any digest that is
+/// neither pinned nor this executable's is still refused.
 async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallError> {
     let (runtime, record) = ready(config).await?;
     let proxy = proxy(runtime, record)?;
@@ -358,6 +372,19 @@ async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallErr
             )
         })?;
 
+    admit_attestation(record, &attestation, linked_host_code())?;
+    Ok(proxy)
+}
+
+/// The decision [`attested_proxy`] makes once it holds an attestation.
+///
+/// `host_code` is the running executable's digest when this binary links its
+/// own tinywallet, and `None` otherwise (see [`linked_host_code`]).
+fn admit_attestation(
+    record: &super::ModuleRecord,
+    attestation: &tinybus::attest::Attestation,
+    host_code: Option<&str>,
+) -> Result<(), WalletCallError> {
     if attestation.name.as_str() != record.bus_name {
         return Err(WalletCallError::Failed(format!(
             "the wallet module's attestation names '{}' rather than '{}'",
@@ -366,105 +393,145 @@ async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallErr
         )));
     }
 
-    if !digest_is_pinned(record, &attestation.sha256) {
-        return Err(WalletCallError::Failed(
-            "the loaded wallet module is not one of the artifacts this build pinned, so it will \
-             not be sent key material"
-                .to_string(),
-        ));
+    if digest_is_pinned(record, &attestation.sha256) {
+        return Ok(());
     }
 
-    Ok(proxy)
+    if host_code.is_some_and(|digest| digest.eq_ignore_ascii_case(&attestation.sha256)) {
+        log::debug!("[modules:wallet] attestation admitted as linked host code module={MODULE_ID}");
+        return Ok(());
+    }
+
+    Err(WalletCallError::Failed(
+        "the loaded wallet module is not one of the artifacts this build pinned, so it will not \
+         be sent key material"
+            .to_string(),
+    ))
+}
+
+/// The digest a wallet linked into this executable is attested with, if this
+/// binary links one.
+///
+/// Only a binary that registered a tinywallet factory
+/// (`openhuman-modules-linked::install`) can serve the wallet as linked code,
+/// so only such a binary recognizes the executable's digest. tinybus documents
+/// that a sender of a secret must recognize linked registration explicitly
+/// before accepting that digest (`Attestation::sha256`); this is that check. In
+/// every other build this is `None` and the executable is never hashed.
+fn linked_host_code() -> Option<&'static str> {
+    if !super::source::linked_factory_available(MODULE_ID) {
+        return None;
+    }
+    host_executable_digest()
+}
+
+/// SHA-256 of the running executable, as tinybus attests linked code.
+///
+/// `ModuleHost::attach_linked_with_config` hashes `std::env::current_exe()`
+/// with `tinybus::module::sha256_file` and records that as the linked module's
+/// attestation. This is the same function on the same file, so the two agree
+/// on encoding by construction. Hashed once per process, like tinybus does; a
+/// failure is not cached, also like tinybus, so a transient read error does not
+/// disable the wallet for the life of the process. A failure leaves `None`,
+/// which fails closed.
+fn host_executable_digest() -> Option<&'static str> {
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(digest) = DIGEST.get() {
+        return Some(digest.as_str());
+    }
+    let executable = std::env::current_exe().ok()?;
+    let digest = tinybus::module::sha256_file(executable).ok()?;
+    Some(DIGEST.get_or_init(|| digest).as_str())
 }
 
 // Embedded library checksums verified from all 17 archives in the
-// registry-pinned TinyWallet v0.28.0 release. Each library is trusted only
+// registry-pinned TinyWallet v0.30.0 release. Each library is trusted only
 // while its archive checksum remains pinned in the supplied ModuleRecord.
 const PINNED_WALLET_LIBRARIES: &[(&str, &str)] = &[
     // archlinux-arm64
     (
-        "da90ff7b53c2a229896d5a4ab0e3121727488f37a78551b3207a9c78bc4a09a6",
-        "2ba4a00b9783eb3eeea02da506e23459f1a61ff0637ead0c99a9691f24a166aa",
+        "50eb1628fe7ad96111fcdbd09aa893451f7d6e19b6d5a1b63233967c1daafb0b",
+        "314dfaaea9e56126816ef3f8020ab24951f96e90715c68087aefdc7919e81b2f",
     ),
     // archlinux-x86_64
     (
-        "1e80c400e50643d938e25b45aa0327de170f66f39fe65645a9d5ccb31b5f4a88",
-        "791a355c0df38b22281a3201dbd7358948b3105742f3e17e4ae21bc5e14c2836",
+        "ffa384b7fa01bb8c288353de0ad50039557d7d6d55a969f3af6fae2a65d926d9",
+        "40f01590635365b43e2a1a24623649f600a73120d92217dc04d2e63a9eb99673",
     ),
     // fedora-43-arm64
     (
-        "fb2b630ae47e64bd10a975861e647a939bfaa55b664c8f0706cd096779d62c3b",
-        "412e73034a3b0250b4f12b082170809bcce8716700ad5966ba2d5d40724488ea",
+        "6da862f1055c90af4d1713ea4ecee1a4e1fe9d5172c97e7b04f07f3e6a01195b",
+        "ea9cda9b984ea9c019bff25cb9e60508ffddb55caa69479458a4a8b83d203bd2",
     ),
     // fedora-43-x86_64
     (
-        "84cc92b8775d26def86ad5073ed7315a50aae4b5aa7134a1cf485b923a32c38b",
-        "3538841f3ccb6a9d2b4c213dcb661c8e0050327da0bccee89e9d356542019134",
+        "cf57707e2798a60ba6ff2174d734c9e5317fd4a5f627d5015529763f42e4f7c5",
+        "1266c267f0669a3531a104ce7aabea2e64491829f809d653f1b3bf330850496e",
     ),
     // fedora-44-arm64
     (
-        "14a1f4a044a7e5b246aa2df7209c31c165bf1305b38d888a540c2e438c11e202",
-        "b3bb6f4ffbe1f42fb826510af9cffb806a700997b6d54bff117ec5f6737a11d0",
+        "805d1f76005b0942255ee132a40c65417d77618e27f58f12f860485d67c3a838",
+        "3a2ed80790e7b0e508f5ee103407a9217a3b2929b39e9168abb745cccb56a8e6",
     ),
     // fedora-44-x86_64
     (
-        "d550966866d4b3446abef6f3b19fcf6968d914579a445c8b08fff276465b9029",
-        "bfd9c6350be70a25853c60a71c0d308f114ef6001ddfb768f9518644bfe520cb",
+        "cca69dd1c96f74a7176e7cf9ce63fa6e6871752b1c2bcbb72e1fa44b876f85c6",
+        "547164191d88315b7e44f790eadd4fb646c128a44a89409140a9b34c6ae5d255",
     ),
     // macos-15-arm64
     (
-        "c8c791b7464f1db2c6395f286cf63727b24bacb7606e318bb7dad5fa120387e1",
-        "82932d9b0ef1feeea3fafe6df035e107a41eeb9544e9c2c229a892aca32efa40",
+        "c11846bb1d59fc20037f93482c7f8a89ab597fcf77be8605fafd1792d2f634dd",
+        "e7d62837cc40ecf439a84396d3959789a3d6503641519e4e41a34568919fecff",
     ),
     // macos-15-x86_64
     (
-        "b72c5f5b979302599b3a4f85b6783bd753c119e23ade819c0b1edf9ffd01d729",
-        "4938a14e361d279245a78a51f7eb813a5ae38997785269468cc4a53843ffac7f",
+        "b08e40f1e3f2fa73ec8c5f3a0a7e22317723aee6663a6f4a49b5ab9260082c58",
+        "8e057a2ed8d230efd63ce53d8517ba7846df9bf7b88d2eaafda54ea42e451f4d",
     ),
     // macos-26-arm64
     (
-        "b8d189befa3358f854346f3903187ef23b990b71d314a4a58539531c9212ca82",
-        "5142a3dc985ba33dc7f7fc534dffb7a8a51e16a0a65081edef74010571af098e",
+        "8a6838b9921d44044bae77c2c711299f5ed2959d54f7417e1f88a96a7e916f9b",
+        "cbb8d58a8eb6d1fef5dcd1006eb66a49d6201960b4b14b9cb553bd2c68b0449a",
     ),
     // macos-26-x86_64
     (
-        "9eb8990e3401b8c6d30ca08a434c64f56ff82e6bc1b6e160d27aae4d30a8c24f",
-        "1ce1b380d9e5a18df2c7d642791c9d15fd9c630c570f76f0a8bfa3171ce33d51",
+        "2368ccf882122bfce205960ea84a78ed89d2b274f8512c714f4c1ed23b5bd500",
+        "871078b66feb7092eff53bfd2530f3dc30c5b398a1ef42889df1a5fe04ca33c7",
     ),
     // ubuntu-22.04-arm64
     (
-        "c753826827230d2ebcb044eeae91f96d1f08d945f1ef37b26030ae0e0843d60c",
-        "6f72f339c6c1a2047afaf9e1f2b6edfc49d80442670bdee576f34aafc344082b",
+        "14dccd485fdf6679e3e5f0829cd87560aabeb230b8a340c2cd015719344c6c58",
+        "5159cfd32c93a9643de0ed1c50d0bc8bf9432fde1c0d53be1a56e48523d2dd3c",
     ),
     // ubuntu-22.04-x86_64
     (
-        "02cec7d7e33112266b988be1bab6213b71193f7a183db8783dba941e62ef7b46",
-        "ca91f929a01fa6f46a83fc4e40fe1e420becbcc8a27810dd10f5f74bde0060be",
+        "06fe9666e4c839676f2ead3aa1a4b3527a2d8b499c946f632cd1cc5eda6c9dab",
+        "f0b36bb707328726c0a0d0842b144eff43a2bc279488e373c3068cef7d5113af",
     ),
     // ubuntu-24.04-arm64
     (
-        "5b8dc519829098029609e224b95b2149a71cdaad240148e33c0abac71ec5dc07",
-        "309cbd3a20abdadd0fa30907ae3e1c6899f3bceb1f7604d2cc63c2bfa474ca22",
+        "8c4fe25c0d605c36c936f28286f2b91beeecccbf948746dffb422b59648479ad",
+        "ceb435327d8c837d119c49953dd48fdab4691c564e8cc72f9c0a83a03e3f8810",
     ),
     // ubuntu-24.04-x86_64
     (
-        "c2bb2acd7c15b061b66d564db738aa3eac6802544fba753a6715ade541faac86",
-        "92d024c6be951824070c80fdcd44661e2f47a812fd82c247a16a810680075b31",
+        "df654794d21da8cc3e6447e2e944fb39f127918609f7c81a49a3dddbea821e7c",
+        "52cf86da7e6b83e3ec79e77fcfea71a7f47628b3e534aa99e33f0c78bd50bb4a",
     ),
     // windows-11-arm64
     (
-        "02598b083ce4d7e66c6d295785b5b42535861614741b2371462847760bbd2823",
-        "d0064850025aad951b9df7cfb24f4608fb36000fb847b12a4b388625b9ed829d",
+        "7dacf69ed8f9b5ca02f0930f4c80d01c445661ac7a43a3440aef1714f9f670fe",
+        "12f50b4f767e6309eca9e106658ac76eb89ab3f56283569399201b2373c2404a",
     ),
     // windows-2022-x86_64
     (
-        "fdf15c140e0de0492fb0fde449e38e8eef0653cc7af6ebbe71c56218f5d33c17",
-        "2546bd8b69417bb4d855e4379fdac4f7ae2499ded9efc34f7c8f7dccbca00920",
+        "46ebd65cb38650cc4eb697d1fc4c96e5cdea692a9e63f4be6fa7947b75f64535",
+        "a010bca0a09be09d039196182320c9df4c6ec2f444875c2595c85f4ef1c14749",
     ),
     // windows-2025-x86_64
     (
-        "a89031486e2aeb8f2f96fc314a5a291ebc4364e3b34dcdcd6a010b1a939b365e",
-        "22e4a21ce38cb9962fb66f57fd073a91e5f756445a020fae245b4583c4b54db4",
+        "57e32f30e61f5d0ed3f32a3b5bb072eaaf253c575cea719abe63bf7c529f506f",
+        "eb4f4dc029c1c767e47fd48e1c7bf225946e8bf3f60b3b34cd94c6eeebfbed9f",
     ),
 ];
 

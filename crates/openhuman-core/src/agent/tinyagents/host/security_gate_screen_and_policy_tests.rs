@@ -191,6 +191,8 @@ async fn allow_and_deny_channel_verdicts_are_unchanged() {
 #[cfg(feature = "security-module")]
 #[tokio::test]
 async fn screen_input_fails_closed_when_tinysecurity_is_unavailable() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     let gate = gate(AutonomyLevel::Full);
     let secret: String = [
         's', 'k', '-', 'l', 'i', 'v', 'e', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
@@ -217,6 +219,8 @@ async fn screen_input_fails_closed_when_tinysecurity_is_unavailable() {
 #[cfg(feature = "security-module")]
 #[tokio::test]
 async fn screening_holds_the_new_user_row_when_tinysecurity_is_unavailable() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     let gate = gate(AutonomyLevel::Full);
     let secret: String = [
         's', 'k', '-', 'o', 'l', 'd', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a',
@@ -346,6 +350,8 @@ async fn a_plain_call_is_unaffected_by_the_nested_refusal() {
 #[cfg(feature = "security-module")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn prompt_screening_uses_the_bound_dispatch_configuration() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     use crate::core::runtime::{CoreContext, DispatchCtx, DomainSet};
     let temp = tempfile::tempdir().unwrap();
     let config = crate::credentials::test_support::plaintext_fixture_config(temp.path());
@@ -390,4 +396,40 @@ async fn prompt_screening_uses_the_bound_dispatch_configuration() {
         );
     })
     .await;
+}
+
+/// TS-E2E-025: the session's tools hold the constructor policy, but the gate
+/// answers against the live one. When the live settings no longer match the
+/// session's (here the policy was switched off after the session was built),
+/// the tools would validate paths against settings no longer in force, so the
+/// call is refused and nothing is handed to the tools.
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn a_call_is_refused_when_the_autonomy_settings_changed_during_the_session() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
+    let session = Arc::new(SecurityPolicy {
+        enabled: true,
+        ..SecurityPolicy::default()
+    });
+    let live = Arc::new(SecurityPolicy {
+        enabled: false,
+        ..SecurityPolicy::default()
+    });
+    let _live = crate::security::live_policy::install_scoped(
+        live,
+        std::path::PathBuf::new(),
+        std::path::PathBuf::new(),
+    );
+
+    let decision = OpenHumanSecurityGate::new(session.clone(), registry())
+        .authorize_tool(&req("write_file", json!({ "path": "notes.md" })))
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(&decision, GateDecision::Deny { reason } if reason.contains("settings changed")),
+        "stale session settings must be refused: {decision:?}"
+    );
+    assert!(!session.can_act(), "a refused call hands the tools nothing");
 }

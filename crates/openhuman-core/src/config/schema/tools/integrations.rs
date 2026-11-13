@@ -222,12 +222,51 @@ impl Default for ComposioConfig {
 pub struct SecretsConfig {
     #[serde(default = "defaults::default_true")]
     pub encrypt: bool,
+    /// Let a headless host unlock its config secrets without a person
+    /// answering the one-time "Unlock configuration secrets" approval.
+    ///
+    /// Off by default. It takes effect only when the operator supplied the
+    /// keyring master key (`OPENHUMAN_KEYRING_MASTER_KEY` or
+    /// `OPENHUMAN_KEYRING_MASTER_KEY_FILE`) to a `file` or `encrypted_file`
+    /// keyring backend: whoever can read that key can already decrypt the
+    /// keyring, so the host answers the grant on the operator's behalf.
+    /// Anywhere else the setting is ignored and the approval still parks for a
+    /// person. Env override: `OPENHUMAN_SECRETS_UNATTENDED_UNLOCK`.
+    #[serde(default)]
+    pub unattended_unlock: bool,
+}
+
+/// Env override for [`SecretsConfig::unattended_unlock`].
+pub const SECRETS_UNATTENDED_UNLOCK_ENV: &str = "OPENHUMAN_SECRETS_UNATTENDED_UNLOCK";
+
+impl SecretsConfig {
+    /// `unattended_unlock` with the process environment applied on top, so a
+    /// configuration read without the env overlay (a raw reload of the file)
+    /// still honours the operator's [`SECRETS_UNATTENDED_UNLOCK_ENV`]: `1` turns
+    /// it on, `0` turns it off, and an empty or unrecognised value leaves the
+    /// file's setting.
+    pub(crate) fn effective_unattended_unlock(&self) -> bool {
+        Self::unattended_unlock_with(
+            self.unattended_unlock,
+            std::env::var(SECRETS_UNATTENDED_UNLOCK_ENV).ok().as_deref(),
+        )
+    }
+
+    /// The decision behind [`Self::effective_unattended_unlock`].
+    pub(crate) fn unattended_unlock_with(file: bool, env: Option<&str>) -> bool {
+        match env.map(|raw| raw.trim().to_ascii_lowercase()).as_deref() {
+            Some("1" | "true" | "yes" | "on") => true,
+            Some("0" | "false" | "no" | "off") => false,
+            _ => file,
+        }
+    }
 }
 
 impl Default for SecretsConfig {
     fn default() -> Self {
         Self {
             encrypt: defaults::default_true(),
+            unattended_unlock: false,
         }
     }
 }
@@ -309,24 +348,21 @@ impl Default for IntegrationToggle {
 /// Composio in particular is unconditionally enabled and has no toggle:
 /// as long as the user is signed in, composio tools are available.
 ///
-/// The per-tool `google_places`, `parallel`, `tinyfish`, and `stock_prices`
+/// The per-tool `google_places`, `tinyfish`, and `stock_prices`
 /// flags below are preserved because those integrations incur per-call
 /// costs that the user may legitimately want to turn off; composio
 /// costs are metered server-side, so there is no client-side toggle
 /// for it.
 ///
 /// Unknown keys are ignored on load, so configs written by older builds that
-/// still carry the retired `twilio` / `apify` toggles keep deserializing.
+/// still carry the retired `twilio` / `apify` / `parallel` toggles keep
+/// deserializing.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(default)]
 pub struct IntegrationsConfig {
     /// Google Places location search integration.
     #[serde(default)]
     pub google_places: IntegrationToggle,
-
-    /// Parallel web search & content extraction integration.
-    #[serde(default)]
-    pub parallel: IntegrationToggle,
 
     /// TinyFish web search, fetch, and browser automation integration.
     #[serde(default)]

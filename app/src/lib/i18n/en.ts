@@ -133,6 +133,9 @@ const en: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agents & Autonomy',
   'settings.devGroups.automationIntegrations': 'Automation & Integrations',
   'settings.tokenUsage.title': 'Token savings',
+  'settings.secretGrant.title': 'Allow OpenHuman to unlock your saved secrets?',
+  'settings.secretGrant.subtitle':
+    'Saving this setting needs your one-time approval to encrypt it. Deny to cancel the save.',
   'settings.tokenUsage.menuDesc':
     'Compression settings and how many tokens and dollars they have saved',
   'settings.tokenUsage.saving': 'Saving…',
@@ -4153,6 +4156,8 @@ const en: TranslationMap = {
     "This turn ran past its time budget without finishing and was stopped so it wouldn't hang. This usually means a tool call or a delegated sub-agent stalled. You can retry your question in this thread.",
   'chat_error.disk_full':
     "Your disk is full, so this conversation couldn't be saved. Free up some disk space, then send your message again in this thread.",
+  'chat_error.prompt_screened':
+    "OpenHuman's security screen held this message, so it wasn't sent to the model. If it quotes instructions meant for an assistant (from a web page or an email, for example), remove them and try again. If ordinary messages are being held, the security module may be unavailable: restart OpenHuman and try again.",
   'chat_error.empty_response':
     'The model returned an empty response. Please retry. If it keeps happening, try a different model or check its setup in Connections → API keys → LLM.',
   'chat_error.chat_template_rejected':

@@ -117,8 +117,16 @@ async fn once_and_pause_resume_aliases_work() {
     assert!(!resume.is_error);
 }
 
+/// The tool does not police its own tier; the host authorization stage does,
+/// from the permission level and external effect each call declares. A read-only
+/// session must be refused every action that creates, changes or removes a job,
+/// and still be allowed to look.
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
-async fn readonly_blocks_mutating_actions() {
+async fn the_host_stage_blocks_mutating_actions_in_readonly_mode() {
+    use crate::agent::tinyagents::host::security_gate_test_support::{authorize_one, is_denied};
     let tmp = TempDir::new().unwrap();
     let config = Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -142,19 +150,35 @@ async fn readonly_blocks_mutating_actions() {
         &config.workspace_dir,
     ));
 
+    for args in [
+        json!({"action": "create", "expression": "* * * * *", "command": "echo blocked"}),
+        json!({"action": "add", "expression": "* * * * *", "command": "echo blocked"}),
+        json!({"action": "once", "delay": "10m", "command": "echo blocked"}),
+        json!({"action": "cancel", "id": "job-1"}),
+        json!({"action": "remove", "id": "job-1"}),
+        json!({"action": "pause", "id": "job-1"}),
+        json!({"action": "resume", "id": "job-1"}),
+    ] {
+        let tool = Box::new(ScheduleTool::new(security.clone(), config.clone()));
+        let decision = authorize_one(security.clone(), tool, args.clone()).await;
+        assert!(
+            is_denied(&decision),
+            "a read-only session must not run {args}; got {decision:?}"
+        );
+    }
+    for args in [
+        json!({"action": "list"}),
+        json!({"action": "get", "id": "job-1"}),
+    ] {
+        let tool = Box::new(ScheduleTool::new(security.clone(), config.clone()));
+        let decision = authorize_one(security.clone(), tool, args.clone()).await;
+        assert!(
+            !is_denied(&decision),
+            "a read-only session may still run {args}; got {decision:?}"
+        );
+    }
+
     let tool = ScheduleTool::new(security, config);
-
-    let blocked = tool
-        .execute(json!({
-            "action": "create",
-            "expression": "* * * * *",
-            "command": "echo blocked"
-        }))
-        .await
-        .unwrap();
-    assert!(blocked.is_error);
-    assert!(blocked.output().contains("read-only"));
-
     let list = tool.execute(json!({"action": "list"})).await.unwrap();
     assert!(!list.is_error);
     assert!(list.output().contains("No scheduled jobs"));

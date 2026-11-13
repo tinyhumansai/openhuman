@@ -44,7 +44,7 @@ mod tests;
 
 pub use execute::ComposioExecuteTool;
 pub(crate) use live_config::live_composio_config;
-pub(crate) use redact::redact_composio_outcome;
+pub(crate) use redact::{composio_call_keys, redact_composio_outcome, redact_composio_response};
 pub use registry::all_composio_agent_tools;
 
 // Brought into this module's own namespace (private `use`, not `pub use`)

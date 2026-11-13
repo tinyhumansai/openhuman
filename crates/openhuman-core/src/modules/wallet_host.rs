@@ -99,6 +99,155 @@ fn x402_request_owner_matches(
         .is_some_and(|owner| &owner.thread_id == thread_id && &owner.client_id == client_id)
 }
 
+/// How the host answers one x402 authorization callback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum X402Route {
+    /// Trusted automation within the budget: approved without a person. The
+    /// module has already reserved the amount against its own budget before
+    /// asking; the host re-checks the per-request cap as a second line.
+    AutomationApproved,
+    /// A direct `openhuman.x402_fetch` RPC holds a one-shot permit for this
+    /// URL and the amount is within both its cap and the per-request budget.
+    RpcPermitApproved,
+    /// The originating WebChat turn: ask the user with a forced approval.
+    PromptWebChat,
+    /// Refused, with the reason handed back to the module.
+    Refused(&'static str),
+}
+
+/// Route an x402 authorization. Trusted automation (a background job or an
+/// approval-free workflow, the same origins the native spend policy treats as
+/// automation) is approved within `per_request_max_atomic`; the WebChat flow
+/// is unchanged; an external channel, an unlabelled turn and everything else
+/// are refused.
+pub(super) fn x402_route(
+    request: &AuthorizeX402PaymentRequest,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
+    per_request_max_atomic: u64,
+) -> X402Route {
+    use crate::core::runtime::turn_origin::AgentTurnOrigin;
+    match origin {
+        Some(AgentTurnOrigin::TrustedAutomation { source, .. })
+            if crate::web3::wallet::policy::is_policy_automation(source) =>
+        {
+            if request.amount_atomic <= per_request_max_atomic {
+                X402Route::AutomationApproved
+            } else {
+                X402Route::Refused("x402 payment exceeds the per-request budget for automation")
+            }
+        }
+        _ if x402_request_owner_matches(request, origin) => X402Route::PromptWebChat,
+        _ => X402Route::Refused("x402 payment was not explicitly approved for this chat"),
+    }
+}
+
+/// How a direct-RPC x402 permit was used by the module's authorization callback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum X402RpcPermitOutcome {
+    /// No authorization callback matched the permit.
+    Unused,
+    /// The payment was within the caller's cap and the per-request budget.
+    Approved,
+    /// The permit matched but the payment was refused, with the reason.
+    Refused(&'static str),
+}
+
+#[derive(Debug)]
+struct X402RpcPermitEntry {
+    url: String,
+    max_amount_atomic: u64,
+    outcome: Option<X402RpcPermitOutcome>,
+}
+
+static X402_RPC_PERMITS: OnceLock<Mutex<HashMap<u64, X402RpcPermitEntry>>> = OnceLock::new();
+static X402_RPC_PERMIT_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn x402_rpc_permits() -> &'static Mutex<HashMap<u64, X402RpcPermitEntry>> {
+    X402_RPC_PERMITS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// One-shot x402 authorization for a direct `openhuman.x402_fetch` RPC call,
+/// correlated by the exact URL the module reports in its callback and bounded
+/// by the caller's `maxAmountAtomic`. Removed when dropped.
+pub(super) struct X402RpcPermit(u64);
+
+impl X402RpcPermit {
+    pub(super) fn new(url: &str, max_amount_atomic: u64) -> Self {
+        let id = X402_RPC_PERMIT_IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut permits) = x402_rpc_permits().lock() {
+            permits.insert(
+                id,
+                X402RpcPermitEntry {
+                    url: url.to_owned(),
+                    max_amount_atomic,
+                    outcome: None,
+                },
+            );
+        }
+        Self(id)
+    }
+
+    /// Retire the permit and report what the authorization callback decided.
+    pub(super) fn finish(self) -> X402RpcPermitOutcome {
+        x402_rpc_permits()
+            .lock()
+            .ok()
+            .and_then(|mut permits| permits.remove(&self.0))
+            .and_then(|entry| entry.outcome)
+            .unwrap_or(X402RpcPermitOutcome::Unused)
+    }
+}
+
+impl Drop for X402RpcPermit {
+    fn drop(&mut self) {
+        if let Ok(mut permits) = x402_rpc_permits().lock() {
+            permits.remove(&self.0);
+        }
+    }
+}
+
+/// Consume an active, unused direct-RPC permit for `request.url` and decide
+/// the payment against its cap and `per_request_max_atomic` (the module
+/// budget's second line, as for automation). `None` when no permit matches,
+/// so the caller falls through to [`x402_route`] unchanged.
+pub(super) fn x402_rpc_permit_route(
+    request: &AuthorizeX402PaymentRequest,
+    per_request_max_atomic: u64,
+) -> Option<X402Route> {
+    let mut permits = x402_rpc_permits().lock().ok()?;
+    let entry = permits
+        .values_mut()
+        .find(|entry| entry.outcome.is_none() && entry.url == request.url)?;
+    let refusal = if request.amount_atomic > entry.max_amount_atomic {
+        Some("x402 payment exceeds the caller's maxAmountAtomic")
+    } else if request.amount_atomic > per_request_max_atomic {
+        Some("x402 payment exceeds the per-request budget")
+    } else {
+        None
+    };
+    let (outcome, route) = match refusal {
+        Some(reason) => (
+            X402RpcPermitOutcome::Refused(reason),
+            X402Route::Refused(reason),
+        ),
+        None => (X402RpcPermitOutcome::Approved, X402Route::RpcPermitApproved),
+    };
+    entry.outcome = Some(outcome);
+    Some(route)
+}
+
+/// Keep a direct-RPC x402 permit alive only while `future` (the module's
+/// payment preparation) runs, and report how it was used.
+pub(crate) async fn with_x402_rpc_permit<F: Future>(
+    url: &str,
+    max_amount_atomic: u64,
+    future: F,
+) -> (F::Output, X402RpcPermitOutcome) {
+    let permit = X402RpcPermit::new(url, max_amount_atomic);
+    let output = future.await;
+    (output, permit.finish())
+}
+
 fn x402_approval_facts(request: &AuthorizeX402PaymentRequest) -> serde_json::Value {
     serde_json::json!({
         "url": request.url,
@@ -451,35 +600,51 @@ impl WalletHost {
         }))
     }
 
-    /// x402 authorization is supplied by the host's guarded HTTP request path;
-    /// absent an active guard scope, payment signing fails closed.
+    /// x402 authorization: a direct `x402_fetch` RPC holding a permit for this
+    /// URL is approved within its cap and the per-request budget
+    /// ([`x402_rpc_permit_route`]); otherwise a WebChat turn asks its user with
+    /// a forced approval (the guarded HTTP request path), trusted automation is
+    /// approved within the per-request budget ([`x402_route`]), and any other
+    /// origin fails closed.
     async fn authorize_x402_payment(
         &self,
         request: AuthorizeX402PaymentRequest,
     ) -> tinybus::Result<HostResponse> {
         let origin = crate::core::runtime::DispatchCtx::ambient_turn().turn_origin();
-        let owner_matches = x402_request_owner_matches(&request, origin.as_ref());
-        let approved = if owner_matches {
-            if let Some(gate) = crate::security::approval::ApprovalGate::try_global() {
-                matches!(
-                    gate.intercept_forced(
-                        "x402_payment",
-                        "Approve this exact x402 payment",
-                        x402_approval_facts(&request),
-                    )
-                    .await,
-                    crate::security::approval::GateOutcome::Allow
+        let per_request_max_atomic = super::x402_service::per_request_max_atomic();
+        let route = x402_rpc_permit_route(&request, per_request_max_atomic)
+            .unwrap_or_else(|| x402_route(&request, origin.as_ref(), per_request_max_atomic));
+        tracing::debug!(
+            origin = origin.as_ref().map(|o| o.class()).unwrap_or_else(|| "none".into()),
+            route = ?route,
+            "[modules:wallet] x402 authorization"
+        );
+        let (approved, reason) = match route {
+            X402Route::AutomationApproved | X402Route::RpcPermitApproved => (true, None),
+            X402Route::PromptWebChat => {
+                let approved = match crate::security::approval::ApprovalGate::try_global() {
+                    Some(gate) => matches!(
+                        gate.intercept_forced(
+                            "x402_payment",
+                            "Approve this exact x402 payment",
+                            x402_approval_facts(&request),
+                        )
+                        .await,
+                        crate::security::approval::GateOutcome::Allow
+                    ),
+                    None => false,
+                };
+                (
+                    approved,
+                    (!approved)
+                        .then(|| "x402 payment was not explicitly approved for this chat".into()),
                 )
-            } else {
-                false
             }
-        } else {
-            false
+            X402Route::Refused(reason) => (false, Some(reason.to_string())),
         };
         Ok(HostResponse::Authorization(AuthorizationResult {
             approved,
-            reason: (!approved)
-                .then(|| "x402 payment was not explicitly approved for this chat".into()),
+            reason,
         }))
     }
 }
@@ -496,7 +661,11 @@ pub(super) async fn install(connection: &tinybus::Connection) -> tinybus::Result
     connection
         .serve_at(
             ObjectPath::new(tinywallet_bus::HOST_OBJECT_PATH)?,
-            WalletHost,
+            super::callback_owner::OwnedBy::new(
+                WalletHost,
+                connection,
+                tinywallet_bus::names::BUS_NAME,
+            ),
         )
         .await?;
     connection

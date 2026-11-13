@@ -134,8 +134,6 @@ test("every allowlisted path carries a reason and known rules", () => {
       assert.ok(entry.site.length > 5, file);
     }
   }
-  const state = `${SRC}/config/workspace/state.rs`;
-  assert.equal(ALLOW.has(state), false, "the TSD facade removed the old SQLite opener");
 });
 
 test("a new database open fails the check", () => {

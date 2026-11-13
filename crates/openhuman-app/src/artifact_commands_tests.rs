@@ -285,8 +285,17 @@ async fn download_rejects_invalid_inputs() {
     );
 }
 
+// `resolve_source` asks the core's security module whether the file is in a
+// protected location, and that module is bound to the secret scope of the
+// config the core loads from the process environment. Other tests repoint
+// `OPENHUMAN_WORKSPACE` at a temporary workspace while holding `env_lock`; a
+// test that resolves a source without holding it can see its scope change
+// between two lookups and be refused as "protected" (the module fails closed).
+// Hold the lock across the whole test so the scope cannot move under it.
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn save_as_refuses_before_the_dialog_opens() {
+    let _env_lock = env_lock();
     let temp = tempfile::tempdir().unwrap();
     let files_dir = temp.path().join("Files");
     let id = ready_artifact(temp.path(), &files_dir).await;
@@ -315,8 +324,17 @@ async fn save_as_refuses_before_the_dialog_opens() {
     }
 }
 
+// `resolve_source` asks the core's security module whether the file is in a
+// protected location, and that module is bound to the secret scope of the
+// config the core loads from the process environment. Other tests repoint
+// `OPENHUMAN_WORKSPACE` at a temporary workspace while holding `env_lock`; a
+// test that resolves a source without holding it can see its scope change
+// between two lookups and be refused as "protected" (the module fails closed).
+// Hold the lock across the whole test so the scope cannot move under it.
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn save_as_copies_to_the_chosen_path_and_reports_a_cancel() {
+    let _env_lock = env_lock();
     let temp = tempfile::tempdir().unwrap();
     let files_dir = temp.path().join("Files");
     let id = ready_artifact(temp.path(), &files_dir).await;

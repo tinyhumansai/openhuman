@@ -206,6 +206,8 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': '智能体与自主性',
   'settings.devGroups.automationIntegrations': '自动化与集成',
   'settings.tokenUsage.title': '令牌节省',
+  'settings.secretGrant.title': '允许 OpenHuman 解锁您保存的密钥吗？',
+  'settings.secretGrant.subtitle': '保存此设置需要您一次性批准对其加密。拒绝即可取消保存。',
   'settings.tokenUsage.menuDesc': '压缩设置以及它们已节省的令牌和美元数量',
   'settings.tokenUsage.saving': '正在保存…',
   'settings.tokenUsage.saved': '已保存',
@@ -3657,6 +3659,8 @@ const messages: TranslationMap = {
     '这一轮超出了时间预算仍未完成，已被停止以免卡住。这通常意味着某次工具调用或被委派的子智能体停滞了。你可以在此对话中重试你的问题。',
   'chat_error.disk_full':
     '你的磁盘已满，因此无法保存此对话。请释放一些磁盘空间，然后在此对话中重新发送你的消息。',
+  'chat_error.prompt_screened':
+    'OpenHuman 的安全筛查拦下了这条消息，因此它没有发送给模型。如果消息中引用了写给助手的指令（例如来自网页或邮件），请删除后重试。如果普通消息也被拦下，可能是安全模块不可用：请重启 OpenHuman 后重试。',
   'chat_error.empty_response':
     '模型返回了空响应。请重试。如果持续出现，请尝试其他模型，或在 连接 → API 密钥 → 语言模型 中检查其设置。',
   'chat_error.chat_template_rejected':

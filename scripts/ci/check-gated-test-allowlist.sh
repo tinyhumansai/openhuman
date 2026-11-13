@@ -18,6 +18,7 @@ cd "$(dirname "$0")/../.."
 EXPECTED=$(cat <<'EOF'
 agent_registry/host_definition_tests.rs
 agent/session_host/mod.rs
+agent/tinyagents/host/security_gate_tests.rs
 integrations/prelude_integrations.rs
 agent/session_host/runtime_session_tool_surface.rs
 agent/session_host/runtime_session_tests.rs
@@ -56,6 +57,7 @@ threads/store/mod.rs
 agent/session_host/transcript_compat_tests.rs
 channels/mod.rs
 mcp/host.rs
+mcp/registry/mod.rs
 modules/registry_contract_tests.rs
 modules/registry.rs
 credentials/core.rs
@@ -104,6 +106,7 @@ integrations/composio/ops/mod.rs
 integrations/composio/client.rs
 mcp/server/resources_tests.rs
 modules/tinyflows.rs
+modules/storage_grant_schemas_tests.rs
 doctor/checks/channels.rs
 doctor/checks/inference_tests.rs
 doctor/checks/mcp.rs
@@ -124,7 +127,6 @@ agent/queued_turn_tests.rs
 cron/ops_tests.rs
 cron/scheduler_tests.rs
 web_chat/web_tests_turn_lifecycle_tests.rs
-web_chat/run_task.rs
 channels/host/voice_tests.rs
 EOF
 )

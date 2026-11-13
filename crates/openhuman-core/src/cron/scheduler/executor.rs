@@ -102,7 +102,7 @@ impl HostExecutor {
             retryable: false,
             raw_detail: agent_error.map(str::to_string),
         };
-        if output.starts_with("blocked by security policy:") {
+        if output.starts_with(super::shell_job::POLICY_REFUSAL_PREFIX) {
             // Deterministic policy violations are not retryable.
             return permanent(output);
         }

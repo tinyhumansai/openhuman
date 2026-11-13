@@ -6,7 +6,7 @@
 use crate::core::legacy_aliases::resolve_legacy;
 use crate::core::rpc_log;
 use crate::core::types::{AppState, InvocationResult};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 /// Dispatches an RPC method call to the appropriate subsystem.
 ///
@@ -242,7 +242,7 @@ async fn try_registry_dispatch(
         return crate::core::all::disabled_component_for_method(&ctx, method)
             .map(|name| Err(crate::core::runtime::components::component_disabled(name).encode()));
     };
-    let params_obj = match params_to_object(params) {
+    let params_obj = match crate::core::params::params_to_object(params) {
         Ok(params_obj) => params_obj,
         Err(err) => return Some(Err(err)),
     };
@@ -250,28 +250,6 @@ async fn try_registry_dispatch(
         return Some(Err(err));
     }
     crate::core::all::try_invoke_registered_rpc(ctx, method, params_obj).await
-}
-
-fn params_to_object(params: Value) -> Result<Map<String, Value>, String> {
-    match params {
-        Value::Object(map) => Ok(map),
-        Value::Null => Ok(Map::new()),
-        other => Err(format!(
-            "invalid params: expected object or null, got {}",
-            type_name(&other)
-        )),
-    }
-}
-
-fn type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "bool",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
 }
 
 #[cfg(test)]

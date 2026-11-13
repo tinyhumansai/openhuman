@@ -197,38 +197,6 @@ fn env_overlay_reasoning_enabled_recognises_truthy_falsy_and_ignores_garbage() {
 }
 
 #[test]
-fn env_overlay_web_search_limits_validated() {
-    let mut cfg = Config::default();
-    cfg.web_search.max_results = 3;
-    cfg.web_search.timeout_secs = 10;
-
-    // Valid values apply.
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new()
-            .with("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "7")
-            .with("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "25"),
-    );
-    assert_eq!(cfg.web_search.max_results, 7);
-    assert_eq!(cfg.web_search.timeout_secs, 25);
-
-    // Out-of-range — ignored.
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new()
-            .with("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "0")
-            .with("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "0"),
-    );
-    assert_eq!(cfg.web_search.max_results, 7);
-    assert_eq!(cfg.web_search.timeout_secs, 25);
-
-    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "11"));
-    assert_eq!(cfg.web_search.max_results, 7);
-
-    // Bare aliases also accepted when the OPENHUMAN-prefixed variant is absent.
-    cfg.apply_env_overlay_with(&HashMapEnv::new().with("WEB_SEARCH_MAX_RESULTS", "4"));
-    assert_eq!(cfg.web_search.max_results, 4);
-}
-
-#[test]
 fn env_overlay_tavily_api_key_supports_alias_precedence_and_ignores_blank_values() {
     let mut cfg = Config::default();
 
@@ -481,6 +449,39 @@ fn env_overlay_jev_route_and_base_url_override_tool_search_when_non_blank() {
     );
 }
 
+#[test]
+fn env_overlay_sets_the_tool_search_discovery_options() {
+    let mut cfg = Config::default();
+    let today = cfg.agent.tool_search.clone();
+    assert!(today.promote_found_tools && today.repair_tool_call_wrapper);
+    assert!(!today.compact_search_results && !today.collapse_search_results);
+    assert_eq!(today.max_limit, 20);
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_TOOL_SEARCH_PROMOTE_FOUND_TOOLS", "off")
+            .with("OPENHUMAN_TOOL_SEARCH_COMPACT_SEARCH_RESULTS", " TRUE ")
+            .with("OPENHUMAN_TOOL_SEARCH_COLLAPSE_SEARCH_RESULTS", "1")
+            .with("OPENHUMAN_TOOL_SEARCH_REPAIR_TOOL_CALL_WRAPPER", "no")
+            .with("OPENHUMAN_TOOL_SEARCH_MAX_LIMIT", "5"),
+    );
+    let set = &cfg.agent.tool_search;
+    assert!(!set.promote_found_tools && !set.repair_tool_call_wrapper);
+    assert!(set.compact_search_results && set.collapse_search_results);
+    assert_eq!(set.max_limit, 5);
+
+    // Blank or unusable values leave the configured choice alone.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_TOOL_SEARCH_PROMOTE_FOUND_TOOLS", "  ")
+            .with("OPENHUMAN_TOOL_SEARCH_COMPACT_SEARCH_RESULTS", "maybe")
+            .with("OPENHUMAN_TOOL_SEARCH_MAX_LIMIT", "0"),
+    );
+    assert!(!cfg.agent.tool_search.promote_found_tools);
+    assert!(cfg.agent.tool_search.compact_search_results);
+    assert_eq!(cfg.agent.tool_search.max_limit, 5);
+}
+
 /// Local model tier presets were removed: OpenHuman no longer picks models by
 /// RAM tier. A stale `OPENHUMAN_LOCAL_AI_TIER` in the environment must be
 /// ignored rather than rewriting the user's configured local models.
@@ -535,6 +536,7 @@ tts_config_download_url = "https://example.invalid/voice.onnx.json"
     assert_eq!(cfg.local_ai.embedding_model_id, "bge-m3");
     let saved = toml::to_string(&cfg).expect("updated config serializes");
     for retired in [
+        "selected_tier",
         "quantization",
         "preload_vision_model",
         "preload_embedding_model",
@@ -628,4 +630,66 @@ fn env_overlay_inbound_debounce_applies_and_ignores_garbage() {
 
     cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_INBOUND_DEBOUNCE_ENABLED", "on"));
     assert!(cfg.inbound_debounce.enabled);
+}
+
+#[test]
+fn search_compact_results_and_contents_cap_default_to_today_and_read_from_the_table() {
+    let defaults = Config::default().search;
+    assert!(!defaults.compact_results);
+    assert_eq!(defaults.contents_max_chars, None);
+
+    let cfg: Config =
+        toml::from_str("[search]\ncompact_results = true\ncontents_max_chars = 1200\n").unwrap();
+    assert!(cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, Some(1_200));
+}
+
+#[test]
+fn search_compact_results_and_contents_cap_env_set_clear_and_ignore_garbage() {
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARCH_COMPACT_RESULTS", "yes")
+            .with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", " 1200 "),
+    );
+    assert!(cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, Some(1_200));
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARCH_COMPACT_RESULTS", "sometimes")
+            .with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", "lots"),
+    );
+    assert!(cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, Some(1_200));
+
+    // `0` removes the cap and `off` restores the default rendering.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARCH_COMPACT_RESULTS", "off")
+            .with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", "0"),
+    );
+    assert!(!cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, None);
+}
+
+#[test]
+fn search_contents_cap_env_treats_every_zero_spelling_as_unset() {
+    for zero in ["0", "00", " 000 "] {
+        let mut cfg = Config::default();
+        cfg.search.contents_max_chars = Some(1_200);
+        cfg.apply_env_overlay_with(
+            &HashMapEnv::new().with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", zero),
+        );
+        assert_eq!(
+            cfg.search.contents_max_chars, None,
+            "{zero:?} must clear the cap, not become a one-character cap"
+        );
+    }
+    // A leading zero on a positive value is still that value.
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", "01"),
+    );
+    assert_eq!(cfg.search.contents_max_chars, Some(1));
 }

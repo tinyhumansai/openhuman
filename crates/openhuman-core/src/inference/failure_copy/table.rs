@@ -37,6 +37,7 @@ pub(crate) enum FailureClass {
     Network,
     Inference,
     ManagedInternal,
+    PromptScreened,
 }
 
 struct OpenHumanFailureCopy;
@@ -107,6 +108,7 @@ impl FailureCopyProvider for OpenHumanFailureCopy {
             HostDefined("managed_request_rejected") => row!("chat_error.managed_request_rejected", "provider_request_rejected", "provider", false, "The request was rejected — usually a model or parameter mismatch. Try a different model in Connections → API keys → LLM."),
             HostDefined("managed_malformed_request") => row!("chat_error.managed_malformed_request", "provider_request_rejected", "provider", false, "Something went wrong with this message. Try rephrasing it — or start a new thread if it keeps happening."),
             HostDefined("managed_internal") => row!("chat_error.managed_internal", "inference", "provider", true, "Something went wrong — we've been notified. Please try again."),
+            HostDefined("prompt_screened") => row!("chat_error.prompt_screened", "prompt_screened", "security", true, "OpenHuman's security screen held this message, so it wasn't sent to the model. If it quotes instructions meant for an assistant (from a web page or an email, for example), remove them and try again. If ordinary messages are being held, the security module may be unavailable: restart OpenHuman and try again."),
             HostDefined(_) => return None,
             _ => return None,
         };
@@ -151,6 +153,7 @@ pub(crate) fn failure_copy(class: FailureClass) -> FailureCopy {
         Network => FailureCopyClass::Network,
         Inference => FailureCopyClass::Inference,
         ManagedInternal => FailureCopyClass::HostDefined("managed_internal"),
+        PromptScreened => FailureCopyClass::HostDefined("prompt_screened"),
     };
     failure_copy_with(&OpenHumanFailureCopy, owner_class)
         .expect("OpenHuman overrides all product-defined failure classes")

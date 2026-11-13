@@ -634,3 +634,7 @@ mod session_checkout_agents_tests;
 #[cfg(test)]
 #[path = "session_routing_tests.rs"]
 mod session_routing_tests;
+
+#[cfg(test)]
+#[path = "session_tenant_release_tests.rs"]
+mod session_tenant_release_tests;

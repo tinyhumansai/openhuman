@@ -8,9 +8,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+mod backend;
 mod keychain;
 #[cfg(test)]
 pub(crate) use keychain::namespaced_keyring_name;
+pub(crate) use keychain::without_keyring;
 mod lock;
 mod migration;
 mod persistence;
@@ -35,7 +37,7 @@ pub(crate) async fn load_profile_read_only(
 const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// Compact secret payload stored as a single keychain entry per auth profile.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 struct KeychainSecrets {
     #[serde(default)]
     pub token: Option<String>,
@@ -211,6 +213,8 @@ fn user_id_from_state_dir(state_dir: &Path) -> String {
 
 #[derive(Clone)]
 pub struct AuthProfilesStore {
+    /// The credential directory (`config_path`'s parent) this store serves.
+    state_dir: PathBuf,
     path: PathBuf,
     legacy_path: PathBuf,
     lock_path: PathBuf,

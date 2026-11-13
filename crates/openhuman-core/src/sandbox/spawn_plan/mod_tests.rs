@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 fn policy(backend: SandboxBackendKind) -> SandboxPolicy {
     SandboxPolicy {
+        filesystem_only: false,
         backend,
         workspace_root: PathBuf::from("/work/action"),
         state_dir: PathBuf::from("/state"),
@@ -37,10 +38,16 @@ fn bounds_come_from_the_docker_overrides_and_never_loosen() {
     assert_eq!(bounded.cpu_millicores, Some(1500));
     assert_eq!(bounded.memory_bytes, Some(512 * 1024 * 1024));
     assert_eq!(bounded.cpu_time_ms, None);
-    // A fraction rounds up to the next millicore rather than down to a looser bound.
+    // A fraction rounds down: a CPU bound is a ceiling, so rounding up would
+    // widen it (0.1004 cores must not run as 0.101).
+    assert_eq!(
+        limits(&with_overrides(Some(0.1004), None)).cpu_millicores,
+        Some(100)
+    );
+    // Below one millicore the bound is 0, which the plan refuses, not widens.
     assert_eq!(
         limits(&with_overrides(Some(0.0004), None)).cpu_millicores,
-        Some(1)
+        Some(0)
     );
     // Absent, zero and non-finite bounds are not bounds.
     for cpu in [
@@ -187,4 +194,67 @@ async fn an_openshell_spawn_declares_only_the_openshell_executor() {
         .unwrap();
     assert_eq!(declared.len(), 1);
     assert_eq!(declared[0].executor_id, OPENSHELL_EXECUTOR);
+}
+
+#[test]
+fn a_path_refusal_of_a_root_over_the_core_workspace_names_the_overlap() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("brain")).unwrap();
+    std::fs::create_dir_all(root.join("work")).unwrap();
+    let config = Config {
+        workspace_dir: root.join("brain"),
+        action_dir: root.clone(),
+        ..Config::default()
+    };
+    let mut over = policy(SandboxBackendKind::Local);
+    over.workspace_root = root.clone();
+
+    let explained = refusal(SandboxDenial2::Path, &over, &config).to_string();
+    assert!(explained.contains("Path"), "{explained}");
+    assert!(explained.contains("core workspace"), "{explained}");
+    assert!(
+        explained.contains(&root.display().to_string()),
+        "{explained}"
+    );
+
+    // A root inside the workspace is the same overlap.
+    over.workspace_root = root.join("brain");
+    assert!(refusal(SandboxDenial2::Path, &over, &config)
+        .to_string()
+        .contains("core workspace"));
+
+    // A root beside the workspace, or another denial, stays the module's own.
+    let mut beside = policy(SandboxBackendKind::Local);
+    beside.workspace_root = root.join("work");
+    assert_eq!(
+        refusal(SandboxDenial2::Path, &beside, &config),
+        PlanError::Refused(SandboxDenial2::Path)
+    );
+    assert_eq!(
+        refusal(SandboxDenial2::Approval, &over, &config),
+        PlanError::Refused(SandboxDenial2::Approval)
+    );
+}
+
+#[test]
+fn only_an_opted_in_agent_spawn_with_the_host_network_asks_for_a_files_only_plan() {
+    let mut opted = policy(SandboxBackendKind::Local);
+    opted.filesystem_only = true;
+    let host = NetworkPolicy::Host;
+    assert!(files_only(&opted, false, SpawnSource::Agent, &host));
+    // A policy that did not opt in keeps the network requirement and the floor.
+    let plain = policy(SandboxBackendKind::Local);
+    assert!(!files_only(&plain, false, SpawnSource::Agent, &host));
+    // Text the host did not author never asks, whatever the policy says.
+    assert!(!files_only(&opted, false, SpawnSource::Untrusted, &host));
+    // A files-only plan cannot promise less network than the host's own.
+    assert!(!files_only(
+        &opted,
+        false,
+        SpawnSource::Agent,
+        &NetworkPolicy::None
+    ));
+    // A run on the host confines nothing, so it is never files-only.
+    assert!(!files_only(&opted, true, SpawnSource::Agent, &host));
 }

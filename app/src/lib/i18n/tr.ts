@@ -116,6 +116,10 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Ajanlar ve özerklik',
   'settings.devGroups.automationIntegrations': 'Otomasyon ve entegrasyonlar',
   'settings.tokenUsage.title': 'Token tasarrufu',
+  'settings.secretGrant.title':
+    "OpenHuman'ın kayıtlı gizli bilgilerinizin kilidini açmasına izin verilsin mi?",
+  'settings.secretGrant.subtitle':
+    'Bu ayarı kaydetmek için şifrelenmesine tek seferlik onayınız gerekiyor. Kaydetmeyi iptal etmek için reddedin.',
   'settings.tokenUsage.menuDesc':
     'Sıkıştırma ayarları ve bunların ne kadar token ve dolar tasarruf sağladığı',
   'settings.tokenUsage.saving': 'Kaydediliyor…',
@@ -3780,6 +3784,8 @@ const messages: TranslationMap = {
     'Bu tur, tamamlanmadan süre bütçesini aştı ve takılı kalmaması için durduruldu. Bu genellikle bir araç çağrısının veya görev devredilen bir alt ajanın takıldığı anlamına gelir. Sorunuzu bu sohbet dizisinde yeniden deneyebilirsiniz.',
   'chat_error.disk_full':
     'Diskiniz dolu, bu yüzden bu sohbet kaydedilemedi. Diskte biraz yer açın, ardından mesajınızı bu sohbet dizisinde yeniden gönderin.',
+  'chat_error.prompt_screened':
+    "OpenHuman'ın güvenlik denetimi bu mesajı tuttuğu için mesaj modele gönderilmedi. Mesaj bir asistana yönelik talimatlardan alıntı içeriyorsa (örneğin bir web sayfasından veya e-postadan), yalnızca bu alıntıyı kaldırıp yeniden deneyin. Sıradan mesajlar da tutuluyorsa güvenlik modülü kullanılamıyor olabilir: OpenHuman'ı yeniden başlatıp tekrar deneyin.",
   'chat_error.empty_response':
     'Model boş bir yanıt döndürdü. Lütfen yeniden deneyin. Sorun devam ederse farklı bir model deneyin veya Bağlantılar → API anahtarları → LLM bölümünden kurulumunu kontrol edin.',
   'chat_error.chat_template_rejected':

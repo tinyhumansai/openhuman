@@ -6,8 +6,8 @@ use crate::core::all::{
 
 #[test]
 fn wallet_schema_wire_contracts_are_preserved() {
-    assert_eq!(all_wallet_controller_schemas().len(), 16);
-    assert_eq!(all_wallet_registered_controllers().len(), 16);
+    assert_eq!(all_wallet_controller_schemas().len(), 20);
+    assert_eq!(all_wallet_registered_controllers().len(), 20);
     assert_schema_controller_parity(
         &all_wallet_controller_schemas(),
         &all_wallet_registered_controllers(),

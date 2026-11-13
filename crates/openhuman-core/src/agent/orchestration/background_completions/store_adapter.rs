@@ -58,24 +58,37 @@ pub(in crate::agent::orchestration) fn router_scope(workspace_dir: &Path) -> Rou
 }
 
 /// The durable completion queue of `workspace_dir` in the storage backend,
-/// under the calling tenant's scope.
+/// under the calling tenant's profile scope.
+///
+/// The agent is left out, as in [`router_scope_for`]: profile-less embed
+/// agents share the workspace's router, thread keys and boot recovery, so
+/// their records must live in the store those reopen, not in whichever
+/// agent's scope happened to open it first (#7687).
 pub(in crate::agent::orchestration) fn open_driver_store(
     ctx: &DispatchCtx,
     workspace_dir: &Path,
 ) -> anyhow::Result<Arc<dyn CompletionStore>> {
     with_storage_context(ctx, || {
-        // Preserve the `background_completions` domain scope used by the
-        // previous document-backed adapter. The owner API now needs the
-        // backend and exact scope so it can provide its own fenced store.
-        let opened = crate::storage::local::open("background_completions", workspace_dir)?;
+        // The scope first: a SaaS call with no profile fails closed without
+        // creating a workspace database as a side effect.
+        let profile = ctx
+            .tenant()
+            .map_err(|error| anyhow::anyhow!("{error}"))?
+            .profile;
+        let scope =
+            crate::storage::scope_from(profile.as_deref(), None, crate::core::runtime::is_saas())
+                .map_err(|error| {
+                anyhow::anyhow!("[background_completions] resolve the storage scope: {error}")
+            })?;
+        let backend = crate::storage::local::backend_for(workspace_dir)?;
         let fallback = if crate::storage::installed_is_shared() {
             CompletionStoreFallback::FailClosed
         } else {
             CompletionStoreFallback::LocalMemory
         };
-        let scope = tinyagents_storage_kit::Scope::new(opened.scope.as_str())?;
+        let scope = tinyagents_storage_kit::Scope::new(scope.as_str())?;
         open_driver_completion_store_or_memory(
-            Arc::new(CompletionBackend(opened.backend)),
+            Arc::new(CompletionBackend(backend)),
             scope,
             fallback,
         )

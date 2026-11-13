@@ -228,9 +228,34 @@ async fn scenario() {
             "gemini answered"
         );
         let exa_before = exa.received_requests().await.unwrap().len();
+        // A canonical role name is not callable: the profile's capability
+        // hook refuses it as a tool error the model reads (the turn itself
+        // completes), and the search provider is never reached.
+        let requests_before = chat_requests(&chat).await.len();
+        handle
+            .chat("t2", "use the canonical name")
+            .await
+            .expect("a refused unknown tool is a tool error, not a failed turn");
+        let tool_results: Vec<String> = chat_requests(&chat).await[requests_before..]
+            .iter()
+            .flat_map(|request| {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                body["messages"].as_array().cloned().unwrap_or_default()
+            })
+            .filter(|message| message["role"] == "tool")
+            .map(|message| message["content"].to_string())
+            .collect();
+        let refused = tool_results.iter().any(|content| {
+            content.contains("denied web_search_tool")
+                && content.contains("outside the hosted profile capability boundary")
+        });
+        if !refused {
+            // The linked module's panic hook drops assertion payloads.
+            eprintln!("profile_direct_providers: tool results {tool_results:?}");
+        }
         assert!(
-            handle.chat("t2", "use the canonical name").await.is_err(),
-            "a canonical role name is not callable"
+            refused,
+            "a canonical role name is not callable: {tool_results:?}"
         );
         assert_eq!(exa.received_requests().await.unwrap().len(), exa_before);
     }

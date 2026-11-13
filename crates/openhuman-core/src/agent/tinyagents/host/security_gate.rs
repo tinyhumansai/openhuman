@@ -152,6 +152,11 @@ pub struct OpenHumanSecurityGate {
     /// recursive delegation as orchestration control under the Cron policy.
     /// The Cron origin check remains mandatory at authorization time.
     headless_descendant_settlement: bool,
+    /// Set only on the root session the cron scheduler built for a job whose
+    /// agent opted into scheduled actions. Together with a
+    /// `TrustedAutomationSource::CronActions` origin and a root run (depth 0)
+    /// it lifts the read-only Cron stage; every later stage still applies.
+    scheduled_actions: bool,
 }
 
 impl OpenHumanSecurityGate {
@@ -173,7 +178,15 @@ impl OpenHumanSecurityGate {
             dispatch: None,
             screening_config: None,
             headless_descendant_settlement: false,
+            scheduled_actions: false,
         }
+    }
+
+    /// Marks the gate as the root session of an opted-in scheduled-actions
+    /// cron run (`cron::origin::scheduled_actions_enabled`).
+    pub(crate) fn with_scheduled_actions(mut self, enabled: bool) -> Self {
+        self.scheduled_actions = enabled;
+        self
     }
 
     /// Marks the gate as part of a host-owned headless root turn.
@@ -239,6 +252,28 @@ impl OpenHumanSecurityGate {
     fn effective_policy(&self) -> Arc<SecurityPolicy> {
         crate::security::live_policy::effective_in(&DispatchCtx::from_weak(self.dispatch.as_ref()))
             .unwrap_or_else(|| self.policy.clone())
+    }
+
+    /// Hand the answers TinySecurity gave for `evaluated` to the constructor
+    /// policy, which the session's tools hold, when the two are different
+    /// instances. The tools' sync gates read only their own cached answers.
+    ///
+    /// `false` when `evaluated` sets the tools' questions differently (the
+    /// autonomy settings changed during the session): the tools would check
+    /// paths against settings no longer in force, so the caller refuses.
+    fn share_answers(&self, evaluated: &Arc<SecurityPolicy>) -> bool {
+        if Arc::ptr_eq(evaluated, &self.policy) {
+            return true;
+        }
+        if !self.policy.decides_tools_like(evaluated) {
+            tracing::warn!(
+                target: "tinyagents",
+                "[tinyagents::host::security] the autonomy settings changed during this session; refusing the call"
+            );
+            return false;
+        }
+        self.policy.adopt_answers_from(evaluated);
+        true
     }
 
     /// The origin of the turn this gate authorizes for: the run's own context
