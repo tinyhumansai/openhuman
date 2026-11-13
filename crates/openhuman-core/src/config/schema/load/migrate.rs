@@ -196,10 +196,6 @@ pub(crate) fn migrate_cloud_provider_slugs(config: &mut Config) {
         rewrite(&mut config.embeddings_provider);
     }
 
-#[cfg(test)]
-#[path = "migrate_tests.rs"]
-mod tests;
-
     if legacy_provider_labels {
         config
             .load_diagnostics_mut()
@@ -248,6 +244,10 @@ mod tests;
         url.trim().trim_end_matches('/').to_ascii_lowercase()
     }
 }
+
+#[cfg(test)]
+#[path = "migrate_tests.rs"]
+mod tests;
 
 /// Convert the single-engine `[search]` format into providers, routes and
 /// roles. In-memory and idempotent like the other load migrations: the legacy
