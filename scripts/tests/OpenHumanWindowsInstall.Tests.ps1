@@ -114,8 +114,10 @@ $environmentPathEntry = '%ProgramFiles%\OpenHuman'
 $originalProgramFiles = $env:ProgramFiles
 try {
   $env:ProgramFiles = 'C:\Program Files'
-  $existingPath = Add-OpenHumanDirectoryToPathValue -PathValue $environmentPathEntry -Directory "$env:ProgramFiles\OpenHuman"
+  $existingPath = Add-OpenHumanDirectoryToPathValue -PathValue $environmentPathEntry -Directory "$env:ProgramFiles\OpenHuman" -ExpandEntries
   Assert-Equal $environmentPathEntry $existingPath 'recognizes an existing environment-variable path entry'
+  $existingPath = Add-OpenHumanDirectoryToPathValue -PathValue $environmentPathEntry -Directory "$env:ProgramFiles\OpenHuman"
+  Assert-Equal "$environmentPathEntry;$env:ProgramFiles\OpenHuman" $existingPath 'keeps REG_SZ-style PATH entries literal'
 } finally {
   $env:ProgramFiles = $originalProgramFiles
 }

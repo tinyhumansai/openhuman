@@ -40,7 +40,9 @@ function Add-OpenHumanDirectoryToPathValue {
     [string]$PathValue,
 
     [Parameter(Mandatory = $true)]
-    [string]$Directory
+    [string]$Directory,
+
+    [switch]$ExpandEntries
   )
 
   $trimCharacters = [char[]]@('\', '/')
@@ -50,7 +52,11 @@ function Add-OpenHumanDirectoryToPathValue {
       continue
     }
 
-    $normalizedEntry = [Environment]::ExpandEnvironmentVariables($entry.Trim().Trim('"')).TrimEnd($trimCharacters)
+    $normalizedEntry = $entry.Trim().Trim('"')
+    if ($ExpandEntries) {
+      $normalizedEntry = [Environment]::ExpandEnvironmentVariables($normalizedEntry)
+    }
+    $normalizedEntry = $normalizedEntry.TrimEnd($trimCharacters)
     if ([string]::Equals($normalizedEntry, $normalizedDirectory, [StringComparison]::OrdinalIgnoreCase)) {
       return $PathValue
     }
@@ -109,19 +115,27 @@ function Add-OpenHumanDirectoryToUserPath {
   }
 
   try {
-    $existingUserPath = [string]$environmentKey.GetValue(
-      'Path',
-      '',
-      [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
-    )
-    $updatedUserPath = Add-OpenHumanDirectoryToPathValue -PathValue $existingUserPath -Directory $Directory
-    $pathWasAdded = -not [string]::Equals($existingUserPath, $updatedUserPath, [StringComparison]::Ordinal)
+    try {
+      $pathValueKind = $environmentKey.GetValueKind('Path')
+    } catch {
+      $pathValueKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    }
 
-    if ($pathWasAdded) {
-      try {
-        $pathValueKind = $environmentKey.GetValueKind('Path')
-      } catch {
-        $pathValueKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    if ($Directory.Contains(';') -or $Directory.Contains('%')) {
+      throw "The install directory cannot be stored safely in PATH: $Directory"
+    }
+
+    $pathWasAdded = $false
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+      $existingUserPath = [string]$environmentKey.GetValue(
+        'Path',
+        '',
+        [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+      )
+      $updatedUserPath = Add-OpenHumanDirectoryToPathValue -PathValue $existingUserPath -Directory $Directory -ExpandEntries:($pathValueKind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString)
+      $pathWasAdded = -not [string]::Equals($existingUserPath, $updatedUserPath, [StringComparison]::Ordinal)
+      if (-not $pathWasAdded) {
+        break
       }
 
       if ($pathValueKind -notin @(
@@ -131,26 +145,38 @@ function Add-OpenHumanDirectoryToUserPath {
         throw "The current user's PATH has an unsupported registry type: $pathValueKind."
       }
 
+      $latestUserPath = [string]$environmentKey.GetValue(
+        'Path',
+        '',
+        [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+      )
+      if (-not [string]::Equals($existingUserPath, $latestUserPath, [StringComparison]::Ordinal)) {
+        continue
+      }
       $environmentKey.SetValue('Path', $updatedUserPath, $pathValueKind)
+      break
+    }
+
+    if ($pathWasAdded -and [string]::Equals($existingUserPath, $latestUserPath, [StringComparison]::Ordinal) -eq $false) {
+      throw "The current user's PATH changed repeatedly while OpenHuman was being added. Please run the installer again."
     }
   } finally {
     $environmentKey.Dispose()
   }
 
   $env:Path = Add-OpenHumanDirectoryToPathValue -PathValue $env:Path -Directory $Directory
-  $environmentNotified = if ($pathWasAdded) {
-    try {
-      Send-OpenHumanEnvironmentChangeNotification
-    } catch {
-      $false
-    }
-  } else {
-    $true
+  $notificationError = $null
+  try {
+    $environmentNotified = Send-OpenHumanEnvironmentChangeNotification
+  } catch {
+    $environmentNotified = $false
+    $notificationError = $_.Exception.Message
   }
 
   return [pscustomobject]@{
     Added = $pathWasAdded
     Notified = [bool]$environmentNotified
+    NotificationError = $notificationError
   }
 }
 
@@ -386,10 +412,11 @@ Examples:
     throw "Unsupported Windows installer type: $assetName"
   }
 
-  $expectedPaths = @(
-    "$env:LOCALAPPDATA\Programs\OpenHuman\OpenHuman.exe",
-    "$env:ProgramFiles\OpenHuman\OpenHuman.exe"
-  )
+  $expectedPaths = if ($assetName -like '*.msi') {
+    @("$env:ProgramFiles\OpenHuman\OpenHuman.exe", "$env:LOCALAPPDATA\Programs\OpenHuman\OpenHuman.exe")
+  } else {
+    @("$env:LOCALAPPDATA\Programs\OpenHuman\OpenHuman.exe", "$env:ProgramFiles\OpenHuman\OpenHuman.exe")
+  }
   $launchPath = $expectedPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
 
   Write-Output ""
@@ -405,6 +432,9 @@ Examples:
       }
       if (-not $pathUpdate.Notified) {
         Write-WarnMsg 'The PATH change was saved, but Windows did not notify other applications.'
+        if ($pathUpdate.NotificationError) {
+          Write-Info "Environment notification failed: $($pathUpdate.NotificationError)"
+        }
         Write-Info 'If a new terminal does not find OpenHuman, sign out and back in.'
       } else {
         Write-Info 'Open a new terminal before running OpenHuman.'
