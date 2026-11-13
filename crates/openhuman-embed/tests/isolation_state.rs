@@ -162,6 +162,7 @@ fn agents_on_one_workspace_keep_their_own_state() {
                 }
             }
             let a_created = a_requests.iter().map(tool_results).collect::<String>();
+            eprintln!("a home: {:?}; tool results: {a_created}", a.home_dir());
             assert!(
                 a_created.contains(&*a.home_dir().to_string_lossy()),
                 "create_skill reported a location in a's home: {a_created}"
