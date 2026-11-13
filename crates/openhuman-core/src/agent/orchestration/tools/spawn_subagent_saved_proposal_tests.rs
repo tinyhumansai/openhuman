@@ -168,6 +168,43 @@ async fn carry_saved_flow_runs_its_lookups_off_the_worker() {
     );
 }
 
+/// A card-saved proposal whose flow was deleted: the hand-off tells the
+/// builder it may save again, so the stale receipt must not survive it. When
+/// the builder then recreates the flow, completion records the replacement id
+/// on the proposal; otherwise the next hand-off probes the deleted id again
+/// and invites yet another copy.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_recreated_flow_replaces_the_deleted_saved_flow_receipt() {
+    let temp = thread_with_delivered_proposal("Friday Inbox Wrap-up");
+    mark_proposal_saved_from_card(&temp, "flow-deleted");
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let thread = Some("thread-parent".to_string());
+    let prompt = "Save the delivered proposal \"Friday Inbox Wrap-up\" as-is.".to_string();
+    let carried = carry_saved_flow(&ctx, temp.path(), &thread, prompt.clone(), None).await;
+    if carried
+        != append_saved_flow_note(
+            prompt.clone(),
+            "thread-parent",
+            "workflow-proposal:sub-propose",
+            "Friday Inbox Wrap-up",
+            "flow-deleted",
+            SavedFlowPresence::Missing,
+        )
+    {
+        // Flows compiled out: the probe cannot tell the flow is gone, so the
+        // receipt is (correctly) kept and there is nothing to recreate.
+        return;
+    }
+    let recreated = TranscriptMessage::tool_result(
+        "call-create",
+        r#"{"type":"workflow_created","flow_id":"flow-new","name":"Friday Inbox Wrap-up"}"#,
+    );
+    record_agent_saved_workflow(&ctx, temp.path(), "thread-parent", "task-save", &[recreated]);
+    let proposals = workflow_proposals_in_thread(&ctx, temp.path(), "thread-parent");
+    assert_eq!(proposals.len(), 1);
+    assert_eq!(proposals[0].saved_flow_id.as_deref(), Some("flow-new"));
+}
+
 #[test]
 fn carry_saved_flow_finds_the_older_saved_proposal_under_a_newer_unsaved_one() {
     // The user saved "Friday Inbox Wrap-up" from its card, then asked for a
