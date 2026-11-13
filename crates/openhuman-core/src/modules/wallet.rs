@@ -379,15 +379,55 @@ fn admit_attestation(
         )));
     }
 
-    if !digest_is_pinned(record, &attestation.sha256) {
-        return Err(WalletCallError::Failed(
-            "the loaded wallet module is not one of the artifacts this build pinned, so it will \
-             not be sent key material"
-                .to_string(),
-        ));
+    if digest_is_pinned(record, &attestation.sha256) {
+        return Ok(());
     }
 
-    Ok(())
+    if host_code.is_some_and(|digest| digest.eq_ignore_ascii_case(&attestation.sha256)) {
+        log::debug!("[modules:wallet] attestation admitted as linked host code module={MODULE_ID}");
+        return Ok(());
+    }
+
+    Err(WalletCallError::Failed(
+        "the loaded wallet module is not one of the artifacts this build pinned, so it will not \
+         be sent key material"
+            .to_string(),
+    ))
+}
+
+/// The digest a wallet linked into this executable is attested with, if this
+/// binary links one.
+///
+/// Only a binary that registered a tinywallet factory
+/// (`openhuman-modules-linked::install`) can serve the wallet as linked code,
+/// so only such a binary recognizes the executable's digest. tinybus documents
+/// that a sender of a secret must recognize linked registration explicitly
+/// before accepting that digest (`Attestation::sha256`); this is that check. In
+/// every other build this is `None` and the executable is never hashed.
+fn linked_host_code() -> Option<&'static str> {
+    if !super::source::linked_factory_available(MODULE_ID) {
+        return None;
+    }
+    host_executable_digest()
+}
+
+/// SHA-256 of the running executable, as tinybus attests linked code.
+///
+/// `ModuleHost::attach_linked_with_config` hashes `std::env::current_exe()`
+/// with `tinybus::module::sha256_file` and records that as the linked module's
+/// attestation. This is the same function on the same file, so the two agree
+/// on encoding by construction. Hashed once per process, like tinybus does; a
+/// failure is not cached, also like tinybus, so a transient read error does not
+/// disable the wallet for the life of the process. A failure leaves `None`,
+/// which fails closed.
+fn host_executable_digest() -> Option<&'static str> {
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(digest) = DIGEST.get() {
+        return Some(digest.as_str());
+    }
+    let executable = std::env::current_exe().ok()?;
+    let digest = tinybus::module::sha256_file(executable).ok()?;
+    Some(DIGEST.get_or_init(|| digest).as_str())
 }
 
 // Embedded library checksums verified from all 17 archives in the
