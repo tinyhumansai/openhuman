@@ -318,8 +318,6 @@ mod linked_attestation {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(attestation) = sender.attestation(name.clone()).await.unwrap() {
-                // The module host must outlive the query; nothing else holds it.
-                drop(modules);
                 return attestation;
             }
             assert!(
