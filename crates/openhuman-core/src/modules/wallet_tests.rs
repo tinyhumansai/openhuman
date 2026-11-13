@@ -346,6 +346,22 @@ mod linked_attestation {
     }
 
     #[tokio::test]
+    async fn the_gate_hashes_this_executable_exactly_as_tinybus_attests_linked_code() {
+        // If these ever drift, a linked wallet is refused again: the digest the
+        // gate recognizes must be the one tinybus puts in the attestation.
+        let attestation = linked_wallet_attestation().await;
+        assert_eq!(
+            super::super::host_executable_digest(),
+            Some(attestation.sha256.as_str())
+        );
+        // Cached: the second call answers the same value without rehashing.
+        assert_eq!(
+            super::super::host_executable_digest(),
+            Some(attestation.sha256.as_str())
+        );
+    }
+
+    #[tokio::test]
     async fn the_executable_digest_is_refused_when_this_binary_links_no_wallet() {
         // A build that registered no linked tinywallet never accepts host code
         // for it: the release pins are the only artifacts it can be sent to.
