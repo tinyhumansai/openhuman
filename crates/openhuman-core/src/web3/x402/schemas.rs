@@ -152,6 +152,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Most this request may pay, in token atomic units.",
                     required: true,
                 },
+                FieldSchema {
+                    name: "network",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Pay only on this CAIP-2 network (eip155:8453) or family (eip155, solana).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "signIn",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                    comment: "Answer the 402 with a Sign-In-With-X credential instead of a payment.",
+                    required: false,
+                },
             ],
             outputs: vec![
                 FieldSchema {
