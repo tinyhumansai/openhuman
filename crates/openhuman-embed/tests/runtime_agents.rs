@@ -105,8 +105,10 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .mount(&provider_b)
                 .await;
             let mut budget_completion = chat_completion("budget-metered");
-            budget_completion["usage"]["prompt_tokens"] = serde_json::json!(1_000_000);
-            budget_completion["usage"]["total_tokens"] = serde_json::json!(1_000_001);
+            // Below gpt-5.5's 272K long-context step, so the call bills at the
+            // standard $5/MTok input rate: $1.25 against the $1 cap.
+            budget_completion["usage"]["prompt_tokens"] = serde_json::json!(250_000);
+            budget_completion["usage"]["total_tokens"] = serde_json::json!(250_001);
             Mock::given(method("POST"))
                 .and(path("/v1/chat/completions"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(budget_completion))
@@ -309,12 +311,12 @@ fn one_runtime_hosts_independently_configured_agents() {
             assert_eq!(common::chat_requests(&budget_provider).await.len(), 1);
             assert_eq!(
                 stop_reason.lock().expect("stop reason lock").as_deref(),
-                Some("turn cost $5.0000 reached cap $1.0000")
+                Some("turn cost $1.2500 reached cap $1.0000")
             );
             let usage = budgeted_turn
                 .usage
                 .expect("runtime-owned agent reports turn usage");
-            assert_eq!(usage.input_tokens, 1_000_000);
+            assert_eq!(usage.input_tokens, 250_000);
             assert!(
                 usage.cost_usd.is_some_and(|usd| usd >= 1.0),
                 "budgeted usage: {usage:?}"
@@ -609,10 +611,14 @@ fn one_runtime_hosts_independently_configured_agents() {
                 panic!("the test is the runtime's sole owner once every agent is dropped");
             };
             drop(runtime);
-            assert!(
-                !workspace_dir.exists(),
-                "an ephemeral workspace must be removed with its runtime"
-            );
+            // The workspace goes with the last holder of the runtime's guard:
+            // the runtime, or a dropped agent's deferred MCP cleanup, which keeps
+            // the files until the module acknowledges its close (`EphemeralRoot`).
+            common::eventually(
+                "the ephemeral workspace to be removed with its runtime",
+                || (!workspace_dir.exists()).then_some(()),
+            )
+            .await;
         })
         .await
         .expect("library host task did not panic");

@@ -85,12 +85,12 @@ pub const BUILTINS: &[BuiltinAgent] = &[
     BuiltinAgent {
         id: "trigger_triage",
         toml: include_str!("trigger_triage/agent.toml"),
-        prompt_fn: super::trigger_triage::build,
+        prompt_fn: crate::triage::trigger_triage_prompt::build,
     },
     BuiltinAgent {
         id: "trigger_reactor",
         toml: include_str!("trigger_reactor/agent.toml"),
-        prompt_fn: super::trigger_reactor::build,
+        prompt_fn: crate::triage::trigger_reactor_prompt::build,
     },
     BuiltinAgent {
         id: "morning_briefing",

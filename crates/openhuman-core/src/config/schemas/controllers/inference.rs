@@ -226,6 +226,7 @@ pub(super) fn handle_update_local_ai_settings(
             chat_model_id: update.chat_model_id,
             usage_embeddings: update.usage_embeddings,
             api_key: update.api_key,
+            native_tool_calling: update.native_tool_calling,
         };
         to_json(config_rpc::load_and_apply_local_ai_settings(&ctx, patch).await?)
     })

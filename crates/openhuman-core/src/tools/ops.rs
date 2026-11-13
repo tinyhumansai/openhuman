@@ -172,7 +172,7 @@ pub async fn all_tools_with_runtime_and_pack_handle(
     #[cfg(feature = "flows")]
     tools.extend(crate::flows::registration::tools(config.clone(), security));
     #[cfg(feature = "web3")]
-    tools.extend(crate::web3::wallet::tools::all_agent_tools());
+    tools.extend(crate::web3::tools::wallet_agent_tools());
     tools.append(&mut vec![
         Box::new(crate::cron::tools::ScheduleTool::new(
             security.clone(),
@@ -208,6 +208,8 @@ pub async fn all_tools_with_runtime_and_pack_handle(
         // task_source_add/update/remove) are registered too but ship
         // default-OFF via `tools::user_filter` (their toggle IDs default off
         // in onboarding). The per-call permission ladder still gates them.
+        // The `task_source_*` family registers nothing while no provider can
+        // fetch (`task_sources::types::any_provider_can_fetch`).
     ]);
     tools.extend(crate::artifacts::tiny_store::registered_tools(
         &config.workspace_dir,

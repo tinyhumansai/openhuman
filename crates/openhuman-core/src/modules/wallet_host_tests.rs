@@ -1,7 +1,8 @@
 use super::{
     consume_approval, native_approval_matches_request, validate_module_endpoint_url,
-    web3_approval_matches_request, x402_approval_facts, x402_request_owner_matches, x402_route,
-    ApprovalKind, ApprovalPermit, X402Route,
+    web3_approval_matches_request, with_x402_rpc_permit, x402_approval_facts,
+    x402_request_owner_matches, x402_route, x402_rpc_permit_route, ApprovalKind, ApprovalPermit,
+    X402Route, X402RpcPermit, X402RpcPermitOutcome,
 };
 use tinywallet_bus::wire::{
     AuthorizeNativeWalletExecutionRequest, AuthorizeWeb3ExecutionRequest,
@@ -18,6 +19,7 @@ fn x402_approval_is_bound_to_the_exact_chat_owner_and_payment_facts() {
         asset: "0x1111111111111111111111111111111111111111".into(),
         recipient: "0x2222222222222222222222222222222222222222".into(),
         amount_atomic: 2500,
+        scheme: None,
         owner: Some(QuoteOwner {
             thread_id: "thread-1".into(),
             client_id: "client-1".into(),
@@ -471,6 +473,7 @@ fn x402_request(amount_atomic: u64, owner: Option<QuoteOwner>) -> AuthorizeX402P
         asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU".into(),
         recipient: "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk".into(),
         amount_atomic,
+        scheme: None,
         owner,
     }
 }
@@ -604,4 +607,94 @@ fn x402_from_scheduled_actions_cron_is_budgeted_and_plain_cron_is_refused() {
         ),
         X402Route::Refused(_)
     ));
+}
+
+fn x402_request_for(url: &str, amount_atomic: u64) -> AuthorizeX402PaymentRequest {
+    AuthorizeX402PaymentRequest {
+        url: url.into(),
+        ..x402_request(amount_atomic, None)
+    }
+}
+
+#[test]
+fn x402_rpc_permit_approves_a_payment_within_the_caller_cap() {
+    let url = "https://rpc-permit.example/within-cap";
+    let permit = X402RpcPermit::new(url, 500);
+    assert_eq!(
+        x402_rpc_permit_route(&x402_request_for(url, 500), 1_000),
+        Some(X402Route::RpcPermitApproved)
+    );
+    assert_eq!(permit.finish(), X402RpcPermitOutcome::Approved);
+}
+
+#[test]
+fn x402_rpc_permit_refuses_a_payment_over_the_caller_cap() {
+    let url = "https://rpc-permit.example/over-cap";
+    let permit = X402RpcPermit::new(url, 500);
+    assert!(matches!(
+        x402_rpc_permit_route(&x402_request_for(url, 501), u64::MAX),
+        Some(X402Route::Refused(_))
+    ));
+    assert!(matches!(permit.finish(), X402RpcPermitOutcome::Refused(_)));
+}
+
+#[test]
+fn x402_rpc_permit_refuses_a_payment_over_the_per_request_budget() {
+    let url = "https://rpc-permit.example/over-budget";
+    let permit = X402RpcPermit::new(url, 1_000);
+    assert!(matches!(
+        x402_rpc_permit_route(&x402_request_for(url, 500), 499),
+        Some(X402Route::Refused(_))
+    ));
+    assert!(matches!(permit.finish(), X402RpcPermitOutcome::Refused(_)));
+}
+
+#[test]
+fn x402_without_a_matching_rpc_permit_keeps_the_existing_refusal() {
+    let permitted = "https://rpc-permit.example/permitted";
+    let other = "https://rpc-permit.example/other";
+    let permit = X402RpcPermit::new(permitted, u64::MAX);
+    // A permit for one URL never authorizes another; routing falls through.
+    assert_eq!(
+        x402_rpc_permit_route(&x402_request_for(other, 1), u64::MAX),
+        None
+    );
+    assert!(matches!(
+        x402_route(&x402_request_for(other, 1), None, u64::MAX),
+        X402Route::Refused(_)
+    ));
+    assert_eq!(permit.finish(), X402RpcPermitOutcome::Unused);
+    // No permit at all: nothing is approved for a plain RPC caller.
+    assert_eq!(
+        x402_rpc_permit_route(&x402_request_for(permitted, 1), u64::MAX),
+        None
+    );
+}
+
+#[test]
+fn x402_rpc_permit_is_consumed_by_the_first_authorization() {
+    let url = "https://rpc-permit.example/consumed-once";
+    let permit = X402RpcPermit::new(url, 10);
+    assert_eq!(
+        x402_rpc_permit_route(&x402_request_for(url, 1), 10),
+        Some(X402Route::RpcPermitApproved)
+    );
+    assert_eq!(x402_rpc_permit_route(&x402_request_for(url, 1), 10), None);
+    assert_eq!(permit.finish(), X402RpcPermitOutcome::Approved);
+}
+
+#[tokio::test]
+async fn x402_rpc_permit_is_active_only_while_its_future_runs() {
+    let url = "https://rpc-permit.example/scoped";
+    let (route, outcome) = with_x402_rpc_permit(url, 10, async {
+        x402_rpc_permit_route(&x402_request_for(url, 10), 10)
+    })
+    .await;
+    assert_eq!(route, Some(X402Route::RpcPermitApproved));
+    assert_eq!(outcome, X402RpcPermitOutcome::Approved);
+    assert_eq!(x402_rpc_permit_route(&x402_request_for(url, 1), 10), None);
+
+    let ((), unused) = with_x402_rpc_permit(url, 10, async {}).await;
+    assert_eq!(unused, X402RpcPermitOutcome::Unused);
+    assert_eq!(x402_rpc_permit_route(&x402_request_for(url, 1), 10), None);
 }

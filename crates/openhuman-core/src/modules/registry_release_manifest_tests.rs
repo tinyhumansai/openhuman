@@ -2,13 +2,13 @@ use super::*;
 
 #[cfg(feature = "security-module")]
 #[test]
-fn tinysecurity_registry_matches_the_verified_v0190_release_manifest() {
+fn tinysecurity_registry_matches_the_published_release_manifest() {
     let security = find("tinysecurity").expect("compiled TinySecurity module");
-    assert_eq!(security.version, "0.20.0");
-    assert_eq!(tinysecurity_bus::CONTRACT_VERSION, (2, 1));
+    assert_eq!(security.version, "0.21.0");
+    assert_eq!(tinysecurity_bus::CONTRACT_VERSION, (2, 2));
     assert_eq!(
         security.release_url,
-        "https://github.com/tinyhumansai/tinysecurity/releases/tag/v0.20.0"
+        "https://github.com/tinyhumansai/tinysecurity/releases/tag/v0.21.0"
     );
 
     let mut actual = security
@@ -20,58 +20,58 @@ fn tinysecurity_registry_matches_the_verified_v0190_release_manifest() {
     let mut published = [
         (
             "macos-15-arm64",
-            "tinysecurity-module-0.20.0-macos-15-arm64.tar.gz",
-            "d0c80a5fc21527d812504d64dc25aeadc55327f17ff938ed18d9b5da36800239",
+            "tinysecurity-module-0.21.0-macos-15-arm64.tar.gz",
+            "0f8e2e15f6a13951ecf8396bd472a83f65701d5e139aef9be89a74dd4daad4f9",
         ),
         (
             "macos-15-x86_64",
-            "tinysecurity-module-0.20.0-macos-15-x86_64.tar.gz",
-            "6d351306f7d970715199c6e9b9e4b566e4ff29dfd94701d6ce19716bf03114c1",
+            "tinysecurity-module-0.21.0-macos-15-x86_64.tar.gz",
+            "478fab9d675009570de65d8be2863f89bb6b6f3a9a552af8ab229ae5638ef455",
         ),
         (
             "macos-26-arm64",
-            "tinysecurity-module-0.20.0-macos-26-arm64.tar.gz",
-            "9f51e6bfda60aa7d44520130cf4a3e1e88e5fee7b423ca663a979926e79e3d30",
+            "tinysecurity-module-0.21.0-macos-26-arm64.tar.gz",
+            "d02e23e87b227e7e9f8933c0525dc99d7b81e896cd34877b145bce10ce5708cd",
         ),
         (
             "macos-26-x86_64",
-            "tinysecurity-module-0.20.0-macos-26-x86_64.tar.gz",
-            "4668ee65802f5aa55b8c9310f8dd11a3a290ff4e121895ba73f1e7951ad9fb21",
+            "tinysecurity-module-0.21.0-macos-26-x86_64.tar.gz",
+            "c12af96a7c0348c3c3ca942abb317072cffe6c982d174e25c5b155c6b9895861",
         ),
         (
             "ubuntu-22.04-arm64",
-            "tinysecurity-module-0.20.0-ubuntu-22.04-arm64.tar.gz",
-            "3b89af12be97ccac2a2593ff9886cd8f9cb7fcba5405fe04c9d0986e4d6c110c",
+            "tinysecurity-module-0.21.0-ubuntu-22.04-arm64.tar.gz",
+            "23ffa7b0cf576f1488a3b7419c0ee873425f4141e9f7899e08925909e4fcf068",
         ),
         (
             "ubuntu-22.04-x86_64",
-            "tinysecurity-module-0.20.0-ubuntu-22.04-x86_64.tar.gz",
-            "d531a36c266cb467c1fc258543ed4713ddd2234930fc3beeba386b48e4bbe0ac",
+            "tinysecurity-module-0.21.0-ubuntu-22.04-x86_64.tar.gz",
+            "cad96e016358b44b0179c8e23f7492c98c0521b148a123cbcb84158e36cf2b32",
         ),
         (
             "ubuntu-24.04-arm64",
-            "tinysecurity-module-0.20.0-ubuntu-24.04-arm64.tar.gz",
-            "745b0583c73703644da49b9c741c8c8a487ea24116d51b797133f3cea0a5d680",
+            "tinysecurity-module-0.21.0-ubuntu-24.04-arm64.tar.gz",
+            "5d05e1678aec9c27705090902c6a8027b55492dad6cbf036f67643c18368afc4",
         ),
         (
             "ubuntu-24.04-x86_64",
-            "tinysecurity-module-0.20.0-ubuntu-24.04-x86_64.tar.gz",
-            "e694059c8f2e9f4da4265ae8523fa8d6643236a4eff745e5e4290ee6ffe06fa9",
+            "tinysecurity-module-0.21.0-ubuntu-24.04-x86_64.tar.gz",
+            "793637899fd71bc232b215a486c51d9e888ce0aee12bb924a362b9d0729d907e",
         ),
         (
             "windows-11-arm64",
-            "tinysecurity-module-0.20.0-windows-11-arm64.zip",
-            "5c45a750b61315609a88fb487bab0a2ee87292c5f2eff6d4a19d46c93a53ca15",
+            "tinysecurity-module-0.21.0-windows-11-arm64.zip",
+            "d888f4e60df0fd7ecc2e9226695ab3541d83206203e391331b8a78e81f5dee0b",
         ),
         (
             "windows-2022-x86_64",
-            "tinysecurity-module-0.20.0-windows-2022-x86_64.zip",
-            "282f9e8cfff87da92b0f0c0aba2650edaf10def411a3a7423d46d890adfaae26",
+            "tinysecurity-module-0.21.0-windows-2022-x86_64.zip",
+            "b500a2e6161b85a06ad54644dfdb685b9369aadd0d868a0cdc11ab18abf9693d",
         ),
         (
             "windows-2025-x86_64",
-            "tinysecurity-module-0.20.0-windows-2025-x86_64.zip",
-            "77359a4c2b3c1207e98e8c36e86bd014d7933cffbd4889bc4e7fc36c53adf3e7",
+            "tinysecurity-module-0.21.0-windows-2025-x86_64.zip",
+            "260884a7ca22f99969a162b464a47caa78380aeb6e9b903d2fa274f84fe46f7b",
         ),
     ];
     published.sort_unstable();
@@ -81,7 +81,7 @@ fn tinysecurity_registry_matches_the_verified_v0190_release_manifest() {
 #[test]
 fn tinychannels_registry_matches_scoped_runtime_release() {
     let record = find("tinychannels").expect("compiled TinyChannels module");
-    assert_eq!(record.version, "0.2.0");
+    assert_eq!(record.version, "0.2.1");
     assert_eq!(tinychannels_bus::CONTRACT_VERSION, 33);
     assert_eq!(
         tinychannels_bus::module_relay::MODULE_OPERATION_VERSION,
@@ -90,88 +90,88 @@ fn tinychannels_registry_matches_scoped_runtime_release() {
     let expected = [
         (
             "archlinux-arm64",
-            "tinychannels-module-0.2.0-archlinux-arm64.tar.gz",
-            "07d2285c42dbeca2d70e0eb26890df533b7daab2139a8e71c71d9ec88ce819cf",
+            "tinychannels-module-0.2.1-archlinux-arm64.tar.gz",
+            "2680ef5f51775adcf4d92c4cb228ed7518f8d0ec47fc93830c239569926cf98b",
         ),
         (
             "archlinux-x86_64",
-            "tinychannels-module-0.2.0-archlinux-x86_64.tar.gz",
-            "8d67e15a9c11f75cc53fab27c838308f5d622895df403f4d8ff5a37b4000411d",
+            "tinychannels-module-0.2.1-archlinux-x86_64.tar.gz",
+            "e8c5d4b98f1177a589f52b88bb0087c77370db37eab8387a177a86a3dab7a577",
         ),
         (
             "fedora-43-arm64",
-            "tinychannels-module-0.2.0-fedora-43-arm64.tar.gz",
-            "82ea9f45978fa82a1ab10846b922f7a31dfd1e0d6d7e13436aec3624dce707d6",
+            "tinychannels-module-0.2.1-fedora-43-arm64.tar.gz",
+            "31f1e49213391a5ef3c30d195dc18230305cd7d1096afc1a26d50b1cb1094655",
         ),
         (
             "fedora-43-x86_64",
-            "tinychannels-module-0.2.0-fedora-43-x86_64.tar.gz",
-            "a0ab5045055328e55e39568b77c1fd5dc63ea63a015fb86d0e0fbe905375b855",
+            "tinychannels-module-0.2.1-fedora-43-x86_64.tar.gz",
+            "d5c8093c19347f80f371dd192b634d6d1c381098e269a8469a1fb429ef8ed112",
         ),
         (
             "fedora-44-arm64",
-            "tinychannels-module-0.2.0-fedora-44-arm64.tar.gz",
-            "0eb80bc0ba0c36694e92a2ea628f73c010b9409952d232eca4261fc9a20cd837",
+            "tinychannels-module-0.2.1-fedora-44-arm64.tar.gz",
+            "c09fc5658b3db0d61a41592a0af985e01256ad1e57f4698956cd1aafbc50dbb8",
         ),
         (
             "fedora-44-x86_64",
-            "tinychannels-module-0.2.0-fedora-44-x86_64.tar.gz",
-            "a0ee9aa9d8f462ccbe60e6122fb32beb519f6e080d7ca7c19c150bff1a0e83a6",
+            "tinychannels-module-0.2.1-fedora-44-x86_64.tar.gz",
+            "224047a34161dea3918918623a907214ba37243ecd86470a9edd89974f335481",
         ),
         (
             "macos-15-arm64",
-            "tinychannels-module-0.2.0-macos-15-arm64.tar.gz",
-            "846b9391cdb7e5488c6b62c5c25fbd495e1899e3db92517cb0b0be0e32de8567",
+            "tinychannels-module-0.2.1-macos-15-arm64.tar.gz",
+            "a5978525dec30a0179bb25c03dbddb7b188bc383ec609879ef4be2327ce37bfa",
         ),
         (
             "macos-15-x86_64",
-            "tinychannels-module-0.2.0-macos-15-x86_64.tar.gz",
-            "88a249b5ea3d5e80eb5bc753ee8d503bf8a2b2293d2c1127ca6a5fd3015dd421",
+            "tinychannels-module-0.2.1-macos-15-x86_64.tar.gz",
+            "76080dbcd6c0ff4a0c2eb591f23087bb238520658a19372ff1b5d328e15138e4",
         ),
         (
             "macos-26-arm64",
-            "tinychannels-module-0.2.0-macos-26-arm64.tar.gz",
-            "3a666957b9d4cce0ffc23e1ea2a21b6fce90d823276cca018cba04ce957bfd54",
+            "tinychannels-module-0.2.1-macos-26-arm64.tar.gz",
+            "06722cfb0686534cbdbcc7a07f5613d8e4f692b7df6a4087fffd34669f8735c8",
         ),
         (
             "macos-26-x86_64",
-            "tinychannels-module-0.2.0-macos-26-x86_64.tar.gz",
-            "ef0edd5d7990398a4b97ef114e8858d53f7418dbc818c1fad949472a712a2b61",
+            "tinychannels-module-0.2.1-macos-26-x86_64.tar.gz",
+            "450e65b3c2db1ad7a95bd2e9a97a90412d35808a55ca882ce2015e8683269704",
         ),
         (
             "ubuntu-22.04-arm64",
-            "tinychannels-module-0.2.0-ubuntu-22.04-arm64.tar.gz",
-            "8d947a1b283bcb538ac59f68e1fdcce07fe47d9bb59d8ea0406316c213c04b13",
+            "tinychannels-module-0.2.1-ubuntu-22.04-arm64.tar.gz",
+            "aa6fccae1e6762363c205c66be620fee096afabef0adb8652e0efe50b07d40ce",
         ),
         (
             "ubuntu-22.04-x86_64",
-            "tinychannels-module-0.2.0-ubuntu-22.04-x86_64.tar.gz",
-            "92c90089eef81d7e90aeb8f2992dea706bcd91fd2cd9485004edea24eac18c0c",
+            "tinychannels-module-0.2.1-ubuntu-22.04-x86_64.tar.gz",
+            "30ef63ef849ee8c7f959d1711a8f875629feb1643169ba4a1c5a6e75279ceebe",
         ),
         (
             "ubuntu-24.04-arm64",
-            "tinychannels-module-0.2.0-ubuntu-24.04-arm64.tar.gz",
-            "cd7c1522e32d0cb125fe643feea5f3602663c99a8ae96f201fc5077a2496d588",
+            "tinychannels-module-0.2.1-ubuntu-24.04-arm64.tar.gz",
+            "d12dca9a9eee6bd487d45f845e9ee449f035049e8d47da1be26a2b2d5d282ad8",
         ),
         (
             "ubuntu-24.04-x86_64",
-            "tinychannels-module-0.2.0-ubuntu-24.04-x86_64.tar.gz",
-            "b4556e866c309b1792a73af48bf7297c4a2714bae25c9ef1adc22c403f25dc04",
+            "tinychannels-module-0.2.1-ubuntu-24.04-x86_64.tar.gz",
+            "c22ab9d0342a7f24e37952665b8fd9ba7e51dbb11397c75f4e242bc228135a29",
         ),
         (
             "windows-11-arm64",
-            "tinychannels-module-0.2.0-windows-11-arm64.zip",
-            "3e29456cd6b161a605c9224ebaa51dbdaa3f0a4b944529cfc3a8e471bc0d5725",
+            "tinychannels-module-0.2.1-windows-11-arm64.zip",
+            "ce07269fcda05f1ea4798fbf567cd26081d229c503a940981c48fbcd1d77771f",
         ),
         (
             "windows-2022-x86_64",
-            "tinychannels-module-0.2.0-windows-2022-x86_64.zip",
-            "456d7c6cd16494aff56adfa2b4b96db47abd284203e11de10fc0e9efb6f76eda",
+            "tinychannels-module-0.2.1-windows-2022-x86_64.zip",
+            "03ce46d2e8e6728a531244d5e771ad26d082f490eab571079b051dc0aa323205",
         ),
         (
             "windows-2025-x86_64",
-            "tinychannels-module-0.2.0-windows-2025-x86_64.zip",
-            "427bf8719b9cd2ac874f6cc9f74a5dc49fb08c8758b62cf8a09616448cb25134",
+            "tinychannels-module-0.2.1-windows-2025-x86_64.zip",
+            "fe8f9aaa89a3993df7c819a7fcdda4298c7f653116990a5355f0f726ba868d62",
         ),
     ];
     assert_eq!(record.assets.len(), expected.len());

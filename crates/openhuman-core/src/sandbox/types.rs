@@ -62,6 +62,11 @@ pub struct SandboxPolicy {
     pub env_passthrough: Vec<String>,
     /// Docker-specific overrides (image, resource limits).
     pub docker_overrides: Option<DockerOverrides>,
+    /// The agent opted into a files-only jail (`AgentExt::sandbox_filesystem_only`):
+    /// with the host network, its plan asks the executor to enforce only the file
+    /// grants (`spawn_plan::files_only`). Never set for text the host did not author.
+    #[serde(default)]
+    pub filesystem_only: bool,
 }
 
 fn default_mount_workspace() -> bool {

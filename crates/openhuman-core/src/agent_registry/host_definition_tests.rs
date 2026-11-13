@@ -456,3 +456,23 @@ wildcard = {}
         tinyagents_definition::ToolScope::Wildcard
     ));
 }
+
+/// A sandboxed shell runs in a files-only jail (TinySecurity contract 2.2) only when the
+/// definition says so in as many words; a definition that does not name the field keeps
+/// the full sandbox requirements.
+#[test]
+fn a_definition_opts_its_shell_into_a_files_only_jail_only_by_naming_it() {
+    let base = r#"
+id = "builder_like"
+when_to_use = "Builds things on a schedule."
+sandbox_mode = "sandboxed"
+
+[tools]
+named = ["shell"]
+"#;
+    let def: AgentDefinition = toml::from_str(base).expect("a sandboxed definition parses");
+    assert!(!def.extensions.sandbox_filesystem_only);
+    let opted: AgentDefinition = toml::from_str(&format!("sandbox_filesystem_only = true\n{base}"))
+        .expect("the opt-in parses");
+    assert!(opted.extensions.sandbox_filesystem_only);
+}

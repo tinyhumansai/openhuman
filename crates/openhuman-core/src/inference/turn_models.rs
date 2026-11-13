@@ -336,7 +336,7 @@ impl TurnModelSource {
                 .unwrap_or_else(|| {
                     crate::inference::provider::provider_for_role(&source.role, &source.config)
                 });
-            return !tinyinference_local::profile::is_local_provider_string(&provider_string);
+            return provider_string_native_tools(&provider_string, &source.config);
         }
         false
     }
@@ -609,7 +609,7 @@ impl TurnModelSource {
                 };
                 (
                     provider_id,
-                    !is_local,
+                    provider_string_native_tools(&provider_string, &cn.config),
                     !is_local,
                     is_local,
                     self_hosted,
@@ -709,6 +709,15 @@ impl TurnModelSource {
         }
         Err(anyhow::anyhow!("turn model source is missing a model"))
     }
+}
+
+/// Whether a provider string's model gets native tools: cloud providers do; a
+/// local runtime does only when the operator opted in with
+/// `local_ai.native_tool_calling`. The local-runtime model factory reads the
+/// same flag, so session assembly, the harness dialect and the wire agree.
+fn provider_string_native_tools(provider_string: &str, config: &crate::config::Config) -> bool {
+    !tinyinference_local::profile::is_local_provider_string(provider_string)
+        || config.local_ai.native_tool_calling
 }
 
 #[cfg(test)]

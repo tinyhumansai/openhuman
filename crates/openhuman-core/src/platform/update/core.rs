@@ -3,6 +3,8 @@
 
 use std::io::Write;
 use std::path::PathBuf;
+
+use crate::platform::update::download;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Locks staging mutations by destination so concurrent update requests cannot
@@ -375,6 +377,7 @@ async fn check_available_with_base_url(base_url: &str) -> Result<UpdateInfo, Str
         update_available,
         download_url: platform_asset.map(|a| a.browser_download_url.clone()),
         asset_name: platform_asset.map(|a| a.name.clone()),
+        asset_size: platform_asset.map(|a| a.size),
         release_notes: release.body,
         published_at: release.published_at,
     };
@@ -392,29 +395,35 @@ async fn check_available_with_base_url(base_url: &str) -> Result<UpdateInfo, Str
 
 /// Download and stage the updated binary.
 ///
-/// The binary is downloaded to a temp file, then moved to the staging path.
+/// The asset's `.sha256` sidecar is fetched first, then the asset is streamed
+/// to a temp file and moved to the staging path only if its digest matches.
 /// The caller (Tauri shell) is responsible for killing the old process and
 /// restarting with the new binary.
 ///
 /// `staging_dir` — directory where the new binary should be placed (e.g.
 /// the `binaries/` dir next to the Tauri app, or the Resources dir).
 /// If `None`, uses the directory of the currently running executable.
-///
-/// `target_version` — the version of the release being staged, used in the
-/// returned `UpdateApplyResult`. If `None`, falls back to `current_version()`.
 pub async fn download_and_stage(
     download_url: &str,
     asset_name: &str,
     staging_dir: Option<PathBuf>,
 ) -> Result<UpdateApplyResult, String> {
-    download_and_stage_with_version(download_url, asset_name, staging_dir, None).await
+    download_and_stage_with_version(download_url, asset_name, staging_dir, None, None).await
 }
 
+/// `download_and_stage`, with the release metadata the caller already holds.
+///
+/// `target_version` — the version of the release being staged, used in the
+/// returned `UpdateApplyResult`. If `None`, falls back to `current_version()`.
+///
+/// `expected_size` — the asset size the release declared. The body must be
+/// exactly this long. If `None`, the body is capped at `MAX_UPDATE_BYTES`.
 pub async fn download_and_stage_with_version(
     download_url: &str,
     asset_name: &str,
     staging_dir: Option<PathBuf>,
     target_version: Option<&str>,
+    expected_size: Option<u64>,
 ) -> Result<UpdateApplyResult, String> {
     log::info!(
         "[update] downloading update from {} (asset: {})",
@@ -427,6 +436,12 @@ pub async fn download_and_stage_with_version(
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+
+    // Fail closed before the archive is fetched: an update without a
+    // checksum is never staged.
+    let expected_sha256 = download::fetch_expected_sha256(&client, download_url)
+        .await
+        .inspect_err(|e| log::error!("[update] checksum lookup failed asset={asset_name}: {e}"))?;
 
     let response = client.get(download_url).send().await.map_err(|e| {
         let msg = format!("failed to download update: {e}");
@@ -477,12 +492,9 @@ pub async fn download_and_stage_with_version(
         return Err(msg);
     }
 
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("failed to read update body: {e}"))?;
-
-    log::info!("[update] downloaded {} bytes", bytes.len());
+    let max_bytes = expected_size.unwrap_or(download::MAX_UPDATE_BYTES);
+    download::check_declared_length(&response, max_bytes)
+        .inspect_err(|e| report_rejected_download(e, asset_name, "oversize"))?;
 
     // Determine staging path.
     let dir = if let Some(d) = staging_dir {
@@ -510,15 +522,25 @@ pub async fn download_and_stage_with_version(
     let destination_lock = staging_lock(&staged_path);
     let _destination_guard = destination_lock.lock().await;
 
-    // Write to a temp file first, then rename for atomicity.
+    // Stream to a temp file first, then rename for atomicity.
     let tmp_path = dir.join(format!(".{asset_name}.tmp"));
-    {
-        let mut file = std::fs::File::create(&tmp_path)
-            .map_err(|e| format!("failed to create temp file: {e}"))?;
-        file.write_all(&bytes)
-            .map_err(|e| format!("failed to write update binary: {e}"))?;
-        file.flush()
-            .map_err(|e| format!("failed to flush update binary: {e}"))?;
+    let mut file = std::fs::File::create(&tmp_path)
+        .map_err(|e| format!("failed to create the download temp file for {asset_name}: {e}"))?;
+    let streamed = download::stream_to_file(response, &mut file, max_bytes).await;
+    let refusal = match streamed {
+        Ok((written, digest)) => {
+            log::info!("[update] downloaded {written} bytes");
+            download::verify(written, &digest, max_bytes, expected_size, &expected_sha256).err()
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+    };
+    if let Some(e) = refusal {
+        let _ = std::fs::remove_file(&tmp_path);
+        report_rejected_download(&e, asset_name, "verification");
+        return Err(e);
     }
 
     if is_archive {
@@ -542,6 +564,18 @@ pub async fn download_and_stage_with_version(
         restart_required: true,
         restart_strategy: UpdateRestartStrategy::SelfReplace,
     })
+}
+
+/// Report an update body refused by the size or checksum check. These are not
+/// transport noise: a mismatch on the restart path is worth a Sentry event.
+fn report_rejected_download(message: &str, asset_name: &str, failure: &str) {
+    log::error!("[update] refusing update asset={asset_name}: {message}");
+    crate::core::observability::report_error(
+        message,
+        "update",
+        "download",
+        &[("asset", asset_name), ("failure", failure)],
+    );
 }
 
 /// Classify a reqwest failure as a user-environment transport problem (DNS

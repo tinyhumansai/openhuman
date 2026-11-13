@@ -316,8 +316,11 @@ without fencing).
   (`security::secret_storage::get` / `set` / `delete`) and the flow store's
   `http-credentials.json` become encrypted documents (`DocumentSecrets`,
   `enc2:`) in the acting agent's scope. Auth profiles use their own
-  profile-local `EncryptedFileSecrets` document at `auth-profiles/secrets.enc`.
-  Each
+  profile-local `EncryptedFileSecrets` document at `auth-profiles/secrets.enc`,
+  except a SaaS tenant's: under that tenant's context its document is the
+  secret `auth-profiles` in the tenant's scope, locked by compare-and-swap on
+  the backend, with nothing written beside the profile
+  (`credentials/profiles/backend.rs`). Each
   scope's data key is derived with HKDF-SHA256 from the keyring master key
   (`OPENHUMAN_KEYRING_MASTER_KEY` / `_FILE`, else the OS keychain); with no
   master key they fail closed. The config encryption key stays on the

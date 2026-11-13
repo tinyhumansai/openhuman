@@ -113,8 +113,6 @@ pub mod voice;
 pub mod web3;
 pub mod web_chat;
 
-pub use config::DaemonConfig;
-
 /// Embeddable core composition API. Host the OpenHuman core in any process —
 /// the Tauri shell, a CLI, a stdio MCP server, or a cloud/team server — via
 /// [`CoreBuilder`] → [`CoreRuntime`]. See `crates/openhuman-embed/README.md`

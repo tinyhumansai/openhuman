@@ -45,6 +45,8 @@ fn settings_come_from_the_runtime_table() {
             cpu_millis: 250,
             memory_bytes: 64 * 1024 * 1024,
             workdir: "/sandbox".into(),
+            owner_scope: OwnerScope::default(),
+            module: ModuleConfig::default(),
         })
     );
     assert_eq!(
@@ -190,6 +192,7 @@ async fn without_module_support_execution_is_refused() {
     let error = execute(
         &crate::core::runtime::DispatchCtx::unbound(),
         &crate::config::Config::default(),
+        BoxBackend::OpenShell,
         "id",
         &HashMap::new(),
         Duration::from_secs(1),

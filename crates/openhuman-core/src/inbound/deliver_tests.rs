@@ -684,3 +684,6 @@ async fn a_pinned_source_in_a_mixed_digest_still_runs_its_agent() {
 
 #[path = "deliver_digest_tests.rs"]
 mod digest;
+
+#[path = "deliver_direct_tests.rs"]
+mod direct;

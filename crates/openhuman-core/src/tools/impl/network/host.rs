@@ -287,16 +287,27 @@ mod x402 {
     /// held here and the hook is built per call.
     #[derive(Debug)]
     pub(super) struct X402PaymentHook {
-        ctx: DispatchCtx,
+        /// Weak: `PerCallTool` also builds a prototype `http_request` when the
+        /// belt is assembled, under the building request's context, and a
+        /// cached chat session keeps that belt in its tenant's own state slots.
+        /// A strong context would keep the tenant in use
+        /// (`CoreContext::tenant_in_use`), so its profile slot never frees.
+        core: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
         chat: Option<ApprovalChatContext>,
     }
 
     impl X402PaymentHook {
         pub(super) fn new(ctx: &DispatchCtx, chat: Option<&ApprovalChatContext>) -> Self {
             Self {
-                ctx: ctx.clone(),
+                core: ctx.downgrade(),
                 chat: chat.cloned(),
             }
+        }
+
+        /// The context the payment runs under: the one this hook was built
+        /// for while it lives, else the calling task's own.
+        fn ctx(&self) -> DispatchCtx {
+            DispatchCtx::from_weak(self.core.as_ref())
         }
     }
 
@@ -314,8 +325,8 @@ mod x402 {
                 .ok_or_else(|| {
                     "402 response is missing a valid PAYMENT-REQUIRED header".to_string()
                 })?;
-            let config = self
-                .ctx
+            let ctx = self.ctx();
+            let config = ctx
                 .load_config()
                 .await
                 .map_err(|error| format!("x402 payment failed: {error}"))?;
@@ -328,7 +339,7 @@ mod x402 {
                     client_id: context.client_id.clone(),
                 });
             let (service, payment) = x402_service::prepare_payment(
-                &self.ctx,
+                &ctx,
                 &config,
                 url.to_owned(),
                 challenge.to_owned(),

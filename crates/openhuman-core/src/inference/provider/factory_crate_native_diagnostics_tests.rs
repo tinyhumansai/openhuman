@@ -228,3 +228,36 @@ async fn non_openrouter_openai_compatible_endpoints_get_no_baked_provider_option
         );
     }
 }
+
+/// The model the turn actually runs must carry the same choice as session
+/// assembly (`TurnModelSource::supports_native_tool_calling`): a profile with
+/// `tool_calling = false` makes the harness strip `tools` off the wire and
+/// fall back to the text protocol, whatever the prompt says.
+#[tokio::test]
+async fn local_openai_model_calls_tools_natively_only_when_opted_in() {
+    let _guard = crate::inference::inference_test_guard_async().await;
+    let _storage = crate::storage::test_support::install_backend_for_test(
+        crate::storage::test_support::memory_backend(),
+    );
+    let _signed_out = crate::platform::llm_gate::SignedOutTestGuard::set(true);
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config {
+        config_path: dir.path().join("config.toml"),
+        workspace_dir: dir.path().join("workspace"),
+        ..Config::default()
+    };
+    let tool_calling = |config: &Config| {
+        let config = config.clone();
+        async move {
+            create_chat_model_from_string("chat", "local-openai:glm-5.3-flash", &config, 0.0)
+                .await
+                .expect("local-openai builds")
+                .profile()
+                .expect("local-openai exposes a profile")
+                .tool_calling
+        }
+    };
+    assert!(!tool_calling(&config).await, "off by default");
+    config.local_ai.native_tool_calling = true;
+    assert!(tool_calling(&config).await, "on when opted in");
+}

@@ -92,10 +92,8 @@ On success the resolved workspace is published to the cache in [`schema/load/act
 way). `active_workspace_snapshot()` resolves the workspace again from disk and returns it with a revision
 number, for callers that make one decision per workspace switch.
 
-Two other entry points exist for narrower cases. `Config::load_from_config_path` reloads a config whose
+One other entry point exists for a narrower case. `Config::load_from_config_path` reloads a config whose
 paths are already known and ignores `OPENHUMAN_WORKSPACE`, for long-lived objects that hold a snapshot.
-`Config::load_from_default_paths` ignores `OPENHUMAN_WORKSPACE` too and is read-only; the debug prompt
-dump uses it.
 
 Most code does not call these directly. `ops::load_config_with_timeout()` wraps `load_or_init` in a
 30-second timeout, returns the embedding host's `Config` instead when one is installed on the current
@@ -165,7 +163,6 @@ config.update_model_settings (JSON-RPC / CLI)
 | `migrations/` | Version-gated startup migrations and `seed_new_workspace`. See [migrations/README.md](migrations/README.md). |
 | `workspace/` | Workspace bootstrap (`init_workspace`) and the `workspace.*` RPCs over the editable persona files (`SOUL.md`, `IDENTITY.md`). Registers its own controllers. See [workspace/README.md](workspace/README.md). |
 | `app_env.rs` | Reads the app environment (`production`, `staging`) used to pick the root directory. |
-| [`daemon.rs`](./daemon.rs) | `DaemonConfig`, a small bundle of `data_dir`, `workspace_dir` and the autonomy, security, reliability, secrets and audit sections, built from a Tauri app data dir by `from_app_data_dir`. Re-exported by `openhuman-embed`. |
 | [`tools.rs`](./tools.rs) | Read-only agent tools over config: `config_snapshot`, `config_get_runtime_flags`, `config_get_client_config`, `config_get_autonomy`, `config_get_search`, `config_resolve_api_url`, `config_get_data_paths`. |
 | [`workspace_handle.rs`](./workspace_handle.rs) | `workspace_handle(path)`, a short stable digest of a workspace path. Process-wide streams (Event Log, `core_notification`) carry it instead of the path so home directories never reach exported logs. |
 
@@ -183,7 +180,6 @@ config.update_model_settings (JSON-RPC / CLI)
 | `build_runtime_proxy_client`, `apply_runtime_proxy_to_builder` | [`schema/proxy.rs`](./schema/proxy.rs) | `reqwest` clients that honor the configured proxy for a named service key. |
 | `migrations::run_pending`, `CURRENT_SCHEMA_VERSION` | [`migrations/mod.rs`](./migrations/mod.rs) | The startup migration runner. |
 | `WORKLOAD_ROLES` | [`schema/types/model_ids.rs`](./schema/types/model_ids.rs) | Provider-neutral workload roles shared by inference and settings. Hosted model ids and aliases are registered by the host. |
-| `DaemonConfig` | `daemon.rs` | Supervisor-level config bundle for embedders. |
 
 ## RPC surface
 

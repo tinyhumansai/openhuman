@@ -48,6 +48,7 @@ impl CoreContext {
             user_skill_roots: true,
             extensions: Default::default(),
             turn_origin: None,
+            host_secret_grant: None,
             channel_thread: None,
             session_agent: None,
             profile: None,
@@ -97,8 +98,19 @@ impl CoreContext {
         thread: Option<String>,
         origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
     ) -> Arc<CoreContext> {
+        Arc::new(self.copy_with(thread, origin, None))
+    }
+
+    /// A copy of this context with `thread`, `origin` and `grant` replacing
+    /// its own where given.
+    pub(super) fn copy_with(
+        &self,
+        thread: Option<String>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
+        grant: Option<Arc<crate::security::approval::gate::HostSecretGrant>>,
+    ) -> CoreContext {
         let ctx = self;
-        Arc::new(CoreContext {
+        CoreContext {
             host_kind: ctx.host_kind,
             workspace_binding: RwLock::new(
                 ctx.workspace_binding
@@ -116,12 +128,13 @@ impl CoreContext {
             user_skill_roots: ctx.user_skill_roots,
             extensions: ctx.extensions.clone(),
             turn_origin: origin.or_else(|| ctx.turn_origin.clone()),
+            host_secret_grant: grant.or_else(|| ctx.host_secret_grant.clone()),
             channel_thread: thread.or_else(|| ctx.channel_thread.clone()),
             session_agent: ctx.session_agent.clone(),
             profile: ctx.profile.clone(),
             profile_admission: Arc::clone(&ctx.profile_admission),
             agent: ctx.agent.clone(),
             bare: ctx.bare,
-        })
+        }
     }
 }

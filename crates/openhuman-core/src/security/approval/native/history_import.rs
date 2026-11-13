@@ -6,7 +6,11 @@
 //!
 //! - each decided request becomes inert history through `ImportApprovalHistory2`
 //!   (the module keeps a sanitized copy in a denied row and never revives it as a
-//!   grant), at most [`HISTORY_LIMIT`] of the most recent; and
+//!   grant), at most [`HISTORY_LIMIT`] of the most recent;
+//! - each request still undecided and unexpired becomes a pending orphan through
+//!   the same call (contract 2.2): the module stores it with its redacted tool
+//!   name, summary and arguments so it can be listed, binds it to a synthetic call
+//!   no real call can match, and accepts only a denial for it; and
 //! - each "approve always for this flow" grant becomes durable flow trust through
 //!   `GrantFlowTool2`.
 //!
@@ -101,9 +105,19 @@ pub(super) fn state_of(row: &LegacyApproval) -> ApprovalState {
             }
         }
         Some(_) => ApprovalState::Denied,
-        // An undecided request of an earlier launch can never be resumed.
+        // An undecided request of an earlier launch can never be resumed, but one
+        // still inside its window stays visible until a person dismisses it.
+        None if expiry(row) > chrono::Utc::now() => ApprovalState::Pending,
         None => ApprovalState::Expired,
     }
+}
+
+/// When the legacy request's window closes.
+fn expiry(row: &LegacyApproval) -> chrono::DateTime<chrono::Utc> {
+    row.expires_at.unwrap_or_else(|| {
+        row.created_at
+            + chrono::Duration::milliseconds(i64::try_from(DEFAULT_WINDOW_MS).unwrap_or(i64::MAX))
+    })
 }
 
 fn millis(at: chrono::DateTime<chrono::Utc>) -> u64 {
@@ -124,6 +138,8 @@ pub(super) fn legacy_record(row: &LegacyApproval) -> ApprovalRecord {
             .as_bytes()
         )
     );
+    let state = state_of(row);
+    let pending = state == ApprovalState::Pending;
     ApprovalRecord {
         request_id: row.request_id.clone(),
         fingerprint,
@@ -138,7 +154,12 @@ pub(super) fn legacy_record(row: &LegacyApproval) -> ApprovalRecord {
         expires_at_ms: row
             .expires_at
             .map_or_else(|| millis(row.created_at) + DEFAULT_WINDOW_MS, millis),
-        state: state_of(row),
+        state,
+        // Only a pending orphan is rendered, so only it carries what a person
+        // needs to recognize it; the module redacts each again before storing.
+        tool_name: pending.then(|| row.tool_name.clone()),
+        summary: pending.then(|| row.summary.clone()).flatten(),
+        args_redacted: pending.then(|| row.args_redacted.clone()).flatten(),
     }
 }
 
@@ -154,9 +175,34 @@ pub(super) fn recent_decided(history: &LegacyHistory) -> Vec<&LegacyApproval> {
     decided.split_off(skip)
 }
 
+/// The undecided rows still inside their window, oldest first.
+pub(super) fn open_requests(history: &LegacyHistory) -> Vec<&LegacyApproval> {
+    let mut open: Vec<&LegacyApproval> = history
+        .approvals
+        .iter()
+        .filter(|row| state_of(row) == ApprovalState::Pending)
+        .collect();
+    open.sort_by_key(|row| row.created_at);
+    open.truncate(HISTORY_LIMIT);
+    open
+}
+
+/// Read the legacy history on a thread of its own.
+///
+/// The read is a synchronous storage call, and the gate reaches the engine from
+/// the storage bridge's own runtime (`run_engine`), whose threads, blocking pool
+/// included, refuse to re-enter the bridge. A plain OS thread is outside it.
 async fn read(config: Config) -> Result<Option<LegacyHistory>, EngineError> {
-    crate::core::runtime::DispatchCtx::ambient()
-        .spawn_blocking(move || read_legacy(&config))
+    let (reply, result) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("approval-history-import".into())
+        .spawn(move || {
+            let _ = reply.send(read_legacy(&config));
+        })
+        .map_err(|error| {
+            EngineError::Unavailable(format!("the legacy read did not start: {error}"))
+        })?;
+    result
         .await
         .map_err(|error| {
             EngineError::Unavailable(format!("the legacy read did not finish: {error}"))
@@ -175,7 +221,10 @@ pub(super) async fn run(
     let mut report = Report::default();
     if !history.approvals.is_empty() {
         let scope = engine.history_scope(proxy, &tenant).await?;
-        for row in recent_decided(&history) {
+        for row in recent_decided(&history)
+            .into_iter()
+            .chain(open_requests(&history))
+        {
             match import_row(proxy, &scope, row).await {
                 Ok(()) => report.history += 1,
                 Err(error @ EngineError::Unavailable(_)) => return Err(error),
@@ -298,7 +347,9 @@ impl NativeEngine {
     ) -> Result<std::sync::Arc<ScopeEntry>, EngineError> {
         let subject = self.subject(tenant, Variant::Standard)?;
         let generation = Self::generation(proxy).await?;
-        scopes::ensure(
+        // The import and an orphan's dismissal only need the scope to exist;
+        // a live check's posture for the same subject stays as it is.
+        scopes::ensure_keeping_posture(
             self.config(),
             proxy,
             subject,

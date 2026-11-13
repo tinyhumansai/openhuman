@@ -193,7 +193,6 @@ pub(crate) fn secret_slots(config: &mut Config) -> Vec<(String, SecretSlot<'_>)>
     let integrations = &mut config.integrations;
     for (name, toggle) in [
         ("google_places", &mut integrations.google_places),
-        ("parallel", &mut integrations.parallel),
         ("tinyfish", &mut integrations.tinyfish),
         ("stock_prices", &mut integrations.stock_prices),
     ] {
@@ -226,6 +225,7 @@ pub(crate) fn secret_slots(config: &mut Config) -> Vec<(String, SecretSlot<'_>)>
     }
     if let Some(lq) = ch.linq.as_mut() {
         slots.push(("linq.api_token".into(), Str(&mut lq.api_token)));
+        slots.push(("linq.webhook_secret".into(), Opt(&mut lq.webhook_secret)));
     }
     if let Some(irc) = ch.irc.as_mut() {
         slots.push(("irc.server_password".into(), Opt(&mut irc.server_password)));
@@ -248,6 +248,21 @@ pub(crate) fn secret_slots(config: &mut Config) -> Vec<(String, SecretSlot<'_>)>
     }
     if let Some(qq) = ch.qq.as_mut() {
         slots.push(("qq.app_secret".into(), Str(&mut qq.app_secret)));
+    }
+    // The connect flow keeps these two in the credentials store, but a value
+    // written to `config.toml` by hand still wins and must not sit in plaintext.
+    if let Some(email) = ch.email.as_mut() {
+        slots.push(("email.password".into(), Str(&mut email.password)));
+    }
+    if let Some(yb) = ch.yuanbao.as_mut() {
+        slots.push(("yuanbao.app_secret".into(), Str(&mut yb.app_secret)));
+        slots.push(("yuanbao.token".into(), Str(&mut yb.token)));
+    }
+    if let Some(relay) = ch.relay.as_mut() {
+        slots.push((
+            "relay.upgrade_secret".into(),
+            Opt(&mut relay.upgrade_secret),
+        ));
     }
     slots
 }

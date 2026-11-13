@@ -106,6 +106,7 @@ integrations/composio/ops/mod.rs
 integrations/composio/client.rs
 mcp/server/resources_tests.rs
 modules/tinyflows.rs
+modules/storage_grant_schemas_tests.rs
 doctor/checks/channels.rs
 doctor/checks/inference_tests.rs
 doctor/checks/mcp.rs
@@ -126,7 +127,6 @@ agent/queued_turn_tests.rs
 cron/ops_tests.rs
 cron/scheduler_tests.rs
 web_chat/web_tests_turn_lifecycle_tests.rs
-web_chat/run_task.rs
 channels/host/voice_tests.rs
 EOF
 )

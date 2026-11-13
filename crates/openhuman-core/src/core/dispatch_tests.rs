@@ -233,3 +233,26 @@ async fn dispatch_legacy_alias_routes_to_registry() {
         "legacy alias must resolve to a registered controller: {method}"
     );
 }
+
+#[tokio::test]
+async fn dispatch_wrong_params_shape_is_a_param_validation_error() {
+    // The registry path must emit the shared `core::params` message, so the
+    // transport's `is_param_validation_error` keeps matching it if the
+    // prefix wording ever changes. Shape is checked before the handler runs.
+    let err = dispatch(
+        DispatchCtx::process_default(),
+        test_state(),
+        "openhuman.security_policy_info",
+        json!([1, 2]),
+    )
+    .await
+    .expect_err("array params must be rejected");
+    assert!(
+        crate::core::params::is_param_validation_error(&err),
+        "dispatch params error not recognised as validation: {err}"
+    );
+    assert_eq!(
+        err,
+        crate::core::params::params_to_object(json!([1, 2])).unwrap_err()
+    );
+}

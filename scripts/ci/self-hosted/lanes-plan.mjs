@@ -26,6 +26,7 @@ export const AREA_ENV = {
   toolchainImage: "CI_AREA_TOOLCHAIN_IMAGE",
   installPs1: "CI_AREA_INSTALL_PS1",
   storage: "CI_AREA_STORAGE",
+  inbound: "CI_AREA_INBOUND",
 };
 
 /** Read the area flags from an environment object. Missing means false. */
@@ -72,10 +73,26 @@ export const HOSTED_GROUPS = [
     container: true,
   })),
   { group: "tauri", lanes: ["tauri"], maxParallel: 1, container: true },
+  // One integration target with a feature set of its own: a runner and a
+  // Rust cache of its own, armed only by the `inbound` area.
+  {
+    group: "inbound-e2e",
+    lanes: ["inbound-e2e"],
+    maxParallel: 1,
+    container: true,
+  },
 
   // pwsh ships on the bare ubuntu-latest image, not in the CI container.
   { group: "pester", lanes: ["pester"], maxParallel: 1, container: false },
 ];
+
+/**
+ * The inbound module E2E, with the gates its target requires
+ * (crates/openhuman-cli/Cargo.toml), against the staged release modules.
+ */
+export const INBOUND_MODULE_E2E =
+  "bash scripts/ci-cancel-aware.sh cargo test -p openhuman-cli" +
+  " --features modules,inbound-queues,e2e-test-support --test inbound_module_e2e";
 
 const CORE_PRODUCT = '"$(bash scripts/ci/product-features.sh --core)"';
 
@@ -554,6 +571,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             " core::all:: core::cli:: core::invoke:: core::session_expiry:: core::legacy_aliases:: core::runtime::" +
             " agent_registry::agents::loader:: commands::ops::tests:: memory::people::contacts_gate_tests::" +
             " memory::layout_migration::" +
+            " mcp::registry::tests::" +
             " doctor::checks::" +
             " core::schema_test_support::" +
             " openhuman::config:: openhuman::platform::socket::event_handlers:: tools::schemas:: tools::ops::tests::",
@@ -588,6 +606,32 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           name: "dep-sim-calibration",
           when: gateSmoke,
           run: "bash scripts/ci/check-dep-sim-calibration.sh",
+        },
+      ],
+    },
+    {
+      // tests/inbound_module_e2e.rs: the Composio admission path into the
+      // digest-verified TinyEventQueues release and back through the host's
+      // production `Deliver` (#8155). Its `e2e-test-support` gate is not in
+      // the product set, so rust-coverage.sh skips the target; it runs here,
+      // for changes to the inbound host, the module host or the module pin.
+      name: "inbound-e2e",
+      // Compiles the core crate; hosted runners can cap heavy-compile slots
+      // (lanes.mjs). Lower number = served first.
+      heavy: 2,
+      targetDir: targetDir("build"),
+      env: { ...rustEnv },
+      checks: [
+        {
+          name: "install-test-modules",
+          when: areas.inbound,
+          run: `bash scripts/ci/self-hosted/install-test-modules.sh "${modulesDir}" ${modulesEnvFile}`,
+        },
+        {
+          name: "inbound-module-e2e",
+          when: areas.inbound,
+          needs: ["install-test-modules"],
+          run: withModules(INBOUND_MODULE_E2E),
         },
       ],
     },

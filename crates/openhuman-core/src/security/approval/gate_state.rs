@@ -239,13 +239,24 @@ impl ApprovalGate {
     ) -> anyhow::Result<Option<PendingApproval>> {
         // One read of the route. If an expiry or a competing decision removes
         // it after this, `decide` reports the miss as the benign race it is.
-        if let Err(error) = self.validate_decision_context(request_id, dispatch, agent) {
-            tracing::warn!(
-                request_id = %request_id,
-                error = %error,
-                "[approval::gate] decision refused: the caller does not own the request"
-            );
-            return Err(error);
+        let parked = match self.validate_decision_context(request_id, dispatch, agent) {
+            Ok(parked) => parked,
+            Err(error) => {
+                tracing::warn!(
+                    request_id = %request_id,
+                    error = %error,
+                    "[approval::gate] decision refused: the caller does not own the request"
+                );
+                return Err(error);
+            }
+        };
+        // Pending orphans are listed only for the default tenant, so only it
+        // may dismiss one.
+        if parked.is_none() && agent.is_none() && *dispatch == crate::core::runtime::Tenant::default()
+        {
+            if let Some(dismissed) = self.decide_orphan(request_id, decision)? {
+                return Ok(Some(dismissed));
+            }
         }
         match agent {
             Some(agent) => self.decide_for_agent(agent, request_id, decision),
@@ -395,12 +406,29 @@ impl ApprovalGate {
     /// The requests this tenant has parked and not yet seen decided, oldest
     /// first. A SaaS profile sees every agent's; anything else sees only its own
     /// agent's (the process, for the default orchestrator).
+    ///
+    /// The process's own list also carries the requests an earlier launch left
+    /// undecided (the engine's pending orphans), after its parked ones.
     pub fn list_pending(&self) -> anyhow::Result<Vec<PendingApproval>> {
         let tenant = super::gate::current_route_tenant();
-        Ok(self.pending_where(|route| {
+        let mut rows = self.pending_where(|route| {
             route.tenant.profile == tenant.profile
                 && (tenant.profile.is_some() || route.tenant.agent == tenant.agent)
-        }))
+        });
+        if tenant == crate::core::runtime::Tenant::default() {
+            // The parked list stands on its own: an engine that cannot answer
+            // costs only the orphans.
+            let orphans = self
+                .run_engine(|engine| async move { engine.orphans().await })?
+                .unwrap_or_else(|error| {
+                    tracing::warn!(error = %error, "[approval::gate] pending orphans were not listed");
+                    Vec::new()
+                });
+            let parked: std::collections::HashSet<String> =
+                rows.iter().map(|row| row.request_id.clone()).collect();
+            rows.extend(orphans.into_iter().filter(|row| !parked.contains(&row.request_id)));
+        }
+        Ok(rows)
     }
 
     /// [`Self::list_pending`] narrowed to `agent`'s requests; `None` lists the

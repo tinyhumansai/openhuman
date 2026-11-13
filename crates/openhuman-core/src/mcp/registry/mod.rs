@@ -528,6 +528,10 @@ pub(crate) async fn tools_safe_for_agent(
 #[path = "scan_tests.rs"]
 mod scan_tests;
 
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod tests;
+
 // ---------------------------------------------------------------------------
 // Disabled facade — compiled only when the `mcp` feature is OFF.
 // ---------------------------------------------------------------------------

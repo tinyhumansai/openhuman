@@ -18,6 +18,8 @@ use crate::config::Config;
 
 use super::wallet::{self, WalletCallError};
 
+pub(crate) use super::wallet_host::X402RpcPermitOutcome;
+
 /// Prepare and sign a 402 challenge inside TinyWallet. Both supported rails'
 /// secret material is sent only through the attested confidential call; the
 /// module parses the challenge and selects the matching chain.
@@ -28,16 +30,96 @@ pub(crate) async fn prepare_payment(
     payment_required: String,
     owner: Option<tinywallet_bus::wire::QuoteOwner>,
 ) -> Result<(X402ServiceHandle, X402PreparePaymentResponse), WalletCallError> {
-    let mut active = service().lock().await;
-    ensure_service(ctx, config, &mut active).await?;
-    let service_handle = active
-        .as_ref()
-        .ok_or_else(|| WalletCallError::Failed("x402 service is unavailable".into()))?
-        .handle
-        .clone();
+    prepare(ctx, config, url, payment_required, owner, None, None)
+        .await
+        .0
+}
 
-    let evm = signing_secret(ctx, config, crate::web3::wallet::WalletChain::Evm).await?;
-    let solana = signing_secret(ctx, config, crate::web3::wallet::WalletChain::Solana).await?;
+/// [`prepare_payment`] for a direct `openhuman.x402_fetch` RPC caller, which
+/// has no turn to approve through. The host's authorization callback approves
+/// this payment only while a one-shot permit for `url` is active, and only
+/// within `max_amount_atomic` and the per-request budget. The permit is
+/// installed while the service lock is held, so it can only be matched by this
+/// preparation. Returns how the permit was used so a refusal is recognisable.
+pub(crate) async fn prepare_capped_payment(
+    ctx: &DispatchCtx,
+    config: &Config,
+    url: String,
+    payment_required: String,
+    max_amount_atomic: u64,
+    network: Option<String>,
+) -> (
+    Result<(X402ServiceHandle, X402PreparePaymentResponse), WalletCallError>,
+    X402RpcPermitOutcome,
+) {
+    prepare(
+        ctx,
+        config,
+        url,
+        payment_required,
+        None,
+        Some(max_amount_atomic),
+        network,
+    )
+    .await
+}
+
+/// Answer a Sign-In-With-X (CAIP-122) challenge with the wallet's EVM key.
+/// TinyWallet builds and signs the message itself and refuses a challenge
+/// whose domain or URI is not the requested URL's host, so this is never a
+/// sign-anything primitive. Pays nothing and reserves no budget.
+pub(crate) async fn sign_in(
+    ctx: &DispatchCtx,
+    config: &Config,
+    url: String,
+    payment_required: String,
+) -> Result<tinywallet_bus::wire::X402SignInResponse, WalletCallError> {
+    let secret = signing_secret(ctx, config, crate::web3::wallet::WalletChain::Evm).await?;
+    let mut request = tinywallet_bus::wire::X402SignInRequest {
+        url,
+        payment_required,
+        secret,
+    };
+    let response = wallet::call_confidential(config, methods::X402_SIGN_IN, &request).await;
+    request.secret.mnemonic.zeroize();
+    response
+}
+
+async fn prepare(
+    ctx: &DispatchCtx,
+    config: &Config,
+    url: String,
+    payment_required: String,
+    owner: Option<tinywallet_bus::wire::QuoteOwner>,
+    rpc_cap: Option<u64>,
+    network: Option<String>,
+) -> (
+    Result<(X402ServiceHandle, X402PreparePaymentResponse), WalletCallError>,
+    X402RpcPermitOutcome,
+) {
+    let mut active = service().lock().await;
+    if let Err(error) = ensure_service(ctx, config, &mut active).await {
+        return (Err(error), X402RpcPermitOutcome::Unused);
+    }
+    let Some(service_handle) = active.as_ref().map(|current| current.handle.clone()) else {
+        return (
+            Err(WalletCallError::Failed(
+                "x402 service is unavailable".into(),
+            )),
+            X402RpcPermitOutcome::Unused,
+        );
+    };
+
+    let secrets = async {
+        let evm = signing_secret(ctx, config, crate::web3::wallet::WalletChain::Evm).await?;
+        let solana = signing_secret(ctx, config, crate::web3::wallet::WalletChain::Solana).await?;
+        Ok::<_, WalletCallError>((evm, solana))
+    };
+    let (evm, solana) = match secrets.await {
+        Ok(secrets) => secrets,
+        Err(error) => return (Err(error), X402RpcPermitOutcome::Unused),
+    };
+    let permit_url = url.clone();
     let mut request = X402PreparePaymentRequest {
         service: service_handle.clone(),
         url,
@@ -45,13 +127,21 @@ pub(crate) async fn prepare_payment(
         owner,
         secret: evm,
         additional_secrets: vec![solana],
+        network,
     };
-    let response = wallet::call_confidential(config, methods::X402_PREPARE_PAYMENT, &request).await;
+    let call = wallet::call_confidential(config, methods::X402_PREPARE_PAYMENT, &request);
+    let (response, outcome) = match rpc_cap {
+        Some(max_amount_atomic) => {
+            super::wallet_host::with_x402_rpc_permit(&permit_url, max_amount_atomic, call).await
+        }
+        None => (call.await, X402RpcPermitOutcome::Unused),
+    };
     request.secret.mnemonic.zeroize();
     for secret in &mut request.additional_secrets {
         secret.mnemonic.zeroize();
     }
-    Ok((service_handle, response?))
+    drop(active);
+    (response.map(|response| (service_handle, response)), outcome)
 }
 
 /// Record the retry result through the same module-owned payment ledger.

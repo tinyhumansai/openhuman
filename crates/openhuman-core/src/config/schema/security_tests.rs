@@ -1,11 +1,11 @@
 use super::*;
 
 #[test]
-fn security_config_defaults() {
-    let sec = SecurityConfig::default();
-    assert!(sec.audit.enabled);
-    assert_eq!(sec.audit.log_path, "audit.log");
-    assert_eq!(sec.audit.max_size_mb, 100);
+fn audit_config_defaults() {
+    let audit = AuditConfig::default();
+    assert!(audit.enabled);
+    assert_eq!(audit.log_path, "audit.log");
+    assert_eq!(audit.max_size_mb, 100);
 }
 
 #[test]

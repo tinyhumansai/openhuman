@@ -117,6 +117,29 @@ async fn credentialed_plaintext_remote_servers_are_not_passed_to_the_module() {
     assert_eq!(client_config(&config).await.servers.len(), 1);
 }
 
+/// Bracketed IPv6 and `localhost` loopback endpoints keep their credentials,
+/// while a non-loopback IPv6 literal over plaintext HTTP is dropped.
+#[tokio::test]
+async fn credentialed_plaintext_loopback_servers_reach_the_module() {
+    for endpoint in ["http://[::1]:8080/mcp", "http://localhost:8080/mcp"] {
+        let mut config = Config::default();
+        let mut server = populated_server();
+        server.endpoint = endpoint.into();
+        config.mcp_client.servers.push(server);
+        assert_eq!(
+            client_config(&config).await.servers.len(),
+            1,
+            "{endpoint} is loopback and must keep its credentialed server"
+        );
+    }
+
+    let mut config = Config::default();
+    let mut server = populated_server();
+    server.endpoint = "http://[2001:db8::1]:8080/mcp".into();
+    config.mcp_client.servers.push(server);
+    assert!(client_config(&config).await.servers.is_empty());
+}
+
 #[test]
 fn oauth_redirect_port_parser_accepts_only_explicit_url_ports() {
     assert_eq!(explicit_port("http://127.0.0.1:7789/rpc"), Some(7789));
