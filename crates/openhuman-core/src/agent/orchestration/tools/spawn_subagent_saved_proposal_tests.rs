@@ -267,6 +267,19 @@ fn carry_saved_flow_prefers_draft_id_over_a_shared_flow_id() {
 }
 
 #[test]
+fn nested_subworkflow_id_does_not_select_the_saved_child_proposal() {
+    let saved = ThreadWorkflowProposal {
+        message_id: "saved-child".into(),
+        name: "Child workflow".into(),
+        draft_id: None,
+        flow_id: Some("flow-child".into()),
+        saved_flow_id: Some("flow-child".into()),
+    };
+    let hand_off = r#"Build a new proposal from this graph: {"nodes":[{"type":"sub_workflow","config":{"workflow_id":"flow-child"}}]}"#;
+    assert_eq!(hand_off_proposal(&[saved], hand_off), None);
+}
+
+#[test]
 fn carry_saved_flow_skips_ambiguous_same_name_proposals() {
     let temp = thread_with_delivered_proposal_extra("Daily", r#", "draft_id":"draft-old""#);
     mark_proposal_saved_from_card(&temp, "flow-old");

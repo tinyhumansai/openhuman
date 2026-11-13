@@ -313,6 +313,45 @@ fn contains_token(text: &str, token: &str) -> bool {
     })
 }
 
+/// Whether `token` appears as an id token outside a nested-workflow reference.
+/// A hand-off may include the requested graph, whose
+/// `sub_workflow.config.workflow_id` values identify child workflows rather
+/// than the proposal being handed off.
+fn contains_target_id(text: &str, token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let mut nested_ranges = Vec::new();
+    let mut search_from = 0;
+    while let Some(field_at) = text[search_from..].find("\"workflow_id\"") {
+        let field_at = search_from + field_at;
+        let mut value_at = field_at + "\"workflow_id\"".len();
+        while text.as_bytes().get(value_at).is_some_and(u8::is_ascii_whitespace) {
+            value_at += 1;
+        }
+        if text.as_bytes().get(value_at) == Some(&b':') {
+            value_at += 1;
+            while text.as_bytes().get(value_at).is_some_and(u8::is_ascii_whitespace) {
+                value_at += 1;
+            }
+            let mut deserializer = serde_json::Deserializer::from_str(&text[value_at..]);
+            if String::deserialize(&mut deserializer).is_ok() {
+                nested_ranges.push(value_at..value_at + deserializer.byte_offset());
+            }
+        }
+        search_from = field_at + 1;
+    }
+    contains_token(text, token)
+        && !text.match_indices(token).any(|(at, _)| {
+            let is_id_char = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+            let before_ok = at == 0 || !text[..at].chars().last().is_some_and(is_id_char);
+            let after_at = at + token.len();
+            let after_ok = after_at == text.len()
+                || !text[after_at..].chars().next().is_some_and(is_id_char);
+            before_ok && after_ok && !nested_ranges.iter().any(|range| range.contains(&at))
+        }) == false
+}
+
 /// The proposal a `workflow_builder` hand-off is about, if the hand-off
 /// identifies one. Identity first: a `draft_id` or `flow_id` the hand-off
 /// carries, as the orchestrator is told to pass them. Then by exact name.
@@ -332,7 +371,7 @@ fn hand_off_proposal<'a>(
         if proposal
             .draft_id
             .as_deref()
-            .is_some_and(|id| contains_token(hand_off, id))
+            .is_some_and(|id| contains_target_id(hand_off, id))
         {
             return Some(proposal);
         }
@@ -341,7 +380,7 @@ fn hand_off_proposal<'a>(
         if proposal
             .flow_id
             .as_deref()
-            .is_some_and(|id| contains_token(hand_off, id))
+            .is_some_and(|id| contains_target_id(hand_off, id))
         {
             return Some(proposal);
         }
@@ -448,7 +487,9 @@ pub(crate) fn append_saved_flow_note(
             "[spawn_subagent] saved-flow carry skipped thread_id={thread_id} \
              proposal_id={proposal_id} flow_id={flow_id} reason=flow-missing"
         );
-        return prompt;
+        return format!(
+            "{prompt}\n\nThe previously saved flow could not be found. Ignore any earlier note saying this proposal was already saved; it is not currently saved as that flow. You may save the proposal again as a new flow."
+        );
     }
     log::debug!(
         "[spawn_subagent] saved-flow carry applied thread_id={thread_id} \
