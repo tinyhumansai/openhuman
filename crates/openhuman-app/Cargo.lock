@@ -7888,7 +7888,7 @@ dependencies = [
 
 [[package]]
 name = "tinychannels-bus"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64 0.23.1",
  "schemars 1.2.3",
@@ -8545,7 +8545,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-bus"
-version = "0.29.0"
+version = "0.30.0"
 dependencies = [
  "serde",
  "serde_json",
