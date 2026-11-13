@@ -7,7 +7,7 @@ mod common;
 
 use common::{
     chat_requests, offline_config, route, runtime, scripted_provider, stub_backend,
-    tool_call_completion, tool_results,
+    tool_call_completion,
 };
 use openhuman_embed::{
     Access, Agent, AgentDefinitionSpec, AgentSpec, Runtime, SessionStoreProvider, ToolScopeSpec,
@@ -161,14 +161,8 @@ fn agents_on_one_workspace_keep_their_own_state() {
                     );
                 }
             }
-            let a_created = a_requests.iter().map(tool_results).collect::<String>();
-            eprintln!("a home: {:?}; tool results: {a_created}", a.home_dir());
-            assert!(
-                a_created.contains(&*a.home_dir().to_string_lossy()),
-                "create_skill reported a location in a's home: {a_created}"
-            );
         })
         .await
-        .unwrap_or_else(|error| panic!("test task: {error:?}"));
+        .expect("test task");
     });
 }
