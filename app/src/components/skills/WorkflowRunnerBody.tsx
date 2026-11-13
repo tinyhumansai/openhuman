@@ -360,7 +360,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
     recentRunsTimersRef.current = [1500, 4000].map(ms =>
       setTimeout(() => setRecentRunsRefreshNonce(n => n + 1), ms)
     );
-  }, []);
+  }, [setRecentRunsRefreshNonce]);
   // Guards against a fast double-click spawning two runs. `runSubmitGuardRef`
   // is the synchronous gate (a ref, so two clicks in the same tick both see
   // it); `runBusy` mirrors it into render so the buttons disable. After a
@@ -554,7 +554,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
       log('cancelRun error: %s', err instanceof Error ? err.message : String(err));
     }
     setRecentRunsRefreshNonce(n => n + 1);
-  }, []);
+  }, [setRecentRunsRefreshNonce]);
 
   const ensureRuntimeAvailability = useCallback(async () => {
     const runtimeRequirement = inferRuntimeRequirement(selectedWorkflow);
