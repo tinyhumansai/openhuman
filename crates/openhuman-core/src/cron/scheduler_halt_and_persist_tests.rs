@@ -496,7 +496,13 @@ async fn a_successful_auto_delete_one_shot_is_removed() {
 async fn a_failed_one_shot_is_kept_disabled_with_its_error() {
     let tmp = TempDir::new().unwrap();
     let config = no_retry_config(&tmp).await;
-    let job = one_shot(&config, "echo boom; exit 1", true);
+    #[cfg(unix)]
+    let command = "echo boom; exit 1";
+    #[cfg(windows)]
+    // cmd treats `;` as part of the text, so `echo boom; exit 1` would exit 0 —
+    // the job would be deleted (delete_after_run) instead of failing.
+    let command = "exit 1";
+    let job = one_shot(&config, command, true);
 
     run_through_scheduler(&config, &job.id).await;
 

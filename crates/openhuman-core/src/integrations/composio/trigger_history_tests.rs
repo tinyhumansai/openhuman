@@ -153,7 +153,10 @@ async fn cancelling_a_pending_open_retains_a_handle_that_shutdown_can_release() 
     owner.close().await.unwrap();
     assert_eq!(
         *observed.calls.lock().await,
-        vec!["open:cancelled/state", "close:cancelled/state"]
+        vec![
+            format!("open:{}", PathBuf::from("cancelled").join("state").display()),
+            format!("close:{}", PathBuf::from("cancelled").join("state").display())
+        ]
     );
     assert!(owner.lease.lock().await.is_none());
 }

@@ -331,11 +331,21 @@ async fn slow_engine_results_survive_the_manual_pre_turn_cutoff() {
     omitted.recall = false;
     assert!(pre_turn(config.clone(), omitted.clone(), input(4), None).is_none());
     drain(&cache, &Key::new(&config, &omitted, "slow", false)).await;
-    let turns = crate::memory::test_fixtures::stored(
-        &engine.inner,
-        tinymemory_api::MetaFilter::kinds([tinymemory_api::ItemKind::Conversation]),
-    )
-    .await;
+    // The turn log is written by the engine's own worker, not the prefetch
+    // cache — `drain` only covers the cache. Poll briefly so the assertion
+    // does not race the log worker, instead of asserting immediately.
+    let mut turns = Vec::new();
+    for _ in 0..200 {
+        turns = crate::memory::test_fixtures::stored(
+            &engine.inner,
+            tinymemory_api::MetaFilter::kinds([tinymemory_api::ItemKind::Conversation]),
+        )
+        .await;
+        if turns.len() == 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert_eq!(turns.len(), 3, "omitted recall still logs its user turn");
 }
 

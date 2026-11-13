@@ -211,6 +211,7 @@ fn unclassified_connector_faults_do_not_expose_remote_content() {
 #[cfg(feature = "crash-reporting")]
 #[test]
 fn classified_provider_errors_remain_product_output_and_emit_one_sanitized_event() {
+    let _lock = crate::modules::MODULE_TEST_GLOBAL_LOCK.lock().unwrap();
     let provider_message =
         "[composio:error:auth] private-test-token /home/private-user/document.txt";
     let error = tinybus::Error::MethodFailed {

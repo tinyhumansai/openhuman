@@ -354,7 +354,11 @@ fn spawn_parallel_agents_opts_out_of_the_global_tool_timeout() {
 /// own sentence, not the crate's typed error.
 #[test]
 fn invalid_ownership_paths_are_rejected_with_the_host_message() {
-    for raw in ["files: /etc/passwd", "files: ../outside.rs"] {
+    #[cfg(unix)]
+    let abs_claim = "/etc/passwd";
+    #[cfg(windows)]
+    let abs_claim = r"C:\etc\passwd";
+    for raw in [format!("files: {abs_claim}"), "files: ../outside.rs".to_string()] {
         let definition = definition_with_tool_scope(
             "writer",
             ToolScope::Named(vec!["write_fixture".into()]),
@@ -364,7 +368,7 @@ fn invalid_ownership_paths_are_rejected_with_the_host_message() {
         let parent = parent_admitting(&["writer"], write_fixture_tools());
 
         let preflight = prepare_spawn_parallel_tasks_from_defs(
-            vec![dispatch_task("writer", Some(raw), None)],
+            vec![dispatch_task("writer", Some(raw.as_str()), None)],
             &definitions,
             &parent,
         );

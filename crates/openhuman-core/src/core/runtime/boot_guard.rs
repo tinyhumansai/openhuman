@@ -415,6 +415,10 @@ fn domain_flags(d: &DomainSet) -> [(&'static str, bool); 21] {
     ]
 }
 
-#[cfg(test)]
+// SaaS boot-guard semantics are Unix-only by product design: on every
+// non-Unix host `check()` always pushes
+// `Violation::Platform("SaaS mode needs a Unix host")` (see the `#[cfg(not(unix))]`
+// branch in this file), so none of these tests can pass on Windows.
+#[cfg(all(test, unix))]
 #[path = "boot_guard_tests.rs"]
 mod tests;

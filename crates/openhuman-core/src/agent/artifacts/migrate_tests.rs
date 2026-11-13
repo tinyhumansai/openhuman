@@ -3,10 +3,9 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use super::*;
-use crate::agent::artifacts::store::{
-    get_artifact, list_artifacts, read_artifact_args, read_artifact_bytes, save_artifact_args,
-    save_artifact_meta,
-};
+use crate::agent::artifacts::store::{get_artifact, save_artifact_args, save_artifact_meta};
+#[cfg(unix)]
+use crate::agent::artifacts::store::{list_artifacts, read_artifact_args, read_artifact_bytes};
 use crate::agent::artifacts::types::ArtifactKind;
 
 /// A pre-#5505 record: bytes under `<workspace>/artifacts/<id>/<name>`.
@@ -67,6 +66,10 @@ fn partials(files_dir: &Path) -> usize {
         .unwrap_or(0)
 }
 
+// Unix-only: the migrator reopens the partial read-only and calls
+// `File::sync_all()`, which Windows rejects on a read-only handle (FlushFileBuffers
+// requires GENERIC_WRITE). The Windows fix is product-side.
+#[cfg(unix)]
 #[tokio::test]
 async fn moves_a_legacy_file_into_the_files_folder() {
     let tmp = TempDir::new().unwrap();
@@ -115,6 +118,10 @@ async fn moves_a_legacy_file_into_the_files_folder() {
     );
 }
 
+// Unix-only: the migrator reopens the partial read-only and calls
+// `File::sync_all()`, which Windows rejects on a read-only handle (FlushFileBuffers
+// requires GENERIC_WRITE). The Windows fix is product-side.
+#[cfg(unix)]
 #[tokio::test]
 async fn running_twice_changes_nothing() {
     let tmp = TempDir::new().unwrap();
@@ -149,6 +156,10 @@ async fn leaves_pending_and_failed_records_alone() {
     assert!(visible(&files_dir).is_empty());
 }
 
+// Unix-only: the migrator reopens the partial read-only and calls
+// `File::sync_all()`, which Windows rejects on a read-only handle (FlushFileBuffers
+// requires GENERIC_WRITE). The Windows fix is product-side.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_name_already_in_the_folder_is_never_overwritten() {
     let tmp = TempDir::new().unwrap();
@@ -183,6 +194,10 @@ async fn a_name_already_in_the_folder_is_never_overwritten() {
 
 /// Two accounts migrate a same-named file into the one shared folder: both
 /// survive under distinct names, and each account still lists only its own.
+// Unix-only: the migrator reopens the partial read-only and calls
+// `File::sync_all()`, which Windows rejects on a read-only handle (FlushFileBuffers
+// requires GENERIC_WRITE). The Windows fix is product-side.
+#[cfg(unix)]
 #[tokio::test]
 async fn two_accounts_migrate_into_the_shared_folder_without_clobbering() {
     let tmp = TempDir::new().unwrap();
@@ -224,6 +239,10 @@ async fn two_accounts_migrate_into_the_shared_folder_without_clobbering() {
 
 // ── Crash safety: stop after each step, check nothing is lost, rerun ──────
 
+// Unix-only: the migrator reopens the partial read-only and calls
+// `File::sync_all()`, which Windows rejects on a read-only handle (FlushFileBuffers
+// requires GENERIC_WRITE). The Windows fix is product-side.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_crash_after_the_copy_leaves_the_record_intact_and_is_redone() {
     let tmp = TempDir::new().unwrap();
@@ -249,6 +268,10 @@ async fn a_crash_after_the_copy_leaves_the_record_intact_and_is_redone() {
     );
 }
 
+// Unix-only: the migrator reopens the partial read-only and calls
+// `File::sync_all()`, which Windows rejects on a read-only handle (FlushFileBuffers
+// requires GENERIC_WRITE). The Windows fix is product-side.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_crash_after_the_rename_loses_nothing_and_leaves_at_most_one_duplicate() {
     let tmp = TempDir::new().unwrap();
@@ -274,6 +297,10 @@ async fn a_crash_after_the_rename_loses_nothing_and_leaves_at_most_one_duplicate
     assert!(!legacy_path(&ws, "a1", "deck.pptx").exists());
 }
 
+// Unix-only: the migrator reopens the partial read-only and calls
+// `File::sync_all()`, which Windows rejects on a read-only handle (FlushFileBuffers
+// requires GENERIC_WRITE). The Windows fix is product-side.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_crash_after_the_meta_write_is_finished_by_the_next_run() {
     let tmp = TempDir::new().unwrap();
@@ -311,6 +338,10 @@ async fn a_crash_after_the_meta_write_is_finished_by_the_next_run() {
 
 /// A partial left by an interrupted run whose record has since gone (deleted
 /// between runs) is not overwritten by any later copy; the sweep removes it.
+// Unix-only: the migrator reopens the partial read-only and calls
+// `File::sync_all()`, which Windows rejects on a read-only handle (FlushFileBuffers
+// requires GENERIC_WRITE). The Windows fix is product-side.
+#[cfg(unix)]
 #[tokio::test]
 async fn an_orphaned_partial_from_an_earlier_run_is_removed() {
     let tmp = TempDir::new().unwrap();

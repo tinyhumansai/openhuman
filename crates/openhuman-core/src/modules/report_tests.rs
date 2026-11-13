@@ -3,6 +3,7 @@ use super::*;
 #[cfg(feature = "crash-reporting")]
 #[test]
 fn terminal_reports_are_sanitized_and_deduplicated() {
+    let _lock = crate::modules::MODULE_TEST_GLOBAL_LOCK.lock().unwrap();
     let record = crate::modules::registry::find("tinybox").unwrap();
     let events = sentry::test::with_captured_events(|| {
         sentry::with_scope(
@@ -51,6 +52,7 @@ fn terminal_reports_are_sanitized_and_deduplicated() {
 #[cfg(feature = "crash-reporting")]
 #[test]
 fn a_pre_core_report_without_a_sentry_client_can_be_captured_later() {
+    let _lock = crate::modules::MODULE_TEST_GLOBAL_LOCK.lock().unwrap();
     let record = crate::modules::registry::find("tinyhosts").unwrap();
     let hub = std::sync::Arc::new(sentry::Hub::new_from_top(sentry::Hub::current()));
     hub.bind_client(None);

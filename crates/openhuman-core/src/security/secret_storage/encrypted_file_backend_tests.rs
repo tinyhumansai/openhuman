@@ -24,6 +24,10 @@ fn write_secret(backend: &EncryptedFileBackend, key: &[u8; KEY_LEN], value: &str
     backend.set_with_key(key, "user:token", value).unwrap();
 }
 
+// Unix-only: the driver's NTFS ACL verifier rejects fixtures written via
+// plain `std::fs::write` (a single-ACE owner-only DACL is required); the
+// Windows story is untested upstream.
+#[cfg(unix)]
 #[test]
 fn legacy_plaintext_is_removed_only_after_verified_encrypted_migration() {
     let dir = secrets_tempdir();
@@ -55,6 +59,10 @@ fn invalid_legacy_plaintext_is_preserved_for_recovery() {
     assert!(!backend.path.exists());
 }
 
+// Unix-only: the driver's NTFS ACL verifier rejects fixtures written via
+// plain `std::fs::write` (a single-ACE owner-only DACL is required); the
+// Windows story is untested upstream.
+#[cfg(unix)]
 #[test]
 fn encrypted_store_removes_only_matching_legacy_plaintext() {
     let dir = secrets_tempdir();
@@ -91,6 +99,10 @@ fn encrypted_store_remains_readable_when_verified_plaintext_cannot_be_deleted() 
     );
 }
 
+// Unix-only: the driver's NTFS ACL verifier rejects fixtures written via
+// plain `std::fs::write` (a single-ACE owner-only DACL is required); the
+// Windows story is untested upstream.
+#[cfg(unix)]
 #[test]
 fn existing_encrypted_file_does_not_remove_plaintext_until_directory_sync_succeeds() {
     let dir = secrets_tempdir();
@@ -120,6 +132,10 @@ fn existing_encrypted_file_does_not_remove_plaintext_until_directory_sync_succee
     assert!(legacy_path.with_extension("json.migrated").exists());
 }
 
+// Unix-only: the driver's NTFS ACL verifier rejects fixtures written via
+// plain `std::fs::write` (a single-ACE owner-only DACL is required); the
+// Windows story is untested upstream.
+#[cfg(unix)]
 #[test]
 fn older_plaintext_copy_is_removed_only_when_it_matches() {
     let dir = secrets_tempdir();
@@ -265,6 +281,10 @@ fn empty_env_values_fall_through_to_the_keychain() {
     );
 }
 
+// Unix-only: the driver's NTFS ACL verifier rejects the fixture's default
+// DACL (a single-ACE owner-only DACL is required); the Windows story is
+// untested upstream.
+#[cfg(unix)]
 #[test]
 fn read_master_key_file_returns_contents_and_reports_a_missing_file() {
     let tmp = tempfile::TempDir::new().unwrap();

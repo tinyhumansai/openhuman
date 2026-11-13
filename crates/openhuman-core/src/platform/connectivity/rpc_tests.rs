@@ -261,11 +261,16 @@ fn port_excluded_error_rejects_addr_in_use_and_others() {
     // AddrInUse has its own takeover path and must NOT be treated as an
     // OS exclusion. Unrelated kinds (and unrelated raw codes) must fall
     // through to the existing BindFailed arm so genuine bind bugs surface.
-    for err in [
+    let mut errors = vec![
         std::io::Error::new(ErrorKind::AddrInUse, "in use"),
         std::io::Error::new(ErrorKind::ConnectionRefused, "refused"),
-        std::io::Error::from_raw_os_error(5), // EIO on unix / not WSAEACCES
-    ] {
+    ];
+    // Raw code 5 is EIO on Unix; on Windows it is ERROR_ACCESS_DENIED, which
+    // the classifier deliberately treats as a port exclusion (the kind IS
+    // PermissionDenied there), so this arm stayed Unix-only.
+    #[cfg(unix)]
+    errors.push(std::io::Error::from_raw_os_error(5));
+    for err in errors {
         assert!(
             !is_port_excluded_bind_error(&err),
             "non-exclusion error must not route to fallback: {err:?}"

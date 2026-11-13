@@ -45,6 +45,10 @@ async fn read(scoped: &ScopedStorage, token: &str) -> Option<String> {
         .map(|blob| String::from_utf8(blob.bytes).unwrap())
 }
 
+// Unix-only: `read_regular` opens the candidate before its metadata check, and
+// Windows refuses to open a directory with GENERIC_READ (ERROR_ACCESS_DENIED),
+// so the "not a regular file" skip can never run. The Windows fix is product-side.
+#[cfg(unix)]
 #[tokio::test]
 async fn originals_within_their_ttl_move_into_the_modules_blobs() {
     let legacy = legacy_root();
@@ -79,6 +83,10 @@ async fn originals_within_their_ttl_move_into_the_modules_blobs() {
     );
 }
 
+// Unix-only: `read_regular` opens the candidate before its metadata check, and
+// Windows refuses to open a directory with GENERIC_READ (ERROR_ACCESS_DENIED),
+// so the "not a regular file" skip can never run. The Windows fix is product-side.
+#[cfg(unix)]
 #[tokio::test]
 async fn without_a_ttl_every_readable_original_is_kept() {
     let legacy = legacy_root();
@@ -97,6 +105,10 @@ async fn without_a_ttl_every_readable_original_is_kept() {
     assert_eq!(read(&scoped, OLD).await.as_deref(), Some("stale original"));
 }
 
+// Unix-only: `read_regular` opens the candidate before its metadata check, and
+// Windows refuses to open a directory with GENERIC_READ (ERROR_ACCESS_DENIED),
+// so the "not a regular file" skip can never run. The Windows fix is product-side.
+#[cfg(unix)]
 #[tokio::test]
 async fn the_legacy_files_are_left_in_place() {
     let legacy = legacy_root();
@@ -110,6 +122,10 @@ async fn the_legacy_files_are_left_in_place() {
     assert!(legacy.path().join(OLD).exists());
 }
 
+// Unix-only: `read_regular` opens the candidate before its metadata check, and
+// Windows refuses to open a directory with GENERIC_READ (ERROR_ACCESS_DENIED),
+// so the "not a regular file" skip can never run. The Windows fix is product-side.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_second_run_is_a_noop_and_a_blob_already_stored_is_kept() {
     let legacy = legacy_root();

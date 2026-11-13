@@ -448,7 +448,11 @@ fn validate_upload_paths_rejects_an_absolute_path() {
     // The live-observed bug: the model copies `/tmp/openhuman-flow/report.html`
     // from a prior flow, which the runtime rejects (uploads are confined to the
     // workspace). Catch it at author time with an actionable message.
-    let errors = validate_upload_paths(&upload_graph(json!("/tmp/openhuman-flow/report.html")));
+    #[cfg(unix)]
+    let abs_path = "/tmp/openhuman-flow/report.html";
+    #[cfg(windows)]
+    let abs_path = r"C:\tmp\openhuman-flow\report.html";
+    let errors = validate_upload_paths(&upload_graph(json!(abs_path)));
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(errors[0].contains("'up'"), "{}", errors[0]);
     assert!(errors[0].contains("workspace-relative"), "{}", errors[0]);

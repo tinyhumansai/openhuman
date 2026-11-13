@@ -17,9 +17,9 @@ async fn shell_blocks_rate_limited() {
 
 #[tokio::test]
 async fn shell_uses_host_node_and_python_from_path() {
-    for (binary, command, expected) in [
-        ("node", "node -e 'console.log(1)'", "1"),
-        ("python3", "python3 -c 'print(1)'", "1"),
+    for (binary, flag, script, expected) in [
+        ("node", "-e", "console.log(1)", "1"),
+        ("python3", "-c", "print(1)", "1"),
     ] {
         let available = std::process::Command::new(binary)
             .arg("--version")
@@ -28,6 +28,14 @@ async fn shell_uses_host_node_and_python_from_path() {
         if !available {
             continue;
         }
+        // POSIX passes a quoted script; cmd does not — an inner `"…"` in /C is
+        // parsed as the program name (verified with Rust's std::process::Command:
+        // `cmd /C "node -e \"console.log(1)\""` exits 0 with empty output). The
+        // bare form is exactly what cmd can lex, and prints on both.
+        #[cfg(unix)]
+        let command = format!("{binary} {flag} '{script}'");
+        #[cfg(windows)]
+        let command = format!("{binary} {flag} {script}");
 
         let tool = ShellTool::new(
             test_security(AutonomyLevel::Full),

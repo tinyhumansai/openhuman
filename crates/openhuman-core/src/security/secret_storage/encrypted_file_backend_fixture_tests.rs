@@ -41,6 +41,10 @@ fn enc2_fixture_values_decrypt_under_the_fixture_key() {
     assert_eq!(plain, ["sk-test-fixture-value", "pa\u{00df}word \u{1f511}"]);
 }
 
+// Unix-only: the driver's NTFS ACL verifier rejects the fixture's default
+// DACL (a single-ACE owner-only DACL is required); the Windows story is
+// untested upstream.
+#[cfg(unix)]
 #[test]
 fn secrets_enc_fixture_reads_through_the_backend() {
     let dir = fixture_dir();
@@ -55,6 +59,10 @@ fn secrets_enc_fixture_reads_through_the_backend() {
     assert_eq!(get("user-1:missing"), None);
 }
 
+// Unix-only: the driver's NTFS ACL verifier rejects the fixture's default
+// DACL (a single-ACE owner-only DACL is required); the Windows story is
+// untested upstream.
+#[cfg(unix)]
 #[test]
 fn secrets_enc_fixture_survives_a_write_and_stays_in_format() {
     let dir = fixture_dir();

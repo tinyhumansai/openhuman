@@ -366,6 +366,10 @@ async fn direct_list_tools_forwards_tags_and_reshapes_v3_envelope() {
 
 #[tokio::test]
 async fn direct_connected_integrations_fetches_schemas_without_backend_composio_route() {
+    // Serialises against every other composio cache-reader in the crate —
+    // the integrations cache is process-global and this test asserts an
+    // exact fetch outcome.
+    let _cache_lock = crate::integrations::composio::connected_integrations::composio_cache_test_lock_async().await;
     let _module = module_guard().await;
     let tmp = tempfile::tempdir().unwrap();
     let backend_tool_requests = Arc::new(AtomicUsize::new(0));

@@ -238,11 +238,18 @@ async fn offload_failure_keeps_the_inline_payload_for_the_summarizer_fallback() 
     let offload = new_artifact_offload(memory_blobs(), None, "worker", "task-1");
     let big = "x".repeat(10_000);
 
+    // Force the materialisation to fail portably: a path under a *file* is not
+    // a directory on any platform (`/proc/nonexistent-action-root` only works
+    // because /proc is read-only on Unix).
+    let tmp = tempfile::tempdir().unwrap();
+    let blocker = tmp.path().join("not-a-directory");
+    std::fs::write(&blocker, b"file, not a directory").unwrap();
+
     let (text, artifact) = offload_oversized_result(
         big.clone(),
         &offload,
         DEFAULT_OFFLOAD_THRESHOLD_BYTES,
-        &PathBuf::from("/proc/nonexistent-action-root"),
+        &blocker.join("nested"),
         None,
     )
     .await;

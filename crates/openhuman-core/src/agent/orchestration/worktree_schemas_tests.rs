@@ -193,12 +193,16 @@ fn require_managed_worktree_path_enforces_absolute_and_managed() {
 
     // An absolute but unmanaged path (e.g. the main checkout) is rejected —
     // worktree_remove must never target it.
-    p.insert("path".into(), Value::String("/home/u/proj".into()));
+    #[cfg(unix)]
+    let home = "/home/u/proj";
+    #[cfg(windows)]
+    let home = r"C:\proj";
+    p.insert("path".into(), Value::String(home.into()));
     assert!(require_managed_worktree_path(&p).is_err());
 
     // An absolute, managed worker checkout is accepted.
-    let ok = "/home/u/proj/.claude/worktrees/worker-x";
-    p.insert("path".into(), Value::String(ok.into()));
+    let ok = format!("{home}/.claude/worktrees/worker-x");
+    p.insert("path".into(), Value::String(ok.clone().into()));
     assert_eq!(
         require_managed_worktree_path(&p).unwrap(),
         PathBuf::from(ok)

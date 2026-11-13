@@ -14,8 +14,11 @@ fn age(path: &Path, by: std::time::Duration) {
 #[cfg(windows)]
 fn open_directory(path: &Path) -> std::fs::File {
     use std::os::windows::fs::OpenOptionsExt;
+    // SetFileTime needs FILE_WRITE_ATTRIBUTES; directories can't take
+    // FILE_GENERIC_WRITE, so request just the attribute bit.
+    const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
     std::fs::File::options()
-        .read(true)
+        .access_mode(FILE_WRITE_ATTRIBUTES)
         .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
         .open(path)
         .unwrap()

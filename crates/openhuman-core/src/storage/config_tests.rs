@@ -53,11 +53,9 @@ fn the_retired_classic_opt_out_reads_as_unset() {
 #[test]
 fn the_default_url_is_sqlite_under_the_workspace_storage_directory() {
     let workspace = Path::new("/work/space");
-    assert_eq!(default_url(workspace), "sqlite:/work/space/storage");
-    assert_eq!(
-        effective_url(&StorageMode::Default, workspace),
-        "sqlite:/work/space/storage"
-    );
+    let expected = format!("sqlite:{}", workspace.join("storage").display());
+    assert_eq!(default_url(workspace), expected);
+    assert_eq!(effective_url(&StorageMode::Default, workspace), expected);
     assert_eq!(
         effective_url(&StorageMode::Url("memory".into()), workspace),
         "memory"

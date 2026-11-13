@@ -598,10 +598,14 @@ fn resolve_action_dir_override_beats_default_when_no_env() {
     unsafe {
         std::env::remove_var(ACTION_DIR_ENV_VAR);
     }
-    let over = Some(PathBuf::from("/tmp/override-action-dir"));
+    #[cfg(unix)]
+    let over_path = "/tmp/override-action-dir";
+    #[cfg(windows)]
+    let over_path = r"C:\override-action-dir";
+    let over = Some(PathBuf::from(over_path));
     assert_eq!(
         resolve_action_dir(&over),
-        PathBuf::from("/tmp/override-action-dir"),
+        PathBuf::from(over_path),
         "override must be used when no env var is set"
     );
 }
@@ -625,10 +629,14 @@ fn resolve_action_dir_blank_env_does_not_pin() {
     unsafe {
         std::env::set_var(ACTION_DIR_ENV_VAR, "   ");
     }
-    let over = Some(PathBuf::from("/tmp/override-action-dir"));
+    #[cfg(unix)]
+    let over_path = "/tmp/override-action-dir";
+    #[cfg(windows)]
+    let over_path = r"C:\override-action-dir";
+    let over = Some(PathBuf::from(over_path));
     assert_eq!(
         resolve_action_dir(&over),
-        PathBuf::from("/tmp/override-action-dir"),
+        PathBuf::from(over_path),
         "blank env var must be ignored so the override still applies"
     );
     unsafe {

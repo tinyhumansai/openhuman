@@ -120,6 +120,7 @@ mod reported {
 
     #[test]
     fn independent_invocation_faults_report_separately_around_a_success() {
+        let _lock = crate::modules::MODULE_TEST_GLOBAL_LOCK.lock().unwrap();
         let runtime = current_thread();
         let (proxy, _service) = runtime.block_on(fixture());
         let client = fixture_client(proxy);
@@ -148,6 +149,7 @@ mod reported {
 
     #[test]
     fn cached_native_module_unavailability_is_reported_once() {
+        let _lock = crate::modules::MODULE_TEST_GLOBAL_LOCK.lock().unwrap();
         let runtime = current_thread();
         let (proxy, _service) = runtime.block_on(fixture());
         let client = fixture_client(proxy);
@@ -170,6 +172,7 @@ mod reported {
 
     #[test]
     fn malformed_inner_json_from_a_real_bus_reply_is_reported_as_a_sanitized_fault() {
+        let _lock = crate::modules::MODULE_TEST_GLOBAL_LOCK.lock().unwrap();
         let runtime = current_thread();
         let (proxy, _service) = runtime.block_on(fixture());
         let client = fixture_client(proxy);
@@ -193,6 +196,7 @@ mod reported {
 
     #[test]
     fn unknown_module_failures_emit_only_safe_registry_metadata() {
+        let _lock = crate::modules::MODULE_TEST_GLOBAL_LOCK.lock().unwrap();
         let events = sentry::test::with_captured_events(|| {
             current_thread().block_on(async {
                 let client = client(Config::default());

@@ -290,6 +290,7 @@ async fn a_bounded_wait_with_nothing_cached_and_downloads_off_fails_rather_than_
 #[cfg(feature = "crash-reporting")]
 #[test]
 fn terminal_resolution_cached_failure_is_reported_when_a_client_becomes_available() {
+    let _lock = crate::modules::MODULE_TEST_GLOBAL_LOCK.lock().unwrap();
     const MODULE: &str = "tinycomputer";
     let table = tinybus::module::resolution::global();
     table.forget(MODULE);
@@ -349,6 +350,7 @@ fn terminal_resolution_cached_failure_is_reported_when_a_client_becomes_availabl
 #[cfg(feature = "crash-reporting")]
 #[test]
 fn terminal_resolution_wait_timeout_is_not_reported_as_terminal() {
+    let _lock = crate::modules::MODULE_TEST_GLOBAL_LOCK.lock().unwrap();
     const MODULE: &str = "tinyvoice";
     let table = tinybus::module::resolution::global();
     table.forget(MODULE);
@@ -440,6 +442,7 @@ const REFUSED_LOAD: &str = "module 'tinyconnectors' could not be loaded from the
 #[cfg(feature = "crash-reporting")]
 #[test]
 fn a_failed_resolution_is_reported_once_with_the_module_id() {
+    let _lock = crate::modules::MODULE_TEST_GLOBAL_LOCK.lock().unwrap();
     // The resolution runs once per process and caches its failure, so this
     // report is the one Sentry event per broken install. Every later caller's
     // re-report is demoted as `ModuleUnavailable`; this one must not be.

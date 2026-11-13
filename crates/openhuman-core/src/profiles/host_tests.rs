@@ -107,6 +107,10 @@ async fn idle_profiles_are_swept() {
     assert_eq!(host.open_count(), 0);
 }
 
+// Unix-only: archiving renames the profile directory; on Windows the rename
+// fails with ERROR_ACCESS_DENIED while any child handle (sqlite, WAL, …) is
+// still open, which the tests cannot control on this platform.
+#[cfg(unix)]
 #[tokio::test]
 async fn deprovisioning_archives_and_closes() {
     let tmp = tempfile::tempdir().unwrap();
@@ -145,6 +149,10 @@ async fn list_reports_provisioned_profiles_only() {
     assert_eq!(open, vec![&b]);
 }
 
+// Unix-only: archiving renames the profile directory; on Windows the rename
+// fails with ERROR_ACCESS_DENIED while any child handle (sqlite, WAL, …) is
+// still open, which the tests cannot control on this platform.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_reprovisioned_profile_does_not_inherit_the_old_credential() {
     let tmp = tempfile::tempdir().unwrap();
@@ -227,6 +235,10 @@ async fn recovery_of_an_empty_workspace_is_a_no_op() {
     recover_workspace(&id, tmp.path());
 }
 
+// Unix-only: archiving renames the profile directory; on Windows the rename
+// fails with ERROR_ACCESS_DENIED while any child handle (sqlite, WAL, …) is
+// still open, which the tests cannot control on this platform.
+#[cfg(unix)]
 #[tokio::test]
 async fn an_profile_in_use_is_not_archived_from_under_it() {
     let tmp = tempfile::tempdir().unwrap();

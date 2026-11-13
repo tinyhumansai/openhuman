@@ -106,7 +106,11 @@ fn the_policy_is_on_and_closed() {
 #[test]
 fn artifacts_land_in_the_profiles_sandbox() {
     let id = ProfileId::for_user("alice", ProfileIdMode::Raw).unwrap();
-    let layout = profile_layout(Path::new("/srv/oh"), &id);
+    #[cfg(unix)]
+    let root = Path::new("/srv/oh");
+    #[cfg(windows)]
+    let root = Path::new(r"C:\srv\oh");
+    let layout = profile_layout(root, &id);
     let config = profile_config(&layout, &id);
     assert!(config.files_dir().starts_with(&layout.sandbox_dir));
 }

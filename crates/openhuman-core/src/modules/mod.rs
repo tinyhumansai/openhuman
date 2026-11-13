@@ -385,3 +385,10 @@ pub async fn import_legacy_tinyjuice(root: &std::path::Path, ttl: Option<std::ti
 #[cfg(all(test, feature = "modules"))]
 #[path = "import_once_tests.rs"]
 mod import_once_tests;
+
+/// Serialises tests that share the process-global module resolution table or
+/// the capture-all Sentry hook: capturing events only sees one Hub at a
+/// time, and two tests forgetting/marking the same module interleave with
+/// each other's assertions otherwise.
+#[cfg(all(test, feature = "crash-reporting"))]
+pub(crate) static MODULE_TEST_GLOBAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
