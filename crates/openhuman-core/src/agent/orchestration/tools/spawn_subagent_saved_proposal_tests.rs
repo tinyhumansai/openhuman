@@ -143,7 +143,7 @@ fn carry_saved_flow_appends_the_note_only_for_the_named_proposal() {
 /// answers `Missing` (or `Unknown` when flows are compiled out); either way
 /// the result is exactly what `append_saved_flow_note` gives for it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn carry_saved_flow_runs_its_lookups_off_the_worker_and_keeps_the_note() {
+async fn carry_saved_flow_runs_its_lookups_off_the_worker() {
     let temp = thread_with_delivered_proposal("Friday Inbox Wrap-up");
     mark_proposal_saved_from_card(&temp, "flow-1");
     let ctx = crate::core::runtime::DispatchCtx::ambient();
