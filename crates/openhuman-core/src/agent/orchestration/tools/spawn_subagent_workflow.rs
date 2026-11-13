@@ -335,6 +335,7 @@ fn hand_off_proposal<'a>(
         }
     }
     let mut best: Option<&ThreadWorkflowProposal> = None;
+    let mut ambiguous = false;
     for proposal in proposals {
         if !hand_off.contains(proposal.name.as_str()) {
             continue;
@@ -345,9 +346,12 @@ fn hand_off_proposal<'a>(
         };
         if longer {
             best = Some(proposal);
+            ambiguous = false;
+        } else if best.is_some_and(|current| proposal.name.len() == current.name.len()) {
+            ambiguous = true;
         }
     }
-    best
+    if ambiguous { None } else { best }
 }
 
 /// Note appended to a `workflow_builder` save hand-off when the proposal it
