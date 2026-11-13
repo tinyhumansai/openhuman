@@ -108,11 +108,25 @@ fn contains_target_id(text: &str, token: &str) -> bool {
 
 /// Whether `name` appears in `text` outside a nested-workflow reference, so a
 /// graph node naming a child workflow cannot select that child's proposal.
+/// The name is matched as written and, when it differs, in its JSON-escaped
+/// form, since a hand-off may carry the proposal as serialized JSON context
+/// (`Say "Hello"` appears there as `Say \"Hello\"`).
 fn contains_target_name(text: &str, name: &str) -> bool {
     if name.is_empty() {
         return false;
     }
     let nested = nested_workflow_ranges(text);
-    text.match_indices(name)
-        .any(|(at, _)| !in_nested_workflow(&nested, at))
+    let found = |needle: &str| {
+        text.match_indices(needle)
+            .any(|(at, _)| !in_nested_workflow(&nested, at))
+    };
+    if found(name) {
+        return true;
+    }
+    let escaped = serde_json::to_string(name).unwrap_or_default();
+    let escaped = escaped
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+        .unwrap_or("");
+    !escaped.is_empty() && escaped != name && found(escaped)
 }
