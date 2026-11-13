@@ -341,6 +341,19 @@ where
 ///
 /// Both are belt-and-braces over a check that already exists. That is the right
 /// posture for the one code path that hands over a recovery phrase.
+///
+/// # Linked code is accepted as host code
+///
+/// A wallet linked into the executable (`[modules] source = "linked"`, built
+/// through `openhuman-modules-linked`) has no release artifact. tinybus attests
+/// it with the digest of the executable that contains it, so it can never match
+/// a release pin, and refusing it would make a linked wallet unusable for the
+/// very calls linking exists to serve. That code is part of this binary: it is
+/// exactly as trusted as the core making this check, and anything able to swap
+/// it could swap the check too. So the running executable's own digest is also
+/// accepted, but only when this binary registered a linked tinywallet factory
+/// (see [`linked_host_code`]). The name must still match, and any digest that is
+/// neither pinned nor this executable's is still refused.
 async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallError> {
     let (runtime, record) = ready(config).await?;
     let proxy = proxy(runtime, record)?;
