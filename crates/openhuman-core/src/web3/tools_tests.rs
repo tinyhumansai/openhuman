@@ -1,7 +1,7 @@
 use super::*;
 
-fn tool(name: &str) -> Web3ModuleTool {
-    Web3ModuleTool::new(
+fn tool(name: &str) -> ModuleTool {
+    ModuleTool::web3(
         tinywallet_bus::tools::find_web3_tool_declaration(name)
             .expect("a shipped web3 declaration"),
     )

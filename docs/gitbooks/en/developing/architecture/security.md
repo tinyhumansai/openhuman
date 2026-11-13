@@ -83,7 +83,7 @@ Local PII detection belongs to [`tinymemory_api::safety`](https://github.com/tin
 
 ## Calls into
 
-- `crates/openhuman-core/src/config/`: `SecurityConfig`, `AutonomyConfig` for policy + sandbox selection.
+- `crates/openhuman-core/src/config/`: `AutonomyConfig`, `SandboxConfig` for policy + sandbox selection.
 - Workspace filesystem, for the audit log and secret store.
 
 ## Called by

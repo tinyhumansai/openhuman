@@ -1,6 +1,6 @@
 # workspace
 
-Owns workspace layout bootstrap and the editable "Persona Pack" prompt files (`SOUL.md`, `IDENTITY.md`) that drive the agent's personality. Two concerns live here: (1) `init_workspace`, the one-shot setup that creates the default directory tree and copies the bundled prompt/skills files into a fresh workspace (backs CLI `init`-style entrypoints); and (2) read/edit/reset RPCs over a tightly allowlisted set of persona files, so the settings UI can round-trip those prompts without ever exposing an arbitrary path under the workspace. It also carries an unrelated file-watcher state store (see [`state.rs`](./state.rs) below).
+Owns workspace layout bootstrap and the editable "Persona Pack" prompt files (`SOUL.md`, `IDENTITY.md`) that drive the agent's personality. Two concerns live here: (1) `init_workspace`, the one-shot setup that creates the default directory tree and copies the bundled prompt/skills files into a fresh workspace (backs CLI `init`-style entrypoints); and (2) read/edit/reset RPCs over a tightly allowlisted set of persona files, so the settings UI can round-trip those prompts without ever exposing an arbitrary path under the workspace.
 
 ## Responsibilities
 
@@ -20,7 +20,6 @@ Owns workspace layout bootstrap and the editable "Persona Pack" prompt files (`S
 | [`crates/openhuman-core/src/config/workspace/rpc.rs`](./rpc.rs) | Pure-domain persona file API: `WorkspaceFile` type, `read_workspace_file` / `write_workspace_file` / `reset_workspace_file`, `MAX_WORKSPACE_FILE_BYTES`, allowlist enforcement (`ensure_editable`). Returns `Outcome<WorkspaceFile>`. |
 | [`crates/openhuman-core/src/config/workspace/schemas.rs`](./schemas.rs) | Controller schemas + `handle_*` fns delegating to `rpc.rs`; loads config to resolve `workspace_dir`. |
 | [`crates/openhuman-core/src/config/workspace/tools.rs`](./tools.rs) | LLM-callable wrappers over the persona-file RPCs: `WorkspaceReadPersonaTool` (default-on), `WorkspaceUpdatePersonaTool`, `WorkspaceResetPersonaTool`, and `WorkspaceInitTool` (all three mutators default-off, gated by the `workspace_manage` toggle in [`tools/user_filter.rs`](../../tools/user_filter.rs)). |
-| `crates/openhuman-core/src/config/workspace/state.rs` | `WatcherStateStore`, a machine-local TSD KV store for `path -> last_mtime_secs`, so a vault file watcher can skip re-ingesting unchanged files after a restart. It opens its own local backend and does not use a shared remote storage URL. Not otherwise wired to the persona/bootstrap concerns above; currently has no other caller in the tree. |
 
 ## Public surface
 
@@ -61,7 +60,6 @@ The editable surface is restricted to the `BOOTSTRAP_FILES` allowlist (`SOUL.md`
 - `crate::core::Outcome`: uniform RPC return type.
 - Bundled prompt assets via `include_str!("../../agent/prompts/SOUL.md" | "IDENTITY.md")`.
 - `tinytools` (`PermissionLevel`, `Tool`, `ToolResult`) for the agent tools in `tools.rs`.
-- The watcher state store uses the configured TSD SQLite driver for its dedicated local database; legacy SQLite table import remains part of host migration.
 
 ## Used by
 
@@ -73,7 +71,7 @@ The editable surface is restricted to the `BOOTSTRAP_FILES` allowlist (`SOUL.md`
 - `bundled_default_contents` is the single allowlist gate: membership there is both "what may be edited from the Persona surface" and "what to restore on reset", so a caller can never read or clobber an arbitrary workspace path (path-traversal names like `../escape.md` and case variants like `soul.md` are rejected).
 - `read_workspace_file` deliberately avoids a `metadata().len()` pre-check (TOCTOU-prone) and instead reads through `take(MAX_WORKSPACE_FILE_BYTES + 1)`, capping bytes held regardless of races; an over-cap file is refused, non-UTF-8 is rejected.
 - `WorkspaceFile` intentionally omits the absolute on-disk path to avoid leaking host filesystem layout over RPC.
-- The persona/bootstrap surface has no `store.rs`, `bus.rs`, or `types.rs`: no event-bus subscribers, no persisted in-memory state beyond plain files. `tools.rs` and `state.rs` are the exceptions to an otherwise stateless-handler domain.
+- The persona/bootstrap surface has no `store.rs`, `bus.rs`, or `types.rs`: no event-bus subscribers, no persisted in-memory state beyond plain files. `tools.rs` is the exception to an otherwise stateless-handler domain.
 - The module's own `init_workspace` is unrelated to `keyring::init_workspace` (same name, different domain).
 
 ## Further reading

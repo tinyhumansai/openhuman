@@ -98,7 +98,7 @@ fn config_with_every_secret() -> Config {
         }
         filled += 1;
     }
-    assert_eq!(filled, 38, "every sealed credential field must be set");
+    assert_eq!(filled, 37, "every sealed credential field must be set");
     config
 }
 

@@ -156,3 +156,5 @@ mod profile_layout_parity_tests;
 
 #[path = "load_managed_provider_tests.rs"]
 mod managed_provider_tests;
+#[path = "load_retired_keys_compat_tests.rs"]
+mod retired_keys_compat_tests;

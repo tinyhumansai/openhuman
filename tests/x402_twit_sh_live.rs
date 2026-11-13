@@ -6,7 +6,6 @@
 use std::sync::Arc;
 
 use openhuman_core::security::{AutonomyLevel, SecurityPolicy};
-use openhuman_core::web3::x402;
 use serde_json::json;
 use tinytools::Tool;
 
@@ -16,8 +15,6 @@ async fn x402_pay_twit_sh_for_hal_finney_tweet() {
     env_logger::init();
 
     let tmp = tempfile::tempdir().unwrap();
-    x402::init_ledger(tmp.path(), "test-session");
-
     // This ignored test explicitly opts into a paid request to one endpoint;
     // use the current host authorization seam rather than bypassing it.
     let security = Arc::new(SecurityPolicy {

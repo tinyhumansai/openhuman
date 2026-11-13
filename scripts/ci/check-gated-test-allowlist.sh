@@ -106,6 +106,7 @@ integrations/composio/ops/mod.rs
 integrations/composio/client.rs
 mcp/server/resources_tests.rs
 modules/tinyflows.rs
+modules/storage_grant_schemas_tests.rs
 doctor/checks/channels.rs
 doctor/checks/inference_tests.rs
 doctor/checks/mcp.rs

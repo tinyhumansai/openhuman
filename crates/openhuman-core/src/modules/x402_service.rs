@@ -30,7 +30,7 @@ pub(crate) async fn prepare_payment(
     payment_required: String,
     owner: Option<tinywallet_bus::wire::QuoteOwner>,
 ) -> Result<(X402ServiceHandle, X402PreparePaymentResponse), WalletCallError> {
-    prepare(ctx, config, url, payment_required, owner, None)
+    prepare(ctx, config, url, payment_required, owner, None, None)
         .await
         .0
 }
@@ -47,6 +47,7 @@ pub(crate) async fn prepare_capped_payment(
     url: String,
     payment_required: String,
     max_amount_atomic: u64,
+    network: Option<String>,
 ) -> (
     Result<(X402ServiceHandle, X402PreparePaymentResponse), WalletCallError>,
     X402RpcPermitOutcome,
@@ -58,8 +59,30 @@ pub(crate) async fn prepare_capped_payment(
         payment_required,
         None,
         Some(max_amount_atomic),
+        network,
     )
     .await
+}
+
+/// Answer a Sign-In-With-X (CAIP-122) challenge with the wallet's EVM key.
+/// TinyWallet builds and signs the message itself and refuses a challenge
+/// whose domain or URI is not the requested URL's host, so this is never a
+/// sign-anything primitive. Pays nothing and reserves no budget.
+pub(crate) async fn sign_in(
+    ctx: &DispatchCtx,
+    config: &Config,
+    url: String,
+    payment_required: String,
+) -> Result<tinywallet_bus::wire::X402SignInResponse, WalletCallError> {
+    let secret = signing_secret(ctx, config, crate::web3::wallet::WalletChain::Evm).await?;
+    let mut request = tinywallet_bus::wire::X402SignInRequest {
+        url,
+        payment_required,
+        secret,
+    };
+    let response = wallet::call_confidential(config, methods::X402_SIGN_IN, &request).await;
+    request.secret.mnemonic.zeroize();
+    response
 }
 
 async fn prepare(
@@ -69,6 +92,7 @@ async fn prepare(
     payment_required: String,
     owner: Option<tinywallet_bus::wire::QuoteOwner>,
     rpc_cap: Option<u64>,
+    network: Option<String>,
 ) -> (
     Result<(X402ServiceHandle, X402PreparePaymentResponse), WalletCallError>,
     X402RpcPermitOutcome,
@@ -103,6 +127,7 @@ async fn prepare(
         owner,
         secret: evm,
         additional_secrets: vec![solana],
+        network,
     };
     let call = wallet::call_confidential(config, methods::X402_PREPARE_PAYMENT, &request);
     let (response, outcome) = match rpc_cap {
