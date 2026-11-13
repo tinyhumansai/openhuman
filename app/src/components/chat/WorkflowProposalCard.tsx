@@ -222,6 +222,7 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
         threadId,
         flowId,
         name: proposal.name,
+        proposalId: proposal.proposalId,
         sourceMessageId: proposal.sourceMessageId,
       })
     );
@@ -264,6 +265,7 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
         threadId,
         flowId,
         name: proposal.name,
+        proposalId: proposal.proposalId,
         sourceMessageId: proposal.sourceMessageId,
       })
     );
