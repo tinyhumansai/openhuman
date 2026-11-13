@@ -57,8 +57,11 @@ fn nested_workflow_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
             }
             b':' => awaiting_value_of = last_key.take(),
             b'{' => {
+                // An object opened as a property value (`"key": {`) ends that
+                // pending value; its own first string is a key.
                 objects.push((at, false));
                 last_key = None;
+                awaiting_value_of = None;
             }
             b'}' => {
                 if let Some((start, true)) = objects.pop() {
