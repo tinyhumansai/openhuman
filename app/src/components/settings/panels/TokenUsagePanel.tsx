@@ -2,6 +2,7 @@ import { RefreshCw, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import { intlLocale } from '../../../lib/i18n/intlLocale';
 import {
   getTokenjuiceSavings,
   getTokenjuiceSettings,
@@ -15,8 +16,8 @@ import { formatCurrency } from '../../dashboard/formatCurrency';
 import { Button, Card, Field, NumberField, StatusLine, Switch } from '../../ui';
 import SettingsPanel from '../layout/SettingsPanel';
 
-function formatInt(n: number): string {
-  return Math.round(n).toLocaleString();
+function formatInt(n: number, locale: string): string {
+  return Math.round(n).toLocaleString(locale);
 }
 
 function formatBytes(n: number): string {
@@ -73,7 +74,8 @@ interface TokenUsagePanelProps {
 }
 
 const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const numberLocale = intlLocale(locale);
 
   const [settings, setSettings] = useState<TokenjuiceSettings | null>(null);
   const [savings, setSavings] = useState<SavingsStats | null>(null);
@@ -194,25 +196,30 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
         <div className="grid grid-cols-2 gap-2 p-4 lg:grid-cols-4">
           <StatTile
             label={t('settings.tokenUsage.tokensSaved')}
-            value={total ? formatInt(total.tokensSaved) : '—'}
+            value={total ? formatInt(total.tokensSaved, numberLocale) : '—'}
             hint={
               total
-                ? t('settings.tokenUsage.overEvents').replace('{count}', formatInt(total.events))
+                ? t('settings.tokenUsage.overEvents').replace(
+                    '{count}',
+                    formatInt(total.events, numberLocale)
+                  )
                 : undefined
             }
           />
           <StatTile
             label={t('settings.tokenUsage.costSaved')}
-            value={total ? formatCurrency(total.costSavedUsd, 'USD') : '—'}
+            value={
+              total ? formatCurrency(total.costSavedUsd, 'USD', { locale: numberLocale }) : '—'
+            }
           />
           <StatTile
             label={t('settings.tokenUsage.cacheOccupancy')}
-            value={savings ? formatInt(savings.cache.entries) : '—'}
+            value={savings ? formatInt(savings.cache.entries, numberLocale) : '—'}
             hint={savings ? formatBytes(savings.cache.bytes) : undefined}
           />
           <StatTile
             label={t('settings.tokenUsage.compactions')}
-            value={total ? formatInt(total.events) : '—'}
+            value={total ? formatInt(total.events, numberLocale) : '—'}
           />
         </div>
 
@@ -229,8 +236,11 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
                     <span className="font-mono text-content-secondary">{name}</span>
                     <span className="tabular-nums text-content-muted">
                       {t('settings.tokenUsage.tokensAndCost', '{tokens} tok · {cost}')
-                        .replace('{tokens}', formatInt(b.tokensSaved))
-                        .replace('{cost}', formatCurrency(b.costSavedUsd, 'USD'))}
+                        .replace('{tokens}', formatInt(b.tokensSaved, numberLocale))
+                        .replace(
+                          '{cost}',
+                          formatCurrency(b.costSavedUsd, 'USD', { locale: numberLocale })
+                        )}
                     </span>
                   </div>
                 ))}

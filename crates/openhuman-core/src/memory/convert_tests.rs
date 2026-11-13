@@ -5,6 +5,7 @@ use tinymemory_integrations::documents::{DocumentConverter, Error, RawDocument};
 #[cfg(feature = "documents")]
 use {
     crate::memory::brain::{ingest, BrainIngestParams},
+    crate::memory::scope::MemoryIdentity,
     crate::memory::test_fixtures::{bind_reference, config_in, stored},
     tinymemory_api::{ItemKind, MetaFilter},
 };
@@ -298,8 +299,11 @@ async fn brain_ingest_files_a_pdf_by_path() {
     let path = tmp.path().join("brief.pdf");
     std::fs::write(&path, pdf_saying("The vendor code is PV-7023")).unwrap();
 
+    // The identity is the "no agent" root: this ingest is the host filing a
+    // document on its own behalf, not an agent turn.
     let view = ingest(
         &config,
+        &MemoryIdentity::root(),
         BrainIngestParams {
             path: Some(path.display().to_string()),
             text: None,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::core_binary::find_debug_binary_walking_up;
 
 // -------------------------------------------------------------------------
 // config_path_for_client — pure path resolution tests

@@ -7,6 +7,8 @@
 
 use std::path::PathBuf;
 
+use crate::core_binary::resolve_core_binary;
+
 /// Information returned to the frontend about the MCP server binary.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct McpBinaryInfo {
@@ -26,110 +28,18 @@ fn current_os() -> &'static str {
     return "linux";
 }
 
-/// Walk up from `start` until we find a directory containing
-/// `target/debug/openhuman-core[.exe]`. Returns the full path to the binary
-/// when found, or `None` if the tree is exhausted.
-fn find_debug_binary_walking_up(start: &std::path::Path) -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    let bin_name = "openhuman-core.exe";
-    #[cfg(not(target_os = "windows"))]
-    let bin_name = "openhuman-core";
-
-    let mut dir = start.to_path_buf();
-    loop {
-        let candidate = dir.join("target").join("debug").join(bin_name);
-        if candidate.exists() {
-            return Some(candidate);
-        }
-        if !dir.pop() {
-            return None;
-        }
-    }
-}
-
 /// Resolve the absolute path to the `openhuman-core` binary.
 ///
-/// In dev builds (`cfg!(debug_assertions)`) we:
-/// 1. Check `OPENHUMAN_CORE_BINARY_PATH` env var first.
-/// 2. Walk up from `current_exe()` looking for `target/debug/openhuman-core`.
-///
-/// In release builds the binary is a sibling of the shell executable:
-/// - macOS: `../MacOS/openhuman-core` relative to the host exe.
-/// - Windows / Linux: same directory as the host exe.
+/// Thin wrapper over the shared resolver in [`crate::core_binary`] so the MCP
+/// panel and the service fallback commands always agree on the binary.
 fn resolve_binary_path() -> Result<PathBuf, String> {
     log::debug!("[mcp_commands] mcp_resolve_binary_path: resolving binary path");
-
-    #[cfg(target_os = "windows")]
-    let bin_name = "openhuman-core.exe";
-    #[cfg(not(target_os = "windows"))]
-    let bin_name = "openhuman-core";
-
-    if cfg!(debug_assertions) {
-        // Dev mode: env override takes priority.
-        if let Ok(env_path) = std::env::var("OPENHUMAN_CORE_BINARY_PATH") {
-            if !env_path.is_empty() {
-                let p = PathBuf::from(&env_path);
-                if p.exists() {
-                    log::debug!(
-                        "[mcp_commands] mcp_resolve_binary_path: using OPENHUMAN_CORE_BINARY_PATH={}",
-                        env_path
-                    );
-                    return Ok(p);
-                }
-                log::warn!(
-                    "[mcp_commands] OPENHUMAN_CORE_BINARY_PATH set to {env_path} but file not found; falling back to walk"
-                );
-            }
-        }
-
-        let exe = std::env::current_exe().map_err(|e| format!("current_exe failed: {e}"))?;
-        let start = exe
-            .parent()
-            .ok_or_else(|| "current_exe has no parent directory".to_string())?;
-
-        let candidate = find_debug_binary_walking_up(start).ok_or_else(|| {
-            format!(
-                "could not find target/debug/{bin_name} walking up from {}",
-                start.display()
-            )
-        })?;
-
-        log::debug!(
-            "[mcp_commands] mcp_resolve_binary_path: dev binary found at {}",
-            candidate.display()
-        );
-        return Ok(candidate);
-    }
-
-    // Release mode: sibling binary.
-    let exe = std::env::current_exe().map_err(|e| format!("current_exe failed: {e}"))?;
-
-    #[cfg(target_os = "macos")]
-    let candidate = {
-        // macOS .app: Contents/MacOS/<host> → Contents/MacOS/openhuman-core
-        exe.parent()
-            .map(|p| p.join(bin_name))
-            .ok_or_else(|| "current_exe has no parent directory".to_string())?
-    };
-
-    #[cfg(not(target_os = "macos"))]
-    let candidate = exe
-        .parent()
-        .map(|p| p.join(bin_name))
-        .ok_or_else(|| "current_exe has no parent directory".to_string())?;
-
-    if !candidate.exists() {
-        return Err(format!(
-            "openhuman-core binary not found at expected path: {}",
-            candidate.display()
-        ));
-    }
-
+    let path = resolve_core_binary()?;
     log::debug!(
-        "[mcp_commands] mcp_resolve_binary_path: release binary at {}",
-        candidate.display()
+        "[mcp_commands] mcp_resolve_binary_path: resolved path={}",
+        path.display()
     );
-    Ok(candidate)
+    Ok(path)
 }
 
 /// Tauri command — resolve the `openhuman-core` binary path and OS name.

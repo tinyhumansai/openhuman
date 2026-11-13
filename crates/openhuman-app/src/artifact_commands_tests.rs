@@ -23,17 +23,21 @@ fn sanitize_accepts_plain_names() {
 
 async fn ready_artifact(workspace: &Path, files_dir: &Path) -> String {
     use openhuman_rpc::embed::artifacts::{create_artifact, finalize_artifact, ArtifactKind};
+    // The trailing `chat` argument carries the producing turn's routing
+    // context (thread_id / client_id). It is `None` on the CLI / cron /
+    // sub-agent paths, which is what this helper is.
     let (meta, path) = create_artifact(
         workspace,
         files_dir,
         ArtifactKind::Presentation,
         "Deck",
         "pptx",
+        None,
     )
     .await
     .unwrap();
     std::fs::write(&path, b"deck").unwrap();
-    finalize_artifact(workspace, &meta.id, 4).await.unwrap();
+    finalize_artifact(workspace, &meta.id, 4, None).await.unwrap();
     meta.id
 }
 

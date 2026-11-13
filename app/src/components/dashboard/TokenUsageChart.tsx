@@ -2,6 +2,7 @@ import { Bar, BarChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } fro
 
 import type { CostDashboardDay } from '../../hooks/useCostDashboard';
 import { useT } from '../../lib/i18n/I18nContext';
+import { intlLocale } from '../../lib/i18n/intlLocale';
 import ChartTooltip from './ChartTooltip';
 import { dayOfMonth, formatTokens, longDateLabel, shortDayLabel } from './formatCurrency';
 
@@ -22,11 +23,12 @@ interface TokenPoint {
 }
 
 const TokenUsageChart = ({ days }: TokenUsageChartProps) => {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const numberLocale = intlLocale(locale);
   const data: TokenPoint[] = days.map(d => ({
     date: d.date,
-    label: shortDayLabel(d.date),
-    dayNumber: dayOfMonth(d.date),
+    label: shortDayLabel(d.date, numberLocale),
+    dayNumber: dayOfMonth(d.date, numberLocale),
     input: d.input_tokens,
     output: d.output_tokens,
     total: d.total_tokens,
@@ -74,7 +76,7 @@ const TokenUsageChart = ({ days }: TokenUsageChartProps) => {
               if (!item) return null;
               return (
                 <ChartTooltip
-                  title={longDateLabel(item.date)}
+                  title={longDateLabel(item.date, numberLocale)}
                   rows={[
                     {
                       label: t('settings.costDashboard.inputTokens'),

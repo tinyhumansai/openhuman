@@ -1,19 +1,44 @@
 const ONE_CENT = 0.01;
 
-function currencyFormatter(currency: string, maximumFractionDigits: number): Intl.NumberFormat {
+/**
+ * Locale used when no explicit one is supplied.
+ *
+ * `Intl` defaults to the **host** locale when it is called with `undefined`,
+ * which makes every number in the cost dashboard change shape depending on
+ * the operating system's language (a Turkish machine renders `$12,50`, an
+ * English one `$12.50`). That is neither the app's active language nor a
+ * stable contract, so the default is pinned instead and the dashboard passes
+ * the app locale explicitly.
+ */
+export const DEFAULT_INTL_LOCALE = 'en-US';
+
+function currencyFormatter(
+  currency: string,
+  maximumFractionDigits: number,
+  locale: string
+): Intl.NumberFormat {
   const normalized = currency?.trim() ? currency.trim().toUpperCase() : 'USD';
   try {
-    return new Intl.NumberFormat(undefined, {
+    return new Intl.NumberFormat(locale, {
       style: 'currency',
       currency: normalized,
       maximumFractionDigits,
     });
   } catch {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency: 'USD',
-      maximumFractionDigits,
-    });
+    try {
+      return new Intl.NumberFormat(locale, {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits,
+      });
+    } catch {
+      // A malformed locale must not take the whole dashboard down.
+      return new Intl.NumberFormat(DEFAULT_INTL_LOCALE, {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits,
+      });
+    }
   }
 }
 
@@ -24,6 +49,11 @@ interface FormatCurrencyOptions {
    * otherwise all read the same.
    */
   precise?: boolean;
+  /**
+   * BCP-47 locale for the number format. Defaults to [`DEFAULT_INTL_LOCALE`];
+   * pass the app's active locale to localise the separators.
+   */
+  locale?: string;
 }
 
 /**
@@ -43,13 +73,14 @@ export function formatCurrency(
 ): string {
   const finite = Number.isFinite(amountUsd) ? amountUsd : 0;
   const safe = Object.is(finite, -0) ? 0 : finite;
+  const locale = options.locale ?? DEFAULT_INTL_LOCALE;
   if (safe !== 0 && Math.abs(safe) < ONE_CENT) {
     if (options.precise) {
-      return currencyFormatter(currency, 4).format(safe);
+      return currencyFormatter(currency, 4, locale).format(safe);
     }
-    return `${safe < 0 ? '-' : ''}<${currencyFormatter(currency, 2).format(ONE_CENT)}`;
+    return `${safe < 0 ? '-' : ''}<${currencyFormatter(currency, 2, locale).format(ONE_CENT)}`;
   }
-  return currencyFormatter(currency, Math.abs(safe) >= 100 ? 0 : 2).format(safe);
+  return currencyFormatter(currency, Math.abs(safe) >= 100 ? 0 : 2, locale).format(safe);
 }
 
 export function formatTokens(n: number): string {
@@ -68,10 +99,10 @@ export function formatPercent(percent: number): string {
   return `${safe.toFixed(1)}%`;
 }
 
-export function shortDayLabel(isoDate: string): string {
+export function shortDayLabel(isoDate: string, locale: string = DEFAULT_INTL_LOCALE): string {
   try {
     const date = new Date(`${isoDate}T00:00:00Z`);
-    return new Intl.DateTimeFormat(undefined, { weekday: 'short', timeZone: 'UTC' }).format(date);
+    return new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' }).format(date);
   } catch {
     return isoDate.slice(5);
   }
@@ -81,10 +112,10 @@ export function shortDayLabel(isoDate: string): string {
  * Full long-form date label for tooltips (e.g. "Wed, May 27").
  * Falls back to the raw ISO string when parsing fails.
  */
-export function longDateLabel(isoDate: string): string {
+export function longDateLabel(isoDate: string, locale: string = DEFAULT_INTL_LOCALE): string {
   try {
     const date = new Date(`${isoDate}T00:00:00Z`);
-    return new Intl.DateTimeFormat(undefined, {
+    return new Intl.DateTimeFormat(locale, {
       weekday: 'short',
       month: 'short',
       day: 'numeric',
@@ -99,10 +130,10 @@ export function longDateLabel(isoDate: string): string {
  * Day-of-month number for the X-axis sub-line, in UTC. Returns the
  * trailing two digits of the ISO date on any parse failure.
  */
-export function dayOfMonth(isoDate: string): string {
+export function dayOfMonth(isoDate: string, locale: string = DEFAULT_INTL_LOCALE): string {
   try {
     const date = new Date(`${isoDate}T00:00:00Z`);
-    return new Intl.DateTimeFormat(undefined, { day: 'numeric', timeZone: 'UTC' }).format(date);
+    return new Intl.DateTimeFormat(locale, { day: 'numeric', timeZone: 'UTC' }).format(date);
   } catch {
     return isoDate.slice(-2);
   }

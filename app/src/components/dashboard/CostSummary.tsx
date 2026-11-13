@@ -1,6 +1,7 @@
 import { CalendarDays, type LucideIcon, TrendingUp, Wallet } from 'lucide-react';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { intlLocale } from '../../lib/i18n/intlLocale';
 import { formatCurrency } from './formatCurrency';
 
 interface CostSummaryProps {
@@ -17,7 +18,8 @@ const CostSummary = ({
   monthlyPaceUsd,
   monthToDateUsd,
 }: CostSummaryProps) => {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const numberLocale = intlLocale(locale);
 
   return (
     <section
@@ -28,20 +30,20 @@ const CostSummary = ({
         testId="metric-total-spend"
         icon={Wallet}
         label={t('settings.costDashboard.totalSpend')}
-        value={formatCurrency(periodTotalUsd, currency)}
+        value={formatCurrency(periodTotalUsd, currency, { locale: numberLocale })}
         hint={t('settings.costDashboard.lastSevenDays')}
       />
       <StatTile
         testId="metric-month-to-date"
         icon={CalendarDays}
         label={t('settings.costDashboard.monthToDate')}
-        value={formatCurrency(monthToDateUsd, currency)}
+        value={formatCurrency(monthToDateUsd, currency, { locale: numberLocale })}
       />
       <StatTile
         testId="metric-monthly-pace"
         icon={TrendingUp}
         label={t('settings.costDashboard.monthlyPace')}
-        value={formatCurrency(monthlyPaceUsd, currency)}
+        value={formatCurrency(monthlyPaceUsd, currency, { locale: numberLocale })}
         hint={t('settings.costDashboard.monthlyPaceHint')}
       />
     </section>

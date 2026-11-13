@@ -3,6 +3,7 @@ import { type ReactNode, useMemo, useState } from 'react';
 
 import { type CostUsageRecord, useCostUsageLog } from '../../hooks/useCostDashboard';
 import { useT } from '../../lib/i18n/I18nContext';
+import { intlLocale } from '../../lib/i18n/intlLocale';
 import {
   Badge,
   Button,
@@ -21,14 +22,14 @@ const PERIODS = [1, 7, 30, 90, 365];
  * Two-line timestamp — date over time — in the user's locale, matching the
  * Approval history table; an unparseable value is shown raw.
  */
-const DateTimeCell = ({ value }: { value: string }) => {
+const DateTimeCell = ({ value, locale }: { value: string; locale: string }) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return <>{value}</>;
   return (
-    <span className="flex flex-col leading-tight" title={date.toLocaleString()}>
-      <span className="text-content">{date.toLocaleDateString()}</span>
+    <span className="flex flex-col leading-tight" title={date.toLocaleString(locale)}>
+      <span className="text-content">{date.toLocaleDateString(locale)}</span>
       <span className="text-xs text-content-muted">
-        {date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+        {date.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' })}
       </span>
     </span>
   );
@@ -36,7 +37,8 @@ const DateTimeCell = ({ value }: { value: string }) => {
 
 /** Detailed local usage records. Filters apply to the fetched, bounded window. */
 const UsageLogPanel = () => {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const numberLocale = intlLocale(locale);
   const [days, setDays] = useState(30);
   const [category, setCategory] = useState(ALL);
   const [provider, setProvider] = useState(ALL);
@@ -72,7 +74,7 @@ const UsageLogPanel = () => {
       id: 'when',
       header: t('settings.costDashboard.when'),
       className: 'w-px whitespace-nowrap tabular-nums',
-      cell: record => <DateTimeCell value={record.timestamp} />,
+      cell: record => <DateTimeCell value={record.timestamp} locale={numberLocale} />,
     },
     {
       id: 'model',
@@ -116,7 +118,9 @@ const UsageLogPanel = () => {
       align: 'right',
       className: 'w-px whitespace-nowrap tabular-nums font-medium text-content',
       cell: record =>
-        record.cost_source === 'unknown' ? '—' : formatCurrency(record.cost_usd, currency),
+        record.cost_source === 'unknown'
+          ? '—'
+          : formatCurrency(record.cost_usd, currency, { locale: numberLocale }),
     },
     {
       id: 'source',
@@ -154,7 +158,7 @@ const UsageLogPanel = () => {
                 {t('settings.costDashboard.filteredTotal')
                   .replace('{shown}', String(records.length))
                   .replace('{loaded}', String(data.records.length))
-                  .replace('{cost}', formatCurrency(filteredCost, data.currency))}
+                  .replace('{cost}', formatCurrency(filteredCost, data.currency, { locale: numberLocale }))}
               </span>
             )}
             <Button

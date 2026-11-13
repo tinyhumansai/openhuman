@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { CostDashboardModelStats } from '../../hooks/useCostDashboard';
 import { cn } from '../../lib/cn';
 import { useT } from '../../lib/i18n/I18nContext';
+import { intlLocale } from '../../lib/i18n/intlLocale';
 import {
   Badge,
   DataTable,
@@ -24,7 +25,8 @@ interface ModelCostTableProps {
 
 /** Per-model spend for the window: model, provider chip, volume, cost, share. */
 const ModelCostTable = ({ models, currency, title, description }: ModelCostTableProps) => {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const numberLocale = intlLocale(locale);
 
   const columns: DataTableColumn<CostDashboardModelStats>[] = [
     {
@@ -73,7 +75,7 @@ const ModelCostTable = ({ models, currency, title, description }: ModelCostTable
       cell: row =>
         row.request_count > 0 && (row.unpriced_request_count ?? 0) >= row.request_count
           ? '—'
-          : formatCurrency(row.cost_usd, currency),
+          : formatCurrency(row.cost_usd, currency, { locale: numberLocale }),
     },
     {
       id: 'share',

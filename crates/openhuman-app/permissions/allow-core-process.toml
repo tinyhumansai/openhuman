@@ -83,6 +83,23 @@ allow = [
     "gateway_status",
 
     # =========================
+    # SERVICE FALLBACK
+    # =========================
+    # The daemon service is reached through the core RPC first
+    # (`openhuman.service_install` and friends). When that path is unavailable
+    # — the embedded core is not running yet, or the renderer talks to a remote
+    # runtime — `tauriCommands/service.ts` falls back to these commands, which
+    # run the same operation as a one-shot `openhuman-core service …` CLI
+    # invocation. The frontend already invoked them, but no such command was
+    # registered on the Rust side, so every fallback invoke failed with
+    # "Command … not found".
+    "service_install_direct",
+    "service_start_direct",
+    "service_stop_direct",
+    "service_status_direct",
+    "service_uninstall_direct",
+
+    # =========================
     # CORE UPDATE
     # =========================
     # Probe and apply an update of the embedded core (`tauriCommands/core.ts`),

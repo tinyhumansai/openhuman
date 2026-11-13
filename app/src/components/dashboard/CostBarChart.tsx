@@ -11,6 +11,7 @@ import {
 
 import type { CostDashboardDay } from '../../hooks/useCostDashboard';
 import { useT } from '../../lib/i18n/I18nContext';
+import { intlLocale } from '../../lib/i18n/intlLocale';
 import ChartTooltip from './ChartTooltip';
 import { dayOfMonth, formatCurrency, longDateLabel, shortDayLabel } from './formatCurrency';
 
@@ -31,13 +32,14 @@ interface ChartPoint {
 }
 
 const CostBarChart = ({ days, currency }: CostBarChartProps) => {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const numberLocale = intlLocale(locale);
   const todayDate = days.length > 0 ? days[days.length - 1].date : null;
 
   const chartData: ChartPoint[] = days.map(day => ({
     date: day.date,
-    label: shortDayLabel(day.date),
-    dayNumber: dayOfMonth(day.date),
+    label: shortDayLabel(day.date, numberLocale),
+    dayNumber: dayOfMonth(day.date, numberLocale),
     cost: day.cost_usd || 0,
     requestCount: day.request_count,
     isToday: day.date === todayDate,
@@ -76,7 +78,9 @@ const CostBarChart = ({ days, currency }: CostBarChartProps) => {
               width={52}
               tick={{ fill: 'currentColor', opacity: 0.7 }}
               domain={[0, hasSpend ? 'auto' : 1]}
-              tickFormatter={(v: number) => formatCurrency(v, currency, { precise: true })}
+              tickFormatter={(v: number) =>
+                formatCurrency(v, currency, { precise: true, locale: numberLocale })
+              }
             />
             <Tooltip
               cursor={{ fill: 'rgba(150,150,150,0.10)' }}
@@ -85,11 +89,11 @@ const CostBarChart = ({ days, currency }: CostBarChartProps) => {
                 if (!item) return null;
                 return (
                   <ChartTooltip
-                    title={longDateLabel(item.date)}
+                    title={longDateLabel(item.date, numberLocale)}
                     rows={[
                       {
                         label: t('settings.costDashboard.cost'),
-                        value: formatCurrency(item.cost, currency),
+                        value: formatCurrency(item.cost, currency, { locale: numberLocale }),
                         color: NORMAL_FILL,
                       },
                       {

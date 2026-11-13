@@ -119,8 +119,11 @@ describe('TokenUsagePanel — mount load', () => {
 
   it('renders the loaded stat values', async () => {
     await renderPanel();
-    // tokensSaved 34567 -> locale-grouped integer
-    expect(await screen.findByText((34567).toLocaleString())).toBeInTheDocument();
+    // tokensSaved 34567 -> locale-grouped integer.
+    // The panel formats with the app locale (English by default -> en-US),
+    // so the expectation is pinned rather than derived from the host locale,
+    // which would make the test pass or fail depending on the OS language.
+    expect(await screen.findByText('34,567')).toBeInTheDocument();
     // cache.entries 7
     expect(screen.getByText('7')).toBeInTheDocument();
   });

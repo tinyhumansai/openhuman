@@ -6,7 +6,6 @@ export * from './auth';
 export * from './window';
 export * from './core';
 export * from './composio';
-export * from './conscious';
 export * from './localAi';
 export * from './config';
 export * from './cron';

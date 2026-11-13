@@ -70,6 +70,9 @@ mod app_update;
 // Save-As dialog that used to sit in front of it was removed with the crate.
 mod artifact_commands;
 mod claude_code;
+// Resolution of the sibling `openhuman-core` binary, shared by the MCP panel
+// and the direct-CLI service fallback.
+mod core_binary;
 mod core_process;
 mod core_rpc;
 #[cfg(target_os = "linux")]
@@ -107,6 +110,9 @@ mod ptt_hotkeys;
 mod ptt_overlay;
 #[cfg(target_os = "windows")]
 mod reset_reboot_schedule;
+// Direct-CLI service fallback: the frontend calls these when the core RPC
+// path is unavailable. See `service_commands.rs`.
+mod service_commands;
 mod session;
 mod stderr_panic_hook;
 mod widget_scheme;
@@ -3310,6 +3316,15 @@ pub fn run() {
             // substitute: a `webkitdirectory` input cannot report where the
             // directory it returned actually lives.
             directory_picker::pick_directory_via_dialog,
+            // Direct-CLI service fallback. `tauriCommands/service.ts` reaches the
+            // daemon through the core RPC first and only falls back to these
+            // when that path is unavailable; they run the same operation as a
+            // one-shot `openhuman-core service …` invocation.
+            service_commands::service_install_direct,
+            service_commands::service_start_direct,
+            service_commands::service_stop_direct,
+            service_commands::service_status_direct,
+            service_commands::service_uninstall_direct,
             check_core_update,
             apply_core_update,
             check_app_update,
