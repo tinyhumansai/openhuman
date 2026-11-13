@@ -227,6 +227,46 @@ fn carry_saved_flow_matches_by_draft_id_not_name() {
 }
 
 #[test]
+fn carry_saved_flow_prefers_draft_id_over_a_shared_flow_id() {
+    let temp = thread_with_delivered_proposal_extra(
+        "Daily",
+        r#", "draft_id":"draft-old", "flow_id":"flow-shared""#,
+    );
+    attach_workflow_proposal(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path(),
+        Some("thread-parent"),
+        "sub-propose-2",
+        "workflow_builder",
+        &[TranscriptMessage::tool(
+            r#"{"type":"workflow_proposal","persisted":false,"name":"Daily","graph":{"nodes":[]},"draft_id":"draft-new","flow_id":"flow-shared"}"#,
+        )],
+        "proposal".to_string(),
+    );
+    conversations::update_message(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path().to_path_buf(),
+        "thread-parent",
+        "workflow-proposal:sub-propose-2",
+        conversations::ConversationMessagePatch {
+            merge_extra_metadata: Some(json!({ "saved_flow_id": "flow-shared" })),
+            ..Default::default()
+        },
+    )
+    .expect("mark newer proposal saved");
+
+    let prompt = "Save draft-old from flow-shared as-is.";
+    let result = carry_saved_flow_matched(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path(),
+        &Some("thread-parent".to_string()),
+        prompt.to_string(),
+        None,
+    );
+    assert_eq!(result, prompt);
+}
+
+#[test]
 fn carry_saved_flow_skips_ambiguous_same_name_proposals() {
     let temp = thread_with_delivered_proposal_extra("Daily", r#", "draft_id":"draft-old""#);
     mark_proposal_saved_from_card(&temp, "flow-old");

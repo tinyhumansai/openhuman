@@ -325,12 +325,24 @@ fn hand_off_proposal<'a>(
     proposals: &'a [ThreadWorkflowProposal],
     hand_off: &str,
 ) -> Option<&'a ThreadWorkflowProposal> {
+    // A draft is the strongest identity: it distinguishes revisions even
+    // when they share a saved flow id. Resolve it across the full proposal
+    // list before considering a flow id.
     for proposal in proposals {
-        let identified = [proposal.draft_id.as_deref(), proposal.flow_id.as_deref()]
-            .into_iter()
-            .flatten()
-            .any(|id| contains_token(hand_off, id));
-        if identified {
+        if proposal
+            .draft_id
+            .as_deref()
+            .is_some_and(|id| contains_token(hand_off, id))
+        {
+            return Some(proposal);
+        }
+    }
+    for proposal in proposals {
+        if proposal
+            .flow_id
+            .as_deref()
+            .is_some_and(|id| contains_token(hand_off, id))
+        {
             return Some(proposal);
         }
     }
@@ -406,7 +418,7 @@ async fn saved_flow_presence(ctx: &DispatchCtx, flow_id: &str) -> SavedFlowPrese
     let result = crate::core::invoke::invoke_method(
         ctx.clone(),
         crate::core::invoke::default_state(),
-        "flows.get",
+        "openhuman.flows_get",
         json!({ "id": flow_id }),
     )
     .await;
