@@ -86,7 +86,7 @@ public static class OpenHumanInstallerNativeMethods
 
   [UIntPtr]$messageResult = [UIntPtr]::Zero
   $result = [OpenHumanInstallerNativeMethods]::SendMessageTimeout(
-    [IntPtr](-1),
+    [IntPtr]0xffff,
     [UInt32]0x001A,
     [UIntPtr]::Zero,
     'Environment',

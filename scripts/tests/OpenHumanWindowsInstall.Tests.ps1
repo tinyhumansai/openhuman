@@ -111,8 +111,14 @@ $existingOpenHumanDirectory = 'C:\Tools;C:\Program Files\OpenHuman\'
 $existingPath = Add-OpenHumanDirectoryToPathValue -PathValue $existingOpenHumanDirectory -Directory 'c:\program files\openhuman'
 Assert-Equal $existingOpenHumanDirectory $existingPath 'avoids a case-insensitive duplicate with a trailing separator'
 $environmentPathEntry = '%ProgramFiles%\OpenHuman'
-$existingPath = Add-OpenHumanDirectoryToPathValue -PathValue $environmentPathEntry -Directory "$env:ProgramFiles\OpenHuman"
-Assert-Equal $environmentPathEntry $existingPath 'recognizes an existing environment-variable path entry'
+$originalProgramFiles = $env:ProgramFiles
+try {
+  $env:ProgramFiles = 'C:\Program Files'
+  $existingPath = Add-OpenHumanDirectoryToPathValue -PathValue $environmentPathEntry -Directory "$env:ProgramFiles\OpenHuman"
+  Assert-Equal $environmentPathEntry $existingPath 'recognizes an existing environment-variable path entry'
+} finally {
+  $env:ProgramFiles = $originalProgramFiles
+}
 
 Write-Host "`n== Select-OpenHumanWindowsAssetFromRelease ==" -ForegroundColor Cyan
 $release = [pscustomobject]@{
