@@ -515,7 +515,10 @@ async fn sign_in_and_retry(
         Some((SIGN_IN_HEADER, signed.header.as_str())),
     )
     .await?;
-    Ok(with_signed_in_as(into_value(retry, None).await?, signed.address))
+    Ok(with_signed_in_as(
+        into_value(retry, None).await?,
+        signed.address,
+    ))
 }
 
 /// Adds the signed-in wallet address to a sign-in retry's response.
