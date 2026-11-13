@@ -515,11 +515,15 @@ async fn sign_in_and_retry(
         Some((SIGN_IN_HEADER, signed.header.as_str())),
     )
     .await?;
-    let mut value = into_value(retry, None).await?;
+    Ok(with_signed_in_as(into_value(retry, None).await?, signed.address))
+}
+
+/// Adds the signed-in wallet address to a sign-in retry's response.
+fn with_signed_in_as(mut value: Value, address: String) -> Value {
     if let Some(object) = value.as_object_mut() {
-        object.insert("signedInAs".into(), Value::String(signed.address));
+        object.insert("signedInAs".into(), Value::String(address));
     }
-    Ok(value)
+    value
 }
 
 #[cfg(test)]

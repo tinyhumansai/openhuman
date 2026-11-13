@@ -196,6 +196,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Null when unpaid, else paymentId, amountAtomic, asset, recipient, network, settled and settlementResponse.",
                     required: true,
                 },
+                FieldSchema {
+                    name: "signedInAs",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "With signIn, the wallet address the Sign-In-With-X credential named.",
+                    required: false,
+                },
             ],
         },
         other => panic!("unknown x402 schema function: {other}"),
