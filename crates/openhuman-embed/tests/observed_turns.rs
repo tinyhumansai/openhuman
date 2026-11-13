@@ -175,6 +175,8 @@ fn model_and_tool_observations_capture_payloads_only_with_consent() {
                 TurnObservation::Model {run_id,..} => Some(run_id) == terminal[0].1.as_ref(),
                 TurnObservation::ModelDispatch {run_id,..} => Some(run_id) == terminal[0].1.as_ref(),
                 TurnObservation::Tool {run_id,..} => run_id == &terminal[0].1,
+                // Setup precedes the run, so it has no run id to correlate.
+                TurnObservation::Setup {..} => true,
             }));
             assert_eq!(models[1].0.as_deref(),Some("actual-model"));
             assert_eq!(models[1].1.as_deref(),Some("stop"));
@@ -183,6 +185,10 @@ fn model_and_tool_observations_capture_payloads_only_with_consent() {
             let tools: Vec<_> = events.iter().filter(|event| matches!(event,TurnObservation::Tool {..})).collect();
             assert_eq!(tools.len(),2);
             assert!(matches!(tools[1],TurnObservation::Tool {failed:Some(false),..}));
+            // Sizes ride the completion whatever the capture consent, so a
+            // host can attribute tool cost without capturing any content.
+            assert!(matches!(tools[0],TurnObservation::Tool {input_bytes:None,output_bytes:None,..}));
+            assert!(matches!(tools[1],TurnObservation::Tool {input_bytes:Some(arguments),output_bytes:Some(24),..} if *arguments > 0));
             let debug = format!("{events:?}");
             assert_eq!(debug.contains("SECRET-PATH"),capture==TraceContent::Include);
             assert_eq!(debug.contains("SECRET-PROMPT"),capture==TraceContent::Include);

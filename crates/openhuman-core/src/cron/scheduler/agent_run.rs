@@ -41,6 +41,27 @@ pub(super) async fn run_agent_job_for_run(
     // registry agents only.
     let opened = host_agent_for_job(job).await;
     let is_host_agent = opened.is_some();
+    // The scheduled-actions opt-in is read from the definition the run will
+    // actually use: the host agent's own, else the registry's.
+    let scheduled_actions = match opened.as_ref() {
+        Some(opened) => {
+            crate::cron::origin::scheduled_actions_enabled(job, &opened.agent.definition)
+        }
+        None => crate::agent_registry::host_definition::AgentDefinitionRegistry::current()
+            .and_then(|registry| {
+                registry
+                    .get(selected_agent_id)
+                    .map(|def| crate::cron::origin::scheduled_actions_enabled(job, def))
+            })
+            .unwrap_or(false),
+    };
+    if scheduled_actions {
+        tracing::info!(
+            job_id = %job.id,
+            agent_id = %selected_agent_id,
+            "[cron] agent opted into scheduled actions; root run executes as CronActions"
+        );
+    }
     if is_host_agent {
         tracing::debug!(
             job_id = %job.id,
@@ -159,6 +180,9 @@ pub(super) async fn run_agent_job_for_run(
                     // event bus can filter from other flows (`cli`, `web`…).
                     agent.set_event_context(format!("cron:{}", job.id), "cron");
                     agent.enable_headless_descendant_settlement();
+                    if scheduled_actions {
+                        agent.enable_scheduled_actions();
+                    }
                     let timeout_secs = effective.agent.agent_timeout_secs;
                     let deadline = tinyagents_harness::turn_deadline::TurnDeadline::starting_now(
                         std::time::Duration::from_secs(timeout_secs),
@@ -196,6 +220,7 @@ pub(super) async fn run_agent_job_for_run(
                         job,
                         run_id,
                         &prefixed_prompt,
+                        scheduled_actions,
                     ));
                     match tokio::time::timeout_at(absolute_deadline, run).await {
                         Ok(result) => result,
@@ -250,8 +275,17 @@ async fn run_with_corrective_turn(
     job: &CronJob,
     run_id: &str,
     prompt: &str,
+    scheduled_actions: bool,
 ) -> anyhow::Result<String> {
-    let response = Box::pin(run_cron_turn(agent, context, job, run_id, prompt)).await?;
+    let response = Box::pin(run_cron_turn(
+        agent,
+        context,
+        job,
+        run_id,
+        prompt,
+        scheduled_actions,
+    ))
+    .await?;
     if job_allows_no_reply(job) || !needs_correction(&response) {
         return Ok(response);
     }
@@ -270,6 +304,7 @@ async fn run_with_corrective_turn(
         job,
         run_id,
         NO_REPLY_CORRECTION,
+        scheduled_actions,
     ))
     .await?;
     if !needs_correction(&response) {
@@ -295,13 +330,15 @@ async fn run_cron_turn(
     job: &CronJob,
     run_id: &str,
     prompt: &str,
+    scheduled_actions: bool,
 ) -> anyhow::Result<String> {
     // A job with no channel origin runs as `TrustedAutomation { Cron }`: the
     // approval gate treats it as user-authorized automation (the user created
     // the job and authorized its prompt together). A job created from a
     // channel chat runs as that channel's turn instead, so its external-effect
-    // tools stay gated like its creator's were.
-    let origin = crate::cron::origin::turn_origin_for_job_run(job, run_id);
+    // tools stay gated like its creator's were. A job whose agent opted into
+    // scheduled actions runs as `TrustedAutomation { CronActions }`.
+    let origin = crate::cron::origin::turn_origin_for_job_run(job, run_id, scheduled_actions);
     let turn =
         crate::core::runtime::turn_origin::with_origin(origin, Box::pin(agent.run_single(prompt)));
     // A host agent's turn runs in its own context, so every ambient read
@@ -404,7 +441,13 @@ async fn build_cron_agent(
         if let Some(model) = job.model.clone() {
             effective.default_model = Some(model);
         }
-        let agent = host.session_host(&effective, None).await?;
+        let root = super::workspace_root::scheduled_workspace(&effective, &host.definition)
+            .map_err(anyhow::Error::msg)?;
+        if let Some(root) = root.as_deref() {
+            effective = super::workspace_root::rooted_config(&effective, root);
+        }
+        let mut agent = host.session_host(&effective, None).await?;
+        root_cron_agent(&mut agent, job, root);
         tracing::debug!(
             job_id = %job.id,
             agent_id = %host.definition.id,
@@ -417,7 +460,18 @@ async fn build_cron_agent(
         });
     }
     let agent_id = job.agent_id.as_deref().unwrap_or("orchestrator");
-    let agent = OpenHumanSessionHost::from_config_for_agent(ctx, config, agent_id)
+    let root = match crate::agent_registry::host_definition::AgentDefinitionRegistry::current()
+        .and_then(|registry| registry.get(agent_id).cloned())
+    {
+        Some(definition) => super::workspace_root::scheduled_workspace(config, &definition)
+            .map_err(anyhow::Error::msg)?,
+        None => None,
+    };
+    let rooted = root
+        .as_deref()
+        .map(|root| super::workspace_root::rooted_config(config, root));
+    let config = rooted.as_ref().unwrap_or(config);
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, config, agent_id)
         .await
         .inspect_err(|e| {
             tracing::warn!(
@@ -427,6 +481,7 @@ async fn build_cron_agent(
                 "[cron] no agent to run the job as; failing it rather than using another agent"
             );
         })?;
+    root_cron_agent(&mut agent, job, root);
     tracing::debug!(
         job_id = %job.id,
         agent_id = %agent_id,
@@ -437,4 +492,22 @@ async fn build_cron_agent(
         context: None,
         _lease: None,
     })
+}
+
+/// Root a scheduled run at its agent's `scheduled_workspace`, when it names
+/// one: the run's workspace descriptor is what the shell and file tools work
+/// in (`RunContext::with_workspace`), so a sandboxed shell asks for this root
+/// instead of the process-wide `action_dir`.
+fn root_cron_agent(
+    agent: &mut OpenHumanSessionHost,
+    job: &CronJob,
+    root: Option<std::path::PathBuf>,
+) {
+    let Some(root) = root else { return };
+    tracing::info!(
+        job_id = %job.id,
+        root = %root.display(),
+        "[cron] scheduled run rooted at its agent's workspace"
+    );
+    agent.set_workspace_descriptor(Some(tinytools::WorkspaceDescriptor::new(root)));
 }

@@ -76,7 +76,7 @@ pub(crate) fn describe_origin(
         ),
         Some(AgentTurnOrigin::TrustedAutomation { source, .. }) => {
             let label = match source {
-                TrustedAutomationSource::Cron => "cron",
+                TrustedAutomationSource::Cron | TrustedAutomationSource::CronActions => "cron",
                 TrustedAutomationSource::Background => "background",
                 TrustedAutomationSource::Workflow { .. } => "workflow",
             };

@@ -264,12 +264,5 @@
     "line": 455,
     "text": "if let Err(err) = tokio::fs::write(&output_path, &bytes).await {",
     "occurrence": 1
-  },
-  {
-    "rule": "json-write",
-    "path": "crates/openhuman-core/src/voice/ops.rs",
-    "line": 176,
-    "text": "tokio::fs::write(&file_path, audio_bytes)",
-    "occurrence": 1
   }
 ]

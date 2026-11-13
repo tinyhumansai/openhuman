@@ -138,7 +138,9 @@ The gate is interactive, so a parked call needs a surface that can answer it. Th
 
 | Turn origin | At the gate |
 | --- | --- |
-| Cron and internal background jobs | Allowed, no row, no event |
+| Cron | Read-only: shell, acting and external-effect tools are denied, never parked |
+| Cron job whose agent sets `scheduled_actions = true` (see below) | Allowed, no row, no event, for the job's own run only |
+| Internal background jobs | Allowed, no row, no event |
 | A saved flow's pre-declared action | Allowed, no row, no event |
 | CLI, a delegated sub-agent, and a triage dispatch started on your own machine | Allowed, no row, no event |
 | Web chat | Parks for your decision |
@@ -146,9 +148,11 @@ The gate is interactive, so a parked call needs a surface that can answer it. Th
 | An external channel turn (Telegram, Slack and so on) | Parks and writes a row |
 | An unlabelled call site | Denied |
 
-A triage dispatch that your own machine started keeps the authority its caller already had. One steered by an outside payload parks and leaves an audit row. No surface can decide a background park yet, so it expires at the timeout. You get the audit trail, not a working escalation, and `auto_approve_all` gives up even that.
+A triage dispatch that your own machine started keeps the authority its caller already had. One steered by an outside payload parks and leaves an audit row. No surface can decide a background park yet, so it expires at the timeout. You get the audit trail, not a working escalation. Under `auto_approve_all` the call is approved instead of parked, and that auto-approval is still audited (see above).
 
 The browser's consequential actions (click, fill, type, key press, select, check, and a task's `needs_approval` step) are the exception. They use the **forced** gate, which ignores auto-approval and denies every turn that is not a routable WebChat chat, cron included. An operator opts specific action kinds back in for cron, background and approval-free workflow turns with `[browser] unattended_actions`. See [TinyComputer browser on Linux and Docker](../developing/tinycomputer-docker.md#4-unattended-actions).
+
+A scheduled job has nobody to ask, so its turns are read-only. An agent definition can opt its cron jobs into acting with `scheduled_actions = true`, and only when it also names its tools explicitly (`[tools] named = [...]`). Such a job runs as `TrustedAutomation { CronActions }`: its own run may use shell and acting tools without a prompt, while sub-agents it spawns stay read-only. It is also trusted automation for the wallet: it may execute prepared transfers within the `[wallet_policy]` caps (when `automation_enabled` is set) and pay x402 within the per-request budget. A plain cron job can only read (including balances); it can neither execute a transfer nor pay x402. A job created from a channel conversation keeps running as that channel's `ExternalChannel` turn, so `wallet_execute_prepared` transfers and x402 payments are refused for it, opted-in agent or not. The autonomy tier, TinySecurity's command analysis and protected-path floor, the agent's sandbox, the browser's allowed websites and its checkpoint before payment still apply, and SaaS mode ignores the setting. See `crates/openhuman-core/src/cron/README.md`, "Scheduled actions".
 
 An external channel turn parks because remote input is untrusted. The row is written, and you can still decide on the thread card before the timeout.
 

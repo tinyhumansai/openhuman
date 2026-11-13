@@ -89,3 +89,50 @@ async fn consumer_rejects_outputs_for_another_registration_or_consumer() {
             .is_err());
     }
 }
+
+/// Two tenants share the one consumer object on the binding: each output is
+/// staged and released only on its own registration's route, and a retired
+/// registration's outputs are refused.
+#[tokio::test]
+async fn each_registration_stages_and_releases_only_its_own_output() {
+    let consumer = Consumer::new("registration-id".into(), "consumer-id".into());
+    consumer
+        .add("registration-two".into(), "consumer-two".into())
+        .unwrap();
+    assert!(
+        consumer
+            .add("registration-two".into(), "consumer-id".into())
+            .is_err(),
+        "a registration keeps the consumer it was routed with"
+    );
+    let first = identity(0);
+    let mut second = identity(0);
+    second.registration_id = "registration-two".into();
+    second.consumer_id = "consumer-two".into();
+    for (identity, text) in [(&first, b"first".to_vec()), (&second, b"second".to_vec())] {
+        consumer
+            .deliver(SecretCipherDeliveryRequest2 {
+                identity: identity.clone(),
+                plaintext: text,
+                replacement: None,
+            })
+            .await
+            .expect("each registration owns slot 0 of its own route");
+    }
+
+    let mut crossed = second.clone();
+    crossed.consumer_id = first.consumer_id.clone();
+    assert!(consumer.take(&crossed).is_err(), "no cross-tenant release");
+    assert_eq!(&*consumer.take(&second).unwrap().0, "second");
+    assert_eq!(&*consumer.take(&first).unwrap().0, "first");
+
+    consumer.remove("registration-two");
+    assert!(consumer
+        .deliver(SecretCipherDeliveryRequest2 {
+            identity: second,
+            plaintext: b"late".to_vec(),
+            replacement: None,
+        })
+        .await
+        .is_err());
+}

@@ -60,7 +60,11 @@ that installed ranker together with `agent.tool_search`
 `ToolDiscoveryPolicy` the harness runs with for that turn. The slot is
 process-wide, like the other host registrations, because the credential a
 decision-model ranker needs belongs to the process's signed-in user rather
-than to any one agent config. See
+than to any one agent config. The four prompt-shaping options
+(`promote_found_tools`, `compact_search_results`, `collapse_search_results`,
+`repair_tool_call_wrapper`) are the exception: `discovery/pin.rs` chooses them
+per session, records them on a new thread's first transcript row and reads them
+back on resume, so a thread keeps the behaviour it started with. See
 [the Jev page](../../../../../docs/gitbooks/en/developing/jev.md) for the ranking
 mechanism and its measured accuracy against plain BM25.
 

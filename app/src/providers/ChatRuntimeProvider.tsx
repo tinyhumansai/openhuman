@@ -431,6 +431,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   }, [t]);
   const { refetch: refetchSnapshot } = useRefetchSnapshotOnTurnEnd();
   const socketStatus = useAppSelector(selectSocketStatus);
+  const selectedThreadId = useAppSelector(state => state.thread.selectedThreadId);
   // The core's run queue (`queue_item_*`) → `queueSlice` → the composer queue.
   useRunQueueEvents(socketStatus === 'connected');
   // The core's `chat_suggestions` → `followupSuggestionsSlice` → follow-up chips.
@@ -2180,6 +2181,21 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       });
     }
   }, [socketStatus, dispatch]);
+
+  // Join the selected thread's room when the selection changes.
+  //
+  // The reconnect handler re-subscribes the selected thread on (re)connect,
+  // but nothing subscribes on selection itself: selecting an existing thread
+  // only dispatches `setSelectedThread` + a message read, so the socket never
+  // joins `thread:<id>`. A background turn that cold-boots on that thread
+  // sends its sub-agent progress to the thread room, and the client misses
+  // the cards until the next reconnect. Subscribe on every selection change,
+  // using the same `thread:subscribe` mechanism as reconnect; the join is
+  // idempotent, so re-selecting an already-joined thread is a no-op.
+  useEffect(() => {
+    if (socketStatus !== 'connected' || !selectedThreadId) return;
+    void socketService.subscribeThread(selectedThreadId);
+  }, [socketStatus, selectedThreadId]);
 
   // assistant-ui's runtime is mounted here, INSIDE the subscription provider,
   // so it sits above every chat surface and below the Redux store this file

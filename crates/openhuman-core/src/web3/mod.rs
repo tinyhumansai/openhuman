@@ -29,9 +29,10 @@ pub mod bridge;
 #[cfg(feature = "web3")]
 pub mod dapp;
 #[cfg(feature = "web3")]
-mod module_tools;
-#[cfg(feature = "web3")]
 pub mod swap;
+/// Wallet and Web3 agent tool adapters over the declarations in `tinywallet-bus`.
+#[cfg(feature = "web3")]
+pub mod tools;
 // Ungated family members: `wallet` and `x402` are facades in their own right —
 // each keeps its own `stub.rs` and gates its real submodules on the same
 // default-ON `web3` feature. Always-compiled callers resolve through those
@@ -123,13 +124,5 @@ pub fn all_web3_registered_controllers() -> Vec<RegisteredController> {
 /// gracefully (rather than being hidden) when the user is not signed in.
 #[cfg(feature = "web3")]
 pub fn all_web3_agent_tools() -> Vec<Box<dyn Tool>> {
-    tinywallet_bus::tools::web3_tool_declarations()
-        .iter()
-        .map(|declaration| {
-            Box::new(module_tools::Web3ModuleTool::new(
-                tinywallet_bus::tools::find_web3_tool_declaration(declaration.name)
-                    .expect("the declaration came from the shipped Web3 list"),
-            )) as Box<dyn Tool>
-        })
-        .collect()
+    tools::web3_agent_tools()
 }

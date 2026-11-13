@@ -100,6 +100,8 @@ pub struct LocalAiSettingsPatch {
     pub chat_model_id: Option<String>,
     pub usage_embeddings: Option<bool>,
     pub api_key: Option<String>,
+    /// See [`crate::config::schema::LocalAiConfig::native_tool_calling`].
+    pub native_tool_calling: Option<bool>,
 }
 
 /// Updates the model-related settings in the configuration.
@@ -441,6 +443,10 @@ pub async fn apply_local_ai_settings(
     }
     if let Some(v) = update.usage_embeddings {
         config.local_ai.usage.embeddings = v;
+    }
+    if let Some(v) = update.native_tool_calling {
+        config.local_ai.native_tool_calling = v;
+        log::info!("[config][local_ai] native_tool_calling={v}");
     }
     if let Some(api_key) = update.api_key {
         let trimmed = api_key.trim();

@@ -152,6 +152,11 @@ pub struct OpenHumanSecurityGate {
     /// recursive delegation as orchestration control under the Cron policy.
     /// The Cron origin check remains mandatory at authorization time.
     headless_descendant_settlement: bool,
+    /// Set only on the root session the cron scheduler built for a job whose
+    /// agent opted into scheduled actions. Together with a
+    /// `TrustedAutomationSource::CronActions` origin and a root run (depth 0)
+    /// it lifts the read-only Cron stage; every later stage still applies.
+    scheduled_actions: bool,
 }
 
 impl OpenHumanSecurityGate {
@@ -173,7 +178,15 @@ impl OpenHumanSecurityGate {
             dispatch: None,
             screening_config: None,
             headless_descendant_settlement: false,
+            scheduled_actions: false,
         }
+    }
+
+    /// Marks the gate as the root session of an opted-in scheduled-actions
+    /// cron run (`cron::origin::scheduled_actions_enabled`).
+    pub(crate) fn with_scheduled_actions(mut self, enabled: bool) -> Self {
+        self.scheduled_actions = enabled;
+        self
     }
 
     /// Marks the gate as part of a host-owned headless root turn.

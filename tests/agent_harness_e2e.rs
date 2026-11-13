@@ -9,6 +9,9 @@
 //! points on purpose: `HOME` / backend-URL / approval-TTL env vars are global,
 //! so tests must run one at a time. That makes `clippy::await_holding_lock`
 //! a false positive here — the lock IS the serialization mechanism.
+// Its turn futures nest as deep as the core crate's own (which raises the
+// limit to 256 for the same reason).
+#![recursion_limit = "256"]
 #![allow(clippy::await_holding_lock)]
 
 #[path = "support/env_guard.rs"]
@@ -745,10 +748,19 @@ async fn wait_for_event(
 ) -> Value {
     let deadline = tokio::time::Instant::now() + timeout;
     let mut seen: Vec<String> = Vec::new();
+    // A terminal event that arrives instead of the awaited one says why the turn
+    // ended; carry its body into the timeout panic so a log-less run explains itself.
+    let mut terminal_bodies: Vec<String> = Vec::new();
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         match tokio::time::timeout(remaining, rx.recv()).await {
             Ok(Some(v)) => {
+                if matches!(
+                    v.get("event").and_then(Value::as_str),
+                    Some("chat_done" | "chat_error")
+                ) {
+                    terminal_bodies.push(v.to_string().chars().take(1200).collect());
+                }
                 seen.push(
                     v.get("event")
                         .and_then(Value::as_str)
@@ -763,7 +775,7 @@ async fn wait_for_event(
                 panic!("SSE channel closed waiting for {event_name}; seen events so far: {seen:?}")
             }
             Err(_) => panic!(
-                "timed out waiting for SSE event {event_name}; all received events: {seen:?}"
+                "timed out waiting for SSE event {event_name}; all received events: {seen:?}; terminal events: {terminal_bodies:?}"
             ),
         }
     }
@@ -1531,7 +1543,7 @@ async fn managed_tinysearch_answer_reaches_followup_model_request_inner() {
     let _lock = env_lock();
     let pinned = openhuman_core::modules::registry::find("tinysearch")
         .expect("TinySearch is registered in the module asset registry");
-    assert_eq!(pinned.version, "0.5.6", "use the pinned module release");
+    assert_eq!(pinned.version, "0.5.7", "use the pinned module release");
     assert!(
         std::env::var_os("OPENHUMAN_MODULE_SOURCE").is_none()
             && std::env::var_os("OPENHUMAN_MODULE_SOURCE_DIR").is_none()
@@ -1601,7 +1613,7 @@ async fn managed_tinysearch_answer_reaches_followup_model_request_inner() {
         .unwrap_or_else(|| panic!("modules_list omitted TinySearch: {modules_response}"));
     assert_eq!(
         tinysearch.get("version").and_then(Value::as_str),
-        Some("0.5.6")
+        Some("0.5.7")
     );
     assert_eq!(
         tinysearch.get("state").and_then(Value::as_str),
@@ -2187,6 +2199,12 @@ enabled = true
     let gate_workspace =
         GATE_WORKSPACE.get_or_init(|| tempfile::TempDir::new().expect("GATE_WORKSPACE tempdir"));
     cfg.workspace_dir = gate_workspace.path().to_path_buf();
+    // `action_dir` is `#[serde(skip)]` too. With `[autonomy] enabled = true` the
+    // gate asks TinySecurity to redact the approval arguments, and the module
+    // client refuses a policy whose roots are not absolute, so a gate built
+    // without one denies every external-effect call (fail closed) and never
+    // raises `approval_request`.
+    cfg.action_dir = gate_workspace.path().join("action");
 
     // GLOBAL_GATE is a OnceLock — first call installs, subsequent calls return the
     // same gate. The session_id must start with "session-" (debug_assert in gate.rs).
@@ -3776,7 +3794,7 @@ async fn agent_installs_a_registry_skill_then_runs_it_inner() {
         text_completion("The skill is installed."),
     ]);
     serialize_children_after_parent(2, 3);
-    let stack = boot_stack().await;
+    let stack = boot_stack_with_config(SUPERVISED_AUTONOMY_CONFIG).await;
 
     let mut events = spawn_sse_collector(format!(
         "{}/events?client_id=harness-skill-registry",
@@ -3795,6 +3813,7 @@ async fn agent_installs_a_registry_skill_then_runs_it_inner() {
     // Not `wait_for_event`: if the turn ends without asking, the failure has to
     // show what the agent did instead, which only the captured requests hold.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
+    let mut answered_handoffs = std::collections::HashSet::new();
     let approval = loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         let event = match tokio::time::timeout(remaining, events.recv()).await {
@@ -3805,6 +3824,28 @@ async fn agent_installs_a_registry_skill_then_runs_it_inner() {
             ),
         };
         match event.get("event").and_then(Value::as_str) {
+            // Under supervised autonomy the hand-off itself asks first: answer
+            // it, then the child's install is the request this test is about.
+            Some("approval_request") if event.to_string().contains("spawn_subagent") => {
+                let handoff_id = event
+                    .pointer("/data/request_id")
+                    .or_else(|| event.get("request_id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_else(|| panic!("approval_request missing request_id: {event}"))
+                    .to_string();
+                // The same card can arrive on more than one surface.
+                if !answered_handoffs.insert(handoff_id.clone()) {
+                    continue;
+                }
+                let handoff = post_json_rpc(
+                    &stack.rpc_base,
+                    699,
+                    "openhuman.approval_decide",
+                    json!({ "request_id": handoff_id, "decision": "approve_once" }),
+                )
+                .await;
+                assert_no_jsonrpc_error(&handoff, "approval_decide for spawn_subagent");
+            }
             Some("approval_request") => break event,
             // The acknowledgement turn ends before the detached child asks.
             Some("chat_done") => {}
@@ -4218,7 +4259,7 @@ async fn orchestrator_raw_skill_install_through_use_skill_needs_approval_inner()
         ),
         text_completion("The install was not approved."),
     ]);
-    let stack = boot_stack().await;
+    let stack = boot_stack_with_config(SUPERVISED_AUTONOMY_CONFIG).await;
     let mut events = spawn_sse_collector(format!(
         "{}/events?client_id=harness-raw-skill-install",
         stack.rpc_base

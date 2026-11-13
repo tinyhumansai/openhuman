@@ -3,18 +3,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-fn default_diagram_viewer_enabled() -> bool {
-    true
-}
-
-fn default_diagram_viewer_source_url() -> String {
-    "http://localhost:8787/workspace/diagrams/latest.png".to_string()
-}
-
-fn default_diagram_viewer_refresh_interval_seconds() -> u64 {
-    10
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 #[derive(Default)]
@@ -23,8 +11,6 @@ pub struct DashboardConfig {
     pub event_stream: EventStreamConfig,
     #[serde(default)]
     pub model_health: ModelHealthConfig,
-    #[serde(default)]
-    pub diagram_viewer: DiagramViewerConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -96,27 +82,6 @@ impl Default for ModelHealthConfig {
             hallucination_threshold: 0.10,
             min_tasks_for_rating: 10,
             evaluation_window_tasks: 50,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct DiagramViewerConfig {
-    #[serde(default = "default_diagram_viewer_enabled")]
-    pub enabled: bool,
-    #[serde(default = "default_diagram_viewer_source_url")]
-    pub source_url: String,
-    #[serde(default = "default_diagram_viewer_refresh_interval_seconds")]
-    pub refresh_interval_seconds: u64,
-}
-
-impl Default for DiagramViewerConfig {
-    fn default() -> Self {
-        Self {
-            enabled: default_diagram_viewer_enabled(),
-            source_url: default_diagram_viewer_source_url(),
-            refresh_interval_seconds: default_diagram_viewer_refresh_interval_seconds(),
         }
     }
 }

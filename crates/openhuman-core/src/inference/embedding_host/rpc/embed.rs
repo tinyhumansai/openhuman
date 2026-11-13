@@ -199,7 +199,15 @@ pub(crate) async fn probe_dimensions_for_inspection(
                 1,
             )
             .await
-            .map_err(|_| InspectionEmbeddingError::ProbeFailed)?;
+            .map_err(|error| {
+                // Keep the cause: the probe input is a fixed string and the
+                // sanitizer scrubs credentials from any echoed provider reply.
+                log::warn!(
+                    "[embedding-inspect] probe failed provider={provider_slug} model={model}: {}",
+                    tinyinference_core::sanitize::sanitize_api_error(&error.to_string())
+                );
+                InspectionEmbeddingError::ProbeFailed
+            })?;
         vectors.first().map_or(0, Vec::len)
     } else {
         let embedder = create_embedding_provider_for_inspection(
@@ -215,7 +223,15 @@ pub(crate) async fn probe_dimensions_for_inspection(
         let vectors = embedder
             .embed(&["OpenHuman doctor embedding probe".to_owned()])
             .await
-            .map_err(|_| InspectionEmbeddingError::ProbeFailed)?;
+            .map_err(|error| {
+                // Keep the cause: the probe input is a fixed string and the
+                // sanitizer scrubs credentials from any echoed provider reply.
+                log::warn!(
+                    "[embedding-inspect] probe failed provider={provider_slug} model={model}: {}",
+                    tinyinference_core::sanitize::sanitize_api_error(&error.to_string())
+                );
+                InspectionEmbeddingError::ProbeFailed
+            })?;
         vectors.first().map_or(0, Vec::len)
     };
     Ok(InspectionEmbeddingDimensions { configured, actual })

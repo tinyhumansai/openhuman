@@ -17,6 +17,7 @@ fn is_unattended(origin: &AgentTurnOrigin) -> bool {
         origin,
         AgentTurnOrigin::TrustedAutomation {
             source: TrustedAutomationSource::Cron
+                | TrustedAutomationSource::CronActions
                 | TrustedAutomationSource::Background
                 | TrustedAutomationSource::Workflow {
                     require_approval: false

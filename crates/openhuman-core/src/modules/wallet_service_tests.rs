@@ -202,6 +202,7 @@ async fn unconfirmed_execution_is_rejected_before_wallet_service_or_secret_acces
             quote_id: "quote-that-is-never-opened".into(),
             confirmed: false,
         },
+        crate::web3::wallet::policy::ExecutionOrigin::rpc(),
     )
     .await
     .expect_err("an unconfirmed transfer must be rejected at the host boundary");

@@ -17,7 +17,10 @@ use tinyagents_harness::middleware::wrap_harness_instruction;
 
 use crate::agent::{
     session_host::{product_copy, stop_policy},
-    tinyagents::{SupplementalTrace, TinyagentsTurnOutcome, TurnModelSource},
+    tinyagents::{
+        host::run_context::SessionRunOptions, SupplementalTrace, TinyagentsTurnOutcome,
+        TurnModelSource,
+    },
 };
 use tinyagents_harness::turn_policy::AGENT_TURN_MAX_OUTPUT_TOKENS;
 use tinyinference_llm::usage::BilledUsage;
@@ -293,10 +296,12 @@ pub(super) async fn repair_required_output(
     iteration: u32,
     usage: &mut RepairUsage,
     trace: Option<&Arc<SupplementalTrace>>,
+    replay: &SessionRunOptions,
 ) -> Option<String> {
     use tinyagents_harness::config as required;
 
-    let prompt_history: Vec<tinyinference_llm::message::Message> = history
+    let prompt_history: Vec<tinyinference_llm::message::Message> = replay
+        .replayed(history)
         .iter()
         .filter_map(message_to_native_chat_message)
         .map(|message| crate::agent::tinyagents::chat_message_to_message(&message))
@@ -407,6 +412,7 @@ pub(super) async fn close_if_needed(
     outcome: &TinyagentsTurnOutcome,
     budget: Option<std::time::Duration>,
     trace: Option<&Arc<SupplementalTrace>>,
+    replay: &SessionRunOptions,
 ) -> Option<GroundedClose> {
     let needs_cap_close = outcome.hit_cap && !outcome.wrap_up_injected;
     let needs_final_close = outcome.text.trim().is_empty()
@@ -422,7 +428,8 @@ pub(super) async fn close_if_needed(
     let records = product_copy::close_results(&outcome.tool_outcomes);
     let rendered = product_copy::render_close_results(&records, 16_000);
     let instruction = close_instruction(outcome, needs_cap_close, &rendered);
-    let history: Vec<tinyinference_llm::message::Message> = base_history
+    let history: Vec<tinyinference_llm::message::Message> = replay
+        .replayed(base_history)
         .iter()
         .filter_map(message_to_native_chat_message)
         .map(|message| crate::agent::tinyagents::chat_message_to_message(&message))

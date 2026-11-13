@@ -44,3 +44,40 @@ fn a_tool_both_advertised_and_deferred_keeps_the_advertised_declaration() {
     assert_eq!(granted.len(), 1);
     assert_eq!(granted[0].description, "advertised copy");
 }
+
+/// With pruning on, a recorded declaration survives only while the snapshot
+/// offers its name. A deferred tool the host has not rebuilt yet has no
+/// declaration to grant, but it is still offered through the catalogue.
+#[test]
+fn the_granted_snapshot_offers_every_deferred_name_even_without_a_declaration() {
+    let visible = vec![spec("shell", "built-in shell")];
+    let registered = vec![spec("lookup", "deferred copy")];
+    let deferred: HashSet<String> = ["lookup".to_string(), "not_rebuilt_yet".to_string()].into();
+
+    let snapshot = granted_tool_snapshot(&visible, &registered, &deferred, true).expect("freezes");
+
+    assert!(snapshot.offers("shell"));
+    assert!(snapshot.offers("lookup"));
+    assert!(snapshot.offers("not_rebuilt_yet"));
+    assert!(!snapshot.offers("retired_tool"));
+    assert!(snapshot
+        .specs()
+        .iter()
+        .all(|spec| spec.name != "not_rebuilt_yet"));
+
+    let recorded = ToolSnapshot::new(vec![
+        (*spec("not_rebuilt_yet", "recorded")).clone(),
+        (*spec("retired_tool", "recorded")).clone(),
+    ])
+    .unwrap();
+    let (merged, retained) = snapshot.with_retained_offered(&recorded).unwrap();
+    assert_eq!(retained, 1, "only the still-offered declaration is kept");
+    assert!(merged
+        .specs()
+        .iter()
+        .any(|spec| spec.name == "not_rebuilt_yet"));
+    assert!(merged
+        .specs()
+        .iter()
+        .all(|spec| spec.name != "retired_tool"));
+}

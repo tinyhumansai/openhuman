@@ -120,6 +120,20 @@ fn proxy_config_has_any_proxy_url_ignores_whitespace_urls() {
 // ── is_supported_proxy_service_selector ────────────────────────
 
 #[test]
+fn attachment_fetch_is_a_supported_proxy_service() {
+    assert!(is_supported_proxy_service_selector("inference.attachment"));
+
+    let config = ProxyConfig {
+        enabled: true,
+        all_proxy: Some("http://proxy:8080".into()),
+        scope: ProxyScope::Services,
+        services: vec!["inference.attachment".into()],
+        ..ProxyConfig::default()
+    };
+    assert!(config.validate().is_ok());
+}
+
+#[test]
 fn is_supported_proxy_service_selector_accepts_known_keys_case_insensitive() {
     assert!(is_supported_proxy_service_selector("providers.list_models"));
     assert!(is_supported_proxy_service_selector(

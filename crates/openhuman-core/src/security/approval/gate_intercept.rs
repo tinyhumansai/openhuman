@@ -51,7 +51,13 @@ impl ApprovalGate {
         #[cfg(not(test))]
         let args_redacted = match self.redact_approval_arguments(args_redacted).await {
             Ok(args) => args,
-            Err(_) => {
+            Err(error) => {
+                // The reason names the failing stage, never the arguments.
+                tracing::warn!(
+                    tool = tool_name,
+                    %error,
+                    "[approval::gate] approval arguments could not be redacted; denying"
+                );
                 return (
                     GateOutcome::Deny {
                         reason: format!(
@@ -87,16 +93,26 @@ impl ApprovalGate {
         let dispatch = crate::core::runtime::DispatchCtx::ambient();
         let saas = crate::core::runtime::is_saas();
         let saas_human_approval = saas_prompt_needed(&dispatch, saas, &origin, tool_name, forced);
+        // A SaaS tenant's own secret master grant with nobody to ask
+        // (`gate_saas_grant.rs`).
+        if let Some(decided) = self
+            .saas_host_grant_outcome(
+                &dispatch,
+                saas,
+                saas_human_approval,
+                forced,
+                tool_name,
+                action_summary,
+                &args_redacted,
+            )
+            .await
+        {
+            return decided;
+        }
         // Deployment-allowlisted tools retain their audited automatic path.
         // A rejected tool can reach the normal approval engine only when this
         // exact SaaS WebChat turn has an authenticated, routable user surface.
-        match saas_outcome_with(
-            &dispatch,
-            saas,
-            &origin,
-            forced,
-            tool_name,
-        ) {
+        match saas_outcome_with(&dispatch, saas, &origin, forced, tool_name) {
             Some(GateOutcome::Allow) => {
                 return self
                     .saas_approved(
@@ -111,13 +127,30 @@ impl ApprovalGate {
             Some(denied) => return (denied, None),
             None => {}
         }
-        if forced
-            && !matches!(
-                &origin,
-                AgentTurnOrigin::WebChat { thread_id, client_id, .. }
-                    if !thread_id.trim().is_empty() && !client_id.trim().is_empty()
-            )
-        {
+        let routable_web_chat = matches!(
+            &origin,
+            AgentTurnOrigin::WebChat { thread_id, client_id, .. }
+                if !thread_id.trim().is_empty() && !client_id.trim().is_empty()
+        );
+        // The native secret master grant a Settings save (or a CLI call) needs
+        // has no chat to ask in; it parks unrouted for the desktop's pending
+        // queue instead of failing before anyone is asked.
+        let unrouted_secret_grant =
+            forced && !routable_web_chat && secret_grant_parks_unrouted(tool_name, &origin);
+        if unrouted_secret_grant {
+            tracing::info!(
+                tool = tool_name,
+                ?origin,
+                "[approval::gate] forced secret grant without a chat route — parking unrouted \
+                 for the desktop's pending-approval queue"
+            );
+        }
+        if forced && !routable_web_chat && !unrouted_secret_grant {
+            tracing::warn!(
+                tool = tool_name,
+                ?origin,
+                "[approval::gate] forced approval denied: no routable WebChat origin on this task"
+            );
             return (
                 GateOutcome::Deny {
                     reason: format!(
@@ -204,6 +237,13 @@ impl ApprovalGate {
         // from bypassing the per-user decision.
         let (variant, approval_forced) =
             one_time_approval_mode(variant, forced, saas_human_approval);
+        // The unrouted secret grant has no chat surface to scope a durable
+        // answer to: it is always a one-time decision.
+        let variant = if unrouted_secret_grant {
+            Variant::Forced
+        } else {
+            variant
+        };
 
         // Chat context (thread/client id) for routing the yes/no reply — handed
         // to the turn by the web channel; absent for non-chat callers.
@@ -354,7 +394,11 @@ impl ApprovalGate {
             summary: action_summary.to_string(),
             thread: chat_thread_id,
             flow: flow_id,
-            origin: if copilot_stream {
+            origin: if unrouted_secret_grant {
+                // A person decides it, exactly as on the WebChat route; never a
+                // class the engine may approve on its own.
+                CallOrigin::Operator
+            } else if copilot_stream {
                 CallOrigin::Copilot
             } else if subagent_park {
                 CallOrigin::SubAgent
@@ -373,12 +417,9 @@ impl ApprovalGate {
                     error = %error,
                     "[approval::gate] the approval engine could not decide — failing closed"
                 );
-                return (
-                    GateOutcome::Deny {
-                        reason: engine_denial(&origin, tool_name, &error),
-                    },
-                    None,
-                );
+                let reason = super::ApprovalScope::closed_denial(scope.as_deref(), tool_name)
+                    .unwrap_or_else(|| engine_denial(&origin, tool_name, &error));
+                return (GateOutcome::Deny { reason }, None);
             }
         };
         match checked {
@@ -650,8 +691,11 @@ fn origin_class(origin: &AgentTurnOrigin) -> CallOrigin {
             source: TrustedAutomationSource::Cron,
             ..
         } => CallOrigin::Cron,
+        // A cron job whose agent opted into scheduled actions: the security
+        // gate admitted the call for that job's root run only, so it is judged
+        // as the user-authorized automation it is.
         AgentTurnOrigin::TrustedAutomation {
-            source: TrustedAutomationSource::Background,
+            source: TrustedAutomationSource::Background | TrustedAutomationSource::CronActions,
             ..
         }
         | AgentTurnOrigin::TrustedAutomation {

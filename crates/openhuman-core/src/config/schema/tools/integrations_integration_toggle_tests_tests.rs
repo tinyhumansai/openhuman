@@ -55,7 +55,7 @@ fn default_is_managed_and_active() {
 }
 
 #[test]
-fn integrations_config_ignores_retired_twilio_and_apify_keys() {
+fn integrations_config_ignores_retired_twilio_apify_and_parallel_keys() {
     let raw = r#"
         [twilio]
         enabled = true
@@ -64,11 +64,15 @@ fn integrations_config_ignores_retired_twilio_and_apify_keys() {
         [apify]
         enabled = false
 
+        [parallel]
+        enabled = false
+        api_key = "enc2:00"
+
         [google_places]
         enabled = false
     "#;
     let cfg: IntegrationsConfig =
         toml::from_str(raw).expect("old config with retired keys must still load");
     assert!(!cfg.google_places.enabled);
-    assert!(cfg.parallel.enabled);
+    assert!(cfg.tinyfish.enabled);
 }

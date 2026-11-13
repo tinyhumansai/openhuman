@@ -75,6 +75,6 @@ pub(crate) mod turn_policy;
 pub(crate) mod turn_progress;
 #[allow(unused_imports)]
 pub use session_host::{
-    CompactOptions, CompactOutcome, HostTools, HostTurnTools, OpenHumanSessionHost,
-    SessionHostBuilder, TurnContext, TurnOverrides,
+    CompactOptions, CompactOutcome, HostTools, HostTurnTools, MemoryBlockPrewarm,
+    OpenHumanSessionHost, SessionHostBuilder, TurnContext, TurnOverrides,
 };

@@ -309,6 +309,10 @@ impl NativeEngine {
 #[path = "engine_impl.rs"]
 mod engine_impl;
 
+#[cfg(feature = "legacy-import")]
+#[path = "engine_orphans.rs"]
+mod engine_orphans;
+
 #[cfg(test)]
 #[path = "engine_outcome_tests.rs"]
 mod outcome_tests;

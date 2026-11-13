@@ -93,7 +93,6 @@ mod corrective_turn {
         };
         config.local_ai.runtime_enabled = false;
         config.memory.conversations.enabled = false;
-        config.agent.session_dual_write = false;
         config.agent.session_shadow_reads = false;
         config.default_model = Some("fixture".into());
         config.secrets.encrypt = false;

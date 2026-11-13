@@ -80,9 +80,8 @@ async fn config(tmp: &tempfile::TempDir, agent_id: Option<&str>) -> Config {
     config.modules.allow_download = false;
     config.local_ai.runtime_enabled = false;
     config.memory.conversations.enabled = false;
-    config.agent.session_dual_write = false;
     config.agent.session_shadow_reads = false;
-    crate::security::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
+    crate::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
         .await
         .expect("store channel test credential");
     if let Some(agent_id) = agent_id {

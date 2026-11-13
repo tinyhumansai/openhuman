@@ -6,6 +6,7 @@
 //! # agent_id = "writer-7"          # host binding: every agent on this config is this memory agent
 //! # root = "team:acme"             # host binding: the layout root (one per tenant)
 //! # recall_each_turn_ms = 1500     # host binding: recall the current message, waiting this long
+//! # memory_block_deadline_ms = 300 # host binding: render the memory block for at most this long
 //!
 //! [memory.engines.cortexdb]
 //! endpoint = "https://api-v1.cortexdb.ai"   # key in the keychain as "memory-cortexdb"
@@ -122,6 +123,14 @@ pub struct MemoryConfig {
     /// background for an earlier turn.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recall_each_turn_ms: Option<u64>,
+    /// Host binding: wait at most this many milliseconds for the memory block
+    /// a new transcript generation renders before the first model call. When
+    /// the deadline lapses the turn keeps the block its thread recorded (a
+    /// cold thread sends none), and the render finishes in the background
+    /// for the next generation's start. Unset (the default), a generation
+    /// start waits for the render however long it takes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_block_deadline_ms: Option<u64>,
     /// Where memory sits on the engine: `legacy` (the shared
     /// `app:tinymemory` tree, the default) or `v3` (the signed-in person's
     /// own `org:<id>` subtree, chats pooled at `ws:main`). Switched by the
@@ -233,6 +242,7 @@ impl Default for MemoryConfig {
             agent_id: None,
             root: None,
             recall_each_turn_ms: None,
+            memory_block_deadline_ms: None,
             layout: MemoryLayoutMode::Legacy,
             conversations: MemoryConversationsConfig::default(),
             recall: RecallSettings::default(),

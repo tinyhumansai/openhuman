@@ -9,6 +9,7 @@ import { bootRuntimeReadyGuestPage, callCoreRpc } from '../helpers/core-rpc';
 // spec runs only on a core started with OPENHUMAN_TEST_KEYRING_CONSENT=off.
 
 const USER_ID = 'ts-e2e-s06-user';
+const RESPONDER_ON = process.env.OPENHUMAN_TEST_KEYRING_CONSENT !== 'off';
 
 function sessionJwt(userId: string): string {
   const payload = Buffer.from(
@@ -18,10 +19,8 @@ function sessionJwt(userId: string): string {
 }
 
 test.describe('keyring consent before sign-in', () => {
-  test.skip(
-    process.env.OPENHUMAN_TEST_KEYRING_CONSENT !== 'off',
-    'TS-E2E S-06 needs the core test keyring responder off'
-  );
+  const reason = 'S-06 needs the keyring responder off';
+  test.skip(RESPONDER_ON, `${reason}: https://github.com/tinyhumansai/openhuman/issues/8598`);
 
   test('s_06 shows the sign-in keyring prompt without a socket and signs in once allowed', async ({
     page,

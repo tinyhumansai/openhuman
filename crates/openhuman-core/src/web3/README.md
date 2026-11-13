@@ -25,7 +25,7 @@ The host callbacks are narrow:
 | Wallet accounts | Return stored public account addresses. |
 | Chain transport | Apply endpoint configuration and generic HTTP/RPC safety, then return the response. |
 | Wallet backend | Answer authenticated wallet-backend requests through the registered handler (`modules::wallet_backend`). |
-| Web3/native/x402 authorization | Apply OpenHuman's explicit user approval policy to the exact module-provided intent. |
+| Web3/native/x402 authorization | Apply OpenHuman's approval policy to the exact module-provided intent: explicit user approval, the native spend policy (`wallet/policy.rs`), or for x402 from trusted automation the per-request budget. |
 
 Secrets are decrypted from host custody only for a confidential call to the
 attested module. The host retains encrypted wallet persistence and user consent;
@@ -73,7 +73,7 @@ second x402 ledger or parse payment protocol payloads.
 | --- | --- |
 | [`mod.rs`](./mod.rs) | Web3 facade and controller/tool aggregation. |
 | [`client.rs`](./client.rs) | Generic authenticated client for the deBridge integration proxy. |
-| [`module_tools.rs`](./module_tools.rs) | Agent-tool adapters over TinyWallet bus operations. |
+| [`tools.rs`](./tools.rs) | Agent-tool adapters over TinyWallet bus operations, for both the `wallet_*` and `web3_*` declarations. |
 | [`swap/`](swap/README.md), [`bridge/`](bridge/), [`dapp/`](dapp/README.md) | Product RPC schemas and controller handlers. |
 | [`wallet/`](wallet/README.md) | Wallet onboarding, host config/custody, controller and tool adapters. |
 | [`x402/`](x402/README.md) | x402 controller projection over the module-owned ledger. |
@@ -91,11 +91,15 @@ Namespace names are wire contracts.
 | `web3_swap` | `quote`, `execute`, `routes` |
 | `web3_bridge` | `quote`, `execute` |
 | `web3_dapp` | `call`, `execute` |
-| [`wallet`](./wallet/README.md) | `setup`, `status`, `reveal_recovery_phrase`, `balances`, `chain_status`, `network_defaults`, `supported_assets`, `encode_erc20_transfer`, `prepare_transfer`, `execute_prepared`, `tx_status`, `tx_receipt`, `lookup_tx` |
-| [`x402`](./x402/README.md) | `get_summary`, `list_payments`, `update_budget` |
+| [`wallet`](./wallet/README.md) | `setup`, `status`, `reveal_recovery_phrase`, `balances`, `token_balances`, `chain_status`, `network_defaults`, `supported_assets`, `encode_erc20_transfer`, `prepare_transfer`, `execute_prepared`, `tx_status`, `tx_receipt`, `lookup_tx`, `policy_get`, `policy_update`, `ledger_list` |
+| [`x402`](./x402/README.md) | `get_summary`, `list_payments`, `update_budget`, `fetch` |
 
 The existing Wallet/Web3/x402 agent declarations come from `tinywallet-bus`;
-OpenHuman supplies adapters that call the module. The `x402_request` tool uses
+OpenHuman supplies adapters that call the module. The policy-bound
+`wallet_balances` and `wallet_execute_prepared` tools are host tools
+(`wallet/automation_tools.rs`) because their behaviour is OpenHuman's spend
+policy. The swap/bridge/dapp execute tools declare `Write` permission and an
+external effect, so the approval gate sees them as the writes they are. The `x402_request` tool uses
 the generic host HTTP executor and its payment hook, retaining its existing
 name and parameter schema.
 
@@ -111,6 +115,8 @@ name and parameter schema.
   contract and module support, not TinyWallet implementation crates.
 - The `client` logs endpoint and operation metadata only; request bodies and
   wallet addresses must not be logged.
+- `x402_fetch` logs the method, host, status and payment amount only; the URL
+  path and query, request headers, bodies and wallet material are never logged.
 
 ```bash
 cargo test -p openhuman --features web3 web3::

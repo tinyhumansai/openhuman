@@ -11,50 +11,113 @@ use tinysecurity_bus::{
 
 const OPERATION_TTL_MS: u32 = 30_000;
 const MASTER_GRANT_TOOL: &str = "native_secret_grant";
+const MASTER_GRANT_SUMMARY: &str = "Unlock configuration secrets";
 
 /// Ask through the installed approval gate, then consume TinySecurity's exact
 /// HumanOnce grant to obtain a short-lived process-private User master handle.
+///
+/// `config` decides who answers the grant: a person, or this host for the
+/// operator when `[secrets] unattended_unlock` holds
+/// ([`super::unattended_unlock`]).
 pub(crate) async fn resolve_user_master(
+    config: &crate::config::Config,
     client: &Client,
     scope: &SecretScope,
     registration_id: &str,
 ) -> Result<String, SecurityError> {
-    resolve_user_master_inner(client, scope, registration_id, None).await
+    resolve_user_master_inner(config, client, scope, registration_id, None).await
 }
 
 /// Resolve the module's User master using one explicitly supplied existing key.
 /// The callback can answer one target read and denies every Set during this
 /// invocation, preserving read-only inspection semantics.
 pub(crate) async fn resolve_user_master_with_existing_key(
+    config: &crate::config::Config,
     client: &Client,
     scope: &SecretScope,
     registration_id: &str,
     backend: &super::secret_backend::SecretBackend,
     encoded_key: &str,
 ) -> Result<String, SecurityError> {
-    resolve_user_master_inner(client, scope, registration_id, Some((backend, encoded_key))).await
+    resolve_user_master_inner(
+        config,
+        client,
+        scope,
+        registration_id,
+        Some((backend, encoded_key)),
+    )
+    .await
 }
 
 async fn resolve_user_master_inner(
+    config: &crate::config::Config,
     client: &Client,
     scope: &SecretScope,
     registration_id: &str,
     existing_key: Option<(&super::secret_backend::SecretBackend, &str)>,
 ) -> Result<String, SecurityError> {
-    let gate = crate::security::approval::ApprovalGate::try_global()
-        .ok_or_else(|| SecurityError::Unavailable("secret approval unavailable".into()))?;
-    let outcome = gate
-        .intercept_forced(
-            MASTER_GRANT_TOOL,
-            "Unlock configuration secrets",
-            serde_json::json!({"registration_id": registration_id}),
-        )
-        .await;
-    if !matches!(outcome, crate::security::approval::GateOutcome::Allow) {
+    #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
+    let answered = super::test_host::answer_master_grant(MASTER_GRANT_TOOL, registration_id).await;
+    #[cfg(not(any(test, feature = "e2e-test-support", feature = "test-keyring-consent")))]
+    let answered = None;
+    let outcome = match answered {
+        Some(outcome) => outcome,
+        None => {
+            use super::unattended_unlock::{answer_master_grant, mode_for, UnlockMode};
+            match crate::security::approval::ApprovalGate::try_global() {
+                // No gate yet: only a library host's own authorisation can
+                // answer (`gate_host_grant.rs`); anything else stays refused.
+                None => crate::security::approval::gate::host_authorised_grant_without_gate(
+                    MASTER_GRANT_TOOL,
+                    MASTER_GRANT_SUMMARY,
+                    serde_json::json!({"registration_id": registration_id}),
+                )
+                .await
+                .ok_or_else(|| SecurityError::Unavailable("secret approval unavailable".into()))?,
+                Some(gate) => match mode_for(config) {
+                    UnlockMode::Unattended => {
+                        answer_master_grant(
+                            &gate,
+                            MASTER_GRANT_TOOL,
+                            MASTER_GRANT_SUMMARY,
+                            registration_id,
+                        )
+                        .await
+                    }
+                    mode => {
+                        if mode == UnlockMode::IgnoredOnSaas {
+                            tracing::warn!(
+                            "[security::unattended_unlock] secrets.unattended_unlock is set but \
+                             this is a SaaS core; the user must approve over WebChat, and an unlock \
+                             with no WebChat route is refused"
+                        );
+                        }
+                        if mode == UnlockMode::IgnoredWithoutOperatorKey {
+                            tracing::warn!(
+                            "[security::unattended_unlock] secrets.unattended_unlock is set but the \
+                             keyring master key was not supplied by the operator \
+                             (OPENHUMAN_KEYRING_MASTER_KEY / OPENHUMAN_KEYRING_MASTER_KEY_FILE on a \
+                             file or encrypted_file keyring); asking a person instead"
+                        );
+                        }
+                        gate.intercept_forced(
+                            MASTER_GRANT_TOOL,
+                            MASTER_GRANT_SUMMARY,
+                            serde_json::json!({"registration_id": registration_id}),
+                        )
+                        .await
+                    }
+                },
+            }
+        }
+    };
+    if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
         crate::security::approval::native::forget_secret_grant(registration_id);
-        return Err(SecurityError::Unavailable(
-            "secret master approval denied".into(),
-        ));
+        tracing::warn!(
+            reason = %reason,
+            "[security::secret_cipher] secret master grant refused"
+        );
+        return Err(master_grant_refusal(&reason));
     }
     let (request, request_id) =
         crate::security::approval::native::take_secret_grant(registration_id).ok_or_else(|| {
@@ -88,6 +151,26 @@ async fn resolve_user_master_inner(
             "secret master resolution refused".into(),
         )),
     }
+}
+
+/// Why the secret master was not unlocked, from the gate's denial reason: a
+/// person's refusal, an unanswered prompt, or the gate's own reason (its
+/// agent-facing marker removed) when it never asked.
+fn master_grant_refusal(reason: &str) -> SecurityError {
+    const WHAT: &str = "the approval to unlock configuration secrets";
+    let message = if crate::security::approval::is_unanswered_approval_reason(reason) {
+        format!("{WHAT} was not answered in time")
+    } else if reason.contains("User denied") {
+        format!("{WHAT} was denied")
+    } else {
+        let reason = reason
+            .trim_start()
+            .strip_prefix(tinytools::status::POLICY_DENIED_MARKER)
+            .unwrap_or(reason)
+            .trim();
+        format!("{WHAT} was refused: {reason}")
+    };
+    SecurityError::ApprovalRefused(message)
 }
 
 /// Successful result of the native routine config cipher.
@@ -197,3 +280,7 @@ pub(crate) async fn run(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "secret_cipher_tests.rs"]
+mod tests;

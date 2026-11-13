@@ -97,6 +97,7 @@ pub(super) async fn stdio_sandbox(_config: &Config) -> Option<StdioSandboxConfig
 pub(super) async fn with_toolchain_grants(config: &Config, sandbox: &mut StdioSandboxConfig) {
     use crate::sandbox::types::SandboxPolicy;
     let seed = SandboxPolicy {
+        filesystem_only: false,
         backend: crate::sandbox::types::SandboxBackendKind::Local,
         workspace_root: PathBuf::from(&sandbox.workspace),
         state_dir: config.workspace_dir.clone(),

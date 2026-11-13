@@ -569,7 +569,11 @@ pub(crate) fn routed_provider_effective(provider: &Provider, config: Option<&Con
 }
 
 async fn store_api_key(config: &Config, key: &ApiKey) -> Result<(), RuntimeError> {
-    openhuman_core::credentials::api_key::store_api_key(config, key.expose())
+    // The host supplied this key for its own runtime: it authorises the
+    // secret master grant of this config directory, which nobody else can
+    // answer before the core (and its approval gate) boots.
+    let store = openhuman_core::credentials::api_key::store_api_key(config, key.expose());
+    openhuman_core::security::approval::gate::host_authorised_secret_grant(config, store)
         .await
         .map(|_| ())
         .map_err(RuntimeError::Build)
