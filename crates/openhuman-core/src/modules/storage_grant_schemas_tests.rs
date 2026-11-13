@@ -206,6 +206,48 @@ fn non_document_grants_match_the_owner_contracts_without_broad_prefixes() {
     );
 }
 
+/// Every call TinyWallet's x402 ledger makes when it opens (its own migration,
+/// `tinywallet-x402/src/ledger/schema.rs` `migrate`) and afterwards
+/// (`ledger/persist.rs`). The migration runs on every first open, whether or
+/// not a wallet exists and whether or not there is legacy data, so a target
+/// missing here fails every `x402_fetch` with `target-not-granted`.
+#[cfg(feature = "web3")]
+#[test]
+fn the_wallet_grant_covers_every_target_its_x402_ledger_opens_and_migrates() {
+    let wallet = declared(tinywallet::MODULE_ID).unwrap();
+    let calls = [
+        // Migration state.
+        (Object::Documents, "Get", json!({"collection": "wallet.migrations", "id": "x402"})),
+        (Object::Documents, "Put", json!({"collection": "wallet.migrations", "id": "x402"})),
+        // v1 budget holds, read and carried into `wallet.budgets`.
+        (Object::Documents, "Get", json!({"collection": "x402_budget", "id": "holds"})),
+        (Object::Documents, "Get", json!({"collection": "wallet.budgets", "id": "holds"})),
+        (Object::Documents, "Put", json!({"collection": "wallet.budgets", "id": "holds"})),
+        // v1 payments (what the host importer writes), copied to `wallet.payments`.
+        (Object::Streams, "Len", json!({"stream": tinywallet::PAYMENTS_STREAM})),
+        (Object::Streams, "ReadWindow", json!({"stream": tinywallet::PAYMENTS_STREAM})),
+        (Object::Streams, "Len", json!({"stream": "wallet.payments"})),
+        (Object::Streams, "ReadWindow", json!({"stream": "wallet.payments"})),
+        (Object::Streams, "AppendBatchIfOffset", json!({"stream": "wallet.payments"})),
+        (Object::Streams, "Append", json!({"stream": "wallet.payments"})),
+    ];
+    for (object, selector, request) in calls {
+        assert_eq!(
+            authorize(&wallet, object, selector, &request).map(|_| ()),
+            Ok(()),
+            "{object:?}.{selector} {request}"
+        );
+    }
+    // The migration's own `ensure_collection` calls repeat the host's specs.
+    for name in ["wallet.budgets", "wallet.migrations"] {
+        let spec = serde_json::to_value(CollectionSpec::new(name)).unwrap();
+        assert!(matches!(
+            authorize(&wallet, Object::Documents, "EnsureCollection", &json!({"spec": spec})),
+            Ok(Plan::Answer(_))
+        ));
+    }
+}
+
 #[test]
 fn connectors_may_read_the_v1_preferences_its_migration_moves() {
     let connectors = declared("tinyconnectors").unwrap();
