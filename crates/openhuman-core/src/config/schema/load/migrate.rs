@@ -34,7 +34,7 @@ pub(crate) fn migrate_legacy_inference_url(config: &mut Config) {
     };
     let logged = match moved.as_deref() {
         None => "<derived>".to_string(),
-        Some(u) => crate::util::redact_url_for_log(u),
+        Some(u) => migration_url_for_log(u),
     };
     tracing::info!(
         "[config][migrate] splitting legacy api_url -> inference_url (api_url cleared, inference_url={})",
@@ -43,6 +43,10 @@ pub(crate) fn migrate_legacy_inference_url(config: &mut Config) {
     config.inference_url = moved;
     config.api_url = None;
     config.load_diagnostics_mut().record_migrated_key("api_url");
+}
+
+fn migration_url_for_log(url: &str) -> String {
+    tinyinference_core::sanitize::redact_url(url)
 }
 
 /// Migrate `cloud_providers` entries to the new slug-keyed shape and rewrite
@@ -191,6 +195,10 @@ pub(crate) fn migrate_cloud_provider_slugs(config: &mut Config) {
     {
         rewrite(&mut config.embeddings_provider);
     }
+
+#[cfg(test)]
+#[path = "migrate_tests.rs"]
+mod tests;
 
     if legacy_provider_labels {
         config
