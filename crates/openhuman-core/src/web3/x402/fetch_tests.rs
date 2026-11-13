@@ -354,3 +354,21 @@ async fn the_first_attempt_carries_no_sign_in_credential() {
     assert_eq!(requests.len(), 1);
     assert!(!requests[0].headers.contains_key(SIGN_IN_HEADER));
 }
+
+#[test]
+fn a_signed_in_response_matches_the_declared_fetch_outputs() {
+    let value = with_signed_in_as(
+        response_value(200, Some("application/json".into()), "{}".into(), false, None),
+        "0x0000000000000000000000000000000000000001".into(),
+    );
+    let declared = super::super::schemas::schemas("fetch").outputs;
+    let object = value.as_object().expect("object response");
+    for key in object.keys() {
+        assert!(
+            declared.iter().any(|field| field.name == key),
+            "response key {key} is not declared in x402.fetch outputs"
+        );
+    }
+    assert_eq!(object["signedInAs"], "0x0000000000000000000000000000000000000001");
+    assert_eq!(object["payment"], Value::Null);
+}
