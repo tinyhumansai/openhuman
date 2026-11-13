@@ -350,7 +350,7 @@ fn nested_subworkflow_id_does_not_select_the_saved_child_proposal() {
         flow_id: Some("flow-child".into()),
         saved_flow_id: Some("flow-child".into()),
     };
-    let hand_off = r#"Build a new proposal from this graph: {"nodes":[{"type":"sub_workflow","config":{"workflow_id":"flow-child"}}]}"#;
+    let hand_off = r#"Build a new proposal from this graph: {"nodes":[{"kind":"sub_workflow","config":{"workflow_id":"flow-child"}}]}"#;
     assert!(hand_off_proposal(&[saved], hand_off).is_none());
 }
 
@@ -372,7 +372,7 @@ fn nested_subworkflow_name_does_not_select_the_saved_child_proposal() {
     };
     // The child's name is longer than the parent's, so a name match anywhere
     // in the text would pick the saved child over the unsaved parent.
-    let hand_off = r#"Save "Morning digest" with this graph: {"nodes":[{"id":"n1","type":"sub_workflow","name":"Fetch headlines and summarize","config":{"workflow_id":"flow-child"}}]}"#;
+    let hand_off = r#"Save "Morning digest" with this graph: {"nodes":[{"id":"n1","kind":"sub_workflow","name":"Fetch headlines and summarize","config":{"workflow_id":"flow-child"}}]}"#;
     let proposals = [parent, child];
     let picked = hand_off_proposal(&proposals, hand_off).expect("the parent proposal");
     assert_eq!(picked.message_id, "parent");
@@ -399,7 +399,7 @@ fn a_sub_workflow_object_nested_under_a_key_is_still_excluded() {
     // first key inside each object must still be read as a key.
     // No quoted prose before the graph, so the scanner meets `"node": {`
     // with nothing but JSON before it.
-    let hand_off = r#"Save the Morning digest proposal with {"node":{"type":"sub_workflow","name":"Fetch headlines and summarize","config":{"workflow_id":"flow-child"}}}"#;
+    let hand_off = r#"Save the Morning digest proposal with {"node":{"kind":"sub_workflow","name":"Fetch headlines and summarize","config":{"workflow_id":"flow-child"}}}"#;
     let proposals = [parent, child];
     let picked = hand_off_proposal(&proposals, hand_off).expect("the parent proposal");
     assert_eq!(picked.message_id, "parent");
@@ -415,7 +415,7 @@ fn a_name_outside_the_graph_still_selects_its_proposal() {
         saved_flow_id: Some("flow-1".into()),
     };
     // The name appears only as an ordinary (non-sub_workflow) node's name.
-    let hand_off = r#"Save this graph: {"nodes":[{"id":"n1","type":"agent","name":"Fetch headlines and summarize"}]}"#;
+    let hand_off = r#"Save this graph: {"nodes":[{"id":"n1","kind":"agent","name":"Fetch headlines and summarize"}]}"#;
     let proposals = [saved];
     let picked = hand_off_proposal(&proposals, hand_off).expect("the named proposal");
     assert_eq!(picked.message_id, "saved");
