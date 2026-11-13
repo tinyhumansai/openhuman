@@ -177,8 +177,12 @@ fn stream_prefixes(owner: &str) -> Vec<String> {
         "mcp" => vec![tinymcp_bus::storage::AUDIT_STREAM.to_owned()],
         "connectors" => tinyconnectors_bus::storage::storage_needs().stream_prefixes,
         // TinyWallet's module still reads and appends this released ledger
-        // stream while its bus contract currently declares collections only.
-        "wallet" => vec!["wallet.payments".to_owned()],
+        // stream while its bus contract currently declares collections only,
+        // and its x402 ledger migration reads the v1 stream the importer fills.
+        "wallet" => vec![
+            "wallet.payments".to_owned(),
+            tinywallet::PAYMENTS_STREAM.to_owned(),
+        ],
         _ => Vec::new(),
     }
 }
