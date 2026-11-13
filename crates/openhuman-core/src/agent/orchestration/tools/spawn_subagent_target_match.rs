@@ -8,8 +8,9 @@
 
 /// Byte ranges of `text` that describe nested workflows rather than the
 /// proposal being handed off. A hand-off may include the requested graph:
-/// every JSON object whose `"type"` is `"sub_workflow"` (the node, its name
-/// and config) and every `"workflow_id": "…"` value identifies a child
+/// every JSON object whose `"kind"` (the `WorkflowGraph` node discriminator;
+/// `"type"` is accepted too) is `"sub_workflow"` (the node, its name and
+/// config) and every `"workflow_id": "…"` value identifies a child
 /// workflow. One string-aware pass over the text; malformed JSON simply
 /// yields fewer ranges.
 fn nested_workflow_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
@@ -44,7 +45,7 @@ fn nested_workflow_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
                     let value = &text[literal.clone()];
                     if key == "\"workflow_id\"" {
                         ranges.push(literal.clone());
-                    } else if key == "\"type\"" && value == "\"sub_workflow\"" {
+                    } else if (key == "\"kind\"" || key == "\"type\"") && value == "\"sub_workflow\"" {
                         if let Some(open) = objects.last_mut() {
                             open.1 = true;
                         }
