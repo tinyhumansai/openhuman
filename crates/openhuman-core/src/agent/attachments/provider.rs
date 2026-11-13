@@ -401,6 +401,8 @@ fn is_local_reference(source: &str) -> bool {
 
 #[path = "provider_open.rs"]
 pub(crate) mod open;
+#[cfg(test)]
+use open::normalize_windows_path_for_comparison;
 use open::secure_open;
 
 #[async_trait]
