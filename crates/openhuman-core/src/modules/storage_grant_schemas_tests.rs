@@ -217,19 +217,55 @@ fn the_wallet_grant_covers_every_target_its_x402_ledger_opens_and_migrates() {
     let wallet = declared(tinywallet::MODULE_ID).unwrap();
     let calls = [
         // Migration state.
-        (Object::Documents, "Get", json!({"collection": "wallet.migrations", "id": "x402"})),
-        (Object::Documents, "Put", json!({"collection": "wallet.migrations", "id": "x402"})),
+        (
+            Object::Documents,
+            "Get",
+            json!({"collection": "wallet.migrations", "id": "x402"}),
+        ),
+        (
+            Object::Documents,
+            "Put",
+            json!({"collection": "wallet.migrations", "id": "x402"}),
+        ),
         // v1 budget holds, read and carried into `wallet.budgets`.
-        (Object::Documents, "Get", json!({"collection": "x402_budget", "id": "holds"})),
-        (Object::Documents, "Get", json!({"collection": "wallet.budgets", "id": "holds"})),
-        (Object::Documents, "Put", json!({"collection": "wallet.budgets", "id": "holds"})),
+        (
+            Object::Documents,
+            "Get",
+            json!({"collection": "x402_budget", "id": "holds"}),
+        ),
+        (
+            Object::Documents,
+            "Get",
+            json!({"collection": "wallet.budgets", "id": "holds"}),
+        ),
+        (
+            Object::Documents,
+            "Put",
+            json!({"collection": "wallet.budgets", "id": "holds"}),
+        ),
         // v1 payments (what the host importer writes), copied to `wallet.payments`.
-        (Object::Streams, "Len", json!({"stream": tinywallet::PAYMENTS_STREAM})),
-        (Object::Streams, "ReadWindow", json!({"stream": tinywallet::PAYMENTS_STREAM})),
+        (Object::Streams, "Len", json!({"stream": "x402.payments"})),
+        (
+            Object::Streams,
+            "ReadWindow",
+            json!({"stream": "x402.payments"}),
+        ),
         (Object::Streams, "Len", json!({"stream": "wallet.payments"})),
-        (Object::Streams, "ReadWindow", json!({"stream": "wallet.payments"})),
-        (Object::Streams, "AppendBatchIfOffset", json!({"stream": "wallet.payments"})),
-        (Object::Streams, "Append", json!({"stream": "wallet.payments"})),
+        (
+            Object::Streams,
+            "ReadWindow",
+            json!({"stream": "wallet.payments"}),
+        ),
+        (
+            Object::Streams,
+            "AppendBatchIfOffset",
+            json!({"stream": "wallet.payments"}),
+        ),
+        (
+            Object::Streams,
+            "Append",
+            json!({"stream": "wallet.payments"}),
+        ),
     ];
     for (object, selector, request) in calls {
         assert_eq!(
@@ -242,7 +278,12 @@ fn the_wallet_grant_covers_every_target_its_x402_ledger_opens_and_migrates() {
     for name in ["wallet.budgets", "wallet.migrations"] {
         let spec = serde_json::to_value(CollectionSpec::new(name)).unwrap();
         assert!(matches!(
-            authorize(&wallet, Object::Documents, "EnsureCollection", &json!({"spec": spec})),
+            authorize(
+                &wallet,
+                Object::Documents,
+                "EnsureCollection",
+                &json!({"spec": spec})
+            ),
             Ok(Plan::Answer(_))
         ));
     }
