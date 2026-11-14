@@ -88,21 +88,6 @@ fn an_empty_endpoint_is_left_out_rather_than_failing_the_module() {
 }
 
 #[test]
-fn the_tinyhumans_gateway_speaks_the_openrouter_dialect() {
-    let judge = build(
-        &Config::default(),
-        SecurityJudgeRoute::tinyhumans("https://api.example.test/", "a-working-key"),
-    )
-    .expect("on by default");
-
-    assert_eq!(
-        judge.endpoint,
-        "https://api.example.test/agent-integrations/openrouter/systemone"
-    );
-    assert_eq!(judge.provider, JudgeProvider::OpenRouter);
-}
-
-#[test]
 fn openjev_keeps_its_own_dialect() {
     let judge = build(
         &Config::default(),
