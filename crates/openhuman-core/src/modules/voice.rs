@@ -1,5 +1,7 @@
-//! TinyVoice's transcript screening adapter.
+//! TinyVoice adapter: transcript screening and PCM16 WAV framing.
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use tinyvoice_bus::names::methods;
 
 use super::{ops, registry};
@@ -39,6 +41,33 @@ pub async fn is_hallucinated(
         HallucinationMode::Conversation => "conversation",
     };
     call(config, methods::IS_HALLUCINATED, (text, mode)).await
+}
+
+/// Wrap 16-bit PCM samples in a canonical 44-byte WAV container.
+///
+/// The samples cross the bus as their little-endian bytes, so the framing is
+/// exact: no `f32` round trip touches them (TinyVoice's `EncodeWavPcm16`).
+pub async fn encode_wav_pcm16(
+    config: &Config,
+    samples: &[i16],
+    sample_rate: u32,
+    channels: u16,
+) -> Result<Vec<u8>, VoiceCallError> {
+    let wav: String = call(
+        config,
+        methods::ENCODE_WAV_PCM16,
+        (pcm16_le_base64(samples), sample_rate, channels),
+    )
+    .await?;
+    BASE64
+        .decode(wav)
+        .map_err(|error| VoiceCallError::Failed(format!("invalid WAV payload: {error}")))
+}
+
+/// Base64 of `samples` as little-endian bytes, the `EncodeWavPcm16` input.
+fn pcm16_le_base64(samples: &[i16]) -> String {
+    let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+    BASE64.encode(bytes)
 }
 
 async fn call<A, R>(config: &Config, method: &str, args: A) -> Result<R, VoiceCallError>

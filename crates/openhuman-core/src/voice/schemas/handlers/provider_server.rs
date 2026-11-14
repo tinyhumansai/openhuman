@@ -6,8 +6,8 @@ use serde_json::{Map, Value};
 use crate::core::all::{BoundRegisteredController, ControllerFuture};
 
 use crate::voice::schemas::helpers::{
-    deserialize_params, generate_silent_wav, validate_provider_key, validate_stt_provider,
-    validate_tts_provider,
+    deserialize_params, validate_provider_key, validate_stt_provider, validate_tts_provider,
+    SILENT_CLIP_SAMPLES, SILENT_CLIP_SAMPLE_RATE,
 };
 use crate::voice::schemas::params::{
     SetProvidersParams, VoiceListModelsParams, VoiceTestProviderParams,
@@ -437,10 +437,25 @@ fn run_voice_test_provider(ctx: DispatchCtx, p: VoiceTestProviderParams) -> Cont
                 .await
                 .map_err(|e| e.to_string())?;
 
-            // 0.1s of silence as WAV (16kHz mono 16-bit PCM) so the local
-            // The selected engine can transcribe it without an
-            // external binary (issue #3425).
-            let silent_wav = generate_silent_wav();
+            // 0.1s of silence as WAV (16kHz mono 16-bit PCM) so the
+            // selected engine can transcribe it without an external binary
+            // (issue #3425).
+            let silent_wav = match crate::modules::voice::encode_wav_pcm16(
+                &config,
+                &[0; SILENT_CLIP_SAMPLES],
+                SILENT_CLIP_SAMPLE_RATE,
+                1,
+            )
+            .await
+            {
+                Ok(wav) => wav,
+                Err(e) => {
+                    return Ok(serde_json::json!({
+                        "ok": false,
+                        "detail": format!("STT test failed: {e}"),
+                    }))
+                }
+            };
             let audio_b64 = {
                 use base64::Engine;
                 base64::engine::general_purpose::STANDARD.encode(&silent_wav)
