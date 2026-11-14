@@ -514,13 +514,13 @@ async fn a_session_that_typed_a_password_stays_unpictured_for_the_next_tool() {
 
     // The first tool types a keychain password: it and the pooled session
     // are marked.
-    let first = BrowserTool::new(Arc::new(SecurityPolicy::default()), client.clone(), 3);
+    let first = BrowserTool::new(client.clone(), 3);
     *first.thread_key.lock().unwrap() = Some(key.clone());
     first.mark_password_typed().await;
     assert!(thread_sessions().lock().await[&key].password_typed);
 
     // A later turn's tool reuses the pooled session and inherits the ban.
-    let next = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+    let next = BrowserTool::new(client, 3);
     *next.thread_key.lock().unwrap() = Some(key.clone());
     assert!(!next
         .password_typed
