@@ -498,8 +498,14 @@ impl BrowserTool {
                 match secret {
                     None => Ok(serde_json::to_value(done?)?),
                     Some(secret) => match done {
-                        Ok(outcome) => Ok(keychain::redact_value(serde_json::to_value(outcome)?, &secret)),
-                        Err(error) => Err(anyhow::anyhow!(keychain::redact(&error.to_string(), &secret))),
+                        Ok(outcome) => Ok(keychain::redact_value(
+                            serde_json::to_value(outcome)?,
+                            &secret,
+                        )),
+                        Err(error) => Err(anyhow::anyhow!(keychain::redact(
+                            &error.to_string(),
+                            &secret
+                        ))),
                     },
                 }
             }

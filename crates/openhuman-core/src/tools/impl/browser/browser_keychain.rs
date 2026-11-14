@@ -40,9 +40,13 @@ pub(super) fn placeholder_site(value: &str) -> Option<String> {
     let valid = !site.is_empty()
         && site.len() <= 253
         && site.contains('.')
-        && site
-            .split('.')
-            .all(|label| !label.is_empty() && label.len() <= 63 && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
+        && site.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        });
     valid.then_some(site)
 }
 
@@ -74,7 +78,9 @@ pub(super) fn redact(text: &str, secret: &str) -> String {
 pub(super) fn redact_value(value: Value, secret: &str) -> Value {
     match value {
         Value::String(text) => Value::String(redact(&text, secret)),
-        Value::Array(items) => Value::Array(items.into_iter().map(|v| redact_value(v, secret)).collect()),
+        Value::Array(items) => {
+            Value::Array(items.into_iter().map(|v| redact_value(v, secret)).collect())
+        }
         Value::Object(map) => Value::Object(
             map.into_iter()
                 .map(|(key, v)| (redact(&key, secret), redact_value(v, secret)))
@@ -108,7 +114,12 @@ pub(super) async fn run_command(command: &str, host: &str) -> anyhow::Result<Zer
         .with_context(|| "the keychain command could not start")?;
     let output = tokio::time::timeout(COMMAND_TIMEOUT, child.wait_with_output())
         .await
-        .map_err(|_| anyhow!("the keychain command took longer than {}s", COMMAND_TIMEOUT.as_secs()))?
+        .map_err(|_| {
+            anyhow!(
+                "the keychain command took longer than {}s",
+                COMMAND_TIMEOUT.as_secs()
+            )
+        })?
         .with_context(|| "the keychain command failed")?;
     let stdout = Zeroizing::new(output.stdout);
     if !output.status.success() {
@@ -117,7 +128,8 @@ pub(super) async fn run_command(command: &str, host: &str) -> anyhow::Result<Zer
     if stdout.len() > MAX_SECRET_BYTES {
         bail!("the keychain command printed more than a password");
     }
-    let text = std::str::from_utf8(&stdout).map_err(|_| anyhow!("the keychain command printed no text"))?;
+    let text = std::str::from_utf8(&stdout)
+        .map_err(|_| anyhow!("the keychain command printed no text"))?;
     let secret = Zeroizing::new(text.trim_end_matches(['\r', '\n']).to_owned());
     if secret.is_empty() || secret.contains(['\r', '\n']) {
         bail!("the keychain command printed no single password");
