@@ -16,8 +16,6 @@ use tinymcp_bus::{
 #[derive(Clone, Default)]
 struct PreparePort {
     requests: Arc<Mutex<Vec<PrepareAgentToolsRequest>>>,
-    /// Member names for each configured-object call.
-    calls: Arc<Mutex<Vec<String>>>,
     transform_error: Option<tinybus::module::ModuleCallError>,
 }
 
@@ -48,21 +46,17 @@ impl McpModulePort for PreparePort {
     async fn call_object(
         &self,
         _: &str,
-        member: &str,
+        _member: &str,
         _: Value,
         _confidential: bool,
     ) -> Result<Value, tinybus::module::ModuleCallError> {
-        self.calls.lock().unwrap().push(member.to_owned());
-        if member == tinymcp_bus::names::methods::STATIC_CALL_TOOL_CLASSIFIED {
-            return serde_json::to_value(tinymcp_bus::ClassifiedStaticToolCall {
-                outcome: tinymcp_bus::McpCallOutcome::answered("docs", "search"),
-                rendered: Some(tinymcp_bus::McpToolResult::default()),
-                envelope: None,
-                error_message: None,
-            })
-            .map_err(|_| tinybus::module::ModuleCallError::ModuleFault);
-        }
-        Err(tinybus::module::ModuleCallError::IncompatibleContract)
+        serde_json::to_value(tinymcp_bus::ClassifiedStaticToolCall {
+            outcome: tinymcp_bus::McpCallOutcome::answered("docs", "search"),
+            rendered: Some(tinymcp_bus::McpToolResult::default()),
+            envelope: None,
+            error_message: None,
+        })
+        .map_err(|_| tinybus::module::ModuleCallError::ModuleFault)
     }
 
     async fn prepare_agent_tools(
