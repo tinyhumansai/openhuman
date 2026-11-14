@@ -9697,6 +9697,7 @@ name = "tinycomputer-engine"
 version = "0.16.0"
 dependencies = [
  "getrandom 0.4.3",
+ "image",
  "serde",
  "serde_json",
  "tinycomputer-browser",
