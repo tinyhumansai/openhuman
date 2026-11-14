@@ -139,6 +139,15 @@ fn create_trace_dir(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The absolute profile folder a persistent `[browser]` keeps, if any.
+fn persistent_profile(config: &Config) -> Option<&str> {
+    let browser = &config.browser;
+    (browser.profile_mode == "persistent")
+        .then_some(browser.profile_path.as_deref())
+        .flatten()
+        .filter(|path| Path::new(path).is_absolute())
+}
+
 /// Build the module configuration for `config`.
 #[must_use]
 pub async fn module_config(config: &Config) -> Value {
@@ -150,8 +159,18 @@ pub async fn module_config(config: &Config) -> Value {
     if let Some(planner) = planner(config, hosted.as_deref()).await {
         out.insert("planner".into(), planner);
     }
+    let mut browser = Map::new();
     if let Some(executable) = config.browser.chrome_path.as_ref() {
-        out.insert("browser".into(), json!({ "executable": executable }));
+        browser.insert("executable".into(), json!(executable));
+    }
+    // The persistent profile folder is host control, like the executable:
+    // TinyComputer's egress-enforced launcher lets a session name this
+    // folder and no other, so cookies and sign-ins survive between sessions.
+    if let Some(profile) = persistent_profile(config) {
+        browser.insert("profile".into(), json!(profile));
+    }
+    if !browser.is_empty() {
+        out.insert("browser".into(), Value::Object(browser));
     }
     let traced = tracing_enabled(config);
     if traced {
@@ -168,6 +187,7 @@ pub async fn module_config(config: &Config) -> Value {
         decision_model = config.computer.decision_model.as_str(),
         jev = out.contains_key("jev"),
         planner = out.contains_key("planner"),
+        profile = persistent_profile(config).is_some(),
         hosted = hosted.is_some(),
         traced,
         "[computer] module config built"
