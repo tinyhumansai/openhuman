@@ -10395,7 +10395,7 @@ dependencies = [
 
 [[package]]
 name = "tinysecurity-bus"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
