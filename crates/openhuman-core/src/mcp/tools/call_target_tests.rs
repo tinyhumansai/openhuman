@@ -148,7 +148,27 @@ async fn valid_mcp_identifier_reports_module_unavailable_without_invalid_input_l
     let outcome = tinymcp_bus::McpCallOutcome::from_metadata(result.metadata.as_ref().unwrap())
         .expect("sanitized outcome remains available");
     assert_eq!(outcome.error.unwrap().code, tinymcp_bus::errors::BUS);
-    assert_eq!(*port.confidential_calls.lock().unwrap(), [true]);
+}
+
+#[tokio::test]
+async fn static_mcp_tool_call_uses_confidential_module_delivery() {
+    let workspace = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.workspace_dir = workspace.path().to_path_buf();
+    config.modules.enabled = true;
+    let port = PreparePort::default();
+    McpConfiguredClient::install_test_port(&config, Box::new(port.clone())).unwrap();
+    let tool = mcp_call_tool(Arc::new(config), Arc::new(SecurityPolicy::default()));
+
+    let result = tool
+        .execute(json!({"server": "docs", "tool": "search", "arguments": {}}))
+        .await
+        .expect("tool failures are returned as a model-visible result");
+
+    assert!(!result.is_error);
+    let calls = port.confidential_calls.lock().unwrap();
+    assert!(!calls.is_empty());
+    assert!(calls.iter().all(|confidential| *confidential));
 }
 
 #[tokio::test]
