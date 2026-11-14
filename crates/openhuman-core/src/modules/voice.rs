@@ -107,12 +107,17 @@ where
     ops::ensure_loaded_within(config, MODULE_ID, load_within)
         .await
         .map_err(|error| {
-            tracing::debug!(method, load_wait_ms = load_started.elapsed().as_millis() as u64, %error, "[voice] module load failed");
+            tracing::debug!(
+                method,
+                load_wait_ms = load_started.elapsed().as_millis() as u64,
+                ?error,
+                "[voice] module load failed"
+            );
             match error {
-            tinybus::module::LoadError::StillLoading => {
-                VoiceCallError::Unavailable(STILL_LOADING_MESSAGE.to_string())
-            }
-            other => VoiceCallError::Unavailable(ops::load_error_message(other)),
+                tinybus::module::LoadError::StillLoading => {
+                    VoiceCallError::Unavailable(STILL_LOADING_MESSAGE.to_string())
+                }
+                other => VoiceCallError::Unavailable(ops::load_error_message(other)),
             }
         })?;
     let record = registry::find(MODULE_ID)
