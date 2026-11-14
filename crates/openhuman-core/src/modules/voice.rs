@@ -1,7 +1,7 @@
 //! TinyVoice adapter: transcript screening and PCM16 WAV framing.
 
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use std::time::Duration;
 use tinyvoice_bus::names::methods;
 
