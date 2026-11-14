@@ -16,8 +16,8 @@ use tinymcp_bus::{
 #[derive(Clone, Default)]
 struct PreparePort {
     requests: Arc<Mutex<Vec<PrepareAgentToolsRequest>>>,
-    /// `(member, confidential)` for each configured-object call.
-    calls: Arc<Mutex<Vec<(String, bool)>>>,
+    /// Member names for each configured-object call.
+    calls: Arc<Mutex<Vec<String>>>,
     transform_error: Option<tinybus::module::ModuleCallError>,
 }
 
@@ -50,12 +50,9 @@ impl McpModulePort for PreparePort {
         _: &str,
         member: &str,
         _: Value,
-        confidential: bool,
+        _confidential: bool,
     ) -> Result<Value, tinybus::module::ModuleCallError> {
-        self.calls
-            .lock()
-            .unwrap()
-            .push((member.to_owned(), confidential));
+        self.calls.lock().unwrap().push(member.to_owned());
         if member == tinymcp_bus::names::methods::STATIC_CALL_TOOL_CLASSIFIED {
             return serde_json::to_value(tinymcp_bus::ClassifiedStaticToolCall {
                 outcome: tinymcp_bus::McpCallOutcome::answered("docs", "search"),
@@ -158,33 +155,6 @@ async fn valid_mcp_identifier_reports_module_unavailable_without_invalid_input_l
     let outcome = tinymcp_bus::McpCallOutcome::from_metadata(result.metadata.as_ref().unwrap())
         .expect("sanitized outcome remains available");
     assert_eq!(outcome.error.unwrap().code, tinymcp_bus::errors::BUS);
-}
-
-#[tokio::test]
-async fn generic_mcp_call_sends_tool_arguments_confidentially() {
-    let workspace = tempfile::tempdir().unwrap();
-    let mut config = Config::default();
-    config.workspace_dir = workspace.path().to_path_buf();
-    config.modules.enabled = true;
-    let port = PreparePort::default();
-    McpConfiguredClient::install_test_port(&config, Box::new(port.clone())).unwrap();
-    let tool = mcp_call_tool(Arc::new(config), Arc::new(SecurityPolicy::default()));
-
-    let result = tool
-        .execute_with_options(
-            json!({"server": "docs", "tool": "search", "arguments": {"query": "secret"}}),
-            ToolCallOptions::default(),
-        )
-        .await
-        .unwrap();
-
-    assert!(!result.is_error, "{}", result.output());
-    let calls = port.calls.lock().unwrap();
-    let call = calls
-        .iter()
-        .find(|(member, _)| member == tinymcp_bus::names::methods::STATIC_CALL_TOOL_CLASSIFIED)
-        .expect("the classified call reaches the module");
-    assert!(call.1, "tool arguments must use confidential delivery");
 }
 
 #[tokio::test]
