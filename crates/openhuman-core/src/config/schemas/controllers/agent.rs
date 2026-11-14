@@ -145,6 +145,9 @@ pub(super) fn handle_update_computer_settings(
             planner_model: update.planner_model,
             rescue_model: update.rescue_model,
             max_rescues: update.max_rescues,
+            captcha_solver: update.captcha_solver,
+            captcha_model: update.captcha_model,
+            max_captcha_attempts: update.max_captcha_attempts,
         };
         to_json(config_rpc::load_and_apply_computer_settings(&ctx, patch).await?)
     })

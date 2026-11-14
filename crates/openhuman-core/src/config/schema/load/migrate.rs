@@ -245,10 +245,6 @@ pub(crate) fn migrate_cloud_provider_slugs(config: &mut Config) {
     }
 }
 
-#[cfg(test)]
-#[path = "migrate_tests.rs"]
-mod tests;
-
 /// Convert the single-engine `[search]` format into providers, routes and
 /// roles. In-memory and idempotent like the other load migrations: the legacy
 /// fields are never serialized, so the next save writes the new format.
@@ -450,3 +446,7 @@ pub(crate) fn migrate_components(config: &mut Config, raw: &str) {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "migrate_tests.rs"]
+mod tests;
