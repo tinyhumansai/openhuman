@@ -1,4 +1,4 @@
-//! Published TinySecurity admission pins copied verbatim from v0.21.0/checksum.toml.
+//! Published TinySecurity admission pins copied verbatim from v0.21.1/checksum.toml.
 //!
 //! `LoadPolicy::Eager` is the "load at boot" policy (the issue calls it Boot): a missing
 //! security module changes behaviour, so it must be serving before the first request.
@@ -62,20 +62,20 @@ pub(crate) const TINYSECURITY: ModuleRecord = ModuleRecord {
         },
         PlatformAsset {
             host_key: "windows-2025-x86_64",
-            archive: "tinysecurity-module-0.21.0-windows-2025-x86_64.zip",
-            sha256: "260884a7ca22f99969a162b464a47caa78380aeb6e9b903d2fa274f84fe46f7b",
+            archive: "tinysecurity-module-0.21.1-windows-2025-x86_64.zip",
+            sha256: "612d04ef0616589f61c852789768f06e0c4aa5fe02449e266a2bbc3df242d590",
             library_sha256: None,
         },
         PlatformAsset {
             host_key: "windows-2022-x86_64",
-            archive: "tinysecurity-module-0.21.0-windows-2022-x86_64.zip",
-            sha256: "b500a2e6161b85a06ad54644dfdb685b9369aadd0d868a0cdc11ab18abf9693d",
+            archive: "tinysecurity-module-0.21.1-windows-2022-x86_64.zip",
+            sha256: "504c9937191a1c84f8e03964c3536e0e83417072769b1dba2ee31c94a2870e91",
             library_sha256: None,
         },
         PlatformAsset {
             host_key: "windows-11-arm64",
-            archive: "tinysecurity-module-0.21.0-windows-11-arm64.zip",
-            sha256: "d888f4e60df0fd7ecc2e9226695ab3541d83206203e391331b8a78e81f5dee0b",
+            archive: "tinysecurity-module-0.21.1-windows-11-arm64.zip",
+            sha256: "cd77275f4849678c71e8dcaa6bad8b2ca4c473b093a641660a7b8195265e00f5",
             library_sha256: None,
         },
     ],
