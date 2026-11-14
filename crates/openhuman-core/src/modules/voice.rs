@@ -63,6 +63,14 @@ pub async fn encode_wav_pcm16(
     channels: u16,
     load_within: Option<Duration>,
 ) -> Result<Vec<u8>, VoiceCallError> {
+    tracing::debug!(
+        method = methods::ENCODE_WAV_PCM16,
+        sample_count = samples.len(),
+        sample_rate,
+        channels,
+        load_wait_ms = load_within.map(|wait| wait.as_millis() as u64),
+        "[voice] encoding PCM16 WAV"
+    );
     let wav: String = call(
         config,
         methods::ENCODE_WAV_PCM16,
@@ -70,9 +78,13 @@ pub async fn encode_wav_pcm16(
         load_within,
     )
     .await?;
-    BASE64
+    let decoded = BASE64
         .decode(wav)
-        .map_err(|error| VoiceCallError::Failed(format!("invalid WAV payload: {error}")))
+        .map_err(|error| VoiceCallError::Failed(format!("invalid WAV payload: {error}")));
+    if let Err(error) = &decoded {
+        tracing::debug!(method = methods::ENCODE_WAV_PCM16, %error, "[voice] invalid WAV response");
+    }
+    decoded
 }
 
 /// Base64 of `samples` as little-endian bytes, the `EncodeWavPcm16` input.
@@ -91,13 +103,17 @@ where
     A: serde::Serialize + Send,
     R: serde::de::DeserializeOwned,
 {
+    let load_started = std::time::Instant::now();
     ops::ensure_loaded_within(config, MODULE_ID, load_within)
         .await
-        .map_err(|error| match error {
+        .map_err(|error| {
+            tracing::debug!(method, load_wait_ms = load_started.elapsed().as_millis() as u64, %error, "[voice] module load failed");
+            match error {
             tinybus::module::LoadError::StillLoading => {
                 VoiceCallError::Unavailable(STILL_LOADING_MESSAGE.to_string())
             }
             other => VoiceCallError::Unavailable(ops::load_error_message(other)),
+            }
         })?;
     let record = registry::find(MODULE_ID)
         .ok_or_else(|| VoiceCallError::Unavailable(format!("unknown module '{MODULE_ID}'")))?;
@@ -110,11 +126,14 @@ where
     proxy
         .call(method, args)
         .await
-        .map_err(|error| match error.wire_name() {
+        .map_err(|error| {
+            tracing::debug!(method, %error, "[voice] module bus call failed");
+            match error.wire_name() {
             name if name.contains("ModuleUnavailable") => {
                 VoiceCallError::Unavailable(error.to_string())
             }
             _ => VoiceCallError::Failed(error.to_string()),
+            }
         })
 }
 
