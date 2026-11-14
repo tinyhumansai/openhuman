@@ -20,7 +20,6 @@ RPC or agent install tool.
 | [`config_ops.rs`](./config_ops.rs) | `config_get` / `config_set` host adapter for the module-owned `mcp.json` document. |
 | `schemas/` and [`schemas_tests.rs`](./schemas_tests.rs) | OpenHuman controller schemas and dispatch. |
 | [`supervisor_events.rs`](./supervisor_events.rs) / tests | Converts module supervisor reports into OpenHuman domain events. |
-| [`bus.rs`](./bus.rs) / tests | Logs lifecycle events for observability. |
 | [`tools.rs`](./tools.rs) / tests | Maps module-provided registry tool specs to OpenHuman permissions and dispatch. |
 | [`action_tool.rs`](./action_tool.rs) / tests | Builds deferred installed-server action tools and rechecks admission before execution. |
 | [`stub.rs`](./stub.rs) | Empty/no-op registry facade when the `mcp` feature is disabled. |

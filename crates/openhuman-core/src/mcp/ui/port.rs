@@ -14,7 +14,12 @@ use crate::config::Config;
 use crate::mcp::host;
 use crate::mcp::module_client::McpConfiguredClient;
 
-use super::types::UiToolDescriptor;
+/// What a widget-initiated tool call needs to know about its target tool.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UiToolDescriptor {
+    pub meta: Option<Value>,
+    pub annotations: Option<Value>,
+}
 
 /// What a widget RPC asks of an MCP server.
 #[async_trait]

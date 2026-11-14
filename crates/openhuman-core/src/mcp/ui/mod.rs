@@ -2,7 +2,7 @@
 //! skill views, and the links a tool result offers.
 //!
 //! - [`resolve`] applies `tinymcp_bus::ui`'s rules to one call's descriptor
-//!   `_meta` and result, giving a [`types::McpUiPresentation`], the metadata
+//!   `_meta` and result, giving a `tinymcp_bus::ui::McpUiPresentation`, the metadata
 //!   the chat surface renders, and caches any document the result carried.
 //! - [`decorate`] applies that to every MCP tool path.
 //! - [`ops`] / `schemas` serve a widget its document and run the tool calls
@@ -20,7 +20,6 @@ pub mod port;
 pub mod resolve;
 mod schemas;
 pub mod tools;
-pub mod types;
 
 pub use decorate::{decorate_result, UiAwareTool};
 pub use schemas::{

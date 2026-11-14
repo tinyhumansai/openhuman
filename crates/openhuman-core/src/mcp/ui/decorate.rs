@@ -20,8 +20,9 @@ use crate::config::Config;
 use crate::mcp::host;
 use crate::mcp::module_client::McpConfiguredClient;
 
-use super::resolve::{presentation_from_view, view_from_envelope};
-use super::types::MCP_RESULT_KIND;
+use super::resolve::presentation_from_view;
+use tinymcp_bus::ui::view_from_envelope;
+use tinymcp_bus::MCP_RESULT_KIND;
 
 /// Whether `metadata` is an `mcp_result` envelope.
 #[must_use]

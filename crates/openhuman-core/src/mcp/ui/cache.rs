@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
-use super::types::UiResource;
+use tinymcp_bus::ui::UiResource;
 
 const INLINE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const READ_TTL: Duration = Duration::from_secs(5 * 60);

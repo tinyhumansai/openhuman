@@ -784,11 +784,8 @@ skills = ["tinyskills/registry", "dep:tinyskills-drivers"]
 # dependencies. The issue-level DoD line claiming it "sheds the MCP SDK /
 # transport stack" is superseded by this correction (see AGENTS.md).
 #
-# NOTE: the family root `pub mod mcp;` and `mcp::http_client` stay ALWAYS
-# compiled. `http_client` is a mis-housed shared utility (the gitbooks docs
-# tool dials `McpHttpClient`; `core::observability` names
-# `McpUnauthorizedError`), and the server/registry/audit stubs need their
-# parent compiled. `sanitize` left the family entirely for `util::sanitize` —
+# NOTE: the family root `pub mod mcp;` stays ALWAYS compiled: the
+# server/registry/audit stubs need their parent compiled. `sanitize` left the family entirely for `util::sanitize` —
 # the orchestrator prompt sanitises *skill* descriptions through it. The gate
 # follows the real dependency graph, not the directory name.
 mcp = ["modules"]
