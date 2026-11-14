@@ -54,6 +54,13 @@ pub struct BrowserConfig {
     /// agent's memory.
     #[serde(default = "default_true")]
     pub learn_from_tasks: bool,
+    /// An executable that answers one site's password, for the browser's
+    /// `{{keychain:<site>}}` placeholder (`tools::impl::browser::keychain`).
+    /// An absolute path, run as `<command> <page host>` with no shell; the
+    /// password is its standard output. Unset, the default, leaves the
+    /// placeholder off: a fill or type that carries one is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keychain_command: Option<String>,
 }
 
 /// Action kinds `[browser] unattended_actions` may name: the gated direct
@@ -151,6 +158,7 @@ impl Default for BrowserConfig {
             task_timeout_secs: default_task_timeout_secs(),
             unattended_actions: Vec::new(),
             learn_from_tasks: true,
+            keychain_command: None,
         }
     }
 }
