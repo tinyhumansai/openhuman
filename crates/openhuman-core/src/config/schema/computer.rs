@@ -45,6 +45,16 @@ pub struct ComputerConfig {
     /// How many times one task may be rescued; `0` turns rescue off and
     /// `None` keeps the module's default (5, also its maximum).
     pub max_rescues: Option<u32>,
+    /// Let a browser task try a captcha or "verify you are human" check with
+    /// Jev's image questions before it asks a person. Needs a TypeSafe key
+    /// (the `typesafe` credential or `TYPESAFE_API_KEY`). Off by default.
+    pub captcha_solver: bool,
+    /// The image-reading Jev model the captcha solver asks. `None` keeps the
+    /// module's default (`jev-preview`).
+    pub captcha_model: Option<String>,
+    /// Image challenges one try may submit before the task asks a person;
+    /// `None` keeps the module's default (3). At most 10.
+    pub max_captcha_attempts: Option<u32>,
     /// Record every decision of a browser task and keep each task's full
     /// report, and trace desktop commands, under `<workspace>/state/computer/`.
     /// Off by default: reports hold page text. `OPENHUMAN_COMPUTER_TRACE=1`
