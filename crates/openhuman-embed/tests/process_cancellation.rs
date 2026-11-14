@@ -228,6 +228,9 @@ async fn cancellation_reaps_the_leader_when_an_escaped_descendant_holds_its_pipe
                 if pid.trim().parse::<u32>().is_ok() {
                     break pid;
                 }
+                // The shell creates the file before it writes the PID, so a
+                // read can land on an empty or partial file; poll again.
+                eprintln!("[process_cancellation] pidfile not ready yet: {pid:?}");
             }
         }
     })
