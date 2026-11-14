@@ -7899,7 +7899,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-bus"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -8268,7 +8268,7 @@ dependencies = [
 
 [[package]]
 name = "tinysecurity-bus"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -8545,7 +8545,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-bus"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "serde",
  "serde_json",

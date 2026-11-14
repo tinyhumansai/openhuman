@@ -10020,6 +10020,7 @@ name = "tinyinference-decisions"
 version = "0.5.0"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
  "httpdate",
  "reqwest 0.12.28",
  "serde",
