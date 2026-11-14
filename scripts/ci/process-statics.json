@@ -898,5 +898,15 @@
     "category": "B",
     "reason": "An in-process write exclusion for backend-stored auth-profile documents, keyed by the authenticated profile id; it holds only which tenant documents have a read-modify-write in flight (no credential data) and serialises writers of the same tenant only, while the backend's compare-and-swap remains the cross-process guard.",
     "verification": "credentials/profiles_storage_tests.rs: a_tenant_store_keeps_its_document_and_lock_in_the_configured_backend; credentials/profiles/backend_tests.rs: a_tenant_store_outside_its_own_scope_is_refused_in_saas"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/browser_pictures.rs",
+    "scope": "",
+    "name": "SINKS",
+    "type": "HookSlot<BrowserPictureSink>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of picture sinks the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; the pictures pass through and are not kept.",
+    "verification": "modules/browser_pictures_tests.rs: a_registered_sink_gets_each_picture_and_a_refusal_is_not_fatal"
   }
 ]
