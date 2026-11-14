@@ -115,6 +115,9 @@ pub(super) struct ComputerSettingsUpdate {
     pub(super) planner_model: Option<String>,
     pub(super) rescue_model: Option<String>,
     pub(super) max_rescues: Option<u32>,
+    pub(super) captcha_solver: Option<bool>,
+    pub(super) captcha_model: Option<String>,
+    pub(super) max_captcha_attempts: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
