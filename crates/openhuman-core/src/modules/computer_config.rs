@@ -77,7 +77,7 @@ async fn captcha(config: &Config) -> Option<Value> {
         return None;
     }
     let Some(api_key) = provider_key(config, "typesafe", "TYPESAFE_API_KEY").await else {
-        tracing::warn!("[computer] captcha_solver is on but no TypeSafe key is configured");
+        tracing::debug!("[computer] captcha_solver is on but no TypeSafe key is configured");
         return None;
     };
     let mut jev = json!({ "api_key": api_key, "provider": "type_safe" });
