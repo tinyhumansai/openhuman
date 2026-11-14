@@ -165,10 +165,17 @@ async fn channel_allowlist_store_loads_a_versioned_document_before_saving() {
         .unwrap();
     document_config.save().await.unwrap();
 
-    crate::channels::host::ConfigAllowlistStore
-        .persist_allowed_identity("telegram", "@operator")
-        .await
-        .unwrap();
+    crate::channels::host::ConfigAllowlistStore {
+        config: Arc::new(Config {
+            config_path: config_path.clone(),
+            workspace_dir: workspace_dir.clone(),
+            action_dir: workspace_dir.clone(),
+            ..Config::default()
+        }),
+    }
+    .persist_allowed_identity("telegram", "@operator")
+    .await
+    .unwrap();
     let saved = Config::load_from_config_path(&config_path, &workspace_dir)
         .await
         .unwrap();
@@ -188,7 +195,6 @@ async fn recovery_restores_the_bootstrap_file_when_document_cas_conflicts() {
     let tmp = tempfile::tempdir().unwrap();
     let storage = memory_backend();
     let mut recovered = config_at(tmp.path(), "recovered-config");
-    recovered.secrets.encrypt = false;
     recovered.storage.url = Some("sqlite:/bootstrap-from-recovered-file".into());
     recovered.save().await.unwrap();
     let corrupted = recovered.config_path.with_extension("toml.corrupted");
@@ -218,8 +224,10 @@ async fn recovery_restores_the_bootstrap_file_when_document_cas_conflicts() {
         .await
         .unwrap();
     let restored: toml::Value = toml::from_str(&restored).unwrap();
-    assert_eq!(
-        restored["storage"]["url"].as_str().unwrap(),
-        "sqlite:/bootstrap-from-recovered-file"
-    );
+    let storage_url = restored["storage"]["url"].as_str().unwrap();
+    let openhuman_dir = recovered.config_path.parent().unwrap();
+    let restored_url = crate::security::secret_storage::SecretStore::new(openhuman_dir, true)
+        .decrypt(storage_url)
+        .unwrap();
+    assert_eq!(restored_url, "sqlite:/bootstrap-from-recovered-file");
 }
