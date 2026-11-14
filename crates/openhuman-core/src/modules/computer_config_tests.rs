@@ -141,6 +141,44 @@ async fn chrome_path_is_the_module_browser_executable() {
     );
 }
 
+/// A persistent profile reaches the module as the host's own profile folder,
+/// the only one TinyComputer's egress-enforced launcher lets a session name,
+/// so cookies and sign-ins survive between sessions.
+#[tokio::test]
+async fn a_persistent_profile_is_the_module_browser_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config_in(dir.path());
+    config.browser.chrome_path = Some("/usr/bin/chromium".into());
+    config.browser.profile_mode = "persistent".into();
+    config.browser.profile_path = Some("/srv/teeny/state/browser/profile".into());
+    let value = module_config(&config).await;
+    assert_eq!(
+        value["browser"],
+        json!({
+            "executable": "/usr/bin/chromium",
+            "profile": "/srv/teeny/state/browser/profile"
+        })
+    );
+}
+
+/// A fresh profile names no folder, and neither does a persistent mode whose
+/// path is unset or relative, which `open_session` refuses anyway.
+#[tokio::test]
+async fn a_fresh_or_unusable_profile_sends_no_module_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    for (mode, path) in [
+        ("fresh", Some("/srv/teeny/state/browser/profile")),
+        ("persistent", None),
+        ("persistent", Some("relative/profile")),
+    ] {
+        let mut config = config_in(dir.path());
+        config.browser.profile_mode = mode.into();
+        config.browser.profile_path = path.map(str::to_owned);
+        let value = module_config(&config).await;
+        assert!(value.get("browser").is_none(), "{mode} {path:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_trace_directory_that_cannot_be_made_still_leaves_the_module_configured() {
     let dir = tempfile::tempdir().unwrap();
@@ -171,4 +209,38 @@ async fn the_trace_directory_is_readable_by_its_owner_alone() {
         .mode()
         & 0o777;
     assert_eq!(mode, 0o700);
+}
+
+#[tokio::test]
+async fn the_captcha_solver_is_sent_only_when_on_and_a_typesafe_key_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config_in(dir.path());
+    store(&config, "typesafe", "ts-test-key").await;
+    assert!(
+        module_config(&config).await.get("captcha").is_none(),
+        "off by default"
+    );
+
+    config.computer.captcha_solver = true;
+    let value = module_config(&config).await;
+    assert_eq!(value["captcha"]["jev"]["provider"], "type_safe");
+    assert_eq!(value["captcha"]["jev"]["api_key"], "ts-test-key");
+    assert!(value["captcha"]["jev"].get("model").is_none());
+    assert!(value["captcha"].get("max_attempts").is_none());
+
+    config.computer.captcha_model = Some(" jev-1.14 ".into());
+    config.computer.max_captcha_attempts = Some(5);
+    let value = module_config(&config).await;
+    assert_eq!(value["captcha"]["jev"]["model"], "jev-1.14");
+    assert_eq!(value["captcha"]["max_attempts"], 5);
+}
+
+#[tokio::test]
+async fn the_captcha_solver_without_a_key_is_left_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config_in(dir.path());
+    config.computer.captcha_solver = true;
+    if std::env::var("TYPESAFE_API_KEY").is_err() {
+        assert!(module_config(&config).await.get("captcha").is_none());
+    }
 }

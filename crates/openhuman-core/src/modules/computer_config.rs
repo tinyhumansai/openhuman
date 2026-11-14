@@ -9,6 +9,8 @@
 //! - `planner` — the planner, rescue and output models: through the
 //!   TinyHumans proxy when signed in, else the user's OpenRouter key.
 //! - `browser` — the Chrome executable the user picked, if any.
+//! - `captcha` — the captcha solver's image-reading Jev route, on TypeSafe
+//!   with the user's TypeSafe key, when `[computer] captcha_solver` is on.
 //! - `trace_path` — where desktop commands are traced, when tracing is on.
 
 #[cfg(unix)]
@@ -64,6 +66,34 @@ async fn jev(config: &Config, hosted: Option<&str>) -> Option<Value> {
                 json!({ "api_key": api_key, "provider": "sage", "fast": config.computer.sage_fast })
             }),
     }
+}
+
+/// The captcha solver's section: TypeSafe's own Jev route (the one that
+/// takes images), the chosen image model and attempt bound. `None` when the
+/// solver is off or there is no TypeSafe key.
+async fn captcha(config: &Config) -> Option<Value> {
+    let computer = &config.computer;
+    if !computer.captcha_solver {
+        return None;
+    }
+    let Some(api_key) = provider_key(config, "typesafe", "TYPESAFE_API_KEY").await else {
+        tracing::debug!("[computer] captcha_solver is on but no TypeSafe key is configured");
+        return None;
+    };
+    let mut jev = json!({ "api_key": api_key, "provider": "type_safe" });
+    if let Some(model) = computer
+        .captcha_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        jev["model"] = json!(model);
+    }
+    let mut section = json!({ "jev": jev });
+    if let Some(attempts) = computer.max_captcha_attempts {
+        section["max_attempts"] = json!(attempts);
+    }
+    Some(section)
 }
 
 /// The model the TinyHumans gateway runs the planner, rescue and output
@@ -139,6 +169,15 @@ fn create_trace_dir(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The absolute profile folder a persistent `[browser]` keeps, if any.
+fn persistent_profile(config: &Config) -> Option<&str> {
+    let browser = &config.browser;
+    (browser.profile_mode == "persistent")
+        .then_some(browser.profile_path.as_deref())
+        .flatten()
+        .filter(|path| Path::new(path).is_absolute())
+}
+
 /// Build the module configuration for `config`.
 #[must_use]
 pub async fn module_config(config: &Config) -> Value {
@@ -150,8 +189,21 @@ pub async fn module_config(config: &Config) -> Value {
     if let Some(planner) = planner(config, hosted.as_deref()).await {
         out.insert("planner".into(), planner);
     }
+    if let Some(captcha) = captcha(config).await {
+        out.insert("captcha".into(), captcha);
+    }
+    let mut browser = Map::new();
     if let Some(executable) = config.browser.chrome_path.as_ref() {
-        out.insert("browser".into(), json!({ "executable": executable }));
+        browser.insert("executable".into(), json!(executable));
+    }
+    // The persistent profile folder is host control, like the executable:
+    // TinyComputer's egress-enforced launcher lets a session name this
+    // folder and no other, so cookies and sign-ins survive between sessions.
+    if let Some(profile) = persistent_profile(config) {
+        browser.insert("profile".into(), json!(profile));
+    }
+    if !browser.is_empty() {
+        out.insert("browser".into(), Value::Object(browser));
     }
     let traced = tracing_enabled(config);
     if traced {
@@ -168,6 +220,8 @@ pub async fn module_config(config: &Config) -> Value {
         decision_model = config.computer.decision_model.as_str(),
         jev = out.contains_key("jev"),
         planner = out.contains_key("planner"),
+        profile = persistent_profile(config).is_some(),
+        captcha = out.contains_key("captcha"),
         hosted = hosted.is_some(),
         traced,
         "[computer] module config built"
