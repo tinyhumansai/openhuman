@@ -10,9 +10,10 @@ use std::sync::Arc;
 use serde::{de::DeserializeOwned, Serialize};
 use tinycomputer_bus::agent::Capabilities;
 use tinycomputer_bus::browser::{
-    names, Action, ActionOutcome, DownloadInfo, DownloadWaitRequest, NavigateRequest, PageState,
-    PageText, ReadRequest, SessionId, SessionInfo, SessionOptions, SessionRef, SessionRequest,
-    Snapshot, SnapshotRequest, Viewport,
+    names, Action, ActionOutcome, DownloadInfo, DownloadWaitRequest, EvaluateRequest,
+    NavigateRequest, OutputChunk, OutputRef, OutputRequest, PageState, PageText, ReadOutputRequest,
+    ReadRequest, ScreenshotRequest, SessionId, SessionInfo, SessionOptions, SessionRef,
+    SessionRequest, Snapshot, SnapshotRequest, Viewport,
 };
 use tinycomputer_bus::DesktopResponse;
 
@@ -336,6 +337,82 @@ impl BrowserClient {
         .await
     }
 
+    /// A picture of the session's page, as the bytes of `request.format`.
+    ///
+    /// The module holds the image and answers a handle ([`OutputRef`]); the
+    /// bytes are pulled in chunks, checked against the handle's size and
+    /// SHA-256, and the held output is released whether or not that worked.
+    pub async fn screenshot(
+        &self,
+        session: &SessionId,
+        request: ScreenshotRequest,
+    ) -> Result<Vec<u8>, BrowserCallError> {
+        let held: OutputRef = self
+            .call(
+                names::methods::SCREENSHOT,
+                SessionRequest::new(session.clone(), request),
+            )
+            .await?;
+        // Released however the read ends, a cancelled call included.
+        let mut release = ReleaseOnDrop {
+            client: Some(self.clone()),
+            output: held.id.clone(),
+        };
+        let read = self.read_output(&held).await;
+        if let Some(client) = release.client.take() {
+            let _released: Result<serde_json::Value, _> = client
+                .call(
+                    names::methods::RELEASE_OUTPUT,
+                    OutputRequest {
+                        output: held.id.clone(),
+                    },
+                )
+                .await;
+        }
+        read
+    }
+
+    async fn read_output(&self, held: &OutputRef) -> Result<Vec<u8>, BrowserCallError> {
+        check_output_size(held)?;
+        let mut bytes = Vec::new();
+        loop {
+            let chunk: OutputChunk = self
+                .call(
+                    names::methods::READ_OUTPUT,
+                    ReadOutputRequest {
+                        offset: bytes.len() as u64,
+                        ..ReadOutputRequest::new(held.id.clone())
+                    },
+                )
+                .await?;
+            append_output_chunk(held, &mut bytes, &chunk)?;
+            if chunk.eof {
+                finish_output(held, &bytes)?;
+                return Ok(bytes);
+            }
+        }
+    }
+
+    /// Runs `expression` in the session's page and returns its value. For the
+    /// host's own checks only; never offered to a model.
+    pub(crate) async fn evaluate(
+        &self,
+        session: &SessionId,
+        expression: &str,
+    ) -> Result<serde_json::Value, BrowserCallError> {
+        self.call(
+            names::methods::EVALUATE,
+            SessionRequest::new(
+                session.clone(),
+                EvaluateRequest {
+                    expression: expression.to_owned(),
+                    ..EvaluateRequest::default()
+                },
+            ),
+        )
+        .await
+    }
+
     pub async fn close_session(&self, session: &SessionId) -> Result<(), BrowserCallError> {
         let _closed: serde_json::Value = self
             .call(names::methods::CLOSE_SESSION, session_ref(session))
@@ -517,6 +594,110 @@ impl BrowserClient {
             }
         })
     }
+}
+
+/// The most bytes a screenshot may be, whatever its handle says: the module
+/// caps an output well under this, so more is a broken reply.
+pub(crate) const MAX_SCREENSHOT_BYTES: u64 = 32 * 1024 * 1024;
+
+fn output_error(message: impl Into<String>) -> BrowserCallError {
+    BrowserCallError::Bus {
+        name: "InvalidReply".into(),
+        message: message.into(),
+    }
+}
+
+/// Releases a held output when the screenshot call is dropped before it
+/// could release it itself (a cancelled turn), so the module's slot is not
+/// spent until it expires.
+struct ReleaseOnDrop {
+    client: Option<BrowserClient>,
+    output: tinycomputer_bus::browser::OutputId,
+}
+
+impl Drop for ReleaseOnDrop {
+    fn drop(&mut self) {
+        let Some(client) = self.client.take() else {
+            return;
+        };
+        let output = self.output.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _released: Result<serde_json::Value, _> = client
+                    .call(names::methods::RELEASE_OUTPUT, OutputRequest { output })
+                    .await;
+            });
+        }
+    }
+}
+
+fn check_output_size(held: &OutputRef) -> Result<(), BrowserCallError> {
+    if held.total_bytes > MAX_SCREENSHOT_BYTES {
+        return Err(output_error(
+            "the screenshot is larger than a screenshot can be",
+        ));
+    }
+    Ok(())
+}
+
+/// Appends `chunk`, the next piece of `held`, to `bytes`.
+fn append_output_chunk(
+    held: &OutputRef,
+    bytes: &mut Vec<u8>,
+    chunk: &OutputChunk,
+) -> Result<(), BrowserCallError> {
+    use base64::Engine as _;
+
+    if chunk.id != held.id || chunk.offset != bytes.len() as u64 {
+        return Err(output_error("a screenshot chunk is out of order"));
+    }
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(chunk.data.as_bytes())
+        .map_err(|_| output_error("a screenshot chunk is not base64"))?;
+    if data.is_empty() && !chunk.eof {
+        return Err(output_error("a screenshot chunk is empty"));
+    }
+    if (bytes.len() + data.len()) as u64 > held.total_bytes {
+        return Err(output_error(
+            "the screenshot is longer than its handle says",
+        ));
+    }
+    bytes.extend_from_slice(&data);
+    Ok(())
+}
+
+/// Checks the whole of `bytes` against `held`'s size and SHA-256.
+fn finish_output(held: &OutputRef, bytes: &[u8]) -> Result<(), BrowserCallError> {
+    use sha2::{Digest, Sha256};
+
+    if bytes.len() as u64 != held.total_bytes {
+        return Err(output_error(
+            "the screenshot is shorter than its handle says",
+        ));
+    }
+    if format!("{:x}", Sha256::digest(bytes)) != held.sha256.to_ascii_lowercase() {
+        return Err(output_error("the screenshot does not match its SHA-256"));
+    }
+    Ok(())
+}
+
+/// The bytes `chunks` (read in order from offset zero) carry for `held`.
+/// Once `complete`, they must be exactly the handle's size and SHA-256.
+#[cfg(test)]
+pub(crate) fn assemble_output(
+    held: &OutputRef,
+    chunks: &[OutputChunk],
+    complete: bool,
+) -> Result<Vec<u8>, BrowserCallError> {
+    check_output_size(held)?;
+    let mut bytes = Vec::new();
+    for chunk in chunks {
+        append_output_chunk(held, &mut bytes, chunk)?;
+    }
+    if complete {
+        finish_output(held, &bytes)?;
+    }
+    Ok(bytes)
 }
 
 fn session_ref(session: &SessionId) -> SessionRef {
