@@ -1,6 +1,10 @@
 //! Agent-facing browser backed by the TinyComputer module's browser and task members.
+#[path = "browser_capture.rs"]
+mod capture;
 #[path = "browser_lifecycle.rs"]
 mod cleanup;
+#[path = "browser_keychain.rs"]
+mod keychain;
 #[path = "browser_pending.rs"]
 mod pending;
 #[path = "browser_session_pool.rs"]
@@ -117,6 +121,9 @@ pub struct BrowserTool {
     pending: Mutex<Option<Pending>>,
     thread_key: StdMutex<Option<String>>,
     max_steps: usize,
+    /// Set once this tool typed a keychain password: from then on it takes
+    /// no picture at all (`capture`), whatever the page seems to show.
+    password_typed: std::sync::atomic::AtomicBool,
 }
 
 impl BrowserTool {
@@ -128,6 +135,7 @@ impl BrowserTool {
             pending: Mutex::new(None),
             thread_key: StdMutex::new(None),
             max_steps: max_steps.clamp(1, 100),
+            password_typed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -166,6 +174,10 @@ impl BrowserTool {
             }
             if let Some(value) = sessions.get_mut(&key) {
                 value.last_used = now;
+                if value.password_typed {
+                    self.password_typed
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
                 *held = Some(value.id.clone());
                 *bound = value.bound_origin.clone();
                 return Ok(value.id.clone());
@@ -187,6 +199,7 @@ impl BrowserTool {
                     last_used: now,
                     config_fingerprint,
                     bound_origin: requested_origin.clone(),
+                    password_typed: false,
                 },
             );
             *held = Some(id.clone());
@@ -220,8 +233,54 @@ impl BrowserTool {
         })
     }
 
+    /// Marks this tool, and the pooled session it holds for its
+    /// conversation, as having typed a keychain password.
+    async fn mark_password_typed(&self) {
+        self.password_typed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let thread_key = self.thread_key.lock().ok().and_then(|key| key.clone());
+        if let Some(key) = thread_key {
+            if let Some(entry) = thread_sessions().lock().await.get_mut(&key) {
+                entry.password_typed = true;
+            }
+        }
+    }
+
+    /// A picture of the page for the host's sinks, unless this tool typed a
+    /// keychain password: such a session is never pictured again, since no
+    /// scan of a page can prove a password is not drawn somewhere in it.
+    async fn capture(&self, id: &SessionId, after: &str) {
+        if self
+            .password_typed
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            tracing::debug!(
+                after,
+                "[browser-capture] skipped: this session typed a keychain password"
+            );
+            return;
+        }
+        capture::capture(&self.client, id, after).await;
+    }
+
     async fn close(&self) -> anyhow::Result<Value> {
         let thread_key = self.thread_key.lock().ok().and_then(|key| key.clone());
+        // The last picture, taken while the session is still owned here, so a
+        // call cancelled during it leaves the session to the next close.
+        let showing = match self.session.lock().await.clone() {
+            Some(id) => Some(id),
+            None => match thread_key.as_ref() {
+                Some(key) => thread_sessions()
+                    .lock()
+                    .await
+                    .get(key)
+                    .map(|entry| entry.id.clone()),
+                None => None,
+            },
+        };
+        if let Some(id) = showing {
+            self.capture(&id, "close").await;
+        }
         let mut held = self.session.lock().await;
         *self.bound_origin.lock().await = None;
         *self.pending.lock().await = None;
@@ -408,11 +467,14 @@ impl BrowserTool {
         };
         let id = self.session_for_url(starting_url).await?;
         match verb {
-            "open" => Ok(serde_json::to_value(
-                self.client
+            "open" => {
+                let page = self
+                    .client
                     .navigate(&id, NavigateRequest::new(required(args, "url")?))
-                    .await?,
-            )?),
+                    .await?;
+                self.capture(&id, "open").await;
+                Ok(serde_json::to_value(page)?)
+            }
             "snapshot" => Ok(serde_json::to_value(
                 self.client
                     .snapshot(
@@ -482,11 +544,36 @@ impl BrowserTool {
                 Ok(serde_json::to_value(d)?)
             }
             _ => {
-                let action = direct_action(args)?;
+                let mut action = direct_action(args)?;
+                // The gate sees the placeholder, never the password.
                 approve_browser_action(&self.client, &id, &action, false, origin).await?;
-                Ok(serde_json::to_value(
-                    self.client.perform(&id, action).await?,
-                )?)
+                let kind = serde_json::to_value(&action)?["action"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                let secret = keychain::substitute(&self.client, &id, &mut action).await?;
+                if secret.is_some() {
+                    // Before the password goes out: a call cancelled while
+                    // it is being typed still leaves the session unpictured.
+                    self.mark_password_typed().await;
+                }
+                let done = self.client.perform(&id, action).await;
+                if secret.is_none() && done.is_ok() && capture::follows(&kind) {
+                    self.capture(&id, &kind).await;
+                }
+                match secret {
+                    None => Ok(serde_json::to_value(done?)?),
+                    Some(secret) => match done {
+                        Ok(outcome) => Ok(keychain::redact_value(
+                            serde_json::to_value(outcome)?,
+                            &secret,
+                        )),
+                        Err(error) => Err(anyhow::anyhow!(keychain::redact(
+                            &error.to_string(),
+                            &secret
+                        ))),
+                    },
+                }
             }
         }
     }
@@ -515,7 +602,8 @@ impl Tool for BrowserTool {
             "input values; TinyComputer runs it in its own browser session, and a failed step is ",
             "handed to its rescue model before the task fails. The reply's status says what it needs: ",
             "running (call task_continue with task_id to keep following it), needs_input (task_continue ",
-            "with inputs), needs_human (ask the user, then task_continue with answer=done), needs_approval ",
+            "with inputs), needs_human (TinyComputer already tried any captcha it could; ask the user, ",
+            "then task_continue with answer=done), needs_approval ",
             "(returns a pending token; use confirm_pending only through the host approval mechanism), ",
             "checkpoint (always before payment), done, or failed with a hint. task_cancel stops it. ",
             "Direct consequential clicks and key presses also require host approval. For downloads, inspect list_downloads and call wait_download; ",
@@ -574,9 +662,13 @@ impl BrowserTool {
         args: Value,
         origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
     ) -> anyhow::Result<ToolResult> {
+        // Whatever the browser read back, a password the keychain typed
+        // into a page never reaches the model.
         match self.run(&args, origin.as_ref()).await {
-            Ok(v) => Ok(ToolResult::success(serde_json::to_string_pretty(&v)?)),
-            Err(e) => Ok(ToolResult::error(e.to_string())),
+            Ok(v) => Ok(ToolResult::success(keychain::redact_filled(
+                &serde_json::to_string_pretty(&v)?,
+            ))),
+            Err(e) => Ok(ToolResult::error(keychain::redact_filled(&e.to_string()))),
         }
     }
 }

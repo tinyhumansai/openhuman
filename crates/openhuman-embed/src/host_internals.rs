@@ -393,6 +393,16 @@ pub mod composio {
     };
 }
 
+/// Where the browser tool's pictures of pages go: a host that registers a
+/// sink gets a picture after each page it opens or acts on.
+#[cfg(feature = "modules")]
+pub mod browser_pictures {
+    pub use openhuman_core::modules::browser_pictures::{
+        register_browser_picture_sink, unregister_browser_picture_sink, BrowserPicture,
+        BrowserPictureSink,
+    };
+}
+
 /// Media-generation tool building over host-supplied generators (tinyhumans).
 #[cfg(feature = "media")]
 pub mod media {
