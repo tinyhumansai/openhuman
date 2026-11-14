@@ -131,11 +131,7 @@ async fn valid_mcp_identifier_reports_module_unavailable_without_invalid_input_l
         transform_error: Some(tinybus::module::ModuleCallError::Unavailable),
         ..PreparePort::default()
     };
-    McpConfiguredClient::install_test_port(
-        &config,
-        Box::new(port.clone()),
-    )
-    .unwrap();
+    McpConfiguredClient::install_test_port(&config, Box::new(port.clone())).unwrap();
     let tool = mcp_call_tool(Arc::new(config), Arc::new(SecurityPolicy::default()));
 
     let result = tool
