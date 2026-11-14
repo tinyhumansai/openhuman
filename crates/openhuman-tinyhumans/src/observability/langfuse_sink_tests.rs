@@ -47,10 +47,7 @@ async fn external_backend_is_skipped_before_session_lookup() {
         Some("https://external.example.invalid/v1/traces".into());
     config.resolved_endpoints.deployment_environment = None;
     assert_eq!(
-        environment_for_base(
-            &config,
-            "https://external.example.invalid/v1/traces"
-        ),
+        environment_for_base(&config, "https://external.example.invalid/v1/traces"),
         "external"
     );
     assert!(push_spans(&config, &[turn_span()]).await.is_ok());
@@ -60,8 +57,7 @@ async fn external_backend_is_skipped_before_session_lookup() {
 #[tokio::test]
 async fn an_external_backend_is_not_ready() {
     let mut config = Config::default();
-    config.resolved_endpoints.tracing_otlp_url =
-        Some("https://external.invalid/v1/traces".into());
+    config.resolved_endpoints.tracing_otlp_url = Some("https://external.invalid/v1/traces".into());
     config.resolved_endpoints.deployment_environment = None;
     assert_eq!(
         environment_for_base(&config, "https://external.invalid/v1/traces"),

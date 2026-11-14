@@ -99,8 +99,15 @@ pub(super) fn armed() -> Option<Config> {
     )
 }
 
-/// The armed config as this thread may see it.
+/// The armed config as this thread may see it. A test thread under
+/// `test_host::absent()` sees none, even after another test armed the module:
+/// the config is process-wide, the guard is per thread, and resetting the
+/// global instead would disarm tests running in parallel.
 fn visible(armed: Option<Config>) -> Option<Config> {
+    #[cfg(test)]
+    if super::test_host::is_absent() {
+        return None;
+    }
     armed
 }
 

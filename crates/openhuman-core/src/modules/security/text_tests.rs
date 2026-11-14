@@ -7,7 +7,10 @@ use super::*;
 #[test]
 fn an_absent_thread_does_not_see_a_config_armed_by_another_test() {
     let armed = Some(Config::default());
-    assert!(visible(armed.clone()).is_some(), "armed is visible by default");
+    assert!(
+        visible(armed.clone()).is_some(),
+        "armed is visible by default"
+    );
     let _absent = super::super::test_host::absent();
     assert!(
         visible(armed).is_none(),
