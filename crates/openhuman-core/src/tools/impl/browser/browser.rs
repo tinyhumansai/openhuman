@@ -1,6 +1,8 @@
 //! Agent-facing browser backed by the TinyComputer module's browser and task members.
 #[path = "browser_lifecycle.rs"]
 mod cleanup;
+#[path = "browser_keychain.rs"]
+mod keychain;
 #[path = "browser_pending.rs"]
 mod pending;
 #[path = "browser_session_pool.rs"]
@@ -488,11 +490,18 @@ impl BrowserTool {
                 Ok(serde_json::to_value(d)?)
             }
             _ => {
-                let action = direct_action(args)?;
+                let mut action = direct_action(args)?;
+                // The gate sees the placeholder, never the password.
                 approve_browser_action(&self.client, &id, &action, false, origin).await?;
-                Ok(serde_json::to_value(
-                    self.client.perform(&id, action).await?,
-                )?)
+                let secret = keychain::substitute(&self.client, &id, &mut action).await?;
+                let done = self.client.perform(&id, action).await;
+                match secret {
+                    None => Ok(serde_json::to_value(done?)?),
+                    Some(secret) => match done {
+                        Ok(outcome) => Ok(keychain::redact_value(serde_json::to_value(outcome)?, &secret)),
+                        Err(error) => Err(anyhow::anyhow!(keychain::redact(&error.to_string(), &secret))),
+                    },
+                }
             }
         }
     }
