@@ -172,3 +172,37 @@ async fn the_trace_directory_is_readable_by_its_owner_alone() {
         & 0o777;
     assert_eq!(mode, 0o700);
 }
+
+#[tokio::test]
+async fn the_captcha_solver_is_sent_only_when_on_and_a_typesafe_key_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config_in(dir.path());
+    store(&config, "typesafe", "ts-test-key").await;
+    assert!(
+        module_config(&config).await.get("captcha").is_none(),
+        "off by default"
+    );
+
+    config.computer.captcha_solver = true;
+    let value = module_config(&config).await;
+    assert_eq!(value["captcha"]["jev"]["provider"], "type_safe");
+    assert_eq!(value["captcha"]["jev"]["api_key"], "ts-test-key");
+    assert!(value["captcha"]["jev"].get("model").is_none());
+    assert!(value["captcha"].get("max_attempts").is_none());
+
+    config.computer.captcha_model = Some(" jev-1.14 ".into());
+    config.computer.max_captcha_attempts = Some(5);
+    let value = module_config(&config).await;
+    assert_eq!(value["captcha"]["jev"]["model"], "jev-1.14");
+    assert_eq!(value["captcha"]["max_attempts"], 5);
+}
+
+#[tokio::test]
+async fn the_captcha_solver_without_a_key_is_left_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config_in(dir.path());
+    config.computer.captcha_solver = true;
+    if std::env::var("TYPESAFE_API_KEY").is_err() {
+        assert!(module_config(&config).await.get("captcha").is_none());
+    }
+}
