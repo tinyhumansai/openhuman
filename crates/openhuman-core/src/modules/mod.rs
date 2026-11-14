@@ -53,6 +53,8 @@ pub mod browser;
 #[cfg(all(feature = "modules", feature = "security-module"))]
 mod browser_egress_host;
 #[cfg(feature = "modules")]
+pub mod browser_pictures;
+#[cfg(feature = "modules")]
 pub mod browser_task;
 #[cfg(feature = "modules")]
 mod browser_task_report;
