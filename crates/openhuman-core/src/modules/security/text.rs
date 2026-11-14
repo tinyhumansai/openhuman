@@ -91,10 +91,17 @@ pub(crate) fn classify_provider_host_blocking(
 
 /// The configuration the module was last admitted with, if any.
 pub(super) fn armed() -> Option<Config> {
-    CONFIG
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+    visible(
+        CONFIG
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone(),
+    )
+}
+
+/// The armed config as this thread may see it.
+fn visible(armed: Option<Config>) -> Option<Config> {
+    armed
 }
 
 pub(super) fn armed_config() -> Result<Config, String> {
@@ -159,3 +166,7 @@ pub(crate) async fn protected_path_check(
             .ok_or_else(|| "TinySecurity ProtectedPath2 gave no answer".to_owned())
     }))
 }
+
+#[cfg(test)]
+#[path = "text_tests.rs"]
+mod tests;
