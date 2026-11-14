@@ -595,9 +595,13 @@ impl BrowserTool {
         args: Value,
         origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
     ) -> anyhow::Result<ToolResult> {
+        // Whatever the browser read back, a password the keychain typed
+        // into a page never reaches the model.
         match self.run(&args, origin.as_ref()).await {
-            Ok(v) => Ok(ToolResult::success(serde_json::to_string_pretty(&v)?)),
-            Err(e) => Ok(ToolResult::error(e.to_string())),
+            Ok(v) => Ok(ToolResult::success(keychain::redact_filled(
+                &serde_json::to_string_pretty(&v)?,
+            ))),
+            Err(e) => Ok(ToolResult::error(keychain::redact_filled(&e.to_string()))),
         }
     }
 }
