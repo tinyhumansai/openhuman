@@ -264,9 +264,7 @@ fn port_excluded_error_rejects_addr_in_use_and_others() {
     for err in [
         std::io::Error::new(ErrorKind::AddrInUse, "in use"),
         std::io::Error::new(ErrorKind::ConnectionRefused, "refused"),
-        // Keep this raw code outside the platform-specific errno/Win32
-        // ranges used by the classifier (5 is PermissionDenied on Windows).
-        std::io::Error::from_raw_os_error(12345),
+        std::io::Error::new(ErrorKind::InvalidInput, "invalid input"),
     ] {
         assert!(
             !is_port_excluded_bind_error(&err),
