@@ -14,7 +14,7 @@ use tinystoragedrivers::{
     StorageBackend, StorageError, Versioned, WriteCondition, WriteOp,
 };
 
-use super::{documents::Repo, DocumentStoreExt};
+use super::documents::Repo;
 
 /// How long a claim blocks other processes before it can be taken over.
 pub const CLAIM_TTL_MS: i64 = 10 * 60 * 1000;
@@ -23,20 +23,6 @@ const COLLECTION: &str = "storage.import_state";
 const LOG_PREFIX: &str = "[storage::import_state]";
 const WAIT_POLL: Duration = Duration::from_millis(100);
 const CAS_RETRIES: usize = 32;
-
-/// The legacy marker collections whose completion rows are moved at boot.
-pub const LEGACY_MARKERS: &[(&str, &str)] = &[
-    ("storage_import", "storage"),
-    ("threads_import", "threads"),
-    ("subagent_sessions_import", "subagents"),
-    ("composio_state_import", "composio"),
-    ("channels_host_import", "host"),
-    ("tinybox_host_import", "host"),
-    ("tinyconnectors_host_import", "host"),
-    ("tinywallet_host_import", "host"),
-    ("tinyjuice_host_import", "host"),
-    ("mcp_host_import", "host"),
-];
 
 /// Declares the host-owned import progress collection.
 #[must_use]
@@ -543,49 +529,6 @@ fn release(repo: &Repo, token: &ClaimToken) -> Result<()> {
             Err(error) => Err(error),
         }
     })
-}
-
-/// Migrates older import marker documents to host-owned completion rows.
-pub async fn migrate_legacy_markers(scoped: &Storage) -> Result<usize, StorageError> {
-    let docs = scoped.documents();
-    if !docs
-        .capabilities()
-        .contains(tinystoragedrivers::Capability::CollectionEnumeration)
-    {
-        return Ok(0);
-    }
-    let present = docs.collections("").await?;
-    let mut moved = 0;
-    for (collection, owner) in LEGACY_MARKERS {
-        if !present.iter().any(|name| name == collection) {
-            continue;
-        }
-        ensure(scoped).await?;
-        for marker in docs
-            .query_all(collection, &tinystoragedrivers::Query::all())
-            .await?
-        {
-            if marker.id.ends_with("#claim") {
-                continue;
-            }
-            let completed_at_ms = if marker.meta.created_ms > 0 {
-                marker.meta.created_ms
-            } else {
-                chrono::Utc::now().timestamp_millis()
-            };
-            mark_done_at(
-                scoped,
-                owner,
-                &step_id(collection, &marker.id),
-                completed_at_ms,
-            )
-            .await?;
-            moved += 1;
-        }
-        docs.drop_collection(collection).await?;
-        tracing::info!(target: "openhuman::storage", collection, owner, "{LOG_PREFIX} legacy import markers moved to host-owned state");
-    }
-    Ok(moved)
 }
 
 #[cfg(test)]

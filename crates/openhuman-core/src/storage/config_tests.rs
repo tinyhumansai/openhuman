@@ -34,23 +34,6 @@ fn the_environment_beats_the_file_beats_the_default() {
 }
 
 #[test]
-fn the_retired_classic_opt_out_reads_as_unset() {
-    assert_eq!(
-        mode_from(Some("classic".into()), &config_with(None)),
-        StorageMode::Default
-    );
-    assert_eq!(
-        mode_from(None, &config_with(Some("Legacy"))),
-        StorageMode::Default
-    );
-    assert_eq!(
-        mode_from(Some("classic".into()), &config_with(Some("memory"))),
-        StorageMode::Url("memory".into()),
-        "a retired value in the environment falls through to the file"
-    );
-}
-
-#[test]
 fn the_default_url_is_sqlite_under_the_workspace_storage_directory() {
     let workspace = Path::new("/work/space");
     assert_eq!(default_url(workspace), "sqlite:/work/space/storage");

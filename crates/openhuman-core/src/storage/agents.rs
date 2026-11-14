@@ -71,7 +71,7 @@ pub(super) fn record_live() {
     }
 }
 
-/// Writes `agent` to the backend's `storage_agents` collection, once per
+/// Writes `agent` to the backend's `agents.registry` collection, once per
 /// process. `AgentContextRegistry::register` calls it for every agent. Best
 /// effort: a failure is logged and retried on the next registration, and
 /// only costs a restarted process its visits to that agent until the agent

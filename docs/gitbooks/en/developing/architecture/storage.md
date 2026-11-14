@@ -34,8 +34,6 @@ The storage URL is the first of these that is set. Blank values count as unset.
 2. `[storage] url` in `config.toml`
 3. The default, `sqlite:<workspace>/storage` (one database per workspace)
 
-The retired `classic` opt-out value is read as unset, with a warning.
-
 `[storage]` is bootstrap configuration. It is always read from the environment or the file and never from storage itself.
 
 | URL                                                                    | Driver                                                                                                                                                                                                               | Cargo feature     |
@@ -94,7 +92,7 @@ it starts a background refresh with `spawn_scoped`.
 
 ### Background work
 
-Background work runs under the process default context, which names no agent, and on its own would only see `local`. `storage::agents` closes the gap. Agents are known when they are live (`AgentContextRegistry`) or when an earlier process recorded their id in the `local` scope (`storage_agents`). `for_each_scope` runs a step once for `local` and once under each known agent. The cron scheduler's agent pass (`cron::scheduler::tick_live_agents`, driven in tests through the public `cron::scheduler::run_live_agent_pass`) runs each live agent's due jobs under that agent's own context, so their results are recorded in the agent's own scope. A recorded agent that is not live waits until it is live again, because its jobs need its host tools and prompt.
+Background work runs under the process default context, which names no agent, and on its own would only see `local`. `storage::agents` closes the gap. Agents are known when they are live (`AgentContextRegistry`) or when an earlier process recorded their id in the `local` scope (`agents.registry`). `for_each_scope` runs a step once for `local` and once under each known agent. The cron scheduler's agent pass (`cron::scheduler::tick_live_agents`, driven in tests through the public `cron::scheduler::run_live_agent_pass`) runs each live agent's due jobs under that agent's own context, so their results are recorded in the agent's own scope. A recorded agent that is not live waits until it is live again, because its jobs need its host tools and prompt.
 
 On a shared backend (MongoDB) other processes may write the same records, so boot-time recovery such as the orphaned-run sweep is skipped (`storage::installed_is_shared`).
 

@@ -1,8 +1,8 @@
 //! Composio host state that is not memory: connected-account identities and
 //! per-toolkit scope prefs.
 //!
-//! Each named value is one serde value in the `composio_state` collection of
-//! the storage backend ([`super::file_store_documents`]), under the acting
+//! Each named value is one `tsd.kv` entry (owner `composio`, namespace
+//! `state`) of the storage backend ([`super::file_store_documents`]), under the acting
 //! agent's scope: the installed backend, or the workspace default when the
 //! host installed none ([`crate::storage::local`]). A read of a missing value
 //! is the default value; every read-modify-write is a compare-and-swap loop,
