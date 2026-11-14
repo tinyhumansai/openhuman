@@ -12,7 +12,15 @@ fn a_picture_follows_actions_that_change_the_page_never_typing() {
     for kind in ["click", "double_click", "press", "select", "check"] {
         assert!(follows(kind), "{kind}");
     }
-    for kind in ["fill", "type", "hover", "scroll", "get_text", "is_visible", "wait_for"] {
+    for kind in [
+        "fill",
+        "type",
+        "hover",
+        "scroll",
+        "get_text",
+        "is_visible",
+        "wait_for",
+    ] {
         assert!(!follows(kind), "{kind}");
     }
 }
@@ -36,7 +44,10 @@ fn a_page_showing_a_keychain_password_is_not_captured() {
     assert!(shows_filled_password(&[
         "textbox \"Password\": capture-test-pw-7d1c9e"
     ]));
-    assert!(shows_filled_password(&["ok", "your password is capture-test-pw-7d1c9e"]));
+    assert!(shows_filled_password(&[
+        "ok",
+        "your password is capture-test-pw-7d1c9e"
+    ]));
     assert!(!shows_filled_password(&[
         "textbox \"Password\" [ref=e4]",
         "Welcome back, Teeny"
@@ -55,14 +66,21 @@ fn saved_pictures_sort_in_the_order_taken_and_are_whole() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert!(names.iter().all(|n| !n.ends_with(".part")), "{names:?}");
-    assert_eq!(file_name(1_700_000_000_000, 7, "jpeg"), "1700000000000-000007.jpeg");
+    assert_eq!(
+        file_name(1_700_000_000_000, 7, "jpeg"),
+        "1700000000000-000007.jpeg"
+    );
 }
 
 #[test]
 fn the_folder_keeps_only_the_newest_pictures() {
     let dir = tempfile::tempdir().unwrap();
     for n in 0..(MAX_KEPT + 5) {
-        std::fs::write(dir.path().join(file_name(1_000 + n as u128, 0, "png")), b"x").unwrap();
+        std::fs::write(
+            dir.path().join(file_name(1_000 + n as u128, 0, "png")),
+            b"x",
+        )
+        .unwrap();
     }
     std::fs::write(dir.path().join("notes.txt"), b"kept").unwrap();
     prune(dir.path(), MAX_KEPT);

@@ -593,7 +593,9 @@ pub(crate) fn assemble_output(
     use sha2::{Digest, Sha256};
 
     if held.total_bytes > MAX_SCREENSHOT_BYTES {
-        return Err(output_error("the screenshot is larger than a screenshot can be"));
+        return Err(output_error(
+            "the screenshot is larger than a screenshot can be",
+        ));
     }
     let mut bytes = Vec::new();
     for chunk in chunks {
@@ -608,12 +610,16 @@ pub(crate) fn assemble_output(
         }
         bytes.extend_from_slice(&data);
         if bytes.len() as u64 > held.total_bytes {
-            return Err(output_error("the screenshot is longer than its handle says"));
+            return Err(output_error(
+                "the screenshot is longer than its handle says",
+            ));
         }
     }
     if complete {
         if bytes.len() as u64 != held.total_bytes {
-            return Err(output_error("the screenshot is shorter than its handle says"));
+            return Err(output_error(
+                "the screenshot is shorter than its handle says",
+            ));
         }
         if format!("{:x}", Sha256::digest(&bytes)) != held.sha256.to_ascii_lowercase() {
             return Err(output_error("the screenshot does not match its SHA-256"));
