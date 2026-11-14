@@ -10,8 +10,9 @@ use std::sync::Arc;
 use serde::{de::DeserializeOwned, Serialize};
 use tinycomputer_bus::agent::Capabilities;
 use tinycomputer_bus::browser::{
-    names, Action, ActionOutcome, DownloadInfo, DownloadWaitRequest, NavigateRequest, PageState,
-    PageText, ReadRequest, SessionId, SessionInfo, SessionOptions, SessionRef, SessionRequest,
+    names, Action, ActionOutcome, DownloadInfo, DownloadWaitRequest, NavigateRequest, OutputChunk,
+    OutputRef, OutputRequest, PageState, PageText, ReadOutputRequest, ReadRequest,
+    ScreenshotRequest, SessionId, SessionInfo, SessionOptions, SessionRef, SessionRequest,
     Snapshot, SnapshotRequest, Viewport,
 };
 use tinycomputer_bus::DesktopResponse;
@@ -336,6 +337,57 @@ impl BrowserClient {
         .await
     }
 
+    /// A picture of the session's page, as the bytes of `request.format`.
+    ///
+    /// The module holds the image and answers a handle ([`OutputRef`]); the
+    /// bytes are pulled in chunks, checked against the handle's size and
+    /// SHA-256, and the held output is released whether or not that worked.
+    pub async fn screenshot(
+        &self,
+        session: &SessionId,
+        request: ScreenshotRequest,
+    ) -> Result<Vec<u8>, BrowserCallError> {
+        let held: OutputRef = self
+            .call(
+                names::methods::SCREENSHOT,
+                SessionRequest::new(session.clone(), request),
+            )
+            .await?;
+        let read = self.read_output(&held).await;
+        let _released: Result<serde_json::Value, _> = self
+            .call(
+                names::methods::RELEASE_OUTPUT,
+                OutputRequest {
+                    output: held.id.clone(),
+                },
+            )
+            .await;
+        read
+    }
+
+    async fn read_output(&self, held: &OutputRef) -> Result<Vec<u8>, BrowserCallError> {
+        let mut chunks = Vec::new();
+        let mut offset = 0u64;
+        loop {
+            let chunk: OutputChunk = self
+                .call(
+                    names::methods::READ_OUTPUT,
+                    ReadOutputRequest {
+                        offset,
+                        ..ReadOutputRequest::new(held.id.clone())
+                    },
+                )
+                .await?;
+            let eof = chunk.eof;
+            chunks.push(chunk);
+            let bytes = assemble_output(held, &chunks, eof)?;
+            if eof {
+                return Ok(bytes);
+            }
+            offset = bytes.len() as u64;
+        }
+    }
+
     pub async fn close_session(&self, session: &SessionId) -> Result<(), BrowserCallError> {
         let _closed: serde_json::Value = self
             .call(names::methods::CLOSE_SESSION, session_ref(session))
@@ -517,6 +569,57 @@ impl BrowserClient {
             }
         })
     }
+}
+
+/// The most bytes a screenshot may be, whatever its handle says: the module
+/// caps an output well under this, so more is a broken reply.
+pub(crate) const MAX_SCREENSHOT_BYTES: u64 = 32 * 1024 * 1024;
+
+fn output_error(message: impl Into<String>) -> BrowserCallError {
+    BrowserCallError::Bus {
+        name: "InvalidReply".into(),
+        message: message.into(),
+    }
+}
+
+/// The bytes `chunks` (read in order from offset zero) carry for `held`.
+/// Once `complete`, they must be exactly the handle's size and SHA-256.
+pub(crate) fn assemble_output(
+    held: &OutputRef,
+    chunks: &[OutputChunk],
+    complete: bool,
+) -> Result<Vec<u8>, BrowserCallError> {
+    use base64::Engine as _;
+    use sha2::{Digest, Sha256};
+
+    if held.total_bytes > MAX_SCREENSHOT_BYTES {
+        return Err(output_error("the screenshot is larger than a screenshot can be"));
+    }
+    let mut bytes = Vec::new();
+    for chunk in chunks {
+        if chunk.id != held.id || chunk.offset != bytes.len() as u64 {
+            return Err(output_error("a screenshot chunk is out of order"));
+        }
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(chunk.data.as_bytes())
+            .map_err(|_| output_error("a screenshot chunk is not base64"))?;
+        if data.is_empty() && !chunk.eof {
+            return Err(output_error("a screenshot chunk is empty"));
+        }
+        bytes.extend_from_slice(&data);
+        if bytes.len() as u64 > held.total_bytes {
+            return Err(output_error("the screenshot is longer than its handle says"));
+        }
+    }
+    if complete {
+        if bytes.len() as u64 != held.total_bytes {
+            return Err(output_error("the screenshot is shorter than its handle says"));
+        }
+        if format!("{:x}", Sha256::digest(&bytes)) != held.sha256.to_ascii_lowercase() {
+            return Err(output_error("the screenshot does not match its SHA-256"));
+        }
+    }
+    Ok(bytes)
 }
 
 fn session_ref(session: &SessionId) -> SessionRef {
