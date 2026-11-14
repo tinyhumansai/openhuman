@@ -49,7 +49,7 @@ fn filled() -> &'static std::sync::Mutex<Vec<(std::time::Instant, Zeroizing<Stri
     FILLED.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
-fn remember(secret: &Zeroizing<String>) {
+pub(super) fn remember(secret: &Zeroizing<String>) {
     let Ok(mut list) = filled().lock() else {
         return;
     };
