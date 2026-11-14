@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
-use super::types::SecurityPolicy;
+use super::types::{SecurityPolicy, ARTIFACTS_DIR};
 use tinytools::status::POLICY_BLOCKED_MARKER;
 
 impl SecurityPolicy {
@@ -68,8 +68,39 @@ impl SecurityPolicy {
             if self.authorize_ready_media_artifact_path(&resolved).await {
                 return self.validate_native_path(path, false).await;
             }
+        } else if let Some(workspace_candidate) = self.workspace_artifact_candidate(&expanded) {
+            // A relative pointer into the artifact store that does not exist
+            // below the action dir may still be a workspace-relative path the
+            // preview handed out: offloaded tool results live under
+            // `<workspace>/artifacts`, never under the action dir, and the
+            // model shortens the absolute pointer to that relative form. Offer
+            // the native validator the workspace-joined candidate; it still
+            // applies the full policy, so internal artifact records stay
+            // refused and only the granted tool-results directory resolves.
+            if let Ok(resolved) = tokio::fs::canonicalize(&workspace_candidate).await {
+                let _ = self.authorize_ready_media_artifact_path(&resolved).await;
+                return self
+                    .validate_native_path(&workspace_candidate.to_string_lossy(), false)
+                    .await;
+            }
         }
         self.validate_native_path(path, false).await
+    }
+
+    /// A workspace-joined candidate for a relative path into the artifact
+    /// store (`artifacts/...`), or `None` for absolute paths and paths
+    /// outside the store, which take no fallback.
+    fn workspace_artifact_candidate(&self, expanded: &str) -> Option<PathBuf> {
+        let path = Path::new(expanded);
+        if path.is_absolute() {
+            return None;
+        }
+        match path.components().next() {
+            Some(Component::Normal(first)) if first == ARTIFACTS_DIR => {
+                Some(self.workspace_dir.join(path))
+            }
+            _ => None,
+        }
     }
 
     /// Resolve a prospective destination parent through TinySecurity's
