@@ -67,6 +67,16 @@ fn remember(secret: &Zeroizing<String>) {
     list.push((now, secret.clone()));
 }
 
+/// Whether any password was typed from the keychain lately.
+pub(super) fn any_filled() -> bool {
+    let Ok(list) = filled().lock() else {
+        // A poisoned list may hold passwords: assume it does.
+        return true;
+    };
+    list.iter()
+        .any(|(at, secret)| at.elapsed() < REMEMBER_FILLED && !secret.is_empty())
+}
+
 /// `text` with every password typed from the keychain lately masked.
 pub(super) fn redact_filled(text: &str) -> String {
     let Ok(list) = filled().lock() else {

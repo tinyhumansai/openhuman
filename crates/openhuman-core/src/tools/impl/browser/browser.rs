@@ -1,4 +1,6 @@
 //! Agent-facing browser backed by the TinyComputer module's browser and task members.
+#[path = "browser_capture.rs"]
+mod capture;
 #[path = "browser_lifecycle.rs"]
 mod cleanup;
 #[path = "browser_keychain.rs"]
@@ -249,6 +251,7 @@ impl BrowserTool {
         };
         drop(held);
         if let Some(id) = id {
+            capture::capture(&self.client, &id, "close").await;
             self.client.close_session(&id).await?;
         }
         Ok(json!({"closed": true}))
@@ -416,11 +419,14 @@ impl BrowserTool {
         };
         let id = self.session_for_url(starting_url).await?;
         match verb {
-            "open" => Ok(serde_json::to_value(
-                self.client
+            "open" => {
+                let page = self
+                    .client
                     .navigate(&id, NavigateRequest::new(required(args, "url")?))
-                    .await?,
-            )?),
+                    .await?;
+                capture::capture(&self.client, &id, "open").await;
+                Ok(serde_json::to_value(page)?)
+            }
             "snapshot" => Ok(serde_json::to_value(
                 self.client
                     .snapshot(
@@ -493,8 +499,15 @@ impl BrowserTool {
                 let mut action = direct_action(args)?;
                 // The gate sees the placeholder, never the password.
                 approve_browser_action(&self.client, &id, &action, false, origin).await?;
+                let kind = serde_json::to_value(&action)?["action"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
                 let secret = keychain::substitute(&self.client, &id, &mut action).await?;
                 let done = self.client.perform(&id, action).await;
+                if done.is_ok() && secret.is_none() && capture::follows(&kind) {
+                    capture::capture(&self.client, &id, &kind).await;
+                }
                 match secret {
                     None => Ok(serde_json::to_value(done?)?),
                     Some(secret) => match done {
