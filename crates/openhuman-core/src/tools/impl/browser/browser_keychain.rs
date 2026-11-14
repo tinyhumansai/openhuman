@@ -33,6 +33,54 @@ const MAX_SECRET_BYTES: usize = 1024;
 /// What stands in for a password in anything returned to the agent.
 pub(super) const MASK: &str = "[keychain]";
 
+/// How long a filled password is still masked in what the browser returns.
+const REMEMBER_FILLED: Duration = Duration::from_secs(6 * 3600);
+/// The most filled passwords remembered at once.
+const MAX_REMEMBERED: usize = 64;
+
+/// Passwords typed from the keychain lately, process-wide. A filled field
+/// stays on the page: a later snapshot, page read or task step of any
+/// session would show what was typed into a text field, so every browser
+/// reply is masked against these, not only the fill's own.
+fn filled() -> &'static std::sync::Mutex<Vec<(std::time::Instant, Zeroizing<String>)>> {
+    static FILLED: std::sync::OnceLock<
+        std::sync::Mutex<Vec<(std::time::Instant, Zeroizing<String>)>>,
+    > = std::sync::OnceLock::new();
+    FILLED.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn remember(secret: &Zeroizing<String>) {
+    let Ok(mut list) = filled().lock() else {
+        return;
+    };
+    let now = std::time::Instant::now();
+    list.retain(|(at, _)| now.duration_since(*at) < REMEMBER_FILLED);
+    if list
+        .iter()
+        .any(|(_, known)| known.as_str() == secret.as_str())
+    {
+        return;
+    }
+    if list.len() >= MAX_REMEMBERED {
+        list.remove(0);
+    }
+    list.push((now, secret.clone()));
+}
+
+/// `text` with every password typed from the keychain lately masked.
+pub(super) fn redact_filled(text: &str) -> String {
+    let Ok(list) = filled().lock() else {
+        return text.to_owned();
+    };
+    let mut out = text.to_owned();
+    for (_, secret) in list.iter() {
+        if !secret.is_empty() && out.contains(secret.as_str()) {
+            out = redact(&out, secret);
+        }
+    }
+    out
+}
+
 /// The site a value names when the whole value is one placeholder.
 pub(super) fn placeholder_site(value: &str) -> Option<String> {
     let inner = value.trim().strip_prefix(OPEN)?.strip_suffix(CLOSE)?;
@@ -176,6 +224,7 @@ pub(super) async fn substitute(
         bail!("the page is not on {site}; the keychain fills a password only on its own site");
     };
     let secret = run_command(&command, &host).await?;
+    remember(&secret);
     tracing::info!(site = %site, "[browser-keychain] filled a password from the keychain");
     *text = secret.to_string();
     Ok(Some(secret))

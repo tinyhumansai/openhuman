@@ -148,3 +148,16 @@ async fn the_command_is_asked_for_the_page_host_and_answers_one_password() {
         .await
         .is_err());
 }
+
+#[test]
+fn a_filled_password_stays_masked_in_later_replies() {
+    let secret = Zeroizing::new("later-pw-789".to_owned());
+    assert_eq!(redact_filled("value: later-pw-789"), "value: later-pw-789");
+    remember(&secret);
+    let snapshot = r#"textbox "Name" value="later-pw-789""#;
+    assert_eq!(
+        redact_filled(snapshot),
+        format!(r#"textbox "Name" value="{MASK}""#)
+    );
+    assert_eq!(redact_filled("nothing here"), "nothing here");
+}
