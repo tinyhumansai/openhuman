@@ -256,11 +256,10 @@ pub(crate) async fn execute(
     let stored = crate::web3::wallet::secret_material(ctx, chain)
         .await
         .map_err(|error| wallet::WalletCallError::Failed(error.to_string()))?;
-    let mnemonic =
-        crate::security::encryption::rpc::decrypt_secret(config, &stored.encrypted_mnemonic)
-            .await
-            .map_err(|error| wallet::WalletCallError::Failed(error.to_string()))?
-            .value;
+    let mnemonic = crate::credentials::ops::decrypt_secret(config, &stored.encrypted_mnemonic)
+        .await
+        .map_err(|error| wallet::WalletCallError::Failed(error.to_string()))?
+        .value;
     let mut request = Web3ExecuteRequest {
         service: service_handle,
         owner,
