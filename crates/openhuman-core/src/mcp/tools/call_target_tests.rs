@@ -16,6 +16,7 @@ use tinymcp_bus::{
 #[derive(Clone, Default)]
 struct PreparePort {
     requests: Arc<Mutex<Vec<PrepareAgentToolsRequest>>>,
+    confidential_calls: Arc<Mutex<Vec<bool>>>,
     transform_error: Option<tinybus::module::ModuleCallError>,
 }
 
@@ -48,8 +49,9 @@ impl McpModulePort for PreparePort {
         _: &str,
         _member: &str,
         _: Value,
-        _confidential: bool,
+        confidential: bool,
     ) -> Result<Value, tinybus::module::ModuleCallError> {
+        self.confidential_calls.lock().unwrap().push(confidential);
         serde_json::to_value(tinymcp_bus::ClassifiedStaticToolCall {
             outcome: tinymcp_bus::McpCallOutcome::answered("docs", "search"),
             rendered: Some(tinymcp_bus::McpToolResult::default()),
@@ -125,12 +127,13 @@ async fn valid_mcp_identifier_reports_module_unavailable_without_invalid_input_l
     let mut config = Config::default();
     config.workspace_dir = workspace.path().to_path_buf();
     config.modules.enabled = true;
+    let port = PreparePort {
+        transform_error: Some(tinybus::module::ModuleCallError::Unavailable),
+        ..PreparePort::default()
+    };
     McpConfiguredClient::install_test_port(
         &config,
-        Box::new(PreparePort {
-            transform_error: Some(tinybus::module::ModuleCallError::Unavailable),
-            ..PreparePort::default()
-        }),
+        Box::new(port.clone()),
     )
     .unwrap();
     let tool = mcp_call_tool(Arc::new(config), Arc::new(SecurityPolicy::default()));
@@ -149,6 +152,7 @@ async fn valid_mcp_identifier_reports_module_unavailable_without_invalid_input_l
     let outcome = tinymcp_bus::McpCallOutcome::from_metadata(result.metadata.as_ref().unwrap())
         .expect("sanitized outcome remains available");
     assert_eq!(outcome.error.unwrap().code, tinymcp_bus::errors::BUS);
+    assert_eq!(*port.confidential_calls.lock().unwrap(), [true]);
 }
 
 #[tokio::test]

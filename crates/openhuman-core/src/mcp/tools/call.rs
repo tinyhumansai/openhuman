@@ -176,7 +176,7 @@ impl Tool for McpCallTool {
             }
         };
         let call: tinymcp_bus::ClassifiedStaticToolCall = match client
-            .call(
+            .call_confidential(
                 &client_config,
                 tinymcp_bus::names::methods::STATIC_CALL_TOOL_CLASSIFIED,
                 (server.as_str(), tool.as_str(), arguments),
