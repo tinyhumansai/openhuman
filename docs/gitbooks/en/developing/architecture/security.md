@@ -1,8 +1,8 @@
 ---
 description: >-
   The trust boundary for the autonomous core: the autonomy and risk policy,
-  sandbox selection, the audit log, the encrypted secret store, the pairing
-  guard and the redact() helper.
+  sandbox selection, the audit log, the encrypted secret store and the
+  redact() helper.
 icon: shield-halved
 ---
 
@@ -16,7 +16,6 @@ It owns:
 - The sandbox selection that confines calls when the host supports it.
 - The append-only audit log of every agent action.
 - The encrypted secret store.
-- The pairing guard that gates public binding of the RPC server.
 - The `redact()` helper every other domain uses to keep plaintext credentials out of logs.
 
 It does not own the cross-domain `EncryptionEngine` (in `security/encryption/`) or per-channel credential storage (in `credentials/`).
@@ -59,7 +58,7 @@ One check never turns off. `is_always_forbidden` blocks credential stores (`~/.s
 
 ## Public binds
 
-The RPC server refuses to bind a non-loopback address without an operator-supplied RPC token. That check is the server's, not this module's: `is_public_bind` lives in `crates/openhuman-rpc/src/server/public_bind.rs`, and `serve` applies it before picking a port.
+The RPC server refuses to bind a non-loopback address without an operator-supplied RPC token. That check belongs to the server: `is_public_bind` lives in `crates/openhuman-rpc/src/server/public_bind.rs`, and `serve` applies it before picking a port.
 
 ## Secret store
 
