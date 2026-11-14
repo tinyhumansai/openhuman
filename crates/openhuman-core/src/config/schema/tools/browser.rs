@@ -61,13 +61,6 @@ pub struct BrowserConfig {
     /// placeholder off: a fill or type that carries one is refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keychain_command: Option<String>,
-    /// A folder the browser tool saves a picture of the page into by itself,
-    /// after it opens a page, after a click, key press, select or check, and
-    /// before it closes a session (`tools::impl::browser::capture`). An
-    /// absolute path. Unset, the default, saves nothing. A page that shows a
-    /// password the keychain typed is never captured.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub screenshot_dir: Option<String>,
 }
 
 /// Action kinds `[browser] unattended_actions` may name: the gated direct
@@ -166,7 +159,6 @@ impl Default for BrowserConfig {
             unattended_actions: Vec::new(),
             learn_from_tasks: true,
             keychain_command: None,
-            screenshot_dir: None,
         }
     }
 }
