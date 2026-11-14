@@ -11,10 +11,9 @@ use serde::{de::DeserializeOwned, Serialize};
 use tinycomputer_bus::agent::Capabilities;
 use tinycomputer_bus::browser::{
     names, Action, ActionOutcome, DownloadInfo, DownloadWaitRequest, EvaluateRequest,
-    NavigateRequest, OutputChunk,
-    OutputRef, OutputRequest, PageState, PageText, ReadOutputRequest, ReadRequest,
-    ScreenshotRequest, SessionId, SessionInfo, SessionOptions, SessionRef, SessionRequest,
-    Snapshot, SnapshotRequest, Viewport,
+    NavigateRequest, OutputChunk, OutputRef, OutputRequest, PageState, PageText, ReadOutputRequest,
+    ReadRequest, ScreenshotRequest, SessionId, SessionInfo, SessionOptions, SessionRef,
+    SessionRequest, Snapshot, SnapshotRequest, Viewport,
 };
 use tinycomputer_bus::DesktopResponse;
 
@@ -634,7 +633,9 @@ impl Drop for ReleaseOnDrop {
 
 fn check_output_size(held: &OutputRef) -> Result<(), BrowserCallError> {
     if held.total_bytes > MAX_SCREENSHOT_BYTES {
-        return Err(output_error("the screenshot is larger than a screenshot can be"));
+        return Err(output_error(
+            "the screenshot is larger than a screenshot can be",
+        ));
     }
     Ok(())
 }
@@ -657,7 +658,9 @@ fn append_output_chunk(
         return Err(output_error("a screenshot chunk is empty"));
     }
     if (bytes.len() + data.len()) as u64 > held.total_bytes {
-        return Err(output_error("the screenshot is longer than its handle says"));
+        return Err(output_error(
+            "the screenshot is longer than its handle says",
+        ));
     }
     bytes.extend_from_slice(&data);
     Ok(())
@@ -668,7 +671,9 @@ fn finish_output(held: &OutputRef, bytes: &[u8]) -> Result<(), BrowserCallError>
     use sha2::{Digest, Sha256};
 
     if bytes.len() as u64 != held.total_bytes {
-        return Err(output_error("the screenshot is shorter than its handle says"));
+        return Err(output_error(
+            "the screenshot is shorter than its handle says",
+        ));
     }
     if format!("{:x}", Sha256::digest(bytes)) != held.sha256.to_ascii_lowercase() {
         return Err(output_error("the screenshot does not match its SHA-256"));

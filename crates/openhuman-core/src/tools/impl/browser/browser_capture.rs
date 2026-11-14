@@ -13,15 +13,14 @@
 //!
 //! Passwords: a password the keychain typed (`browser_keychain`) is masked
 //! in every reply, but a picture cannot be masked. Before a capture, while
-//! any keychain password has been typed lately, the page's accessibility
-//! tree and text are read and the capture is skipped when either shows one
-//! of those passwords (a revealed password field, an echo of it). A masked
-//! password field shows dots, not the password, and is captured. A fill or
-//! type is never followed by a capture.
+//! any keychain password is remembered, the page's text and field values
+//! are read in the page ([`PAGE_TEXT_JS`], which leaves the refs the model
+//! holds alone) and the capture is skipped when any shows one of those
+//! passwords (a field switched to show it, an echo of it), or when the page
+//! cannot be checked. A masked password field shows dots, not the password,
+//! and is captured. A fill or type is never followed by a capture.
 
-use tinycomputer_bus::browser::{
-    ImageFormat, ReadRequest, ScreenshotRequest, SessionId, SnapshotRequest,
-};
+use tinycomputer_bus::browser::{ImageFormat, ScreenshotRequest, SessionId};
 
 use crate::modules::browser::BrowserClient;
 use crate::modules::browser_pictures::{self, BrowserPicture};
@@ -40,6 +39,41 @@ const CAPTURED_AFTER: &[&str] = &["click", "double_click", "press", "select", "c
 /// followed by a picture.
 pub(super) fn follows(kind: &str) -> bool {
     CAPTURED_AFTER.contains(&kind)
+}
+
+/// What a picture of the page could show as text: its rendered text, the
+/// values of its fields (a password field's own value is masked on screen
+/// and left out; one switched to show its password is a text field), and
+/// the same inside open shadow roots and same-origin frames. It goes to the
+/// host's check only, never to a model or a log.
+pub(super) const PAGE_TEXT_JS: &str = r#"(() => {
+  const out = [];
+  const visit = (root) => {
+    if (!root) return;
+    if (root.body && root.body.innerText) out.push(root.body.innerText);
+    if (root instanceof ShadowRoot && root.textContent) out.push(root.textContent);
+    for (const el of root.querySelectorAll('input, textarea, select, [contenteditable]')) {
+      if (el.type === 'password') continue;
+      if (typeof el.value === 'string' && el.value) out.push(el.value);
+      else if (el.isContentEditable && el.textContent) out.push(el.textContent);
+    }
+    for (const el of root.querySelectorAll('*')) if (el.shadowRoot) visit(el.shadowRoot);
+    for (const frame of root.querySelectorAll('iframe, frame')) {
+      try { visit(frame.contentDocument); } catch (e) {}
+    }
+  };
+  visit(document);
+  return out;
+})()"#;
+
+/// The texts [`PAGE_TEXT_JS`] answered; `None` when the answer is not a
+/// list of strings, which counts as a page that could not be checked.
+pub(super) fn page_texts(value: &serde_json::Value) -> Option<Vec<String>> {
+    value
+        .as_array()?
+        .iter()
+        .map(|item| item.as_str().map(str::to_owned))
+        .collect()
 }
 
 /// Whether any of `texts` shows a password the keychain typed lately.
@@ -80,26 +114,18 @@ async fn take(
     after: &str,
 ) -> anyhow::Result<Option<BrowserPicture>> {
     if super::keychain::any_filled() {
-        let tree = client
-            .snapshot(
-                session,
-                SnapshotRequest {
-                    compact: false,
-                    max_chars: 200_000,
-                    ..SnapshotRequest::default()
-                },
-            )
-            .await?;
-        let page = client
-            .read_page(
-                session,
-                ReadRequest {
-                    max_chars: 200_000,
-                    ..ReadRequest::default()
-                },
-            )
-            .await?;
-        if shows_filled_password(&[&tree.tree, &page.content]) {
+        // Read in the page, never through a snapshot: a new snapshot would
+        // renumber the refs the model is holding.
+        let shown = client.evaluate(session, PAGE_TEXT_JS).await?;
+        let Some(texts) = page_texts(&shown) else {
+            tracing::info!(
+                after,
+                "[browser-capture] skipped: the page could not be checked for passwords"
+            );
+            return Ok(None);
+        };
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        if shows_filled_password(&texts) {
             tracing::info!(
                 after,
                 "[browser-capture] skipped: the page shows a password the keychain typed"

@@ -43,3 +43,17 @@ async fn no_sink_means_no_picture_and_no_browser_call() {
     let client = BrowserClient::new(std::sync::Arc::new(crate::config::Config::default()));
     capture(&client, &SessionId::new("s-1"), "open").await;
 }
+
+#[test]
+fn the_page_check_reads_only_a_list_of_strings() {
+    assert_eq!(
+        page_texts(&serde_json::json!(["Welcome", "teeny@agentmail.to"])),
+        Some(vec!["Welcome".to_owned(), "teeny@agentmail.to".to_owned()])
+    );
+    // Anything else is a page that could not be checked: no picture.
+    assert_eq!(page_texts(&serde_json::json!({"x": 1})), None);
+    assert_eq!(page_texts(&serde_json::json!(["ok", 3])), None);
+    assert_eq!(page_texts(&serde_json::Value::Null), None);
+    // The script leaves a masked password field's own value out.
+    assert!(PAGE_TEXT_JS.contains("el.type === 'password'"));
+}
