@@ -18,7 +18,7 @@ It owns:
 - The encrypted secret store.
 - The `redact()` helper every other domain uses to keep plaintext credentials out of logs.
 
-It does not own the cross-domain `EncryptionEngine` (in `security/encryption/`) or per-channel credential storage (in `credentials/`).
+It does not own the cross-domain `EncryptionEngine` (in `security/encryption/`), per-channel credential storage (in `credentials/`), or the public-bind guard (in `openhuman-rpc/src/server/public_bind.rs`).
 
 ## Public surface
 
