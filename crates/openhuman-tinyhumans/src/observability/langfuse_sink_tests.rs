@@ -42,16 +42,20 @@ fn turn_span() -> TraceSpan {
 
 #[tokio::test]
 async fn external_backend_is_skipped_before_session_lookup() {
-    let mut config = Config::default();
-    config.api_url = Some("https://external.example.invalid/api".into());
+    let config = Config {
+        api_url: Some("https://external.example.invalid/api".into()),
+        ..Config::default()
+    };
     assert!(push_spans(&config, &[turn_span()]).await.is_ok());
     assert!(push_spans(&config, &[]).await.is_ok());
 }
 
 #[tokio::test]
 async fn an_external_backend_is_not_ready() {
-    let mut config = Config::default();
-    config.api_url = Some("https://external.invalid/api".into());
+    let config = Config {
+        api_url: Some("https://external.invalid/api".into()),
+        ..Config::default()
+    };
     assert!(!LangfuseSink.ready(&config).await);
     assert!(LangfuseSink.push(&config, &[turn_span()]).await.is_ok());
 }
