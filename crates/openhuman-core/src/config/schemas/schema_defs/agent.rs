@@ -185,7 +185,7 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
         "update_computer_settings" => Some(ControllerSchema {
             namespace: "config",
             function: "update_computer_settings",
-            description: "Update TinyComputer's decision, planner and rescue models.",
+            description: "Update TinyComputer's decision, planner and rescue models, and its captcha solver.",
             inputs: vec![
                 optional_string("decision_model", "Decision model: jev, open_jev, or sage."),
                 optional_bool("sage_fast", "Use Sage's fast mode."),
@@ -200,6 +200,18 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 optional_number(
                     "max_rescues",
                     "Rescues allowed per task (0-5); 0 turns rescue off.",
+                ),
+                optional_bool(
+                    "captcha_solver",
+                    "Let browser tasks try a captcha with Jev's image questions before asking a person; needs a TypeSafe key.",
+                ),
+                optional_string(
+                    "captcha_model",
+                    "Image-reading Jev model for the captcha solver; empty restores the module default (jev-preview).",
+                ),
+                optional_number(
+                    "max_captcha_attempts",
+                    "Image challenges the captcha solver submits per try (1-10).",
                 ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
