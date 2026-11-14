@@ -42,29 +42,42 @@ const MAX_REMEMBERED: usize = 64;
 /// stays on the page: a later snapshot, page read or task step of any
 /// session would show what was typed into a text field, so every browser
 /// reply is masked against these, not only the fill's own.
-fn filled() -> &'static std::sync::Mutex<Vec<(std::time::Instant, Zeroizing<String>)>> {
-    static FILLED: std::sync::OnceLock<
-        std::sync::Mutex<Vec<(std::time::Instant, Zeroizing<String>)>>,
-    > = std::sync::OnceLock::new();
+type FilledPasswords = std::sync::Mutex<Vec<(std::time::Instant, Zeroizing<String>)>>;
+
+fn filled() -> &'static FilledPasswords {
+    static FILLED: std::sync::OnceLock<FilledPasswords> = std::sync::OnceLock::new();
     FILLED.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
-fn remember(secret: &Zeroizing<String>) {
+pub(super) fn remember(secret: &Zeroizing<String>) {
     let Ok(mut list) = filled().lock() else {
         return;
     };
     let now = std::time::Instant::now();
     list.retain(|(at, _)| now.duration_since(*at) < REMEMBER_FILLED);
-    if list
-        .iter()
-        .any(|(_, known)| known.as_str() == secret.as_str())
+    // Typed again: it counts from now.
+    if let Some(entry) = list
+        .iter_mut()
+        .find(|(_, known)| known.as_str() == secret.as_str())
     {
+        entry.0 = now;
         return;
     }
     if list.len() >= MAX_REMEMBERED {
         list.remove(0);
     }
     list.push((now, secret.clone()));
+}
+
+/// Whether any password the keychain typed is still remembered: the same
+/// list [`redact_filled`] masks with, however old the entry, since a page
+/// can keep showing a password long after it was typed.
+pub(super) fn any_filled() -> bool {
+    let Ok(list) = filled().lock() else {
+        // A poisoned list may hold passwords: assume it does.
+        return true;
+    };
+    list.iter().any(|(_, secret)| !secret.is_empty())
 }
 
 /// `text` with every password typed from the keychain lately masked.

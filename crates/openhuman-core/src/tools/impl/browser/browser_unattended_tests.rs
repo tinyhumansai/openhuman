@@ -266,6 +266,7 @@ async fn dispatch_click(origin: AgentTurnOrigin, actions: &[&str]) -> (String, S
             client: client.clone(),
             last_used: Instant::now(),
             bound_origin: None,
+            password_typed: false,
         },
     );
     let tool = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);

@@ -9,6 +9,7 @@ fn session_entry(client: Arc<BrowserClient>, id: SessionId, last_used: Instant) 
         last_used,
         config_fingerprint,
         bound_origin: None,
+        password_typed: false,
     }
 }
 
@@ -499,4 +500,35 @@ async fn two_agents_on_one_thread_get_distinct_browser_session_keys() {
 
     assert!(alpha.is_some() && beta.is_some());
     assert_ne!(alpha, beta);
+}
+
+#[tokio::test]
+async fn a_session_that_typed_a_password_stays_unpictured_for_the_next_tool() {
+    let client = Arc::new(BrowserClient::new(Arc::new(
+        crate::config::Config::default(),
+    )));
+    let key = format!("capture-ban-test:{}", uuid::Uuid::new_v4());
+    thread_sessions().lock().await.insert(
+        key.clone(),
+        session_entry(client.clone(), SessionId::new("pooled"), Instant::now()),
+    );
+
+    // The first tool types a keychain password: it and the pooled session
+    // are marked.
+    let first = BrowserTool::new(Arc::new(SecurityPolicy::default()), client.clone(), 3);
+    *first.thread_key.lock().unwrap() = Some(key.clone());
+    first.mark_password_typed().await;
+    assert!(thread_sessions().lock().await[&key].password_typed);
+
+    // A later turn's tool reuses the pooled session and inherits the ban.
+    let next = BrowserTool::new(Arc::new(SecurityPolicy::default()), client, 3);
+    *next.thread_key.lock().unwrap() = Some(key.clone());
+    assert!(!next
+        .password_typed
+        .load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(next.session().await.unwrap(), SessionId::new("pooled"));
+    assert!(next
+        .password_typed
+        .load(std::sync::atomic::Ordering::SeqCst));
+    thread_sessions().lock().await.remove(&key);
 }
