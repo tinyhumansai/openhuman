@@ -1,7 +1,7 @@
 //! TinyVoice adapter: transcript screening and PCM16 WAV framing.
 
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use std::time::Duration;
 use tinyvoice_bus::names::methods;
 
@@ -123,18 +123,15 @@ where
     let proxy = runtime
         .proxy(record.bus_name, record.object_path)
         .map_err(|error| VoiceCallError::Failed(error.to_string()))?;
-    proxy
-        .call(method, args)
-        .await
-        .map_err(|error| {
-            tracing::debug!(method, %error, "[voice] module bus call failed");
-            match error.wire_name() {
+    proxy.call(method, args).await.map_err(|error| {
+        tracing::debug!(method, %error, "[voice] module bus call failed");
+        match error.wire_name() {
             name if name.contains("ModuleUnavailable") => {
                 VoiceCallError::Unavailable(error.to_string())
             }
             _ => VoiceCallError::Failed(error.to_string()),
-            }
-        })
+        }
+    })
 }
 
 #[cfg(test)]
