@@ -103,5 +103,19 @@
     "site": "let mut file = tokio::fs::OpenOptions::new()",
     "reason": "User-visible artifact content is retained as a local deliverable; versioned records and native blob storage are separate capabilities and this file does not establish shared storage authority.",
     "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
+  },
+  {
+    "path": "crates/openhuman-core/src/tools/impl/browser/browser_capture.rs",
+    "rule": "json-write",
+    "site": "std::fs::write(&partial, bytes)?;",
+    "reason": "pictures of browser pages the host asked for with `[browser] screenshot_dir`: image files in a host-chosen folder that another program collects (like `download_dir`), written whole then renamed so a reader never sees half an image; no store reads them back",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "path": "crates/openhuman-core/src/tools/impl/browser/browser_capture.rs",
+    "rule": "file-mutation",
+    "site": "std::fs::rename(&partial, &path)?;",
+    "reason": "pictures of browser pages the host asked for with `[browser] screenshot_dir`: image files in a host-chosen folder that another program collects (like `download_dir`), written whole then renamed so a reader never sees half an image; no store reads them back",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
   }
 ]

@@ -58,6 +58,7 @@ fn a_page_showing_a_keychain_password_is_not_captured() {
 fn saved_pictures_sort_in_the_order_taken_and_are_whole() {
     let dir = tempfile::tempdir().unwrap();
     let first = save(dir.path(), b"\x89PNGone", "png").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
     let second = save(dir.path(), b"\x89PNGtwo", "png").unwrap();
     assert!(first.file_name() < second.file_name());
     assert_eq!(std::fs::read(&second).unwrap(), b"\x89PNGtwo");
@@ -77,7 +78,7 @@ fn the_folder_keeps_only_the_newest_pictures() {
     let dir = tempfile::tempdir().unwrap();
     for n in 0..(MAX_KEPT + 5) {
         std::fs::write(
-            dir.path().join(file_name(1_000 + n as u128, 0, "png")),
+            dir.path().join(file_name(1_000 + n as u128, "00000000", "png")),
             b"x",
         )
         .unwrap();
@@ -91,6 +92,6 @@ fn the_folder_keeps_only_the_newest_pictures() {
         .collect();
     pictures.sort();
     assert_eq!(pictures.len(), MAX_KEPT);
-    assert_eq!(pictures[0], file_name(1_005, 0, "png"));
+    assert_eq!(pictures[0], file_name(1_005, "00000000", "png"));
     assert!(dir.path().join("notes.txt").exists());
 }

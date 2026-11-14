@@ -6,7 +6,7 @@
 //! forgets, or its toolset has no way to write an image. So when
 //! `screenshot_dir` is set the tool captures the page itself after it opens
 //! one, after a click, key press, select or check, and before it closes a
-//! session, and writes each picture as `<unix ms>-<n>.png` (or `.jpeg`) into
+//! session, and writes each picture as `<unix ms>-<tag>.png` (or `.jpeg`) into
 //! that folder. The host collects them from there.
 //!
 //! A capture never fails the call it follows: whatever goes wrong is logged
@@ -21,7 +21,6 @@
 //! type is never followed by a capture.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use tinycomputer_bus::browser::{
     ImageFormat, ReadRequest, ScreenshotRequest, SessionId, SnapshotRequest,
@@ -147,22 +146,23 @@ async fn capture_into(
     save(dir, &bytes, extension).map(Some)
 }
 
-/// The next picture's name: the time in milliseconds, then a counter, so
-/// names sort in the order the pictures were taken.
-pub(super) fn file_name(unix_ms: u128, n: u64, extension: &str) -> String {
-    format!("{unix_ms:013}-{n:06}.{extension}")
+/// The next picture's name: the time in milliseconds, so names sort in the
+/// order the pictures were taken, then a random tag that keeps two taken in
+/// the same millisecond apart.
+pub(super) fn file_name(unix_ms: u128, tag: &str, extension: &str) -> String {
+    format!("{unix_ms:013}-{tag}.{extension}")
 }
 
 /// Writes `bytes` as the folder's next picture (whole, or not at all), then
 /// drops the oldest beyond [`MAX_KEPT`].
 pub(super) fn save(dir: &Path, bytes: &[u8], extension: &str) -> anyhow::Result<PathBuf> {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
     std::fs::create_dir_all(dir)?;
     let unix_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or_default();
-    let name = file_name(unix_ms, COUNTER.fetch_add(1, Ordering::Relaxed), extension);
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let name = file_name(unix_ms, &tag[..8], extension);
     let path = dir.join(&name);
     // Written beside it under a name no reader takes for a picture, then
     // renamed, so a reader never sees half an image.
