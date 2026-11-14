@@ -26,10 +26,6 @@ use super::presentation_types::{
     GeneratePresentationInput, SlideImageRequest, SlideImageSource, MAX_IMAGE_BYTES,
 };
 
-#[cfg(test)]
-#[path = "presentation_images_tests.rs"]
-mod tests;
-
 /// Format/dimension facts for one image's bytes.
 #[async_trait]
 pub(super) trait ImageInspector: Sync {
@@ -229,3 +225,7 @@ impl ImageSources<'_> {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "presentation_images_tests.rs"]
+mod tests;
