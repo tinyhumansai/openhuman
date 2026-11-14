@@ -232,6 +232,22 @@ impl BrowserTool {
 
     async fn close(&self) -> anyhow::Result<Value> {
         let thread_key = self.thread_key.lock().ok().and_then(|key| key.clone());
+        // The last picture, taken while the session is still owned here, so a
+        // call cancelled during it leaves the session to the next close.
+        let showing = match self.session.lock().await.clone() {
+            Some(id) => Some(id),
+            None => match thread_key.as_ref() {
+                Some(key) => thread_sessions()
+                    .lock()
+                    .await
+                    .get(key)
+                    .map(|entry| entry.id.clone()),
+                None => None,
+            },
+        };
+        if let Some(id) = showing {
+            capture::capture(&self.client, &id, "close").await;
+        }
         let mut held = self.session.lock().await;
         *self.bound_origin.lock().await = None;
         *self.pending.lock().await = None;
@@ -251,7 +267,6 @@ impl BrowserTool {
         };
         drop(held);
         if let Some(id) = id {
-            capture::capture(&self.client, &id, "close").await;
             self.client.close_session(&id).await?;
         }
         Ok(json!({"closed": true}))

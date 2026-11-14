@@ -55,10 +55,12 @@ pub(super) fn remember(secret: &Zeroizing<String>) {
     };
     let now = std::time::Instant::now();
     list.retain(|(at, _)| now.duration_since(*at) < REMEMBER_FILLED);
-    if list
-        .iter()
-        .any(|(_, known)| known.as_str() == secret.as_str())
+    // Typed again: it counts from now.
+    if let Some(entry) = list
+        .iter_mut()
+        .find(|(_, known)| known.as_str() == secret.as_str())
     {
+        entry.0 = now;
         return;
     }
     if list.len() >= MAX_REMEMBERED {
@@ -67,14 +69,15 @@ pub(super) fn remember(secret: &Zeroizing<String>) {
     list.push((now, secret.clone()));
 }
 
-/// Whether any password was typed from the keychain lately.
+/// Whether any password the keychain typed is still remembered: the same
+/// list [`redact_filled`] masks with, however old the entry, since a page
+/// can keep showing a password long after it was typed.
 pub(super) fn any_filled() -> bool {
     let Ok(list) = filled().lock() else {
         // A poisoned list may hold passwords: assume it does.
         return true;
     };
-    list.iter()
-        .any(|(at, secret)| at.elapsed() < REMEMBER_FILLED && !secret.is_empty())
+    list.iter().any(|(_, secret)| !secret.is_empty())
 }
 
 /// `text` with every password typed from the keychain lately masked.

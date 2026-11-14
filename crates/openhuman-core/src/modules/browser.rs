@@ -10,7 +10,8 @@ use std::sync::Arc;
 use serde::{de::DeserializeOwned, Serialize};
 use tinycomputer_bus::agent::Capabilities;
 use tinycomputer_bus::browser::{
-    names, Action, ActionOutcome, DownloadInfo, DownloadWaitRequest, NavigateRequest, OutputChunk,
+    names, Action, ActionOutcome, DownloadInfo, DownloadWaitRequest, EvaluateRequest,
+    NavigateRequest, OutputChunk,
     OutputRef, OutputRequest, PageState, PageText, ReadOutputRequest, ReadRequest,
     ScreenshotRequest, SessionId, SessionInfo, SessionOptions, SessionRef, SessionRequest,
     Snapshot, SnapshotRequest, Viewport,
@@ -353,39 +354,64 @@ impl BrowserClient {
                 SessionRequest::new(session.clone(), request),
             )
             .await?;
+        // Released however the read ends, a cancelled call included.
+        let mut release = ReleaseOnDrop {
+            client: Some(self.clone()),
+            output: held.id.clone(),
+        };
         let read = self.read_output(&held).await;
-        let _released: Result<serde_json::Value, _> = self
-            .call(
-                names::methods::RELEASE_OUTPUT,
-                OutputRequest {
-                    output: held.id.clone(),
-                },
-            )
-            .await;
+        if let Some(client) = release.client.take() {
+            let _released: Result<serde_json::Value, _> = client
+                .call(
+                    names::methods::RELEASE_OUTPUT,
+                    OutputRequest {
+                        output: held.id.clone(),
+                    },
+                )
+                .await;
+        }
         read
     }
 
     async fn read_output(&self, held: &OutputRef) -> Result<Vec<u8>, BrowserCallError> {
-        let mut chunks = Vec::new();
-        let mut offset = 0u64;
+        check_output_size(held)?;
+        let mut bytes = Vec::new();
         loop {
             let chunk: OutputChunk = self
                 .call(
                     names::methods::READ_OUTPUT,
                     ReadOutputRequest {
-                        offset,
+                        offset: bytes.len() as u64,
                         ..ReadOutputRequest::new(held.id.clone())
                     },
                 )
                 .await?;
-            let eof = chunk.eof;
-            chunks.push(chunk);
-            let bytes = assemble_output(held, &chunks, eof)?;
-            if eof {
+            append_output_chunk(held, &mut bytes, &chunk)?;
+            if chunk.eof {
+                finish_output(held, &bytes)?;
                 return Ok(bytes);
             }
-            offset = bytes.len() as u64;
         }
+    }
+
+    /// Runs `expression` in the session's page and returns its value. For the
+    /// host's own checks only; never offered to a model.
+    pub(crate) async fn evaluate(
+        &self,
+        session: &SessionId,
+        expression: &str,
+    ) -> Result<serde_json::Value, BrowserCallError> {
+        self.call(
+            names::methods::EVALUATE,
+            SessionRequest::new(
+                session.clone(),
+                EvaluateRequest {
+                    expression: expression.to_owned(),
+                    ..EvaluateRequest::default()
+                },
+            ),
+        )
+        .await
     }
 
     pub async fn close_session(&self, session: &SessionId) -> Result<(), BrowserCallError> {
