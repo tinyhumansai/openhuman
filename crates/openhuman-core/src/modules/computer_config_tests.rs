@@ -141,6 +141,44 @@ async fn chrome_path_is_the_module_browser_executable() {
     );
 }
 
+/// A persistent profile reaches the module as the host's own profile folder,
+/// the only one TinyComputer's egress-enforced launcher lets a session name,
+/// so cookies and sign-ins survive between sessions.
+#[tokio::test]
+async fn a_persistent_profile_is_the_module_browser_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config_in(dir.path());
+    config.browser.chrome_path = Some("/usr/bin/chromium".into());
+    config.browser.profile_mode = "persistent".into();
+    config.browser.profile_path = Some("/srv/teeny/state/browser/profile".into());
+    let value = module_config(&config).await;
+    assert_eq!(
+        value["browser"],
+        json!({
+            "executable": "/usr/bin/chromium",
+            "profile": "/srv/teeny/state/browser/profile"
+        })
+    );
+}
+
+/// A fresh profile names no folder, and neither does a persistent mode whose
+/// path is unset or relative, which `open_session` refuses anyway.
+#[tokio::test]
+async fn a_fresh_or_unusable_profile_sends_no_module_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    for (mode, path) in [
+        ("fresh", Some("/srv/teeny/state/browser/profile")),
+        ("persistent", None),
+        ("persistent", Some("relative/profile")),
+    ] {
+        let mut config = config_in(dir.path());
+        config.browser.profile_mode = mode.into();
+        config.browser.profile_path = path.map(str::to_owned);
+        let value = module_config(&config).await;
+        assert!(value.get("browser").is_none(), "{mode} {path:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_trace_directory_that_cannot_be_made_still_leaves_the_module_configured() {
     let dir = tempfile::tempdir().unwrap();
