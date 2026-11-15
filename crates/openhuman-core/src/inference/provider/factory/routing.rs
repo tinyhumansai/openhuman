@@ -255,9 +255,10 @@ pub(super) fn route_with_model(provider: String, model: Option<&str>) -> String 
 ///   it would be routed with nothing pinned;
 /// * a bare model id keeps the pinned provider, its credentials, endpoint and
 ///   `@temperature`, and swaps only the model ([`route_with_model`]);
-/// * a pin with no model of its own (`cloud`, `openhuman`) is returned
-///   unchanged: the managed backend already takes the model from
-///   `default_model` / the request pin.
+/// * a `cloud` pin resolves to the configured primary route before applying
+///   a bare override, so a primary BYOK provider's default model cannot win;
+/// * a pin with no model of its own (`openhuman`) is returned unchanged: the
+///   managed backend already takes the model from `default_model` / request.
 ///
 /// `hint:<role>` overrides select a workload rather than a model and must not
 /// be passed here.
@@ -265,6 +266,10 @@ pub(crate) fn route_for_turn_model(pinned: &str, model: &str, config: &Config) -
     let model = model.trim();
     if is_explicit_provider_default(model, config) {
         return model.to_string();
+    }
+    if pinned.trim() == "cloud" {
+        let primary = crate::config::ops::resolve_primary_cloud_provider_string(config);
+        return route_with_model(primary, Some(model));
     }
     route_with_model(pinned.to_string(), Some(model))
 }

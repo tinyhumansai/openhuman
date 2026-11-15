@@ -144,6 +144,26 @@ fn explicit_role_route_still_wins_over_default_model() {
     );
 }
 
+#[test]
+fn cloud_turn_override_replaces_primary_byok_default_model() {
+    let mut config = config_with_byok_provider();
+    config.primary_cloud = Some("p_my-openai".to_string());
+    config.cloud_providers[0].default_model = Some("A".to_string());
+
+    assert_eq!(
+        route_for_turn_model("cloud", "B", &config),
+        "my-openai:B",
+        "a bare override must replace the primary BYOK model behind the cloud pin"
+    );
+}
+
+#[test]
+fn cloud_turn_override_keeps_managed_primary_route() {
+    let config = Config::default();
+
+    assert_eq!(route_for_turn_model("cloud", "B", &config), "openhuman");
+}
+
 /// The #6109 regression in the other direction: a configured sibling route
 /// is used for its own role while the default model covers the unset ones —
 /// no cross-contamination either way.
