@@ -1,6 +1,6 @@
 use super::*;
-use crate::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::config::Config;
+use crate::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::inference::provider::factory::resolves_to_managed_backend;
 
 fn byok_openai_compatible_entry() -> CloudProviderCreds {
@@ -142,6 +142,38 @@ fn explicit_role_route_still_wins_over_default_model() {
         "anthropic:claude-x",
         "the explicitly configured chat_provider must win over default_model"
     );
+}
+
+#[test]
+fn cloud_turn_override_replaces_primary_byok_default_model() {
+    let mut config = config_with_byok_provider();
+    config.primary_cloud = Some("p_my-openai".to_string());
+    config.cloud_providers[0].default_model = Some("A".to_string());
+
+    assert_eq!(
+        route_for_turn_model("cloud", "B", &config),
+        "my-openai:B",
+        "a bare override must replace the primary BYOK model behind the cloud pin"
+    );
+}
+
+#[test]
+fn cloud_turn_override_supplies_model_when_primary_byok_has_no_default() {
+    let mut config = config_with_byok_provider();
+    config.primary_cloud = Some("p_my-openai".to_string());
+
+    assert_eq!(
+        route_for_turn_model("cloud", "B", &config),
+        "my-openai:B",
+        "a turn override must make an otherwise incomplete primary BYOK route usable"
+    );
+}
+
+#[test]
+fn cloud_turn_override_keeps_managed_primary_route() {
+    let config = Config::default();
+
+    assert_eq!(route_for_turn_model("cloud", "B", &config), "openhuman");
 }
 
 /// The #6109 regression in the other direction: a configured sibling route

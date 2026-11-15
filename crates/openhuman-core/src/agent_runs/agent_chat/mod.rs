@@ -7,6 +7,7 @@ mod envelope;
 pub(crate) mod guards;
 pub(crate) mod params;
 mod session_turn;
+mod turn_overrides;
 
 pub use compact::{compact_thread_for, prewarm_memory_block_for};
 pub use envelope::AgentChatReply;
