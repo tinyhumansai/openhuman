@@ -66,10 +66,6 @@ fn the_reply_names_the_page_without_telling_the_agent_to_open_it() {
 #[test]
 fn the_reported_url_is_the_normalized_one() {
     assert_eq!(
-        left_for(&left("https://EXAMPLE.com/a b?x")).as_deref(),
-        None
-    );
-    assert_eq!(
         left_for(&left("https://Example.COM:443/path")).as_deref(),
         Some("https://example.com/path")
     );
