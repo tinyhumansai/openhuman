@@ -1,4 +1,5 @@
 use super::*;
+use openhuman_embed::__host::core::Outcome;
 use serde_json::json;
 
 #[test]

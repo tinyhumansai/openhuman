@@ -1,10 +1,10 @@
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::{json_output, optional_string, required_string, to_json};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 #[derive(Debug, Deserialize)]
@@ -199,8 +199,8 @@ fn handle_auth_set_credential(ctx: DispatchCtx, params: Map<String, Value>) -> C
     Box::pin(async move {
         let config = ctx.load_config().await?;
         let payload =
-            deserialize_params::<crate::security::credentials::SetCredentialRequest>(params)?;
-        to_json(crate::security::credentials::rpc::set_credential(&ctx, &config, payload).await?)
+            deserialize_params::<crate::security::credentials::ops::SetCredentialRequest>(params)?;
+        to_json(crate::security::credentials::ops::set_credential(&ctx, &config, payload).await?)
     })
 }
 
@@ -220,14 +220,14 @@ fn handle_auth_clear_credential(ctx: DispatchCtx, params: Map<String, Value>) ->
             ),
             None => None,
         };
-        to_json(crate::security::credentials::rpc::clear_credential(&ctx, &config, kind).await?)
+        to_json(crate::security::credentials::ops::clear_credential(&ctx, &config, kind).await?)
     })
 }
 
 fn handle_auth_get_state(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = ctx.load_config().await?;
-        to_json(crate::security::credentials::rpc::auth_get_state(&config).await?)
+        to_json(crate::security::credentials::ops::auth_get_state(&config).await?)
     })
 }
 
@@ -237,7 +237,7 @@ fn handle_auth_get_session_token(
 ) -> ControllerFuture {
     Box::pin(async move {
         let config = ctx.load_config().await?;
-        to_json(crate::security::credentials::rpc::auth_get_session_token_json(&config).await?)
+        to_json(crate::security::credentials::ops::auth_get_session_token_json(&config).await?)
     })
 }
 
@@ -249,7 +249,7 @@ fn handle_auth_store_provider_credentials(
         let config = ctx.load_config().await?;
         let payload = deserialize_params::<AuthStoreProviderCredentialsParams>(params)?;
         to_json(
-            crate::security::credentials::rpc::store_provider_credentials(
+            crate::security::credentials::ops::store_provider_credentials(
                 &config,
                 &payload.provider,
                 payload.profile.as_deref(),
@@ -270,7 +270,7 @@ fn handle_auth_remove_provider_credentials(
         let config = ctx.load_config().await?;
         let payload = deserialize_params::<AuthRemoveProviderCredentialsParams>(params)?;
         to_json(
-            crate::security::credentials::rpc::remove_provider_credentials(
+            crate::security::credentials::ops::remove_provider_credentials(
                 &config,
                 &payload.provider,
                 payload.profile.as_deref(),
@@ -298,7 +298,7 @@ fn handle_auth_list_provider_credentials(
             .filter(|v| !v.is_empty())
             .map(str::to_string);
         to_json(
-            crate::security::credentials::rpc::list_provider_credentials(&config, provider_filter)
+            crate::security::credentials::ops::list_provider_credentials(&config, provider_filter)
                 .await?,
         )
     })
@@ -306,24 +306,6 @@ fn handle_auth_list_provider_credentials(
 
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
-    }
-}
-
-fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
 }
 
 fn optional_bool(name: &'static str, comment: &'static str) -> FieldSchema {
@@ -342,19 +324,6 @@ fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
         comment,
         required: false,
     }
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
-    }
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

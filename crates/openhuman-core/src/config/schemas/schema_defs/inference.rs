@@ -1,8 +1,9 @@
 //! Schemas for config snapshot reads and model, memory, runtime, and local-AI inference settings.
 
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::util::params::{json_output, optional_string};
 
-use super::super::helpers::{json_output, optional_bool, optional_json, optional_string};
+use super::super::helpers::{optional_bool, optional_json};
 
 pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
     match function {

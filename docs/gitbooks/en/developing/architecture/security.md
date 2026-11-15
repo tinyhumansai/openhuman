@@ -2,7 +2,7 @@
 description: >-
   The trust boundary for the autonomous core: the autonomy and risk policy,
   sandbox selection, the audit log, the encrypted secret store and the
-  redact() helper.
+  adapters to TinySecurity's redactor.
 icon: shield-halved
 ---
 
@@ -16,9 +16,9 @@ It owns:
 - The sandbox selection that confines calls when the host supports it.
 - The append-only audit log of every agent action.
 - The encrypted secret store.
-- The `redact()` helper every other domain uses to keep plaintext credentials out of logs.
+- The fail-closed adapters to TinySecurity's shared redactor (`scrub.rs`).
 
-It does not own the cross-domain `EncryptionEngine` (in `security/encryption/`), per-channel credential storage (in `credentials/`), or the public-bind guard (in `openhuman-rpc/src/server/public_bind.rs`).
+It does not own the `encryption.*` RPC compatibility namespace (in `security/encryption/`, which delegates to `credentials/` and owns no cipher code), per-channel credential storage (in `credentials/`), or the public-bind guard (in `openhuman-rpc/src/server/public_bind.rs`).
 
 ## Public surface
 
@@ -29,7 +29,6 @@ It does not own the cross-domain `EncryptionEngine` (in `security/encryption/`),
 | `CommandRiskLevel`, `ToolOperation`, `ActionTracker`                                                                          | `policy/types.rs` | Risk classification and per-session counting.                             |
 | `SecretStore`                                                                                                                 | `secret_storage/encrypted_store.rs` (`secrets.rs` re-exports it) | OS-keychain / encrypted-file secret persistence with round-trip helpers. |
 | `AuditLogger`, `AuditEventType`, `AuditEvent`, `Actor`, `Action`, `ExecutionResult`, `SecurityContext`, `CommandExecutionLog` | `audit.rs`   | Append-only audit trail.                                                |
-| `redact(value: &str) -> String`                                                                                               | `core.rs`    | Uniform 4-char-prefix redaction for logs.                               |
 | `security_policy_info_for_config(&Config) -> Outcome<serde_json::Value>`                                                    | `ops.rs`     | RPC handler for the doctor / settings UI.                               |
 
 ## Sandboxing
@@ -64,16 +63,11 @@ The RPC server refuses to bind a non-loopback address without an operator-suppli
 
 `SecretStore` (implemented in `security/secret_storage/encrypted_store.rs`, re-exported through `secrets.rs`) encrypts config-field secrets with ChaCha20-Poly1305 (`enc2:` prefix). It migrates the legacy XOR `enc:` format when it decrypts. Core owns the platform-independent secret-storage contracts, an in-memory default, and an optional encrypted-file backend. `openhuman-rpc::keyring` owns the native OS providers and installs them through those contracts before host boot. RPC product hosts explicitly select persistent storage; embed uses memory unless a provider or backend override is supplied. Backend selection and migration are described in `crates/openhuman-core/src/security/secret_storage/README.md`.
 
-## `redact()`
-
-`redact(value)` returns a uniform 4-character-prefix string (for example `"sk-a…"`) for use in logs and error messages. Use it whenever a secret, credential, token, or PII string is about to be formatted into a `log::` / `tracing::` call. Other domains call it directly: `credentials/`, `webhooks/`, `composio/`, the integration adapters.
-
 ## Layout
 
 | Path                                                          | Role                                                                      |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `policy/` (`mod.rs`, `types.rs`, `path_checks.rs`, `command_checks.rs`, `enforcement.rs`, `policy_*_tests.rs`, `proptest_tests.rs`) | `SecurityPolicy`, `AutonomyLevel`, risk classification, path and command checks, action tracking. |
-| `core.rs`, `core_tests.rs`                                    | `redact()` + small shared helpers.                                        |
 | `audit.rs`                                                    | Append-only audit log types.                                              |
 | `secrets.rs`, `secret_storage/`                                      | `SecretStore` (implemented in `secret_storage/encrypted_store.rs`) + round-trip tests. |
 | `ops.rs`                                                      | RPC handler (`security_policy_info_for_config`).                          |
@@ -96,12 +90,11 @@ Local PII detection belongs to [`tinymemory_api::safety`](https://github.com/tin
 - `crates/openhuman-core/src/tools/impl/network/{gate,mcp,mcp_server_tools}.rs`: risk-classify outbound calls.
 - `crates/openhuman-core/src/memory/host_policy.rs`: supplies TinyMemory's corroborated policy to memory write scrubbers.
 - `crates/openhuman-core/src/agent/subagent_host/`: sub-agent execution applies the host's tool policy and autonomy gate.
-- `crates/openhuman-core/src/credentials/`: uses `SecretStore` and `redact`.
+- `crates/openhuman-core/src/credentials/`: uses `SecretStore`.
 
 ## Tests
 
 - Unit: `policy/policy_tests*.rs`, `policy/proptest_tests.rs`, `secret_storage/encrypted_store_tests*.rs`.
-- `core_tests.rs` covers `redact()`.
 
 ## Related
 

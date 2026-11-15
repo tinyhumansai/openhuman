@@ -1,6 +1,7 @@
 use super::*;
 use crate::agent_runs::agent_chat::params::AgentChatParams;
 use crate::core::all::assert_schema_controller_parity;
+use crate::core::Outcome;
 
 #[test]
 fn runtime_schema_catalog_matches_registered_controllers() {

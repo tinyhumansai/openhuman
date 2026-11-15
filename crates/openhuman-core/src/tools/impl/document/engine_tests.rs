@@ -20,25 +20,6 @@ fn sample_input() -> GenerateDocumentInput {
     }
 }
 
-/// Read the entry names of a produced `.docx` byte buffer.
-fn docx_entry_names(bytes: &[u8]) -> Vec<String> {
-    let cursor = std::io::Cursor::new(bytes.to_vec());
-    let mut zip = zip::ZipArchive::new(cursor).expect("output is a valid zip archive");
-    (0..zip.len())
-        .map(|i| zip.by_index(i).unwrap().name().to_string())
-        .collect()
-}
-
-/// Read one entry's UTF-8 body out of a produced `.docx`.
-fn docx_entry_body(bytes: &[u8], name: &str) -> String {
-    let cursor = std::io::Cursor::new(bytes.to_vec());
-    let mut zip = zip::ZipArchive::new(cursor).expect("valid zip");
-    let mut entry = zip.by_name(name).expect("entry present");
-    let mut body = String::new();
-    std::io::Read::read_to_string(&mut entry, &mut body).unwrap();
-    body
-}
-
 /// A config with modules turned off, so nothing leaves this process.
 ///
 /// The test drives `generate_with` rather than `generate` deliberately:

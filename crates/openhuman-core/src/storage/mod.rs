@@ -33,7 +33,6 @@ pub mod documents;
 pub mod fence;
 pub mod fenced_backend;
 mod fenced_ports;
-mod host_importers;
 pub mod import;
 pub mod import_state;
 mod inspection;

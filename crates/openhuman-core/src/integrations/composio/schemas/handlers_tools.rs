@@ -1,13 +1,14 @@
 //! Tool-discovery and execution handlers: `list_tools`, `execute`.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::config::Config;
 use crate::core::all::{ControllerFuture, ControllerTask};
 use crate::integrations::composio::ops;
 
-use super::util::{read_optional, read_required_non_empty, to_json};
+use super::util::{read_optional, read_required_non_empty};
 
 pub(super) fn handle_list_tools(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
