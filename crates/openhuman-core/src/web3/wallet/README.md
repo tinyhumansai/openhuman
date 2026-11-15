@@ -113,7 +113,7 @@ derives and stores its address on first use.
 under its own `[wallet_policy.accounts.<chain>_<index>]` section
 (`allowed_programs`, `mints` with `per_tx_max_raw` and `daily_max_raw`). The
 host decodes the transaction and refuses it unless the account is the fee
-payer and sole signer, every program is listed, token instructions (SPL
+payer, every other required signer has already signed validly, every program is listed, token instructions (SPL
 Token or Token-2022) are `TransferChecked`, ATA instructions are creates, and
 there is no System instruction or lookup table. The caller declares what the
 transaction debits from the account's token balances (`expectedDebits`); the

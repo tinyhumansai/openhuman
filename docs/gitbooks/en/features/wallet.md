@@ -147,7 +147,7 @@ per_tx_max_raw = 1000000000
 daily_max_raw = 2000000000
 ```
 
-The caller states what the transaction will take from the account's token balances. The transaction is refused if it calls a program not on the list, moves a mint not on the list, moves more than either cap, needs any signer besides the account, or, when simulated, takes a different amount than stated. Token movements must be `TransferChecked` instructions, and System program instructions are not signed this way. Executes are written to the same ledger, but they are counted separately from the primary account's caps.
+The caller states what the transaction will take from the account's token balances. The transaction is refused if it calls a program not on the list, moves a mint not on the list, moves more than either cap, needs another signer that has not already signed it, or, when simulated, takes a different amount than stated. Token movements must be `TransferChecked` instructions, and System program instructions are not signed this way. Executes are written to the same ledger, but they are counted separately from the primary account's caps.
 
 ## See also
 

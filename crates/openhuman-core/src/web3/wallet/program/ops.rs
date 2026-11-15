@@ -61,8 +61,9 @@ pub struct ExecutedProgram {
 pub struct PrepareProgramParams {
     #[serde(alias = "account_index")]
     pub account_index: u32,
-    /// Base64 of the unsigned transaction's wire bytes (signature slots
-    /// zeroed), e.g. `transaction.serialize({requireAllSignatures: false})`.
+    /// Base64 of the transaction's wire bytes, e.g.
+    /// `transaction.serialize({requireAllSignatures: false})`: the account's
+    /// signer slot empty, every other required signer's slot already signed.
     pub transaction: String,
     /// What the transaction debits from the account's token balances, per
     /// mint (`[{mint, amountRaw}]`, empty when it debits nothing). The caps
