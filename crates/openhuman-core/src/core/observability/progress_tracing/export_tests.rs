@@ -1,28 +1,8 @@
 use super::*;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tinyagents_harness::observability::trace_export::{SpanKind, SpanStatus};
-
-#[test]
-fn partial_success_error_message_is_rejected_even_when_rejected_count_is_zero() {
-    let response = serde_json::json!({
-        "partialSuccess": { "rejectedSpans": "0", "errorMessage": "receiver warning" }
-    });
-    assert!(reject_partial_success(&response).is_err());
-}
-
-#[test]
-fn partial_success_positive_rejected_count_is_rejected() {
-    let response = serde_json::json!({
-        "partialSuccess": { "rejectedSpans": "2", "errorMessage": "some spans rejected" }
-    });
-    assert!(reject_partial_success(&response).is_err());
-}
-
-#[test]
-fn empty_partial_success_response_is_accepted() {
-    assert!(reject_partial_success(&serde_json::json!({ "partialSuccess": {} })).is_ok());
-    assert!(reject_partial_success(&serde_json::json!({})).is_ok());
-}
 
 fn file_fixture_span() -> TraceSpan {
     TraceSpan {
@@ -93,30 +73,55 @@ fn disabled_local_export_and_log_only_export_are_safe() {
     export_spans(&config, &[file_fixture_span()]);
 }
 
+/// A sink that records what reached it.
+#[derive(Default)]
+struct RecordingSink {
+    ready: bool,
+    readiness_checks: AtomicUsize,
+    pushed: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl super::super::TraceSink for RecordingSink {
+    async fn ready(&self, _config: &Config) -> bool {
+        self.readiness_checks.fetch_add(1, Ordering::SeqCst);
+        self.ready
+    }
+
+    async fn push(&self, _config: &Config, spans: &[TraceSpan]) -> Result<(), String> {
+        self.pushed.fetch_add(spans.len(), Ordering::SeqCst);
+        Err("recorded".to_string())
+    }
+}
+
 #[tokio::test]
-async fn external_backend_is_skipped_before_session_lookup() {
+async fn usage_data_spans_reach_registered_sinks_only_when_sharing() {
+    let sink = Arc::new(RecordingSink::default());
+    super::super::register_trace_sink("test-recording", sink.clone());
     let mut config = Config::default();
-    config.api_url = Some("https://external.example.invalid/openai/v1".into());
-    let spans = [TraceSpan {
-        trace_id: "thread-one:turn-one".into(),
-        span_id: "root".into(),
-        parent_span_id: None,
-        name: "agent.turn".into(),
-        kind: SpanKind::Turn,
-        start_unix_ms: 1_000,
-        end_unix_ms: Some(2_000),
-        status: SpanStatus::Ok,
-        attributes: BTreeMap::new(),
-        input: None,
-        output: None,
-    }];
-    assert!(push_spans(&config, &spans).await.is_ok());
+    config.observability.share_usage_data = false;
+    export_run_trace(&config, &[file_fixture_span()]).await;
+    assert_eq!(sink.pushed.load(Ordering::SeqCst), 0, "sharing off");
+
+    config.observability.share_usage_data = true;
+    export_run_trace(&config, &[file_fixture_span()]).await;
+    assert_eq!(
+        sink.pushed.load(Ordering::SeqCst),
+        1,
+        "a sink error is swallowed after the push"
+    );
+    export_run_trace(&config, &[]).await;
+    assert_eq!(sink.pushed.load(Ordering::SeqCst), 1, "no spans, no push");
+    assert!(super::super::unregister_trace_sink("test-recording"));
 }
 
 #[tokio::test]
 async fn child_export_obeys_sharing_and_readiness_gates_before_reading() {
     let dispatch = crate::core::runtime::DispatchCtx::ambient();
+    let sink = Arc::new(RecordingSink::default());
+    super::super::register_trace_sink("test-unready", sink.clone());
     let mut config = Config::default();
+    config.observability.share_usage_data = false;
     crate::core::observability::progress_tracing::export_subagent_journal_trace(
         &dispatch,
         &config,
@@ -126,10 +131,13 @@ async fn child_export_obeys_sharing_and_readiness_gates_before_reading() {
         "task-1",
     )
     .await;
+    assert_eq!(
+        sink.readiness_checks.load(Ordering::SeqCst),
+        0,
+        "sharing off skips before any sink is asked"
+    );
 
     config.observability.share_usage_data = true;
-    config.api_url = Some("https://external.invalid/api".into());
-    assert!(!crate::core::observability::telemetry::langfuse::journal_push_ready(&config).await);
     crate::core::observability::progress_tracing::export_subagent_journal_trace(
         &dispatch,
         &config,
@@ -139,4 +147,11 @@ async fn child_export_obeys_sharing_and_readiness_gates_before_reading() {
         "task-1",
     )
     .await;
+    assert_eq!(sink.readiness_checks.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        sink.pushed.load(Ordering::SeqCst),
+        0,
+        "an unready sink skips the journal read and the push"
+    );
+    assert!(super::super::unregister_trace_sink("test-unready"));
 }

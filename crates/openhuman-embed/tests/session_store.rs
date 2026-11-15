@@ -66,10 +66,7 @@ fn a_stateless_runtime_keeps_every_conversation_in_its_session_store() {
             let backend = stub_backend().await;
             let model = provider("noted").await;
             let store = Arc::new(InMemorySessionStores::new());
-            let mut config = offline_config();
-            // On by default in the product: it must stand down by itself once
-            // a host store owns the transcripts.
-            config.agent.session_dual_write = true;
+            let config = offline_config();
             let runtime = Runtime::builder()
                 .config(config)
                 .workspace(Workspace::stateless())

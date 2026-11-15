@@ -27,6 +27,8 @@ pub mod background;
 pub mod capabilities;
 pub mod credentials;
 pub mod cron;
+/// Operator-owned direct inference settings.
+pub mod direct_profile_provider;
 pub(crate) mod doctor;
 pub mod fence;
 pub mod gateway;

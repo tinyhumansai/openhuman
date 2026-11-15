@@ -36,7 +36,7 @@ pub struct SaasConfig {
     pub root: PathBuf,
     /// Validated direct inference defaults shared by profile chat, relay, and cron.
     #[serde(default)]
-    pub chat_provider: Option<super::direct_profile_provider::DirectProfileProvider>,
+    pub chat_provider: Option<crate::profiles::direct_profile_provider::DirectProfileProvider>,
     /// Operator-owned direct Exa/Gemini policy; never a user settings RPC.
     #[serde(default)]
     pub search: Option<crate::config::SearchConfig>,

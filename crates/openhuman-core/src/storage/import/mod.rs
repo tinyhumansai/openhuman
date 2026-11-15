@@ -25,9 +25,7 @@
 //!   recorded as done in `storage.import_state` of the backend's tenant scope
 //!   ([`super::import_state`], step `storage_import/<domain>@<workspace
 //!   digest>`). A later boot sees it and does nothing, so a record deleted
-//!   since is not resurrected from the untouched legacy file. A marker row an
-//!   older build wrote is honoured (it becomes the same entry at boot,
-//!   [`super::import_state::migrate_legacy_markers`]). A failed import
+//!   since is not resurrected from the untouched legacy file. A failed import
 //!   records nothing and is retried on the next boot.
 //! - **v1 shapes, then the owner's steps.** The legacy readers produce the v1
 //!   records the domain used before schema v2; [`upgrade`] runs the domain
@@ -162,8 +160,7 @@ impl From<ImportDoc> for Record {
     }
 }
 
-/// The legacy marker collection that recorded finished imports; its name is
-/// now the `kind` part of the `tsd.migrations` step
+/// The `kind` part of a domain import's `tsd.migrations` step
 /// ([`super::import_state::step_id`]).
 pub const MARKER_KIND: &str = "storage_import";
 

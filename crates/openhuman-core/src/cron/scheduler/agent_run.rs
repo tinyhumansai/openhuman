@@ -441,7 +441,13 @@ async fn build_cron_agent(
         if let Some(model) = job.model.clone() {
             effective.default_model = Some(model);
         }
-        let agent = host.session_host(&effective, None).await?;
+        let root = super::workspace_root::scheduled_workspace(&effective, &host.definition)
+            .map_err(anyhow::Error::msg)?;
+        if let Some(root) = root.as_deref() {
+            effective = super::workspace_root::rooted_config(&effective, root);
+        }
+        let mut agent = host.session_host(&effective, None).await?;
+        root_cron_agent(&mut agent, job, root);
         tracing::debug!(
             job_id = %job.id,
             agent_id = %host.definition.id,
@@ -454,7 +460,18 @@ async fn build_cron_agent(
         });
     }
     let agent_id = job.agent_id.as_deref().unwrap_or("orchestrator");
-    let agent = OpenHumanSessionHost::from_config_for_agent(ctx, config, agent_id)
+    let root = match crate::agent_registry::host_definition::AgentDefinitionRegistry::current()
+        .and_then(|registry| registry.get(agent_id).cloned())
+    {
+        Some(definition) => super::workspace_root::scheduled_workspace(config, &definition)
+            .map_err(anyhow::Error::msg)?,
+        None => None,
+    };
+    let rooted = root
+        .as_deref()
+        .map(|root| super::workspace_root::rooted_config(config, root));
+    let config = rooted.as_ref().unwrap_or(config);
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, config, agent_id)
         .await
         .inspect_err(|e| {
             tracing::warn!(
@@ -464,6 +481,7 @@ async fn build_cron_agent(
                 "[cron] no agent to run the job as; failing it rather than using another agent"
             );
         })?;
+    root_cron_agent(&mut agent, job, root);
     tracing::debug!(
         job_id = %job.id,
         agent_id = %agent_id,
@@ -474,4 +492,22 @@ async fn build_cron_agent(
         context: None,
         _lease: None,
     })
+}
+
+/// Root a scheduled run at its agent's `scheduled_workspace`, when it names
+/// one: the run's workspace descriptor is what the shell and file tools work
+/// in (`RunContext::with_workspace`), so a sandboxed shell asks for this root
+/// instead of the process-wide `action_dir`.
+fn root_cron_agent(
+    agent: &mut OpenHumanSessionHost,
+    job: &CronJob,
+    root: Option<std::path::PathBuf>,
+) {
+    let Some(root) = root else { return };
+    tracing::info!(
+        job_id = %job.id,
+        root = %root.display(),
+        "[cron] scheduled run rooted at its agent's workspace"
+    );
+    agent.set_workspace_descriptor(Some(tinytools::WorkspaceDescriptor::new(root)));
 }

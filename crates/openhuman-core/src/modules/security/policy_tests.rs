@@ -186,6 +186,127 @@ fn secret_authority_boots_without_any_tenants_secret_scope() {
     );
 }
 
+/// Every tenant's secret registration draws on the one process-wide
+/// TinySecurity work budget, so it is sized for many tenants at once (the
+/// contract ceiling), not the single-scope default of four.
+#[test]
+fn secret_authority_admits_concurrent_work_across_tenants() {
+    let module =
+        module_config_for_secret_authority(&Config::default(), Some(":1.42".into()), None).unwrap();
+    let limits = module
+        .secret
+        .expect("the secret authority is enabled")
+        .limits;
+    assert_eq!(limits.max_in_flight, 32, "the contract's maximum");
+    assert!(limits.max_in_flight > tinysecurity_bus::SecretLimits2::default().max_in_flight);
+}
+
+/// Every encrypted credential read is one secret cipher operation, and every
+/// agent of a runtime shares its config directory's registration, so the
+/// per-registration rate is sized at the contract ceiling: the default of 120
+/// refused a busy runtime's API-key reads within a second.
+#[test]
+fn secret_authority_rate_admits_a_busy_runtimes_credential_reads() {
+    let module =
+        module_config_for_secret_authority(&Config::default(), Some(":1.42".into()), None).unwrap();
+    let limits = module
+        .secret
+        .expect("the secret authority is enabled")
+        .limits;
+    assert_eq!(limits.operations_per_minute, 4096, "the contract's maximum");
+    assert!(
+        limits.operations_per_minute
+            > tinysecurity_bus::SecretLimits2::default().operations_per_minute
+    );
+}
+
+/// More tenants than the single-scope default budget unlock their config
+/// secrets at the same moment, and every one of them is admitted: a tenant's
+/// master grant is never refused because other tenants hold work in flight.
+///
+/// The keyring namespace is the credential directory's last path component, so
+/// each run names its tenants uniquely and removes every profile it stored,
+/// whether or not the store succeeded: a fixed `tenant-N` would overwrite (and
+/// leave behind) real `app-session:default` entries in the OS keyring.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_tenants_each_unlock_their_config_secrets() {
+    const TENANTS: usize = 12;
+    let root = tempfile::tempdir().unwrap();
+    let run = uuid::Uuid::new_v4().simple().to_string();
+    let configs: Vec<Config> = (0..TENANTS)
+        .map(|tenant| {
+            let dir = root.path().join(tenant_dir_name(&run, tenant));
+            Config {
+                config_path: dir.join("config.toml"),
+                workspace_dir: dir.join("workspace"),
+                action_dir: dir.join("workspace"),
+                ..Config::default()
+            }
+        })
+        .collect();
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(TENANTS));
+    let stores = configs.iter().cloned().enumerate().map(|(tenant, config)| {
+        let barrier = std::sync::Arc::clone(&barrier);
+        tokio::spawn(async move {
+            barrier.wait().await;
+            crate::credentials::AuthService::from_config(&config)
+                .store_provider_token(
+                    crate::credentials::APP_SESSION_PROVIDER,
+                    crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
+                    &format!("session-{tenant}"),
+                    Default::default(),
+                    true,
+                )
+                .await
+                .map(|_| ())
+                .map_err(|error| format!("tenant {tenant}: {error:#}"))
+        })
+    });
+    let stored: Vec<_> = futures::future::join_all(stores).await;
+    // Clean up before asserting, so a failed store still leaves nothing behind.
+    let mut removed = Vec::with_capacity(TENANTS);
+    for config in &configs {
+        let auth = crate::credentials::AuthService::from_config(config);
+        let gone = auth
+            .remove_profile(
+                crate::credentials::APP_SESSION_PROVIDER,
+                crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            )
+            .await;
+        let left = auth
+            .get_profile(crate::credentials::APP_SESSION_PROVIDER, None)
+            .await
+            .map(|profile| profile.is_some());
+        removed.push((
+            gone.map_err(|e| format!("{e:#}")),
+            left.map_err(|e| format!("{e:#}")),
+        ));
+    }
+    for store in stored {
+        store
+            .expect("store task")
+            .expect("tenant unlocks its secrets");
+    }
+    for (tenant, (gone, left)) in removed.into_iter().enumerate() {
+        assert_eq!(gone, Ok(true), "tenant {tenant}'s profile was removed");
+        assert_eq!(left, Ok(false), "tenant {tenant} keeps no session behind");
+    }
+}
+
+/// A per-run tenant directory name: the keyring namespace it yields is never
+/// shared with another run or with a real user's credential directory.
+fn tenant_dir_name(run: &str, tenant: usize) -> String {
+    format!("oh-policy-test-{run}-tenant-{tenant}")
+}
+
+#[test]
+fn concurrent_tenant_fixtures_use_a_fresh_keyring_namespace_per_run() {
+    let first = uuid::Uuid::new_v4().simple().to_string();
+    let second = uuid::Uuid::new_v4().simple().to_string();
+    assert_ne!(tenant_dir_name(&first, 0), tenant_dir_name(&second, 0));
+    assert_ne!(tenant_dir_name(&first, 0), "tenant-0");
+}
+
 /// Audited permissions are appended on the init audit stream, so the identity
 /// the host correlates them on must be exactly the one TinySecurity was given.
 #[test]
@@ -290,10 +411,11 @@ fn enabled_policy_rejects_commands_the_module_cannot_represent() {
 
 #[test]
 fn module_contract_requires_the_exact_host_wire_version() {
-    assert!(supports_contract((2, 1)));
+    assert!(supports_contract((2, 2)));
     assert!(!supports_contract((1, 35)));
     assert!(!supports_contract((2, 0)));
-    assert!(!supports_contract((2, 2)));
+    assert!(!supports_contract((2, 1)));
+    assert!(!supports_contract((2, 3)));
     assert!(!supports_contract((3, 0)));
     assert!(!supports_contract((1, 34)));
     assert!(!supports_contract((1, 27)));

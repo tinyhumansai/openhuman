@@ -337,68 +337,6 @@ fn classify_shell_hide_window_distinguishes_unset_from_unrecognized() {
 }
 
 #[test]
-fn apply_env_overrides_web_search_limits_only() {
-    let _g = env_lock();
-    clear_env(&[
-        "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
-        "WEB_SEARCH_MAX_RESULTS",
-        "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-        "WEB_SEARCH_TIMEOUT_SECS",
-    ]);
-    let mut cfg = Config::default();
-    unsafe {
-        std::env::set_var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "5");
-        std::env::set_var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "20");
-    }
-    cfg.apply_env_overrides();
-    assert_eq!(cfg.web_search.max_results, 5);
-    assert_eq!(cfg.web_search.timeout_secs, 20);
-    clear_env(&[
-        "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
-        "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-    ]);
-}
-
-#[test]
-fn apply_env_overrides_web_search_max_results_and_timeout_clamped() {
-    let _g = env_lock();
-    clear_env(&[
-        "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
-        "WEB_SEARCH_MAX_RESULTS",
-        "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-        "WEB_SEARCH_TIMEOUT_SECS",
-    ]);
-    let mut cfg = Config::default();
-    cfg.web_search.max_results = 3;
-    cfg.web_search.timeout_secs = 10;
-
-    // Valid values apply.
-    unsafe {
-        std::env::set_var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "5");
-        std::env::set_var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "20");
-    }
-    cfg.apply_env_overrides();
-    assert_eq!(cfg.web_search.max_results, 5);
-    assert_eq!(cfg.web_search.timeout_secs, 20);
-
-    // Out-of-range (>10 for max_results, 0 for timeout) — ignored.
-    unsafe {
-        std::env::set_var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "999");
-        std::env::set_var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "0");
-    }
-    cfg.apply_env_overrides();
-    assert_eq!(
-        cfg.web_search.max_results, 5,
-        "out-of-range must be ignored"
-    );
-    assert_eq!(cfg.web_search.timeout_secs, 20);
-    clear_env(&[
-        "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
-        "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
-    ]);
-}
-
-#[test]
 fn apply_env_overrides_searxng_config() {
     let _g = env_lock();
     clear_env(&[

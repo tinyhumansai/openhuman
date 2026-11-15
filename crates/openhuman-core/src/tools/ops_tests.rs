@@ -4,8 +4,6 @@ use crate::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE
 use crate::security::AuditSink;
 use crate::tools::ops::{all_tools, tool_group};
 use tempfile::TempDir;
-use tinytools::ToolContent;
-use tinytools::ToolResult;
 
 fn test_config(tmp: &TempDir) -> Config {
     let mut config = Config {
@@ -32,13 +30,6 @@ fn assert_contains_all(names: &[String], expected: &[&str]) {
     }
 }
 
-fn only_json_content(result: &ToolResult) -> &serde_json::Value {
-    match result.content.as_slice() {
-        [ToolContent::Json { data }] => data,
-        other => panic!("expected a single JSON content block, got {other:?}"),
-    }
-}
-
 async fn store_test_session_token(config: &Config) {
     AuthService::from_config(config)
         .store_provider_token(
@@ -56,7 +47,6 @@ fn integration_test_config(tmp: &TempDir, backend_url: &str) -> Config {
     let mut cfg = test_config(tmp);
     cfg.api_url = Some(backend_url.to_string());
     cfg.integrations.google_places.enabled = true;
-    cfg.integrations.parallel.enabled = true;
     cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
     cfg
@@ -121,6 +111,9 @@ async fn expansion_tools_for(tmp: &TempDir) -> Vec<Box<dyn Tool>> {
 // ── Theme: Task & workflow productivity ─────────────────────────────────────
 
 const PRODUCTIVITY_TOOLS: &[&str] = &[
+    // The `task_source_*` family is absent while no provider can fetch
+    // (senamakel/openhuman#324); see
+    // `task_source_tools_are_not_offered_while_no_provider_can_fetch`.
     // NOTE: the old `agent_workflow_*` tools were removed when the
     // `agent_workflows` domain was dissolved into `workflows`; workflow
     // discovery/run tools now live under the Knowledge theme
@@ -130,45 +123,18 @@ const PRODUCTIVITY_TOOLS: &[&str] = &[
     "update_artifact",
     "list_artifacts",
     "delete_artifact",
-    "task_source_list",
-    "task_source_get",
-    "task_source_fetch",
-    "task_source_list_tasks",
-    "task_source_preview_filter",
-    "task_source_status",
-    "task_source_add",
-    "task_source_update",
-    "task_source_remove",
 ];
 
-const PRODUCTIVITY_DEFAULT_OFF: &[&str] = &[
-    "delete_artifact",
-    "task_source_add",
-    "task_source_update",
-    "task_source_remove",
-];
+const PRODUCTIVITY_DEFAULT_OFF: &[&str] = &["delete_artifact"];
 
 const PRODUCTIVITY_ALWAYS_ON: &[&str] = &[
     "create_artifact",
     "read_artifact",
     "update_artifact",
     "list_artifacts",
-    "task_source_fetch",
-    "task_source_status",
 ];
 
 // ── Theme: Knowledge & memory ───────────────────────────────────────────────
-
-const KNOWLEDGE_TOOLS: &[&str] = &[
-    "list_workflows",
-    "describe_workflow",
-    "read_workflow_resource",
-    "list_workflow_runs",
-    "read_workflow_run_log",
-    "create_skill",
-    "install_workflow_from_url",
-    "uninstall_workflow",
-];
 
 fn knowledge_default_off() -> Vec<&'static str> {
     let mut tools: Vec<&'static str> = Vec::new();

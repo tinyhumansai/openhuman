@@ -427,6 +427,6 @@ fn api_key_rejected_flattens_to_its_own_prefix_not_session_expired() {
         method: "GET".into(),
         path: "/x".into(),
     }));
-    assert!(flat.starts_with(openhuman_embed::__host::core::observability::API_KEY_REJECTED_PREFIX));
+    assert!(flat.starts_with(crate::errors::API_KEY_REJECTED_PREFIX));
     assert!(!flat.contains("SESSION_EXPIRED"));
 }

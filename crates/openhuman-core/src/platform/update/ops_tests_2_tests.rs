@@ -171,6 +171,7 @@ async fn supervisor_restart_strategy_stages_without_restart_request() {
             "https://github.com/owner/repo/releases/download/v9/openhuman-core".into(),
         ),
         asset_name: Some("openhuman-core-x86_64-unknown-linux-gnu".into()),
+        asset_size: None,
         release_notes: None,
         published_at: None,
     };

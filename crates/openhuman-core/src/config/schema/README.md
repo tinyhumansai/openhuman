@@ -20,12 +20,12 @@ is mounted as a submodule of [`load/dirs.rs`](./load/dirs.rs) via `#[path]`.
 | `[agent]`, `[orchestrator]`, `[teams.*]` | [`agent.rs`](./agent.rs) | `AgentConfig`, `OrchestratorModelConfig`, `TeamModelConfig` |
 | `[autonomy]` | [`autonomy.rs`](./autonomy.rs) | `AutonomyConfig`: feeds `security::SecurityPolicy` |
 | `[[capability_providers]]` | [`capability_providers.rs`](./capability_providers.rs) | `CapabilityProviderConfig` |
-| `[channels_config]`, `[sandbox]` | [`channels.rs`](./channels.rs) | `ChannelsConfig` and per-provider configs re-exported from `tinychannels_bus`; `SandboxConfig`, `ResourceLimitsConfig`, `AuditConfig`, and `SecurityConfig` (only `DaemonConfig` embeds the last one) |
+| `[channels_config]`, `[sandbox]` | [`channels.rs`](./channels.rs) | `ChannelsConfig` and per-provider configs re-exported from `tinychannels_bus`; `SandboxConfig` and `AuditConfig` |
 | `[claude_agent_sdk]` | [`claude_agent_sdk.rs`](./claude_agent_sdk.rs) | `ClaudeAgentSdkConfig` |
 | `[[cloud_providers]]`, `primary_cloud`, `*_provider` slugs | [`cloud_providers.rs`](./cloud_providers.rs) | `CloudProviderCreds`, `AuthStyle` |
 | `[context]` | TinyAgents `ContextConfig` re-exported by [`context.rs`](./context.rs); OpenHuman environment overlays remain in `load/env_overlay/context.rs` | `ContextConfig` |
 | `[cost]` | [`identity_cost.rs`](./identity_cost.rs) | `CostConfig`, `ModelPricing` |
-| `[dashboard]` | [`dashboard.rs`](./dashboard.rs) | `DashboardConfig`, `DiagramViewerConfig`, `EventStreamConfig`, `ModelHealthConfig` |
+| `[dashboard]` | [`dashboard.rs`](./dashboard.rs) | `DashboardConfig`, `EventStreamConfig`, `ModelHealthConfig` |
 | `[channel_voice]` | [`channel_voice.rs`](./channel_voice.rs) | `ChannelVoiceConfig`, `ChannelVoiceOverride`, `VoiceReplyMode` |
 | `[ephemeral_route]` | [`ephemeral_route.rs`](./ephemeral_route.rs) | `EphemeralRoute` |
 | `[cron]` | [`cron.rs`](./cron.rs) | `CronConfig` (`shell_timeout_secs`: shell-job timeout, default 120) |
@@ -39,7 +39,7 @@ is mounted as a submodule of [`load/dirs.rs`](./load/dirs.rs) via `#[path]`.
 | `[observability]` | [`observability.rs`](./observability.rs) | `ObservabilityConfig`, `AgentTracingConfig` |
 | `[privacy]` | [`privacy.rs`](./privacy.rs) | `PrivacyConfig`, `PrivacyMode` |
 | `[prompt_screen]` | [`prompt_screen.rs`](./prompt_screen.rs) | `PromptScreenConfig`, `PromptScreenMode` (TinySecurity prompt screen; `off` is an explicit opt-out, default enforces and fails closed; `[security] mode = "off"` also turns it off) |
-| `[security]` | [`security_mode.rs`](./security_mode.rs) | `SecurityModeConfig`, `SecurityMode` (whether TinySecurity-delegated checks run; `off` allows them and passes redaction through, default enforces and fails closed). Not the daemon's `SecurityConfig` in `security.rs` |
+| `[security]` | [`security_mode.rs`](./security_mode.rs) | `SecurityModeConfig`, `SecurityMode` (whether TinySecurity-delegated checks run; `off` allows them and passes redaction through, default enforces and fails closed) |
 | `[proxy]` | [`proxy.rs`](./proxy.rs) | `ProxyConfig`, `ProxyScope`, plus `runtime_proxy_config()` / `set_runtime_proxy_config()` process-wide accessors |
 | `[[model_routes]]`, `[[embedding_routes]]` | [`routes.rs`](./routes.rs) | `ModelRouteConfig`, `EmbeddingRouteConfig` |
 | `[runtime]` (+ `[runtime.docker]`), `[shell]`, `[reliability]`, `[scheduler]` | [`runtime.rs`](./runtime.rs) | `RuntimeConfig`, `DockerRuntimeConfig`, `ShellConfig`, `ReliabilityConfig`, `SchedulerConfig` |
@@ -56,13 +56,12 @@ is mounted as a submodule of [`load/dirs.rs`](./load/dirs.rs) via `#[path]`.
 | top-level `Config` and its scalar keys | `types.rs` (+ `types/config.rs`, `types/model_ids.rs`) | `Config`, `ModelRegistryEntry`, provider-neutral workload roles |
 | built-in defaults | [`defaults.rs`](./defaults.rs) | `impl Default for Config` and per-field `default_*` fns |
 
-[`tools/mod.rs`](./tools/mod.rs) groups the tool-facing sections: `browser.rs` (`BrowserConfig`,
-`BrowserComputerUseConfig`, and the `unattended_actions` allow-list with its
-known names in `UNATTENDED_BROWSER_ACTIONS`), `http.rs` (`HttpRequestConfig`, `CurlConfig`),
+[`tools/mod.rs`](./tools/mod.rs) groups the tool-facing sections: `browser.rs` (`BrowserConfig` and the
+`unattended_actions` allow-list with its known names in `UNATTENDED_BROWSER_ACTIONS`), `http.rs` (`HttpRequestConfig`, `CurlConfig`),
 `integrations.rs` (`IntegrationsConfig`, `ComposioConfig`, `SecretsConfig`),
 `mcp.rs` (`McpServerConfig`, `McpClientConfig`, `GitbooksConfig`),
 `multimodal.rs` (`MultimodalConfig`, `MultimodalFileConfig`), `search.rs`
-(`SearchConfig`, `WebSearchConfig`, `SearxngConfig`, `SeltzConfig`).
+(`SearchConfig`, `SearxngConfig`, `SeltzConfig`).
 `SearchConfig` (schema version 2) holds `providers` (enabled + `managed` /
 `direct` route per provider), `roles` (ordered providers per capability role),
 `presentation`, limits, and direct keys; fresh installs default to managed Exa
@@ -111,7 +110,7 @@ sandbox policy contract described under Workspace/identity helpers below.
    `resolve_runtime_config_dirs_with`). With no config file and the default
    config dir, it returns a pre-login in-memory `Config` without writing
    anything.
-2. Read and parse `config.toml` (`parse_config_with_recovery`), recovering
+2. Read and parse `config.toml` (`parse_config_boxed`), recovering
    from non-UTF-8 or unparsable content by renaming the file to
    `.corrupted[.<ts>]`, trying the `.bak` copy, and finally falling back to
    defaults with `recovered_from_corruption = true`.

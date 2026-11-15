@@ -8,6 +8,7 @@ use tinysecurity_bus::{
 
 fn policy(workspace: &str) -> SandboxPolicy {
     SandboxPolicy {
+        filesystem_only: false,
         backend: SandboxBackendKind::Local,
         workspace_root: PathBuf::from(workspace),
         state_dir: PathBuf::from("/state"),

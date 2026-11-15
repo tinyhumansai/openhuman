@@ -1,15 +1,15 @@
 //! Handlers for agent behaviour settings: autonomy, privacy, browser, sandbox, and memory sync.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::config::rpc as config_rpc;
 use crate::core::all::ControllerFuture;
 
 use super::super::helpers::{
-    deserialize_params, to_json, AgentSettingsUpdate, AutonomySettingsUpdate,
-    BrowserSettingsUpdate, ComputerSettingsUpdate, PrivacyModeUpdate, SandboxSettingsUpdate,
-    SetBrowserAllowAllParams,
+    deserialize_params, AgentSettingsUpdate, AutonomySettingsUpdate, BrowserSettingsUpdate,
+    ComputerSettingsUpdate, PrivacyModeUpdate, SandboxSettingsUpdate, SetBrowserAllowAllParams,
 };
 
 pub(crate) fn handle_get_autonomy_settings(
@@ -145,6 +145,9 @@ pub(super) fn handle_update_computer_settings(
             planner_model: update.planner_model,
             rescue_model: update.rescue_model,
             max_rescues: update.max_rescues,
+            captcha_solver: update.captcha_solver,
+            captcha_model: update.captcha_model,
+            max_captcha_attempts: update.max_captcha_attempts,
         };
         to_json(config_rpc::load_and_apply_computer_settings(&ctx, patch).await?)
     })

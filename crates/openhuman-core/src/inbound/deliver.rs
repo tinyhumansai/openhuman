@@ -41,6 +41,13 @@
 //! callback deadline (`[inbound] triage_timeout_ms`, at most 25 s), and a
 //! turn that was already accepted is accepted again without triage, so a
 //! redelivery that raced a slow answer never applies a second decision.
+//!
+//! An event its offer took for the caller's direct path (every `Ingest`
+//! attempt was ambiguous, yet the module persisted it, [`super::claims`])
+//! is not delivered twice: while the direct path runs the turn is retried
+//! later; once it handled the event, the event is left out of its turn and
+//! dropped with the reason `handled_directly`, and a turn left with no
+//! events is accepted as it is.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -51,6 +58,10 @@ use tinyeventqueues_bus::{
     DeliverStatus, InboundEvent, Lane, SalienceClass, Turn,
 };
 
+use super::claims::{Claims, Sorted};
+
+/// How long a turn waits for a direct path still running one of its events.
+const DIRECT_WAIT_MS: u64 = 60_000;
 use super::events::{digest_envelope, envelope_of};
 use super::pinned::{Delivered, Pinned};
 use super::results::Results;
@@ -159,6 +170,10 @@ pub struct Deliverer {
     inbound: tokio::sync::OnceCell<Arc<InboundConfig>>,
     /// What runs pinned sources' turns: given, or built on first use.
     pinned: tokio::sync::OnceCell<Option<Pinned>>,
+    /// Who runs events whose offers were ambiguous: given, or the current
+    /// workspace's, resolved on every delivery (the active workspace can
+    /// change without the core being rebuilt).
+    claims: Option<Arc<Claims>>,
 }
 
 impl std::fmt::Debug for Deliverer {
@@ -179,8 +194,13 @@ impl Deliverer {
     /// It has no pinned sources unless given some ([`Self::with_inbound`]).
     #[must_use]
     pub fn new(runner: Arc<dyn TriageRunner>, ctx: DispatchCtx, timeout: Duration) -> Self {
-        Self::build(runner, ctx, tokio::sync::OnceCell::new_with(Some(timeout)))
-            .with_inbound(InboundConfig::default())
+        let mut deliverer =
+            Self::build(runner, ctx, tokio::sync::OnceCell::new_with(Some(timeout)))
+                .with_inbound(InboundConfig::default());
+        // Given its settings, it reads no configuration: its claims are its
+        // own unless given some (`Self::with_claims`).
+        deliverer.claims = Some(Arc::new(Claims::default()));
+        deliverer
     }
 
     /// A deliverer whose triage timeout is `[inbound] triage_timeout_ms`, read
@@ -209,6 +229,7 @@ impl Deliverer {
             accepted: Mutex::new(Accepted::default()),
             inbound: tokio::sync::OnceCell::new(),
             pinned: tokio::sync::OnceCell::new(),
+            claims: None,
         }
     }
 
@@ -224,6 +245,13 @@ impl Deliverer {
     #[must_use]
     pub fn with_pinned(mut self, pinned: Pinned) -> Self {
         self.pinned = tokio::sync::OnceCell::new_with(Some(Some(pinned)));
+        self
+    }
+
+    /// Share `claims` with the offers of the events it delivers.
+    #[must_use]
+    pub fn with_claims(mut self, claims: Arc<Claims>) -> Self {
+        self.claims = Some(claims);
         self
     }
 
@@ -396,6 +424,14 @@ impl Deliverer {
         }
     }
 
+    /// The given claims, or the current workspace's.
+    async fn claims(&self) -> Arc<Claims> {
+        match &self.claims {
+            Some(claims) => Arc::clone(claims),
+            None => Claims::of_ctx(&self.ctx, (self.now_ms)()).await,
+        }
+    }
+
     fn classified(&self) -> std::sync::MutexGuard<'_, Classified> {
         self.classified
             .lock()
@@ -464,6 +500,21 @@ impl Deliverer {
             );
             return DeliverResponse::new(DeliverStatus::Accepted);
         }
+        let turn_id = turn.turn_id.clone();
+        let turn = match self.claims().await.sort(turn) {
+            Sorted::Deliver(turn) => turn,
+            Sorted::Wait(turn) => {
+                return DeliverResponse::new(self.retry(
+                    &turn,
+                    Some(DIRECT_WAIT_MS),
+                    "the direct path is running an event of this turn",
+                ));
+            }
+            Sorted::Handled => {
+                self.accepted().remember(&turn_id);
+                return DeliverResponse::new(DeliverStatus::Accepted);
+            }
+        };
         if let Some((name, source)) = self.pinned_source(&turn.events).await {
             let remaining = self.budget.saturating_sub(started.elapsed());
             let status = self.deliver_pinned(&turn, &name, &source, remaining).await;

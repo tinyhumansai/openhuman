@@ -5,7 +5,6 @@ use crate::core::Outcome;
 #[cfg(test)]
 use tinyinference_voice::piper::synthetic_viseme_timeline;
 use tinyinference_voice::reply::ReplySpeech as ReplySpeechResult;
-use tinyinference_voice::VisemeFrame;
 
 /// Default Piper voice id.
 pub const DEFAULT_PIPER_VOICE: &str = "en_US-lessac-medium";
@@ -42,15 +41,7 @@ pub async fn synthesize_piper(
         ReplySpeechResult {
             audio_base64: speech.audio_base64,
             audio_mime: speech.audio_mime,
-            visemes: speech
-                .visemes
-                .into_iter()
-                .map(|frame| VisemeFrame {
-                    viseme: frame.viseme,
-                    start_ms: frame.start_ms,
-                    end_ms: frame.end_ms,
-                })
-                .collect(),
+            visemes: speech.visemes,
             alignment: None,
         },
         "local piper TTS completed",

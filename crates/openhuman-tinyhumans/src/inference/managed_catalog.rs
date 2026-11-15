@@ -180,10 +180,7 @@ fn catalog_url(config: &Config) -> String {
 /// that actually carried the app session token. A 401 without one describes the
 /// request, not the session.
 pub(super) fn managed_401_means_signed_out(status: u16, session_attached: bool) -> bool {
-    openhuman_embed::__host::core::session_expiry::backend_status_means_session_expired(
-        status,
-        !session_attached,
-    )
+    crate::session::expiry::backend_status_means_session_expired(status, !session_attached)
 }
 
 /// What authenticates a listing request: the live session token, or the

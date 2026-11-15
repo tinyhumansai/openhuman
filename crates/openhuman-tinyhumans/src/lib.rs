@@ -79,6 +79,7 @@ pub(crate) mod channels;
 pub mod client;
 mod devices;
 pub(crate) mod doctor;
+pub mod errors;
 pub mod hosted;
 mod hosted_config;
 pub(crate) mod inference;
@@ -88,11 +89,14 @@ pub mod integrations;
 pub mod jev;
 pub mod jwt;
 pub(crate) mod memory;
+pub mod observability;
 mod provider_oauth;
 mod register;
 mod runtime;
 pub mod session;
 pub(crate) mod socket;
+#[cfg(test)]
+pub(crate) mod test_workspace;
 pub mod transport;
 #[cfg(feature = "voice")]
 pub mod voice;

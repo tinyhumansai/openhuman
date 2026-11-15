@@ -32,8 +32,8 @@ changing the facade.
   callbacks; it redacts endpoint details in logs.
 - `schemas.rs` preserves the `openhuman.wallet_*` RPC names and response
   shapes.
-- `tools.rs` adapts the static tool declarations from `tinywallet-bus` to
-  OpenHuman's `tinytools::Tool` interface.
+- `../tools.rs` adapts the static tool declarations from `tinywallet-bus` to
+  OpenHuman's `tinytools::Tool` interface (shared with the `web3_*` tools).
 - `modules::wallet_service` manages the native wallet service handle and
   closes it on replacement, sign-out, and shutdown.
 
@@ -58,7 +58,7 @@ approval policy.
 ## Agent tools
 
 The six established wallet tools are declared in `tinywallet-bus` and adapted
-in `tools.rs`: `wallet_status`, `wallet_chain_status`,
+in [`../tools.rs`](../tools.rs): `wallet_status`, `wallet_chain_status`,
 `wallet_prepare_transfer`, `wallet_tx_status`, `wallet_tx_receipt`, and
 `wallet_lookup_tx`. `automation_tools.rs` adds two policy-bound tools:
 `wallet_balances` (the module's native and token balances as `{native, tokens}`,

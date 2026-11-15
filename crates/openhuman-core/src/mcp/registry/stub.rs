@@ -12,10 +12,10 @@
 //! which is why the two builds cannot drift in shape.
 //!
 //! The signatures here MUST match the real ones exactly (return types and
-//! async-ness included). The disabled build
-//! (`cargo check --no-default-features`) is
-//! the only thing that catches drift — if a real signature changes, update the
-//! mirror below until that build is green again.
+//! async-ness included). `surface_tests.rs` pins the shared surface in both
+//! builds, so drift fails the `--no-default-features` test build in the
+//! `rust-gates-off` lane — if a real signature changes, update the mirror
+//! below and that test until both builds are green again.
 
 use crate::config::Config;
 
@@ -39,7 +39,7 @@ pub fn all_mcp_registry_registered_controllers() -> Vec<crate::core::all::Regist
 }
 
 // ---------------------------------------------------------------------------
-// Boot / lifecycle (mirrors `boot`, `bus`, `supervisor`)
+// Boot / lifecycle (mirrors `boot`, `supervisor`)
 // ---------------------------------------------------------------------------
 
 /// Boot-time spawn of installed local MCP servers.
@@ -55,16 +55,6 @@ pub mod boot {
     }
 }
 
-/// DomainEvent subscriber for MCP lifecycle logging.
-pub mod bus {
-    use super::*;
-
-    /// No-op: with no connection lifecycle there are no events to subscribe to.
-    pub fn init() {
-        log::debug!("[mcp_registry] {DISABLED_MSG} — event subscriber not registered");
-    }
-}
-
 /// Reconnect supervisor for installed local-spawn servers.
 pub mod supervisor {
     use super::*;
@@ -75,7 +65,7 @@ pub mod supervisor {
     /// its caller in `core/runtime/services.rs` spawns it as a background
     /// task and does not await completion — so returning at once simply means
     /// that task finishes rather than idling forever.
-    pub async fn run(_config: Config) {
+    pub async fn run() {
         log::debug!("[mcp_registry] {DISABLED_MSG} — supervisor not started");
     }
 }

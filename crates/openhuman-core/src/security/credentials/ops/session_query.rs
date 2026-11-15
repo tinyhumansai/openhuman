@@ -4,8 +4,8 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::security::credentials::jwt::get_session_token;
 use crate::security::credentials::session_support::build_session_state;
+use crate::security::credentials::session_support::get_session_token;
 
 pub async fn auth_get_state(
     config: &Config,

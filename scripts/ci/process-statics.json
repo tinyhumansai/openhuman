@@ -150,14 +150,44 @@
     "verification": "config/schema/cloud_providers_tests.rs: hosted_presets_and_classification_are_context_scoped"
   },
   {
-    "file": "crates/openhuman-core/src/core/observability/telemetry/langfuse/environment.rs",
+    "file": "crates/openhuman-core/src/core/observability_hooks.rs",
     "scope": "",
-    "name": "SKIP_LOGGED",
-    "type": "std::sync::Once",
+    "name": "SESSION_EXPIRY_PREDICATES",
+    "type": "HookSlot<SessionExpiryPredicate>",
     "count": 1,
     "category": "A",
-    "reason": "This process-wide latch suppresses duplicate informational messages when Langfuse pushes are disabled for an environment; it stores no request, credential, or tenant data.",
-    "verification": "core/observability/telemetry/langfuse/environment.rs: skip_push calls Once::call_once"
+    "reason": "Host wiring: stateless predicates the embedding host registers at startup to recognise its backend's session-expiry error shapes. It holds code, never request, credential or tenant data.",
+    "verification": "core/observability_hooks_tests.rs: a_registered_predicate_extends_the_core_markers"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/observability_hooks.rs",
+    "scope": "",
+    "name": "EXPECTED_ERROR_CLASSIFIERS",
+    "type": "HookSlot<ExpectedErrorClassifier>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: stateless classifiers the embedding host registers at startup to map its own error sentinels onto expected-error kinds. It holds code, never request, credential or tenant data.",
+    "verification": "core/observability_hooks_tests.rs: a_registered_classifier_demotes_host_sentinels"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/observability_hooks.rs",
+    "scope": "",
+    "name": "CRASH_NOISE_FILTERS",
+    "type": "HookSlot<CrashNoiseFilter>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: named fn-pointer Sentry noise predicates the embedding host registers at startup; Sentry's before_send runs outside any CoreContext, so the table is process-wide. It holds code, never event or tenant data.",
+    "verification": "core/observability_hooks_tests.rs: a_registered_crash_noise_filter_is_named_in_the_verdict"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/observability/progress_tracing/sinks.rs",
+    "scope": "",
+    "name": "TRACE_SINKS",
+    "type": "HookSlot<Arc<dyn TraceSink>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: usage-data trace sinks the embedding host registers at startup. Sinks receive the config and spans per call; the table holds no request, credential or tenant data.",
+    "verification": "core/observability/progress_tracing/export_tests.rs: usage_data_spans_reach_registered_sinks_only_when_sharing"
   },
   {
     "file": "crates/openhuman-core/src/core/slots.rs",
@@ -208,6 +238,16 @@
     "category": "A",
     "reason": "The module's shipped queues.json and pipeline.json, parsed once; immutable process configuration with no tenant data.",
     "verification": "inbound/settings_tests.rs: the_defaults_resolve_to_the_shipped_files_in_storage"
+  },
+  {
+    "file": "crates/openhuman-core/src/inbound/claims.rs",
+    "scope": "",
+    "name": "WORKSPACES",
+    "type": "LazyLock<Mutex<ByWorkspace>>",
+    "count": 1,
+    "category": "B",
+    "reason": "Inbound triage-once claims, keyed by workspace directory and acting storage scope: each workspace and scope's claims live in their own entry and persist only to that scope's storage (inbound.direct), so one profile never reads or writes another's. An entry holds event dedupe keys (source:event_id) and claim states, no payloads.",
+    "verification": "inbound/claims_tests.rs: each_workspace_keeps_its_own_claims, a_direct_path_event_is_skipped_after_a_restart"
   },
   {
     "file": "crates/openhuman-core/src/inference/provider/factory/routing.rs",
@@ -428,6 +468,16 @@
     "category": "A",
     "reason": "Host wiring: an id-keyed table of handlers the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
     "verification": "modules/wallet_backend_tests.rs: a_registered_handler_answers_the_call"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/wallet_host.rs",
+    "scope": "",
+    "name": "X402_RPC_PERMITS",
+    "type": "OnceLock<Mutex<HashMap<u64,X402RpcPermitEntry>>>",
+    "count": 1,
+    "category": "D",
+    "reason": "Routing handle: short-lived one-shot permits for in-flight direct x402_fetch RPC calls, keyed by a process-unique id and matched on the exact request URL. Each permit lives only while its call's future runs (removed on drop), holds only the URL and the caller's cap, and the wallet budget enforces the ownership boundary when the payment is authorized.",
+    "verification": "modules/wallet_host_tests.rs: x402_rpc_permit_is_active_only_while_its_future_runs"
   },
   {
     "file": "crates/openhuman-core/src/prompts/section_renderers.rs",
@@ -870,13 +920,23 @@
     "verification": "sandbox/boxes/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/boxes/registry_retain_tests.rs: equal_tenants_in_two_scopes_never_share_a_retained_box; sandbox/boxes/mod_tests.rs: an_unscoped_command_creates_no_box"
   },
   {
-    "file": "crates/openhuman-core/src/sandbox/boxes/bus_driver.rs",
+    "file": "crates/openhuman-core/src/credentials/profiles/backend.rs",
     "scope": "",
-    "name": "CALL_CONFIG",
-    "type": "Arc<Config>",
+    "name": "HELD",
+    "type": "std::sync::OnceLock<Arc<(Mutex<HashSet<String>>,Condvar)>>",
+    "count": 1,
+    "category": "B",
+    "reason": "An in-process write exclusion for backend-stored auth-profile documents, keyed by the authenticated profile id; it holds only which tenant documents have a read-modify-write in flight (no credential data) and serialises writers of the same tenant only, while the backend's compare-and-swap remains the cross-process guard.",
+    "verification": "credentials/profiles_storage_tests.rs: a_tenant_store_keeps_its_document_and_lock_in_the_configured_backend; credentials/profiles/backend_tests.rs: a_tenant_store_outside_its_own_scope_is_refused_in_saas"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/browser_pictures.rs",
+    "scope": "",
+    "name": "SINKS",
+    "type": "HookSlot<BrowserPictureSink>",
     "count": 1,
     "category": "A",
-    "reason": "A task-local holding the configuration of the host call a TinyBox driver step serves, set only for the duration of that call's future on its own task; nothing is shared between tasks, tenants or workspaces, and it carries module configuration, not tenant data.",
-    "verification": "sandbox/boxes/bus_driver_tests.rs: each_call_reaches_the_module_with_its_own_configuration"
+    "reason": "Host wiring: an id-keyed table of picture sinks the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; the pictures pass through and are not kept.",
+    "verification": "modules/browser_pictures_tests.rs: a_registered_sink_gets_each_picture_and_a_refusal_is_not_fatal"
   }
 ]

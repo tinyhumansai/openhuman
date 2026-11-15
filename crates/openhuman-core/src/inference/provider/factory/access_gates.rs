@@ -211,7 +211,7 @@ pub(super) fn enforce_local_only_endpoint(role: &str, endpoint: &str) -> anyhow:
 /// an external chat provider when the live policy is local-only. Reads the live
 /// privacy mode (defaults to `Standard`/allow when no session policy is
 /// installed). See [`local_only_violation`] for the pure decision.
-pub(super) fn enforce_local_only_inference(role: &str, provider: &str) -> anyhow::Result<()> {
+pub(crate) fn enforce_local_only_inference(role: &str, provider: &str) -> anyhow::Result<()> {
     let mode = crate::security::live_policy::current_privacy_mode();
     match local_only_violation(mode, provider) {
         None => {
@@ -230,12 +230,38 @@ pub(super) fn enforce_local_only_inference(role: &str, provider: &str) -> anyhow
                 provider.trim(),
                 label
             );
-            anyhow::bail!(
-                "Local-only privacy mode is active: this action needs external provider {label}. \
-                 Switch to a local model (Ollama/LM Studio/etc.) or change privacy mode in Settings."
-            )
+            Err(local_only_refusal(&label))
         }
     }
+}
+
+/// [`enforce_local_only_inference`] for a model built from a selected config
+/// that may have no live policy behind it (the doctor's inspection boot
+/// installs none, so the live mode reads its `Standard` fallback). The selected
+/// config's own privacy mode refuses as well, and the live policy still does,
+/// so a hot-swapped `LocalOnly` blocks a config saved as `Standard`.
+pub(crate) fn enforce_local_only_inference_for(
+    config: &crate::config::Config,
+    role: &str,
+    provider: &str,
+) -> anyhow::Result<()> {
+    if let Some(label) = local_only_violation(config.privacy.mode, provider) {
+        log::warn!(
+            "[privacy][chat-factory] LocalOnly BLOCK (selected config): role={} external provider='{}' ({}) refused",
+            role,
+            provider.trim(),
+            label
+        );
+        return Err(local_only_refusal(&label));
+    }
+    enforce_local_only_inference(role, provider)
+}
+
+fn local_only_refusal(label: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Local-only privacy mode is active: this action needs external provider {label}. \
+         Switch to a local model (Ollama/LM Studio/etc.) or change privacy mode in Settings."
+    )
 }
 
 /// Egress spine (privacy epic S2, #4436): emit an [`EgressDescriptor`] for a

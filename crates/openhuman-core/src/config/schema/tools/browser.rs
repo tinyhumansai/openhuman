@@ -1,46 +1,8 @@
-//! Browser and computer-use config types.
+//! Browser config types.
 
 use super::super::defaults;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct BrowserComputerUseConfig {
-    #[serde(default = "default_browser_computer_use_endpoint")]
-    pub endpoint: String,
-    #[serde(default = "default_browser_computer_use_timeout_ms")]
-    pub timeout_ms: u64,
-    #[serde(default)]
-    pub allow_remote_endpoint: bool,
-    #[serde(default)]
-    pub window_allowlist: Vec<String>,
-    #[serde(default)]
-    pub max_coordinate_x: Option<i64>,
-    #[serde(default)]
-    pub max_coordinate_y: Option<i64>,
-}
-
-fn default_browser_computer_use_endpoint() -> String {
-    "http://127.0.0.1:8787/v1/actions".into()
-}
-
-fn default_browser_computer_use_timeout_ms() -> u64 {
-    15_000
-}
-
-impl Default for BrowserComputerUseConfig {
-    fn default() -> Self {
-        Self {
-            endpoint: default_browser_computer_use_endpoint(),
-            timeout_ms: default_browser_computer_use_timeout_ms(),
-            allow_remote_endpoint: false,
-            window_allowlist: Vec::new(),
-            max_coordinate_x: None,
-            max_coordinate_y: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -58,14 +20,6 @@ pub struct BrowserConfig {
     pub session_name: Option<String>,
     #[serde(default = "default_browser_backend")]
     pub backend: String,
-    #[serde(default = "default_true")]
-    pub native_headless: bool,
-    #[serde(default = "default_browser_webdriver_url")]
-    pub native_webdriver_url: String,
-    #[serde(default)]
-    pub native_chrome_path: Option<String>,
-    #[serde(default)]
-    pub computer_use: BrowserComputerUseConfig,
     /// Run Chrome without a visible window.
     #[serde(default = "default_true")]
     pub headless: bool,
@@ -100,6 +54,13 @@ pub struct BrowserConfig {
     /// agent's memory.
     #[serde(default = "default_true")]
     pub learn_from_tasks: bool,
+    /// An executable that answers one site's password, for the browser's
+    /// `{{keychain:<site>}}` placeholder (`tools::impl::browser::keychain`).
+    /// An absolute path, run as `<command> <page host>` with no shell; the
+    /// password is its standard output. Unset, the default, leaves the
+    /// placeholder off: a fill or type that carries one is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keychain_command: Option<String>,
 }
 
 /// Action kinds `[browser] unattended_actions` may name: the gated direct
@@ -179,10 +140,6 @@ fn default_browser_backend() -> String {
     "tinycomputer".into()
 }
 
-fn default_browser_webdriver_url() -> String {
-    "http://127.0.0.1:9515".into()
-}
-
 impl Default for BrowserConfig {
     fn default() -> Self {
         Self {
@@ -190,10 +147,6 @@ impl Default for BrowserConfig {
             allowed_domains: Vec::new(),
             session_name: None,
             backend: default_browser_backend(),
-            native_headless: default_true(),
-            native_webdriver_url: default_browser_webdriver_url(),
-            native_chrome_path: None,
-            computer_use: BrowserComputerUseConfig::default(),
             headless: true,
             viewport_width: default_viewport_width(),
             viewport_height: default_viewport_height(),
@@ -205,6 +158,7 @@ impl Default for BrowserConfig {
             task_timeout_secs: default_task_timeout_secs(),
             unattended_actions: Vec::new(),
             learn_from_tasks: true,
+            keychain_command: None,
         }
     }
 }

@@ -177,13 +177,15 @@ mod attestation_guard {
     fn the_current_attested_linux_release_library_is_accepted() {
         assert!(digest_is_pinned(
             record(),
-            "ca77309f2d5cdb6d13e56cb7fc44145507a333f55c6a31729979a2782a4ab3ae"
+            "6f073bc8c508a18ecbaeddf9291a336a1c492323f5881db06d371dfe1572d41f"
         ));
     }
 
     #[test]
     fn libraries_from_retired_releases_are_refused() {
         for digest in [
+            // v0.29.0, retired by the v0.30.0 pin
+            "ca77309f2d5cdb6d13e56cb7fc44145507a333f55c6a31729979a2782a4ab3ae",
             "06ebfd294c3e815e4fca25df608e2b37f9bfb493b74687562f93b9bd34d52760",
             "d2e663e465c6c245cbf9b37c037ae655db7df0f93a0df9b7fa17a28027ebaa9d",
             "2bd70433707c44dbfe6b3cc3b4cc835299fe951fcb375b49c940d8d3fc1d4061",
@@ -203,7 +205,7 @@ mod attestation_guard {
             assets: &[],
             ..*record()
         };
-        let current_library = "ca77309f2d5cdb6d13e56cb7fc44145507a333f55c6a31729979a2782a4ab3ae";
+        let current_library = "6f073bc8c508a18ecbaeddf9291a336a1c492323f5881db06d371dfe1572d41f";
         assert!(digest_is_pinned(record(), current_library));
         assert!(!digest_is_pinned(&unpinned_record, current_library));
     }
@@ -248,6 +250,158 @@ mod attestation_guard {
             "fixture must actually differ"
         );
         assert!(digest_is_pinned(record, &upper));
+    }
+}
+
+/// A wallet linked into the host executable (`[modules] source = "linked"`,
+/// `openhuman-modules-linked`) is attested by tinybus with the executable's own
+/// digest. The attestation these tests feed the gate is the one tinybus really
+/// issues: a static-link module answering to the wallet's bus name, admitted
+/// through `ModuleHost::attach_linked_with_config` on a private broker, read
+/// back over the bus exactly as `attested_proxy` reads it.
+mod linked_attestation {
+    use std::time::Duration;
+
+    use tinybus::attest::Attestation;
+    use tinybus::broker::Broker;
+    use tinybus::module::ModuleHost;
+    use tinybus::transport::memory::MemoryBus;
+    use tinybus::{BusName, Connection};
+
+    use super::super::{admit_attestation, WalletCallError};
+    use crate::modules::registry;
+
+    const NOT_PINNED: &str = "the loaded wallet module is not one of the artifacts this build \
+                              pinned, so it will not be sent key material";
+
+    mod fixture {
+        async fn setup(_: tinybus::Connection) -> tinybus::Result<()> {
+            Ok(())
+        }
+
+        tinybus_module::module_export_static! {
+            setup = setup,
+            worker_threads = 1,
+            provides = ["ai.tinyhumans.tinywallet.Wallet"],
+            methods = [],
+            signals = [],
+            requires = [],
+            optional = [],
+            lazy = false,
+        }
+    }
+
+    fn record() -> &'static crate::modules::ModuleRecord {
+        registry::find("tinywallet").expect("the tinywallet record is compiled in")
+    }
+
+    /// The digest tinybus attests a linked module with: this test binary's.
+    fn this_executable() -> String {
+        tinybus::module::sha256_file(std::env::current_exe().expect("test executable"))
+            .expect("test executable hashes")
+    }
+
+    /// What the broker says about a linked wallet, as a sender sees it.
+    async fn linked_wallet_attestation() -> Attestation {
+        let record = record();
+        let transport = MemoryBus::new();
+        let broker = Broker::new();
+        broker.spawn(transport.clone());
+        let modules = ModuleHost::new(broker);
+        let sender = Connection::connect(transport.connect().await.unwrap())
+            .await
+            .unwrap();
+        modules
+            .attach_linked_with_config(fixture::linked_module().unwrap(), serde_json::json!({}))
+            .expect("the linked fixture is admitted");
+        let name = BusName::new(record.bus_name).unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(attestation) = sender.attestation(name.clone()).await.unwrap() {
+                return attestation;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the linked wallet was never attested"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_wallet_linked_into_this_executable_is_sent_key_material() {
+        let attestation = linked_wallet_attestation().await;
+        let host_code = this_executable();
+        assert_eq!(attestation.name.as_str(), record().bus_name);
+        assert_eq!(
+            attestation.sha256, host_code,
+            "tinybus attests linked code with the executable's digest"
+        );
+        assert_eq!(attestation.library_sha256, None);
+
+        assert_eq!(
+            admit_attestation(record(), &attestation, Some(&host_code)),
+            Ok(())
+        );
+    }
+
+    #[tokio::test]
+    async fn the_gate_hashes_this_executable_exactly_as_tinybus_attests_linked_code() {
+        // If these ever drift, a linked wallet is refused again: the digest the
+        // gate recognizes must be the one tinybus puts in the attestation.
+        let attestation = linked_wallet_attestation().await;
+        assert_eq!(
+            super::super::host_executable_digest(),
+            Some(attestation.sha256.as_str())
+        );
+        // Cached: the second call answers the same value without rehashing.
+        assert_eq!(
+            super::super::host_executable_digest(),
+            Some(attestation.sha256.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn the_executable_digest_is_refused_when_this_binary_links_no_wallet() {
+        // A build that registered no linked tinywallet never accepts host code
+        // for it: the release pins are the only artifacts it can be sent to.
+        let attestation = linked_wallet_attestation().await;
+        assert_eq!(
+            admit_attestation(record(), &attestation, None),
+            Err(WalletCallError::Failed(NOT_PINNED.to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_digest_neither_pinned_nor_this_executable_is_refused() {
+        let attestation = Attestation {
+            sha256: "a".repeat(64),
+            ..linked_wallet_attestation().await
+        };
+        assert_eq!(
+            admit_attestation(record(), &attestation, Some(&this_executable())),
+            Err(WalletCallError::Failed(NOT_PINNED.to_string()))
+        );
+        let empty = Attestation {
+            sha256: String::new(),
+            ..attestation
+        };
+        assert_eq!(
+            admit_attestation(record(), &empty, Some(&this_executable())),
+            Err(WalletCallError::Failed(NOT_PINNED.to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn host_code_answering_to_another_name_is_refused() {
+        let attestation = Attestation {
+            name: BusName::new("ai.tinyhumans.tinydocs.Documents").unwrap(),
+            ..linked_wallet_attestation().await
+        };
+        assert!(matches!(
+            admit_attestation(record(), &attestation, Some(&this_executable())),
+            Err(WalletCallError::Failed(message)) if message.contains("rather than")
+        ));
     }
 }
 

@@ -186,10 +186,6 @@ pub fn solana_cluster() -> SolanaCluster {
 }
 
 // ---------------------------------------------------------------------------
-// Agent-tool facade (mirrors `pub mod tools`, re-exported via tools/mod.rs)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Controller registration (mirrors `schemas::{all_wallet_registered_controllers,
 // all_wallet_controller_schemas}`)
 // ---------------------------------------------------------------------------

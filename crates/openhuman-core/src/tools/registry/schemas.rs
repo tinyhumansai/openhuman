@@ -1,10 +1,10 @@
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::core::all::{
     BoundRegisteredController, ControllerEntry, ControllerFuture, RegisteredController,
 };
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 /// Declared controller schemas for the `tool_registry` namespace.
@@ -192,10 +192,6 @@ fn required_tool_id(params: &Map<String, Value>) -> Result<&str, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "tool_id must be a non-empty string".to_string())
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

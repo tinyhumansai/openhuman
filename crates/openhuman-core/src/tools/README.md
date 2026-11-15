@@ -124,7 +124,7 @@ step.
 | [`user_filter.rs`](./user_filter.rs) | `filter_tools_by_user_preference` and the UI toggle to tool-name map. |
 | [`host_extensions.rs`](./host_extensions.rs) | Readers over `tinytools`' erased host-extension slots: `pack_registry_handle`, `tool_call_id`. |
 | [`schemas.rs`](./schemas.rs), [`schemas/`](./schemas/) | The `tools.*` controllers: `registry.rs` (schemas and dispatch), `composio.rs`, `web_search.rs`. |
-| [`impl/`](impl/README.md) | Built-in tool families: `filesystem/` (the `FsGate` adapter only; the tools are `tinyagents_harness_tools::fs::filesystem`), `browser/`, `system/`, `network/`, `meta/`, and the `documents`-gated `document/` and `presentation/`. |
+| [`impl/`](impl/README.md) | Cross-cutting built-in tool families: `filesystem/` (the `FsGate` adapter only; the tools are `tinyagents_harness_tools::fs::filesystem`), `browser/`, `system/`, `network/`, and `meta/`. |
 | [`toolpacks/`](toolpacks/README.md) | On-demand tool disclosure (`use_skill`, pack catalog, guides) and `ToolGroups` / `GroupMode`. |
 | [`agent_policy/`](agent_policy/README.md) | Per-session tool boundary against a channel's permission ceiling. |
 | [`registry/`](registry/README.md) | Read-only discovery registry across MCP stdio, controller and connected MCP tools, plus policy diagnostics. |
@@ -144,7 +144,7 @@ Where the built-in tools come from:
 | `gitbooks_search`, `gitbooks_get_page`, `mcp_list_servers`, `mcp_list_tools`, `mcp_call_tool`, `mcp_<server>_<tool>` | [`impl/network/`](./impl/network/) (MCP tools behind `mcp`) |
 | `gmail_unsubscribe` | [`integrations/gmail/`](../integrations/gmail/) |
 | `browser`, `browser_open` | [`impl/browser/`](./impl/browser/) (behind `modules`) |
-| `generate_document`, `generate_presentation` | [`impl/document/`](./impl/document/), [`impl/presentation/`](./impl/presentation/) (behind `documents`) |
+| `generate_document`, `generate_presentation` | [`artifacts/tools/`](../artifacts/tools/) (behind `documents`) |
 | `web_search` and the other search roles | `crate::search::build_search_tools` |
 
 ## Key types and entry points

@@ -29,6 +29,7 @@ pub(crate) fn register_all(options: &InstallOptions, doctor_registration: Doctor
         crate::provider_oauth::OpenAiProviderCredentialSource::default(),
     ));
     crate::hosted_config::register();
+    crate::observability::register();
     client::register(options);
     crate::socket::register();
     devices::tunnel_client::register();

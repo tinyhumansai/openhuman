@@ -64,41 +64,50 @@ async fn resolve_user_master_inner(
         Some(outcome) => outcome,
         None => {
             use super::unattended_unlock::{answer_master_grant, mode_for, UnlockMode};
-            let gate = crate::security::approval::ApprovalGate::try_global()
-                .ok_or_else(|| SecurityError::Unavailable("secret approval unavailable".into()))?;
-            match mode_for(config) {
-                UnlockMode::Unattended => {
-                    answer_master_grant(
-                        &gate,
-                        MASTER_GRANT_TOOL,
-                        MASTER_GRANT_SUMMARY,
-                        registration_id,
-                    )
-                    .await
-                }
-                mode => {
-                    if mode == UnlockMode::IgnoredOnSaas {
-                        tracing::warn!(
+            match crate::security::approval::ApprovalGate::try_global() {
+                // No gate yet: only a library host's own authorisation can
+                // answer (`gate_host_grant.rs`); anything else stays refused.
+                None => crate::security::approval::gate::host_authorised_grant_without_gate(
+                    MASTER_GRANT_TOOL,
+                    MASTER_GRANT_SUMMARY,
+                    serde_json::json!({"registration_id": registration_id}),
+                )
+                .await
+                .ok_or_else(|| SecurityError::Unavailable("secret approval unavailable".into()))?,
+                Some(gate) => match mode_for(config) {
+                    UnlockMode::Unattended => {
+                        answer_master_grant(
+                            &gate,
+                            MASTER_GRANT_TOOL,
+                            MASTER_GRANT_SUMMARY,
+                            registration_id,
+                        )
+                        .await
+                    }
+                    mode => {
+                        if mode == UnlockMode::IgnoredOnSaas {
+                            tracing::warn!(
                             "[security::unattended_unlock] secrets.unattended_unlock is set but \
                              this is a SaaS core; the user must approve over WebChat, and an unlock \
                              with no WebChat route is refused"
                         );
-                    }
-                    if mode == UnlockMode::IgnoredWithoutOperatorKey {
-                        tracing::warn!(
+                        }
+                        if mode == UnlockMode::IgnoredWithoutOperatorKey {
+                            tracing::warn!(
                             "[security::unattended_unlock] secrets.unattended_unlock is set but the \
                              keyring master key was not supplied by the operator \
                              (OPENHUMAN_KEYRING_MASTER_KEY / OPENHUMAN_KEYRING_MASTER_KEY_FILE on a \
                              file or encrypted_file keyring); asking a person instead"
                         );
+                        }
+                        gate.intercept_forced(
+                            MASTER_GRANT_TOOL,
+                            MASTER_GRANT_SUMMARY,
+                            serde_json::json!({"registration_id": registration_id}),
+                        )
+                        .await
                     }
-                    gate.intercept_forced(
-                        MASTER_GRANT_TOOL,
-                        MASTER_GRANT_SUMMARY,
-                        serde_json::json!({"registration_id": registration_id}),
-                    )
-                    .await
-                }
+                },
             }
         }
     };

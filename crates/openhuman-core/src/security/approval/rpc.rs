@@ -19,6 +19,32 @@ use super::types::{
 /// writing unbounded rows.
 const MAX_PREAUTHORIZE_TOOLS: usize = 100;
 
+/// Apply a decision for `tenant` without blocking the calling runtime.
+///
+/// [`ApprovalGate::decide_as`] blocks on the engine, and the engine's decision
+/// waits for the parked call's own check to release its subject's audit stream
+/// (`native/engine_impl.rs`). That check finishes on the task that parked it,
+/// which may be on the runtime serving this RPC (always so on a current-thread
+/// runtime). Deciding inline would stall the thread that has to finish it, so
+/// the decision runs on a blocking thread.
+pub(crate) async fn decide_off_the_caller_runtime(
+    gate: std::sync::Arc<ApprovalGate>,
+    tenant: crate::core::runtime::Tenant,
+    agent: Option<String>,
+    request_id: String,
+    decision: ApprovalDecision,
+) -> anyhow::Result<Option<PendingApproval>> {
+    tracing::debug!(
+        request_id = %request_id,
+        decision = decision.as_str(),
+        "[rpc:approval_decide] deciding on a blocking thread"
+    );
+    crate::core::runtime::DispatchCtx::ambient()
+        .spawn_blocking(move || gate.decide_as(&tenant, agent.as_deref(), &request_id, decision))
+        .await
+        .map_err(|error| anyhow!("the approval decision worker failed: {error}"))?
+}
+
 /// Read the host-aware approval-gate boot decision so the UI banner can
 /// render the right state on first paint (rather than waiting for a
 /// connected socket subscriber to catch a transient boot-time event).
@@ -264,7 +290,14 @@ pub async fn approval_decide(
         );
         anyhow!(error)
     })?;
-    let decided = gate.decide_as(&tenant, agent_id, request_id, decision);
+    let decided = decide_off_the_caller_runtime(
+        std::sync::Arc::clone(&gate),
+        tenant,
+        agent_id.map(str::to_owned),
+        request_id.to_owned(),
+        decision,
+    )
+    .await;
     let decided = match decided {
         Ok(row) => row,
         Err(err) => {

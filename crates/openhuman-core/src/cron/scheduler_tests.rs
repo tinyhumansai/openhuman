@@ -159,6 +159,8 @@ mod headless_descendants_tests;
 mod host_agent_tests;
 #[path = "scheduler_transcript_isolation_tests.rs"]
 mod transcript_isolation_tests;
+#[path = "scheduler_workspace_root_tests.rs"]
+mod workspace_root_tests;
 
 // ── A6: the retry loop must honour its own permanent-failure classifiers ─────
 //

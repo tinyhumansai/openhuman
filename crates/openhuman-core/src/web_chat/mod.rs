@@ -122,9 +122,7 @@ pub(crate) use turn_events::sentry_suppression_reason;
 // the sibling test file still imports them via `super::`).
 #[cfg(any(test, debug_assertions))]
 #[allow(unused_imports)]
-pub(crate) use schemas::{
-    json_output, optional_bool, optional_f64, optional_string, optional_u64, required_string,
-};
+pub(crate) use schemas::{optional_bool, optional_f64, optional_u64};
 // The cron scheduler routes origin deliveries through this in every build.
 pub(crate) use session::pick_target_agent_id;
 #[cfg(any(test, debug_assertions))]

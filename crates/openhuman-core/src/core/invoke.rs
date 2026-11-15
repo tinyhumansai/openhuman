@@ -9,10 +9,11 @@
 
 use serde_json::Value;
 
-use super::session_expiry::{is_session_expired_error, is_unconfirmed_unauthorized_error};
 use crate::core::all;
+use crate::core::observability::is_session_expired_error;
 use crate::core::runtime::{CoreContext, DispatchCtx};
 use crate::core::types::AppState;
+use crate::core::StructuredRpcError;
 
 /// Invokes a JSON-RPC method by name.
 ///
@@ -171,18 +172,16 @@ fn session_failure_outcome(
     current_token: Option<&str>,
 ) -> SessionFailureOutcome {
     if api_key {
-        return SessionFailureOutcome::Replace {
-            reason: "api_key_credential",
-            message: "Backend request failed while using an API-key credential".to_string(),
-        };
+        return replace(
+            msg,
+            "api_key_credential",
+            "Backend request failed while using an API-key credential".to_string(),
+        );
     }
     if let Some(message) = translate_local_session_error(msg, local) {
         // The RPC error is also observed by the renderer's auth classifier.
         // Keep the background hosted probe recoverable.
-        return SessionFailureOutcome::Replace {
-            reason: "local_offline_credential",
-            message,
-        };
+        return replace(msg, "local_offline_credential", message);
     }
     if current_token.is_none() {
         // Nothing was stored or sendable (no session, no API key): this is a
@@ -196,10 +195,61 @@ fn session_failure_outcome(
     }
     // Avoid returning an auth-expired marker that would let the renderer sign
     // out a token this request may not have used.
-    SessionFailureOutcome::Replace {
-        reason: "credential_provenance_unavailable",
-        message: "Backend request failed; credential provenance could not be verified".to_string(),
-    }
+    replace(
+        msg,
+        "credential_provenance_unavailable",
+        "Backend request failed; credential provenance could not be verified".to_string(),
+    )
+}
+
+/// A [`SessionFailureOutcome::Replace`] whose error says `message` and keeps
+/// the original [`StructuredRpcError`] `data` unless it carries a sign-out
+/// marker. Codes such as memory's `UNAUTHORIZED` drive specific UI and never
+/// sign out, so dropping them would only cost the renderer its branch.
+fn replace(original: &str, reason: &'static str, message: String) -> SessionFailureOutcome {
+    let kept = StructuredRpcError::decode(original).and_then(|envelope| {
+        let data = envelope
+            .data
+            .filter(|data| !carries_sign_out_marker(&data.to_string()))?;
+        Some((data, envelope.expected_user_state))
+    });
+    log::debug!(
+        "[invoke][session-failure] replacing auth-expired error reason={reason} structured_data={}",
+        if kept.is_some() {
+            "kept"
+        } else {
+            "dropped_or_absent"
+        }
+    );
+    let message = match kept {
+        Some((data, expected_user_state)) => StructuredRpcError {
+            message,
+            data: Some(data),
+            expected_user_state,
+        }
+        .encode(),
+        None => message,
+    };
+    SessionFailureOutcome::Replace { reason, message }
+}
+
+/// Whether `text` holds anything that reads as "session expired, sign out":
+/// [`is_session_expired_error`], or a marker the renderer's auth classifier
+/// (`classifyRpcError` / `classifyAuthExpiredReason` in
+/// `app/src/services/coreRpcClient.ts`) matches case-insensitively —
+/// `Session expired`, `SESSION_EXPIRED`, `no backend session token`,
+/// `session jwt required`.
+fn carries_sign_out_marker(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    is_session_expired_error(text)
+        || [
+            "session expired",
+            "session_expired",
+            "no backend session token",
+            "session jwt required",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 fn request_session_failure_is_actionable(
@@ -227,6 +277,20 @@ fn translate_local_session_error(msg: &str, credential_is_local: bool) -> Option
             crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
         )
     })
+}
+
+/// Detect auth-looking failures that are not specific enough to clear the
+/// session. This is only for diagnostics; it must not feed the
+/// `SessionExpired` publish path.
+///
+/// Matches a generic `401 Unauthorized` OR a bare `"invalid token"` string,
+/// either of which can come from BYO-key providers, Composio, channels, or
+/// other scoped downstream calls. Used exclusively for diagnostic logging in
+/// [`invoke_method`] so provider auth failures are visible in the logs without
+/// being misclassified as session expiry.
+fn is_unconfirmed_unauthorized_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    (lower.contains("401") && lower.contains("unauthorized")) || lower.contains("invalid token")
 }
 
 /// Internal method invocation logic.

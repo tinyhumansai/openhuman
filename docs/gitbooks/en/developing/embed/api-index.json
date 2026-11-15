@@ -50,7 +50,6 @@
     "CronReply",
     "CronSweepReport",
     "DEFAULT_MAX_AGENTS",
-    "DaemonConfig",
     "DefaultsInfo",
     "DefinitionBase",
     "DirectProfileProvider",

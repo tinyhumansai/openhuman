@@ -97,6 +97,8 @@ pub(crate) struct HostOperationContext {
     /// [`OpenHumanRunContext::approval`](super::OpenHumanRunContext::approval).
     pub(crate) approval: crate::security::approval::ApprovalTurnContext,
     pub(crate) sandbox_mode: Option<SandboxMode>,
+    /// Whether the run's definition opted its sandboxed shell into a files-only jail.
+    pub(crate) sandbox_filesystem_only: bool,
     /// The agent definition the run's parent execution context belongs to, for
     /// tools that act on behalf of the spawning agent when no memory identity
     /// is scoped (see `memory::tools::CallFacts::gather`).
@@ -201,6 +203,20 @@ pub(crate) fn sandbox_mode_for_tool(
         })
         .and_then(|context| context.state::<HostOperationContext>())
         .and_then(|host| host.sandbox_mode)
+}
+
+/// Whether the run's own definition opted its sandboxed shell into a files-only
+/// jail (`AgentExt::sandbox_filesystem_only`). Direct tool dispatch never has.
+pub(crate) fn sandbox_filesystem_only_for_tool(
+    context: Option<&dyn tinytools::ToolRunContext>,
+) -> bool {
+    context
+        .and_then(tinytools::ToolRunContext::host_extension)
+        .and_then(|extension| {
+            extension.downcast_ref::<tinyagents_harness::tool::ToolExecutionContext>()
+        })
+        .and_then(|context| context.state::<HostOperationContext>())
+        .is_some_and(|host| host.sandbox_filesystem_only)
 }
 
 /// Reads the run's approval context from the explicit tool carrier. Direct tool

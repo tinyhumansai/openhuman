@@ -14,11 +14,10 @@ use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::core::Outcome;
 use crate::security::{SecurityPolicy, ToolOperation};
+use tinymcp_bus::ui::{is_ui_uri, resource_from_contents, UiResource};
 
 use super::cache;
 use super::port::UiServerPort;
-use super::resolve::{is_ui_uri, resource_from_contents};
-use super::types::UiResource;
 
 fn require(value: Option<String>, field: &str) -> Result<String, String> {
     value

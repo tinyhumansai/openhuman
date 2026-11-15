@@ -239,13 +239,6 @@
   },
   {
     "rule": "openhuman-task-local",
-    "path": "crates/openhuman-core/src/web_chat/ops/turn_guards.rs",
-    "line": 254,
-    "text": "crate::core::runtime::turn_origin::with_origin(",
-    "occurrence": 1
-  },
-  {
-    "rule": "openhuman-task-local",
     "path": "crates/openhuman-embed/src/turn_control.rs",
     "line": 420,
     "text": "openhuman_core::core::runtime::turn_origin::with_origin(origin, dispatch).await",

@@ -269,7 +269,7 @@ fn cli_adapters() -> &'static [RegisteredCliAdapter] {
             // dispatcher and prints JSON.
             RegisteredCliAdapter {
                 namespace: "subsystems",
-                handler: crate::core::subsystems_cli::run_subsystems_command,
+                handler: crate::memory::status::run_subsystems_command,
             },
         ]
     })
@@ -367,17 +367,17 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         crate::platform::health::all_health_registered_controllers(),
     );
     // Kernel subsystem/driver bindings: slot, bound driver, class, health,
-    // contract version, capabilities (docs/specs/kernel.md §6 item 6). The one
-    // controller registered from `crates/openhuman-core/src/core/` — it is a kernel binding table
-    // with no `crates/openhuman-core/src/` family of its own, so it is tagged `Platform`
-    // rather than earning a `DomainGroup` variant for a single read-only
-    // function. Consequence: like `health`, it is absent under
-    // `DomainSet::harness()`, while `memory.provider_status` (a `Memory`
-    // family method) stays reachable there.
+    // contract version, capabilities (docs/specs/kernel.md §6 item 6).
+    // Memory is the only slot, so `memory::status` owns it (RPC and CLI
+    // table), but the table is a kernel binding view rather than a memory
+    // operation: it stays tagged `Platform` instead of `Memory` or a
+    // `DomainGroup` variant of its own. Consequence:
+    // like `health`, it is absent under `DomainSet::harness()`, while
+    // `memory.provider_status` (a `Memory` family method) stays reachable there.
     push(
         &mut controllers,
         DomainGroup::Platform,
-        crate::core::subsystem::all_subsystems_registered_controllers(),
+        crate::memory::status::all_subsystems_registered_controllers(),
     );
     // Diagnostic tools
     push_entries(

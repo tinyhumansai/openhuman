@@ -163,7 +163,7 @@ impl McpConfiguredClient {
 
     /// Scrubs configured credentials from static remote tool metadata inside
     /// TinyMCP before the host screens or presents that metadata.
-    pub(crate) async fn scrub_static_tools(
+    async fn scrub_static_tools(
         &self,
         config: &McpClientConfig,
         server: &str,
@@ -178,6 +178,71 @@ impl McpConfiguredClient {
             },),
         )
         .await
+    }
+
+    /// A configured static server's tools as an agent may see them: listed
+    /// live, scrubbed of configured credentials, then screened by
+    /// [`crate::mcp::registry::tools_safe_for_agent`].
+    ///
+    /// Returns the scrubbed remote definitions that passed the screen, in
+    /// listing order, with their `_meta` and annotations intact.
+    ///
+    /// # Errors
+    ///
+    /// Names the step that failed, so each caller keeps its own message.
+    pub(crate) async fn safe_static_tools(
+        &self,
+        config: &McpClientConfig,
+        server: &str,
+    ) -> Result<Vec<McpRemoteTool>, SafeStaticToolsError> {
+        let listed: Vec<McpRemoteTool> = self
+            .call(config, names::methods::STATIC_LIST_TOOLS, (server,))
+            .await
+            .map_err(|error| {
+                log::debug!(
+                    "[mcp] safe_static_tools list failed server={server} method={} error={error:?}",
+                    names::methods::STATIC_LIST_TOOLS
+                );
+                SafeStaticToolsError::List(error)
+            })?;
+        self.screen_static_tools(config, server, listed)
+            .await
+            .map_err(|error| {
+                log::debug!(
+                    "[mcp] safe_static_tools scrub failed server={server} method={} error={error:?}",
+                    names::methods::STATIC_SCRUB_TOOLS
+                );
+                SafeStaticToolsError::Scrub(error)
+            })
+    }
+
+    /// The scrub and screen half of [`Self::safe_static_tools`], for a listing
+    /// the caller already holds.
+    async fn screen_static_tools(
+        &self,
+        config: &McpClientConfig,
+        server: &str,
+        listed: Vec<McpRemoteTool>,
+    ) -> Result<Vec<McpRemoteTool>, ModuleCallError> {
+        let scrubbed = self.scrub_static_tools(config, server, listed).await?;
+        let safe = crate::mcp::registry::tools_safe_for_agent(
+            server,
+            scrubbed.iter().map(screened_definition).collect(),
+        )
+        .await;
+        // The screen keeps a subsequence of its input, so one ordered walk
+        // pairs each kept definition with the remote tool it came from.
+        let mut safe = safe.into_iter().peekable();
+        Ok(scrubbed
+            .into_iter()
+            .filter(|tool| {
+                let kept = safe.peek() == Some(&screened_definition(tool));
+                if kept {
+                    safe.next();
+                }
+                kept
+            })
+            .collect())
     }
 
     pub(crate) async fn validate_server_arguments(
@@ -275,22 +340,12 @@ impl McpConfiguredClient {
                         .await?
                 }
             };
-            let tools: Vec<McpRemoteTool> = client
-                .scrub_static_tools(&client_config, &server.name, tools)
-                .await?;
-            let tools = crate::mcp::registry::tools_safe_for_agent(
-                &server.name,
-                tools
-                    .into_iter()
-                    .map(|tool| tinymcp_bus::McpTool {
-                        name: tool.name,
-                        description: tool.description.or(tool.title),
-                        input_schema: tool.input_schema,
-                        meta: None,
-                    })
-                    .collect(),
-            )
-            .await;
+            let tools = client
+                .screen_static_tools(&client_config, &server.name, tools)
+                .await?
+                .iter()
+                .map(screened_definition)
+                .collect();
             sources.push(tinymcp_bus::McpToolSourceSpec {
                 server_id: server.name.clone(),
                 label: server.name.clone(),
@@ -444,6 +499,26 @@ fn current_agent_context_is_removed() -> bool {
             .host_overrides()
             .and_then(|overrides| overrides.approval_scope())
             .is_some_and(|scope| scope.is_closed())
+}
+
+/// The step of [`McpConfiguredClient::safe_static_tools`] that failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SafeStaticToolsError {
+    /// Listing the server's tools failed.
+    List(ModuleCallError),
+    /// Scrubbing the listed metadata failed.
+    Scrub(ModuleCallError),
+}
+
+/// The definition the prompt-injection screen sees for one remote tool: its
+/// raw description (else title) and schema, without `_meta`.
+pub(crate) fn screened_definition(tool: &McpRemoteTool) -> tinymcp_bus::McpTool {
+    tinymcp_bus::McpTool {
+        name: tool.name.clone(),
+        description: tool.description.clone().or_else(|| tool.title.clone()),
+        input_schema: tool.input_schema.clone(),
+        meta: None,
+    }
 }
 
 #[cfg(test)]

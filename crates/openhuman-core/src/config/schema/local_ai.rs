@@ -69,10 +69,8 @@ pub struct LocalAiConfig {
     pub tts_provider: String,
     #[serde(default = "default_autosummary_debounce_ms")]
     pub autosummary_debounce_ms: u64,
-    #[serde(default)]
-    pub selected_tier: Option<String>,
     /// Explicit MVP opt-in marker. Bootstrap disables local AI unless this is
-    /// `true`, regardless of any prior `selected_tier` value. Existing installs
+    /// `true`, regardless of any prior tier selection. Existing installs
     /// (upgrading from pre-MVP) default to `false` and must re-opt-in from
     /// Settings. Set by `apply_preset` on any non-disabled tier.
     #[serde(default)]
@@ -94,6 +92,17 @@ pub struct LocalAiConfig {
     /// All default to `false` (cloud path).
     #[serde(default)]
     pub usage: LocalAiUsage,
+    /// Send native `tools` to the local runtime and read its structured tool
+    /// calls, instead of prompting the JSON-in-tag text protocol.
+    ///
+    /// Off by default: many models on Ollama / LM Studio reject `tools` or
+    /// answer them badly. Turn it on for an endpoint whose model calls tools
+    /// natively, typically a hosted OpenAI-compatible gateway behind
+    /// `local-openai`. Such a gateway may also parse `<tool_call>` text in the
+    /// model's own template and hand the JSON-in-tag body back as the tool's
+    /// *name*, so the text protocol is not a safe fallback there.
+    #[serde(default)]
+    pub native_tool_calling: bool,
 }
 
 impl std::fmt::Debug for LocalAiConfig {
@@ -112,12 +121,12 @@ impl std::fmt::Debug for LocalAiConfig {
             .field("tts_voice_id", &self.tts_voice_id)
             .field("tts_provider", &self.tts_provider)
             .field("autosummary_debounce_ms", &self.autosummary_debounce_ms)
-            .field("selected_tier", &self.selected_tier)
             .field("opt_in_confirmed", &self.opt_in_confirmed)
             .field("ollama_binary_path", &self.ollama_binary_path)
             .field("voice_llm_cleanup_enabled", &self.voice_llm_cleanup_enabled)
             .field("num_ctx", &self.num_ctx)
             .field("usage", &self.usage)
+            .field("native_tool_calling", &self.native_tool_calling)
             .finish()
     }
 }
@@ -196,12 +205,12 @@ impl Default for LocalAiConfig {
             tts_voice_id: default_tts_voice_id(),
             tts_provider: default_tts_provider(),
             autosummary_debounce_ms: default_autosummary_debounce_ms(),
-            selected_tier: None,
             opt_in_confirmed: false,
             ollama_binary_path: None,
             voice_llm_cleanup_enabled: default_voice_llm_cleanup_enabled(),
             num_ctx: None,
             usage: LocalAiUsage::default(),
+            native_tool_calling: false,
         }
     }
 }

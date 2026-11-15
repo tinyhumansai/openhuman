@@ -3,10 +3,10 @@
 //! `web_queue_clear`.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::{json_output, optional_string, required_string, to_json};
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use super::ops::{
@@ -392,24 +392,6 @@ fn deserialize_params<T: serde::de::DeserializeOwned>(
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
 }
 
-pub(crate) fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
-    }
-}
-
-pub(crate) fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
-}
-
 pub(crate) fn optional_f64(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
@@ -435,17 +417,4 @@ pub(crate) fn optional_u64(name: &'static str, comment: &'static str) -> FieldSc
         comment,
         required: false,
     }
-}
-
-pub(crate) fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
-    }
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }

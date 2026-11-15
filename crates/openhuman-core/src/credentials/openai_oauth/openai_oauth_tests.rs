@@ -113,7 +113,10 @@ async fn concurrent_refresh_persists_rotated_token_and_stable_metadata_once() {
     assert_eq!(second.unwrap().unwrap().access_token, "fresh-access");
     assert_eq!(source.refresh_count.load(Ordering::SeqCst), 1);
 
-    let profile = profiles
+    // Read back through the config-bound store the refresh writes with: under
+    // `security-module` it keeps the rotated secrets in the keyring, and a
+    // document-only store never surfaces a keyring-owned profile.
+    let profile = AuthProfilesStore::new_with_config(tmp.path(), false, &config)
         .load()
         .await
         .unwrap()

@@ -51,23 +51,37 @@ pub(crate) trait BoxFiles: Send + Sync {
 
 /// The process's own boxes, for the call running under `ctx`.
 pub(crate) struct SandboxBoxFiles {
-    ctx: DispatchCtx,
+    /// Weak: `PerCallTool` also builds a prototype of the tool when the belt
+    /// is assembled, under the building request's context, and that prototype
+    /// lives as long as the belt. A cached chat session keeps its belt in its
+    /// tenant's own state slots, so a strong context would keep the tenant in
+    /// use (`CoreContext::tenant_in_use`) and its profile slot never frees.
+    core: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
 }
 
 impl SandboxBoxFiles {
     pub(crate) fn new(ctx: DispatchCtx) -> Self {
-        Self { ctx }
+        Self {
+            core: ctx.downgrade(),
+        }
+    }
+
+    /// The context the call runs under: the one this was built for while it
+    /// lives, else the calling task's own.
+    fn ctx(&self) -> DispatchCtx {
+        DispatchCtx::from_weak(self.core.as_ref())
     }
 }
 
 #[async_trait]
 impl BoxFiles for SandboxBoxFiles {
     async fn work_folder(&self) -> Result<Option<&'static str>, BoxError> {
-        let config =
-            self.ctx.load_config().await.map_err(|error| {
-                BoxError::Driver(format!("cannot read the configuration: {error}"))
-            })?;
-        Ok(crate::sandbox::ops::sandbox_box_workdir(&self.ctx, &config))
+        let ctx = self.ctx();
+        let config = ctx
+            .load_config()
+            .await
+            .map_err(|error| BoxError::Driver(format!("cannot read the configuration: {error}")))?;
+        Ok(crate::sandbox::ops::sandbox_box_workdir(&ctx, &config))
     }
 
     async fn read(
@@ -78,7 +92,7 @@ impl BoxFiles for SandboxBoxFiles {
     ) -> Result<Vec<u8>, BoxError> {
         let tenant = crate::sandbox::boxes::tenant_for_box(tenant)?;
         let config =
-            self.ctx.load_config().await.map_err(|error| {
+            self.ctx().load_config().await.map_err(|error| {
                 BoxError::Driver(format!("cannot read the configuration: {error}"))
             })?;
         crate::sandbox::read_box_file(Ok(tenant), &config, path, max_bytes).await

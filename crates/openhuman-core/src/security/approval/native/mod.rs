@@ -13,6 +13,7 @@
 //! | File | Role |
 //! | --- | --- |
 //! | `engine.rs` | `NativeEngine`, the module calls |
+//! | `engine_orphans.rs` | denying a pending orphan an earlier launch left |
 //! | `scopes.rs` | subject registration, posture and grants |
 //! | `audit_stream.rs` | a subject's audit stream, leased by the sandbox planner |
 //! | `rows.rs` | the document-port store behind `Load`, `Cas` and `Append` |

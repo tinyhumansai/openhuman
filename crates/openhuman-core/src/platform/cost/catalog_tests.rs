@@ -120,12 +120,9 @@ fn minimax_rows_and_vision_normalization() {
         lookup("minimax/minimax-m3").unwrap().context_window,
         1_000_000
     );
-    assert_eq!(
-        lookup("minimax-m2.7-highspeed")
-            .unwrap()
-            .output_per_mtok_usd,
-        2.40
-    );
+    assert_eq!(lookup("MiniMax-M3").unwrap().output_per_mtok_usd, 1.20);
+    // Retired upstream; it must not borrow M3's rates.
+    assert!(lookup("minimax-m2.7-highspeed").is_none());
     assert!(model_accepts_image_input("MiniMax/minimax-m3:latest"));
     assert!(default_registry_entries()
         .iter()

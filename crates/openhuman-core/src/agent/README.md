@@ -313,7 +313,7 @@ Definitions, prompts and context:
 | `prompts/` | Bundled identity files, `SystemPromptBuilder`, prompt sections ([README](prompts/README.md)) |
 | `context/` | Shared TinyAgents context defaults ([README](context/README.md)) |
 | [`context_breakdown.rs`](./context_breakdown.rs) | `agent.context_breakdown`: system/tools/history split of prompt size for the UI |
-| `debug/` | Dumps the exact system prompt and prompt-size report for an agent |
+| [`cli.rs`](./cli.rs), [`cli/debug/`](./cli/debug/) | `openhuman agent dump-prompt / dump-all / prompt-size / list`; `cli/debug/` dumps the exact system prompt and prompt-size report for an agent, which `agent.context_breakdown` also reuses |
 | [`../agent_registry/library/`](../agent_registry/library/) | Display-safe projection of definitions (`AgentDefinitionDisplay`) |
 
 Persistence, setup and RPC:

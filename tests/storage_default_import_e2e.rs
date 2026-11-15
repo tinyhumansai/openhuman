@@ -224,3 +224,53 @@ fn serve_on_an_explicit_url_imports_legacy_approvals_without_touching_the_file()
         "an explicit URL replaces the workspace default"
     );
 }
+
+/// The id the module listed the request an earlier version left waiting under.
+fn carried_over_request_id(base: &str) -> String {
+    let listed = rpc(base, "openhuman.approval_list_pending", json!({}));
+    listed["result"]["result"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.to_string().contains("still-pending"))
+        })
+        .and_then(|row| row["request_id"].as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| panic!("the carried-over request is listed: {listed}"))
+}
+
+#[test]
+fn a_request_an_earlier_version_left_waiting_can_be_denied_but_never_approved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("workspace");
+    legacy_workspace(&workspace);
+
+    let (server, base) = start(tmp.path(), &workspace, None);
+    let request_id = carried_over_request_id(&base);
+
+    // Nothing in this launch can run the call it was for, so approving it is
+    // refused and it stays listed.
+    let approved = rpc(
+        &base,
+        "openhuman.approval_decide",
+        json!({ "request_id": request_id, "decision": "approve_once" }),
+    );
+    assert!(approved.get("error").is_some(), "{approved}");
+    assert_eq!(carried_over_request_id(&base), request_id);
+
+    // A person can dismiss it.
+    let denied = rpc(
+        &base,
+        "openhuman.approval_decide",
+        json!({ "request_id": request_id, "decision": "deny" }),
+    );
+    assert!(denied.get("error").is_none(), "{denied}");
+    let listed = rpc(&base, "openhuman.approval_list_pending", json!({})).to_string();
+    assert!(!listed.contains("still-pending"), "{listed}");
+    drop(server);
+
+    // The denial is durable: the next launch does not list it again.
+    let (_server, base) = start(tmp.path(), &workspace, None);
+    let listed = rpc(&base, "openhuman.approval_list_pending", json!({})).to_string();
+    assert!(!listed.contains("still-pending"), "{listed}");
+}

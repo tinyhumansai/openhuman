@@ -80,6 +80,9 @@ impl KeyringConsent {
             crate::security::keyring_consent::operation_approval::request_approval(request).await;
         Ok(KeyringConsentResponse2 {
             outcome: keyring_consent_outcome(approved),
+            // TinySecurity 0.21 read grants are opt-in (`read_grant`); this host
+            // configures none, so it is offered none and grants none.
+            grant: None,
         })
     }
 }

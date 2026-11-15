@@ -28,6 +28,20 @@
     "occurrence": 1
   },
   {
+    "rule": "ambient-config",
+    "path": "crates/openhuman-core/src/artifacts/tools/document_engine.rs",
+    "line": 41,
+    "text": "let config = match crate::config::Config::load_or_init().await {",
+    "occurrence": 1
+  },
+  {
+    "rule": "ambient-config",
+    "path": "crates/openhuman-core/src/artifacts/tools/presentation_engine.rs",
+    "line": 63,
+    "text": "loaded_config = match crate::config::Config::load_or_init().await {",
+    "occurrence": 1
+  },
+  {
     "rule": "bare-spawn",
     "path": "crates/openhuman-core/src/channels/runtime/dispatch/processor/progressive.rs",
     "line": 223,
@@ -204,14 +218,14 @@
   },
   {
     "rule": "env-mutation",
-    "path": "crates/openhuman-core/src/core/agent_cli.rs",
+    "path": "crates/openhuman-core/src/agent/cli.rs",
     "line": 726,
     "text": "std::env::set_var(\"RUST_LOG\", \"error\");",
     "occurrence": 1
   },
   {
     "rule": "ambient-config",
-    "path": "crates/openhuman-core/src/core/agent_cli/debug/mod.rs",
+    "path": "crates/openhuman-core/src/agent/cli/debug/mod.rs",
     "line": 165,
     "text": "Config::load_or_init()",
     "occurrence": 1
@@ -814,7 +828,7 @@
   {
     "rule": "bare-spawn",
     "path": "crates/openhuman-core/src/storage/import_state.rs",
-    "line": 457,
+    "line": 443,
     "text": "std::thread::spawn(move || {",
     "occurrence": 1
   },
@@ -917,20 +931,6 @@
     "occurrence": 1
   },
   {
-    "rule": "ambient-config",
-    "path": "crates/openhuman-core/src/tools/impl/document/engine.rs",
-    "line": 33,
-    "text": "let config = match crate::config::Config::load_or_init().await {",
-    "occurrence": 1
-  },
-  {
-    "rule": "ambient-config",
-    "path": "crates/openhuman-core/src/tools/impl/presentation/engine.rs",
-    "line": 63,
-    "text": "loaded_config = match crate::config::Config::load_or_init().await {",
-    "occurrence": 1
-  },
-  {
     "rule": "bare-spawn",
     "path": "crates/openhuman-core/src/tools/impl/system/exec_adapters.rs",
     "line": 133,
@@ -999,27 +999,6 @@
     "line": 108,
     "text": "None => std::env::remove_var(name),",
     "occurrence": 1
-  },
-  {
-    "rule": "bare-spawn",
-    "path": "crates/openhuman-core/src/web_chat/ops/parallel_turn.rs",
-    "line": 56,
-    "text": "let handle = tokio::spawn(crate::core::runtime::context::CoreContext::propagate(",
-    "occurrence": 1
-  },
-  {
-    "rule": "bare-spawn",
-    "path": "crates/openhuman-core/src/web_chat/ops/parallel_turn.rs",
-    "line": 253,
-    "text": "tokio::spawn(async move {",
-    "occurrence": 1
-  },
-  {
-    "rule": "bare-spawn",
-    "path": "crates/openhuman-core/src/web_chat/ops/parallel_turn.rs",
-    "line": 290,
-    "text": "tokio::spawn(async move {",
-    "occurrence": 2
   },
   {
     "rule": "bare-spawn",

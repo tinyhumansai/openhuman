@@ -59,7 +59,7 @@ impl Cleanups {
 
 /// A pending cleanup; dropping it (the cleanup finished, or its task ended)
 /// lifts the hold on its owner.
-struct CleanupTicket {
+pub(super) struct CleanupTicket {
     cleanups: Arc<Cleanups>,
     owner: Owner,
 }

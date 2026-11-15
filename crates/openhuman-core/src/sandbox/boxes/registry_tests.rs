@@ -1,5 +1,6 @@
 use super::*;
 use crate::sandbox::boxes::scripted_driver::{ok_output, Call, ExecStep, ScriptedDriver};
+use crate::sandbox::boxes::ModuleConfig;
 use std::collections::BTreeMap;
 use tokio::sync::Notify;
 
@@ -20,6 +21,7 @@ fn settings() -> BoxSettings {
         memory_bytes: 256 * 1024 * 1024,
         workdir: "/sandbox".into(),
         owner_scope: OwnerScope::default(),
+        module: ModuleConfig::default(),
     }
 }
 
@@ -93,6 +95,28 @@ fn deadlines_round_up_to_whole_seconds_of_at_least_one() {
     assert_eq!(whole_seconds(Duration::from_millis(1_500)), 2);
     assert_eq!(whole_seconds(Duration::from_secs(30)), 30);
     assert_eq!(whole_seconds(Duration::ZERO), 1);
+}
+
+/// The configuration a command's call brought reaches every driver step made
+/// for it, its create and its exec, so a driver reaches its backend with that
+/// call's configuration rather than whichever call came last.
+#[tokio::test(start_paused = true)]
+async fn every_driver_step_gets_the_call_it_serves() {
+    let driver = ScriptedDriver::new();
+    let boxes = registry(&driver, 10);
+    let module = ModuleConfig::new(&crate::config::Config::default());
+    let served = BoxSettings {
+        module: module.clone(),
+        ..settings()
+    };
+
+    boxes
+        .exec(&user("u1"), &served, &request("true"))
+        .await
+        .unwrap();
+
+    assert_eq!(driver.calls()[0], Call::Create(served, None));
+    assert_eq!(driver.last_exec().unwrap().module, module);
 }
 
 #[tokio::test(start_paused = true)]

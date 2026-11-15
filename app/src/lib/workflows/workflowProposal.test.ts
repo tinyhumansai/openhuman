@@ -11,6 +11,7 @@ import {
 const proposalPayload = (name: string) => ({
   type: 'workflow_proposal',
   persisted: false,
+  proposal_id: 'proposal-1',
   name,
   graph: { nodes: [], edges: [] },
   require_approval: true,
@@ -39,6 +40,7 @@ describe('parseWorkflowProposal / coerceWorkflowProposal', () => {
     const proposal = parseWorkflowProposal(JSON.stringify(proposalPayload('Daily X Trending')));
     expect(proposal).not.toBeNull();
     expect(proposal?.name).toBe('Daily X Trending');
+    expect(proposal?.proposalId).toBe('proposal-1');
     expect(proposal?.requireApproval).toBe(true);
     expect(proposal?.summary.trigger).toBe('schedule: 0 9 * * *');
     expect(proposal?.summary.steps).toEqual([

@@ -608,7 +608,7 @@ pub async fn store_cortexdb_key(config: &Config, key: &str) -> Result<()> {
             true,
         )
         .await
-        .map_err(|error| Error::Engine(format!("storing the API key failed: {error}")))?;
+        .map_err(|error| Error::Engine(format!("storing the API key failed: {error:#}")))?;
     tracing::debug!("[memory:engine] cortexdb key stored");
     // Memory read under the old key is not the new key's account's.
     drop_memory_reads();
@@ -620,7 +620,7 @@ pub async fn clear_cortexdb_key(config: &Config) -> Result<bool> {
     let removed = AuthService::from_config(config)
         .remove_profile(MEMORY_CORTEXDB_KEY_NAME, DEFAULT_AUTH_PROFILE_NAME)
         .await
-        .map_err(|error| Error::Engine(format!("removing the API key failed: {error}")))?;
+        .map_err(|error| Error::Engine(format!("removing the API key failed: {error:#}")))?;
     drop_memory_reads();
     Ok(removed)
 }

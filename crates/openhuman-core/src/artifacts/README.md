@@ -5,7 +5,7 @@ documents, images, video). Metadata lives in the hidden, per-account
 `<workspace_dir>/artifacts/`; the files themselves are written to a visible
 files folder, `~/OpenHuman/projects/Files` by default
 (`config::default_files_dir`, #5505). Producer tools
-([`tools/impl/presentation`](../../tools/impl/presentation/), [`tools/impl/document`](../../tools/impl/document/), `media::generation`) call
+([`tools/presentation.rs`](./tools/presentation.rs), [`tools/document.rs`](./tools/document.rs), `media::generation`) call
 this module to reserve an artifact and its file, write their bytes, and flip the record to
 `Ready` or `Failed`; the module publishes the matching bus events, persists
 `meta.json` / `args.json`, and exposes `ai.*` RPC controllers plus three
@@ -26,6 +26,7 @@ renders artifact content itself.
 | [`tiny_store.rs`](./tiny_store.rs) | OpenHuman's side of the versioned artifacts (`tiny-artifacts`): `versioned_store` (records in the configured storage backend: [`version_documents.rs`](./version_documents.rs); older JSON records are imported once), the acting tenant's scoped blob-backed file store, guarded migration of old path references, `text_extension_of_title` (a `text` artifact keeps the inert extension its title names: csv, ics, vcf, json and the like; anything else stays `txt`), `LegacyUiBridge` (shows the newest version through the legacy row, events and visible files folder), `artifacts_service`, the agent tools, and `save_operator_version` (the preview panel's autosave). |
 | [`box_source.rs`](./box_source.rs) | `BoxSourced`: wraps the crate's `create_artifact` and `update_artifact` (the update's kind comes from its record). When the sandbox backend keeps boxes (`SandboxBackendKind::keeps_boxes`, `openshell` today), a file `path` on an `image` / `file` artifact is read from the calling tenant's box (`sandbox::read_box_file`, relative to the box work folder; `/sandbox/...` is accepted), staged for the call under the kept-copies folder, filed, and removed. No tenant, a missing file or an over-limit file is a tool error. Other backends and text artifacts are untouched. |
 | [`production.rs`](./production.rs) | `Production`: how producer tools (deck, document, generated media) file their output — reserve the file and the card, open the versioned record under the same id, then complete or fail it. |
+| [`tools/`](./tools/) | The producer tools behind the `documents` feature, built by `tools::registered_tools` (presentation, then document) and composed in [`tools/ops.rs`](../tools/ops.rs): `generate_document` ([`document.rs`](./tools/document.rs), with `document_engine.rs` / `document_types.rs`) and `generate_presentation` ([`presentation.rs`](./tools/presentation.rs), with `presentation_engine.rs` / `presentation_types.rs`); [`presentation_images.rs`](./tools/presentation_images.rs) resolves a deck's slide images (artifact bytes or policy-checked files, inspected by the `tinydocs` module) apart from the tool. |
 | `*_tests.rs` | Sibling test files for each of the above (`#[path]`). |
 
 ## Public surface
@@ -129,10 +130,11 @@ event.
 
 ## Used by
 
-- [`tools/impl/presentation/mod.rs`](../../tools/impl/presentation/mod.rs) and [`tools/impl/document/mod.rs`](../../tools/impl/document/mod.rs)
+- [`tools/presentation.rs`](./tools/presentation.rs) and [`tools/document.rs`](./tools/document.rs) in this module
   (`documents` feature; in `scripts/ci/product-features.txt`, not in Cargo
   defaults), and [`media/generation/artifact_tool.rs`](../../media/generation/artifact_tool.rs): the producers.
-  Presentation also uses `read_artifact_bytes` for its image pipeline.
+  Presentation also uses `read_artifact_bytes` for its image pipeline
+  ([`tools/presentation_images.rs`](./tools/presentation_images.rs)).
 - [`config/ops/agent.rs`](../../config/ops/agent.rs) (`ensure_agent_dirs`): creates the files folder and
   runs the migration at boot.
 - [`crates/openhuman-app/src/artifact_commands.rs`](../../../../openhuman-app/src/artifact_commands.rs): the desktop Download

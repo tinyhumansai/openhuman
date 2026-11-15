@@ -310,7 +310,7 @@ fn composio_list_tools_via_subagent_runs_on_small_worker_stack() {
     );
 
     // Every runtime that can host an agent turn (the desktop host,
-    // `openhuman-core run`, `agent_cli`, embedders) sets
+    // `openhuman-core run`, `agent::cli`, embedders) sets
     // `AGENT_WORKER_STACK_BYTES` (16 MiB). The SIGBUS in crahs.log happened on a
     // default ~2 MB worker before that was applied everywhere. This guard runs
     // on a much smaller stack (see `SUBAGENT_TOWER_STACK_BYTES`) so frame growth

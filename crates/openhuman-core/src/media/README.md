@@ -67,9 +67,10 @@ Inside `generation/`:
 
 ## Key types and entry points
 
-- `media_tools_for_config(generators, &Config, &Path, allowlist)`
+- `media_tools_for_config(generators, &Config, &Path, allowlist).await`
   ([`generation/tools.rs`](./generation/tools.rs)) is the entry point a host's
-  tool source calls.
+  tool source calls. It is async because it fetches TinySecurity's
+  protected-path floor once for the reference policy.
 - `MediaGenerators` ([`generation/provider.rs`](./generation/provider.rs)) is
   the image + video pair the tools run over; `MediaGenerators::with_router`
   lets a host rebuild them per chat.
@@ -110,8 +111,20 @@ Inside `generation/`:
   starts with `media_` (`tool_group()` in `tools/ops.rs`). Nothing else is
   tagged `DomainGroup::Media`.
 - Local reference files are limited by `reference_policy` to the action
-  directory or workspace, with no `..` and nothing under an always-forbidden
-  path (credential stores, system roots). Anything else must be an https URL.
+  directory or workspace, with no `..` and nothing TinySecurity's protected
+  floor covers (credential stores and pairs, system roots), session-filed
+  artifacts included. The path is resolved first (`.` segments, symlinks);
+  the floor is asked about the path as named and as resolved, the roots are
+  matched against the resolved path, and the resolved path is what is read.
+  The policy is a sync callback, so it asks TinySecurity's own
+  `ProtectedPath2` per path through the bounded sync bridge
+  (`modules::security::text::protected_path_check`, reached through the
+  builder's `root_config` by `ReferenceFloor::fetch`); the host keeps no copy
+  of the floor algorithm. Security disabled skips the floor, as
+  `SecurityPolicy::is_always_forbidden_async` does; a module that cannot
+  answer refuses every local reference (and so does the sync
+  `media_tools_from`). A refusal is logged by category only, never by path.
+  Anything else must be an https URL.
 
 ## Tests
 

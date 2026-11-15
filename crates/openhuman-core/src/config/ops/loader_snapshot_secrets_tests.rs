@@ -46,6 +46,8 @@ fn config_with_every_secret() -> Config {
         password: SENTINEL.into(),
         ..Default::default()
     });
+    channels.yuanbao = Some(channel(json!({ "app_key": "yb", "app_secret": "" })));
+    channels.relay = Some(Default::default());
     config.mcp_client.servers = [
         json!({ "kind": "bearer_token", "token": SENTINEL }),
         json!({ "kind": "basic", "username": "mcp-user", "password": SENTINEL }),
@@ -96,7 +98,7 @@ fn config_with_every_secret() -> Config {
         }
         filled += 1;
     }
-    assert_eq!(filled, 33, "every sealed credential field must be set");
+    assert_eq!(filled, 37, "every sealed credential field must be set");
     config
 }
 

@@ -1,12 +1,13 @@
 //! Thin JSON-RPC handlers: parse params, load config, delegate to the ops,
 //! and persist config for the setters.
 
+use crate::util::params::value_to_json;
 use std::future::Future;
 
 use crate::config::Config;
 use crate::core::all::ControllerFuture;
 use crate::core::runtime::DispatchCtx;
-use crate::core::{Outcome, StructuredRpcError};
+use crate::core::StructuredRpcError;
 use crate::memory::explore::{self, ExploreParams, ItemsGetParams};
 use crate::memory::lifecycle::views::{self, JobsRunParams, PackPreviewParams, PolicySetParams};
 use crate::memory::scope;
@@ -74,12 +75,8 @@ fn parse<T: DeserializeOwned>(params: Map<String, Value>) -> std::result::Result
     })
 }
 
-fn to_json<T: Serialize>(value: T) -> std::result::Result<Value, String> {
-    Outcome::new(value, Vec::new()).into_cli_compatible_json()
-}
-
 fn finish<T: Serialize>(result: Result<T>) -> std::result::Result<Value, String> {
-    to_json(result.map_err(|error| StructuredRpcError::from(error).encode())?)
+    value_to_json(result.map_err(|error| StructuredRpcError::from(error).encode())?)
 }
 
 async fn load(ctx: &DispatchCtx) -> std::result::Result<Config, String> {

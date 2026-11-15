@@ -1569,28 +1569,29 @@ async fn credentials_profile_store_recovers_dropped_entries_empty_files_and_date
     .expect("write missing oauth secret fixture");
     // Only a keyring-backed store can tell that the keyring holds no access
     // token for this row; a keyring-less view must keep a possibly
-    // keyring-held OAuth row instead of dropping it.
+    // keyring-held OAuth row instead of dropping it. A file keyring keeps
+    // profile secrets out of the interactive keyring (#8670), so even a
+    // config-backed store is keyring-less here: it withholds the row from the
+    // view but never purges it, nor the active pointer to it.
     let missing_secret_config = profile_store_config(&missing_oauth_secret_dir);
     let missing_secret =
         AuthProfilesStore::new_with_config(&missing_oauth_secret_dir, false, &missing_secret_config)
             .load().await
-            .expect("oauth profile missing access token should be dropped");
+            .expect("an oauth profile missing its access token still loads");
     assert!(missing_secret.profiles.is_empty());
-    assert!(missing_secret.active_profiles.is_empty());
-    assert!(!missing_oauth_secret_dir.join("auth-profiles.json").exists());
+    assert_eq!(
+        missing_secret.active_profiles.get("github").map(String::as_str),
+        Some("github:missing-access"),
+        "a keyring-less store never purges a possibly keyring-held profile"
+    );
     let reread_missing_secret =
         AuthProfilesStore::new_with_config(&missing_oauth_secret_dir, false, &missing_secret_config)
             .load().await
         .expect("re-read the persisted missing oauth secret store");
-    assert!(
-        !reread_missing_secret
-            .profiles
-            .contains_key("github:missing-access"),
-        "missing oauth secret profile should be purged from persisted store"
-    );
-    assert!(
-        !reread_missing_secret.active_profiles.contains_key("github"),
-        "active pointer to missing oauth secret profile should be purged"
+    assert_eq!(
+        reread_missing_secret.active_profiles.get("github").map(String::as_str),
+        Some("github:missing-access"),
+        "the kept row survives a re-read"
     );
 
     let public_api_dir = tmp.path().join("public-api-errors");
@@ -1740,8 +1741,11 @@ async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_det
         .get(hit_profile_id)
         .and_then(|profile| profile.token_set.as_ref())
         .expect("keychain hit token set");
-    assert_eq!(hit_tokens.access_token, "kc-access");
-    assert_eq!(hit_tokens.refresh_token.as_deref(), Some("kc-refresh"));
+    // A file keyring keeps profile secrets out of the interactive keyring
+    // (#8670): the store serves the document's own values and never consults
+    // the keyring entry another store seeded.
+    assert_eq!(hit_tokens.access_token, "legacy-access");
+    assert_eq!(hit_tokens.refresh_token.as_deref(), Some("legacy-refresh"));
     assert!(
         !hit_dir.join("auth-profiles.json").exists(),
         "the legacy document is imported into the encrypted store"
@@ -1799,22 +1803,23 @@ async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_det
     );
     assert!(!migrate_dir.join("auth-profiles.json").exists());
 
-    // Saving through a config-backed store moves the secret to the keyring:
-    // a keyring-less view withholds the keyring-owned row.
+    // With a file keyring, saving through a config-backed store keeps the
+    // secret in the encrypted document (#8670): a keyring-less view still
+    // lists the row, because nothing about it lives in the keyring.
     migrate_store
         .update_profile(migrate_profile_id, |_| Ok(()))
         .await
         .expect("re-save the imported profile");
     assert!(
-        !AuthProfilesStore::new(&migrate_dir, false)
+        AuthProfilesStore::new(&migrate_dir, false)
             .load().await
             .expect("keyring-less view")
             .profiles
             .contains_key(migrate_profile_id),
-        "a saved profile's secret lives in the keyring, not the document"
+        "a saved profile's secret lives in the document, not the keyring"
     );
-    // A copy of this document (same keyring user) proves the keyring entry
-    // exists now and is gone after removal.
+    // A copy of this document (same keyring user) carries the secret itself,
+    // before and after the original is removed.
     let probe_dir = tmp.path().join("probe").join("keychain-migrate");
     std::fs::create_dir_all(probe_dir.join("auth-profiles")).expect("create probe dir");
     for entry in std::fs::read_dir(migrate_dir.join("auth-profiles")).expect("read store dir") {
@@ -1833,7 +1838,7 @@ async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_det
             .get(migrate_profile_id)
             .and_then(|profile| profile.token.as_deref()),
         Some("plain-token-for-migration"),
-        "the keyring holds the saved secret"
+        "the document copy holds the saved secret"
     );
 
     // A malformed keyring payload for a legacy row falls back to the
@@ -1887,11 +1892,12 @@ async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_det
         "migrated profile should be removable"
     );
     assert!(
-        !AuthProfilesStore::new_with_config(&probe_dir, true, &config)
+        AuthProfilesStore::new_with_config(&probe_dir, true, &config)
             .load().await
             .expect("probe after removal")
             .profiles
             .contains_key(migrate_profile_id),
-        "removing a profile should delete its keychain payload"
+        "removing a document-held profile leaves no keyring entry behind to delete: \
+         the copy still carries its own secret"
     );
 }

@@ -544,6 +544,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
         chat_model_id: Some(" local-chat ".into()),
         usage_embeddings: Some(true),
         api_key: None,
+        native_tool_calling: Some(true),
     };
 
     let outcome = apply_local_ai_settings(&mut cfg, patch)
@@ -560,6 +561,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
     assert_eq!(cfg.local_ai.model_id, "local-default");
     assert_eq!(cfg.local_ai.chat_model_id, "local-chat");
     assert!(cfg.local_ai.usage.embeddings);
+    assert!(cfg.local_ai.native_tool_calling);
     assert_eq!(outcome.value["config"]["local_ai"]["provider"], "lm_studio");
 
     let clear_and_fallback = LocalAiSettingsPatch {

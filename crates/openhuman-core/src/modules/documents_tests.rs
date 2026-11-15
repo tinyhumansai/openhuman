@@ -8,9 +8,7 @@
 
 use super::*;
 use crate::config::Config;
-use crate::tools::implementations::document::format::spec::{
-    DocumentSection, DocumentSpec, WirePresentationSpec,
-};
+use tinydocs_bus::spec::{DocumentSection, DocumentSpec, WirePresentationSpec};
 
 /// A config with modules enabled but nothing fetchable.
 fn offline_config() -> Config {

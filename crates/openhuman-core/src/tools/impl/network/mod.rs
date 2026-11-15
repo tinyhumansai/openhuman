@@ -1,34 +1,20 @@
-//! Network tools: GitBooks docs lookup and (under the
-//! `mcp` feature) the MCP client/setup tools, plus the host adapter for the
-//! tools that live in `tinyagents_harness_tools::net::network` (`http_request`, `web_fetch`,
+//! Network tools: the host adapter for the tools that live in
+//! `tinyagents_harness_tools::net::network` (`http_request`, `web_fetch`,
 //! `curl`, `pushover`). [`gate`] implements `NetGate` for `SecurityPolicy` and
 //! [`host`] supplies the limits, HTML engine and x402 payment hook those tools
 //! are handed. `url_guard` (in `tinyagents_harness`) is the shared SSRF/allowlist
-//! validator. Registration gates are documented in `tools/impl/README.md`.
+//! validator. The MCP bridge tools and the GitBooks docs tools live in `mcp/`.
+//! Registration gates are documented in `tools/impl/README.md`.
 
 mod gate;
-mod gitbooks;
 mod host;
-// Leaf-gated: the only consumers of these two are the `#[cfg(feature = "mcp")]`
-// blocks in `tools/ops.rs`, so no stub is needed — nothing names them when the
-// feature is off. (`gitbooks` is deliberately NOT gated: it uses TinyMCP's
-// confidential one-shot module call but is a docs tool, not MCP-subsystem code.)
-#[cfg(feature = "mcp")]
-mod mcp;
-#[cfg(feature = "mcp")]
-mod mcp_server_tools;
 
-pub use gitbooks::{GitbooksGetPageTool, GitbooksSearchTool};
 #[cfg(feature = "web3")]
 pub(crate) use host::x402_request_tool;
 pub use host::{
     http_request_tool, routed_curl_tool, routed_http_request_tool, routed_web_fetch_tool,
     web_fetch_tool,
 };
-#[cfg(feature = "mcp")]
-pub use mcp::{mcp_call_tool, McpListServersTool, McpListToolsTool};
-#[cfg(feature = "mcp")]
-pub use mcp_server_tools::configured_server_tools_from_presentations;
 
 /// Shared test helper for the network tools' local-only enforcement tests
 /// (privacy epic S7, #4441). Returns a thread-scoped `LocalOnly` privacy

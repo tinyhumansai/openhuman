@@ -105,13 +105,80 @@ fn install_installed_and_clear() {
     let slot = Slot::default();
     assert!(slot.installed().is_none());
     let backend = test_support::memory_backend();
-    assert!(slot.install(Arc::clone(&backend)).is_none());
+    assert!(slot
+        .install_described(Arc::clone(&backend), None, None)
+        .is_none());
     assert!(slot
         .installed()
         .is_some_and(|got| Arc::ptr_eq(&got, &backend)));
-    assert!(slot.install(test_support::memory_backend()).is_some());
+    assert!(slot
+        .install_described(test_support::memory_backend(), None, None)
+        .is_some());
     assert!(slot.clear());
     assert!(!slot.clear());
+}
+
+/// The URL and driver are part of the installed state: replacing the backend
+/// replaces them, and clearing it forgets them.
+#[test]
+fn a_slot_keeps_the_url_and_driver_with_their_backend() {
+    let slot = Slot::default();
+    assert_eq!(slot.installed_url(), None);
+    slot.install_described(
+        test_support::memory_backend(),
+        Some("memory".into()),
+        Some("memory".into()),
+    );
+    assert_eq!(slot.installed_url().as_deref(), Some("memory"));
+    assert_eq!(slot.installed_driver().as_deref(), Some("memory"));
+
+    slot.install_described(test_support::memory_backend(), None, Some("sqlite".into()));
+    assert_eq!(slot.installed_url(), None, "the new backend has no URL");
+    assert_eq!(slot.installed_driver().as_deref(), Some("sqlite"));
+
+    assert!(slot.clear());
+    assert_eq!(slot.installed_url(), None);
+    assert_eq!(slot.installed_driver(), None);
+}
+
+/// Readers cannot observe a half-published installation at the publication
+/// boundary. The checkpoint pauses the writer while it holds the slot lock.
+#[test]
+fn readers_cannot_observe_an_installation_at_its_publication_boundary() {
+    let slot = Arc::new(Slot::default());
+    slot.install_described(
+        test_support::memory_backend(),
+        Some("memory://old".into()),
+        Some("memory".into()),
+    );
+    let entered = Arc::new(std::sync::Barrier::new(2));
+    let resume = Arc::new(std::sync::Barrier::new(2));
+    let writer = {
+        let slot = Arc::clone(&slot);
+        let entered = Arc::clone(&entered);
+        let resume = Arc::clone(&resume);
+        std::thread::spawn(move || {
+            slot.install_described_at_checkpoint(
+                test_support::memory_backend(),
+                Some("memory://new".into()),
+                Some("memory".into()),
+                || {
+                    entered.wait();
+                    resume.wait();
+                },
+            );
+        })
+    };
+
+    entered.wait();
+    assert_eq!(
+        slot.try_installed_url(),
+        Err(()),
+        "a reader must not inspect the slot during publication"
+    );
+    resume.wait();
+    writer.join().unwrap();
+    assert_eq!(slot.installed_url().as_deref(), Some("memory://new"));
 }
 
 #[test]

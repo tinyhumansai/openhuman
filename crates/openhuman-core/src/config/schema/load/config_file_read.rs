@@ -6,6 +6,8 @@ use super::super::Config;
 use super::branches::default_config_boxed;
 use super::{ConfigLoadFallback, ConfigParseError};
 
+/// Unboxed [`parse_config_boxed`], for the recovery tests.
+#[cfg(test)]
 pub(crate) async fn parse_config_with_recovery(
     config_path: &Path,
     contents: &str,
@@ -14,7 +16,7 @@ pub(crate) async fn parse_config_with_recovery(
     (*config, recovered)
 }
 
-/// [`parse_config_with_recovery`] with the config kept behind a `Box`, so the
+/// Parses `config.toml` with recovery, keeping the config behind a `Box` so the
 /// async chain that threads it through (load, recover, migrate, save) moves a
 /// pointer instead of an ~8 KB value per hop.
 pub(super) async fn parse_config_boxed(config_path: &Path, contents: &str) -> (Box<Config>, bool) {

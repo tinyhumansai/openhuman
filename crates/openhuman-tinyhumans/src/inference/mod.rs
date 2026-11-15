@@ -47,6 +47,7 @@ fn managed_options(config: &Config) -> ManagedOptions {
         openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
         secrets_encrypt: config.secrets.encrypt,
         auth_profile_override: None,
+        config: Some(Arc::new(config.clone())),
     }
 }
 
