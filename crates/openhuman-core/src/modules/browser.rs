@@ -21,6 +21,8 @@ use crate::config::Config;
 
 #[path = "browser_output.rs"]
 mod output;
+#[path = "browser_never_open.rs"]
+mod never_open;
 use output::{append_output_chunk, check_output_size, finish_output, ReleaseOnDrop};
 
 pub const MODULE_ID: &str = super::desktop::MODULE_ID;
@@ -479,6 +481,11 @@ impl BrowserClient {
             return Err(BrowserCallError::Policy(format!(
                 "local/private host '{host}' is blocked"
             )));
+        }
+        // The operator's never-open list holds whatever allow-all says; a
+        // list that cannot be read refuses every page (fails closed).
+        if let Some(reason) = never_open::refusal(raw) {
+            return Err(BrowserCallError::Policy(reason));
         }
         if !allow_all
             && !self.allows_any_site()
