@@ -54,3 +54,37 @@ fn the_file_named_by_the_environment_is_the_list() {
         None
     );
 }
+
+#[test]
+fn a_unicode_entry_matches_its_punycode_host_and_subdomains() {
+    let deny = list("bücher.example\n");
+    assert_eq!(deny, vec!["xn--bcher-kva.example".to_string()]);
+    assert!(check("https://xn--bcher-kva.example/", &deny).is_some());
+    assert!(check("https://www.bücher.example/", &deny).is_some());
+}
+
+#[test]
+fn a_dial_is_refused_for_a_listed_host_with_a_trailing_dot_or_case() {
+    let deny = list("x.com\n");
+    assert!(check_host("X.com.", &deny).is_some());
+    assert!(check_host("edge.x.com", &deny).is_some());
+    assert_eq!(check_host("example.com", &deny), None);
+}
+
+#[test]
+fn a_dial_with_a_list_that_cannot_be_read_is_refused() {
+    let missing = std::env::temp_dir().join("openhuman-never-open-missing-dial.txt");
+    assert!(dial_refusal_for(Some(missing.as_os_str()), "example.com")
+        .expect("fails closed")
+        .contains("could not be read"));
+    assert_eq!(dial_refusal_for(None, "x.com"), None);
+}
+
+#[test]
+fn an_empty_list_refuses_no_dial_and_no_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("empty.txt");
+    std::fs::write(&file, "# nothing yet\n").unwrap();
+    assert_eq!(dial_refusal_for(Some(file.as_os_str()), "x.com"), None);
+    assert_eq!(refusal_for(Some(file.as_os_str()), "https://example.com/path"), None);
+}
