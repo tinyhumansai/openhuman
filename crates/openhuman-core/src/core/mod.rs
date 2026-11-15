@@ -34,7 +34,6 @@ pub mod runtime;
 #[cfg(feature = "crash-reporting")]
 pub mod sentry_transport;
 pub mod server_launcher;
-pub mod session_expiry;
 pub mod shutdown;
 pub mod slots;
 pub mod structured_error;

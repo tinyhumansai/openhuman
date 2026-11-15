@@ -91,10 +91,24 @@ pub(crate) fn classify_provider_host_blocking(
 
 /// The configuration the module was last admitted with, if any.
 pub(super) fn armed() -> Option<Config> {
-    CONFIG
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+    visible(
+        CONFIG
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone(),
+    )
+}
+
+/// The armed config as this thread may see it. A test thread under
+/// `test_host::absent()` sees none, even after another test armed the module:
+/// the config is process-wide, the guard is per thread, and resetting the
+/// global instead would disarm tests running in parallel.
+fn visible(armed: Option<Config>) -> Option<Config> {
+    #[cfg(test)]
+    if super::test_host::is_absent() {
+        return None;
+    }
+    armed
 }
 
 pub(super) fn armed_config() -> Result<Config, String> {
@@ -159,3 +173,7 @@ pub(crate) async fn protected_path_check(
             .ok_or_else(|| "TinySecurity ProtectedPath2 gave no answer".to_owned())
     }))
 }
+
+#[cfg(test)]
+#[path = "text_tests.rs"]
+mod tests;

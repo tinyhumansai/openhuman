@@ -4783,6 +4783,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "tiny-artifacts",
+ "tinyagents-harness",
  "tinyagents-live",
  "tinychannels-bus",
  "tinyhumans-sdk",

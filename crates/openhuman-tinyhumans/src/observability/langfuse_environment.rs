@@ -2,8 +2,10 @@
 //! Langfuse exporter: where the OTLP proxy lives, which environment the
 //! resolved host belongs to, and whether that environment may push at all.
 
-use crate::config::Config;
-use crate::credentials::backend_credential::direct_backend_credential;
+use openhuman_embed::__host::config::Config;
+use openhuman_embed::__host::credentials::backend_credential::{
+    direct_backend_credential, BackendCredential,
+};
 
 const LOG_TARGET: &str = "agent-tracing::langfuse";
 
@@ -48,7 +50,7 @@ pub(crate) fn environment_for_base(config: &Config, base: &str) -> &'static str 
     };
     if parsed
         .host_str()
-        .is_some_and(crate::util::url::provider_host_is_local)
+        .is_some_and(openhuman_embed::__host::util::url::provider_host_is_local)
     {
         return "development";
     }
@@ -74,10 +76,10 @@ pub(crate) fn environment_for_base(config: &Config, base: &str) -> &'static str 
 /// `test` appears in the backend's list but not here because there is no such
 /// bucket on this side: [`environment_for_base`] maps loopback hosts to
 /// `development`, and that is what the Rust suite resolves to.
-pub(super) const LANGFUSE_PUSH_ENVIRONMENTS: &[&str] = &["production", "staging", "development"];
+pub(crate) const LANGFUSE_PUSH_ENVIRONMENTS: &[&str] = &["production", "staging", "development"];
 
 /// Whether a push is permitted for a resolved environment.
-pub(super) fn push_allowed(environment: &str) -> bool {
+pub(crate) fn push_allowed(environment: &str) -> bool {
     LANGFUSE_PUSH_ENVIRONMENTS.contains(&environment)
 }
 
@@ -126,14 +128,14 @@ pub(crate) async fn journal_push_ready(config: &Config) -> bool {
         && url.starts_with("http")
         && matches!(
             direct_backend_credential(config, "langfuse journal push").await,
-            Some(crate::credentials::backend_credential::BackendCredential::Session(_))
+            Some(BackendCredential::Session(_))
         )
 }
 
 #[cfg(test)]
-#[path = "environment_policy_tests.rs"]
+#[path = "langfuse_environment_policy_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "environment_parse_tests.rs"]
+#[path = "langfuse_environment_parse_tests.rs"]
 mod parse_tests;

@@ -150,14 +150,44 @@
     "verification": "config/schema/cloud_providers_tests.rs: hosted_presets_and_classification_are_context_scoped"
   },
   {
-    "file": "crates/openhuman-core/src/core/observability/telemetry/langfuse/environment.rs",
+    "file": "crates/openhuman-core/src/core/observability_hooks.rs",
     "scope": "",
-    "name": "SKIP_LOGGED",
-    "type": "std::sync::Once",
+    "name": "SESSION_EXPIRY_PREDICATES",
+    "type": "HookSlot<SessionExpiryPredicate>",
     "count": 1,
     "category": "A",
-    "reason": "This process-wide latch suppresses duplicate informational messages when Langfuse pushes are disabled for an environment; it stores no request, credential, or tenant data.",
-    "verification": "core/observability/telemetry/langfuse/environment.rs: skip_push calls Once::call_once"
+    "reason": "Host wiring: stateless predicates the embedding host registers at startup to recognise its backend's session-expiry error shapes. It holds code, never request, credential or tenant data.",
+    "verification": "core/observability_hooks_tests.rs: a_registered_predicate_extends_the_core_markers"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/observability_hooks.rs",
+    "scope": "",
+    "name": "EXPECTED_ERROR_CLASSIFIERS",
+    "type": "HookSlot<ExpectedErrorClassifier>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: stateless classifiers the embedding host registers at startup to map its own error sentinels onto expected-error kinds. It holds code, never request, credential or tenant data.",
+    "verification": "core/observability_hooks_tests.rs: a_registered_classifier_demotes_host_sentinels"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/observability_hooks.rs",
+    "scope": "",
+    "name": "CRASH_NOISE_FILTERS",
+    "type": "HookSlot<CrashNoiseFilter>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: named fn-pointer Sentry noise predicates the embedding host registers at startup; Sentry's before_send runs outside any CoreContext, so the table is process-wide. It holds code, never event or tenant data.",
+    "verification": "core/observability_hooks_tests.rs: a_registered_crash_noise_filter_is_named_in_the_verdict"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/observability/progress_tracing/sinks.rs",
+    "scope": "",
+    "name": "TRACE_SINKS",
+    "type": "HookSlot<Arc<dyn TraceSink>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: usage-data trace sinks the embedding host registers at startup. Sinks receive the config and spans per call; the table holds no request, credential or tenant data.",
+    "verification": "core/observability/progress_tracing/export_tests.rs: usage_data_spans_reach_registered_sinks_only_when_sharing"
   },
   {
     "file": "crates/openhuman-core/src/core/slots.rs",

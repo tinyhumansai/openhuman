@@ -9,8 +9,8 @@
 
 use serde_json::Value;
 
-use super::session_expiry::{is_session_expired_error, is_unconfirmed_unauthorized_error};
 use crate::core::all;
+use crate::core::observability::is_session_expired_error;
 use crate::core::runtime::{CoreContext, DispatchCtx};
 use crate::core::types::AppState;
 use crate::core::StructuredRpcError;
@@ -277,6 +277,20 @@ fn translate_local_session_error(msg: &str, credential_is_local: bool) -> Option
             crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
         )
     })
+}
+
+/// Detect auth-looking failures that are not specific enough to clear the
+/// session. This is only for diagnostics; it must not feed the
+/// `SessionExpired` publish path.
+///
+/// Matches a generic `401 Unauthorized` OR a bare `"invalid token"` string,
+/// either of which can come from BYO-key providers, Composio, channels, or
+/// other scoped downstream calls. Used exclusively for diagnostic logging in
+/// [`invoke_method`] so provider auth failures are visible in the logs without
+/// being misclassified as session expiry.
+fn is_unconfirmed_unauthorized_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    (lower.contains("401") && lower.contains("unauthorized")) || lower.contains("invalid token")
 }
 
 /// Internal method invocation logic.

@@ -1,7 +1,11 @@
-use super::{
-    backend_status_means_session_expired, is_session_expired_error,
-    is_unconfirmed_unauthorized_error,
-};
+use super::{backend_status_means_session_expired, register};
+
+/// The core's predicate with this layer's backend shapes registered, as an
+/// installed host sees it.
+fn is_session_expired_error(msg: &str) -> bool {
+    register();
+    openhuman_embed::__host::core::observability::is_session_expired_error(msg)
+}
 
 #[test]
 fn is_session_expired_error_matches_backend_path_401() {
@@ -40,19 +44,6 @@ fn is_session_expired_error_does_not_match_generic_401_unauthorized() {
     ));
     assert!(!is_session_expired_error("401 UNAUTHORIZED"));
     assert!(!is_session_expired_error("got 401 and unauthorized body"));
-}
-
-#[test]
-fn unconfirmed_unauthorized_error_matches_generic_401_for_diagnostics_only() {
-    // Generic 401+unauthorized text feeds the diagnostic-only branch — never
-    // SessionExpired publication.
-    assert!(is_unconfirmed_unauthorized_error(
-        "backend returned 401 Unauthorized"
-    ));
-    assert!(is_unconfirmed_unauthorized_error("401 UNAUTHORIZED"));
-    assert!(is_unconfirmed_unauthorized_error(
-        "got 401 and unauthorized body"
-    ));
 }
 
 #[test]
@@ -121,23 +112,15 @@ fn is_session_expired_error_does_not_match_backend_wrapped_composio_invalid_api_
         !is_session_expired_error(msg),
         "Composio upstream 401 wrapped by the backend must not publish SessionExpired"
     );
-    assert!(
-        is_unconfirmed_unauthorized_error(msg),
-        "auth-looking upstream failures should still be logged diagnostically"
-    );
 }
 
 #[test]
 fn is_session_expired_error_does_not_match_invalid_token_case_insensitive() {
     // "invalid token" is no longer a session-expiry trigger (issue #2286):
-    // it was too broad and caught Discord/OAuth provider token errors. It is
-    // still surfaced via the diagnostic-only `is_unconfirmed_unauthorized_error`.
+    // it was too broad and caught Discord/OAuth provider token errors. The
+    // core still logs it through its diagnostic-only unconfirmed-401 branch.
     assert!(!is_session_expired_error("Invalid Token"));
     assert!(!is_session_expired_error("got an invalid token here"));
-    assert!(is_unconfirmed_unauthorized_error("Invalid Token"));
-    assert!(is_unconfirmed_unauthorized_error(
-        "got an invalid token here"
-    ));
 }
 
 #[test]

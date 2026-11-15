@@ -140,11 +140,14 @@ transport decides severity: names in `KNOWN_PROBE_METHODS` (generic probes
 such as `rpc.discover`, and retired calls) stay debug-only, and anything else
 is reported to Sentry at warn.
 
-Session expiry is classified narrowly by [`session_expiry.rs`](./session_expiry.rs). Only OpenHuman
-backend failures (explicit "Session expired" text, the scheduler-gate
-`SESSION_EXPIRED` sentinel, missing session guards, and 401s formatted as
-`"{METHOD} /path failed (401 ...)"`) count. A provider's 401 does not, so a
-broken BYOK key or Discord token never signs the user out.
+Session expiry is classified narrowly by `observability::is_session_expired_error`
+([`observability_hooks.rs`](./observability_hooks.rs)). The core's own markers
+(explicit "Session expired" text, the scheduler-gate `SESSION_EXPIRED`
+sentinel, missing session guards) always count; the installed host adds its
+backend's wire shapes through `register_session_expiry_predicate` (the
+TinyHumans layer registers its `"{METHOD} /path failed (401 ...)"` shape). A
+provider's 401 does not count, so a broken BYOK key or Discord token never
+signs the user out.
 
 ### Event bus
 
@@ -313,7 +316,7 @@ Dispatch and auth:
 | [`invoke.rs`](./invoke.rs) | `invoke_method` and `default_state`: the in-process entry point and the session-expiry hook. |
 | [`dispatch.rs`](./dispatch.rs) | `dispatch`: legacy rewrite, `core.*` methods, registry fallback, unknown-method handling, `KNOWN_PROBE_METHODS`. |
 | [`legacy_aliases.rs`](./legacy_aliases.rs) | `resolve_legacy`: retired method names to canonical ones; mirrors `LEGACY_METHOD_ALIASES` in [`app/src/services/rpcMethods.ts`](../../../../app/src/services/rpcMethods.ts). |
-| `session_expiry.rs` | `is_session_expired_error`, `is_unconfirmed_unauthorized_error`, and `backend_status_means_session_expired` (the one status rule: only a session-credential 401 expires the session). |
+| [`observability_hooks.rs`](./observability_hooks.rs) | Host-installed classifiers: the session-expiry predicate behind `is_session_expired_error`, the expected-error classifier for host sentinels, and (crash-reporting) extra Sentry noise filters. |
 | `auth.rs` | The per-process RPC bearer: init paths, `get_rpc_token`, `verify_bearer_token`, `bearer_matches`. |
 | `event_bind_tokens.rs` | Single-shot bind tokens for the `/events` SSE stream (`issue`, `consume`). |
 | `server_launcher.rs` | `ServerLauncher` port that `run` / `serve` start a server through. |

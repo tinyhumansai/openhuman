@@ -103,6 +103,11 @@ tinymemory-integrations = { path = "../../vendor/tinymemory/crates/tinymemory-in
 # video generators, over the same vendored crates the core's harness uses.
 tinyinference-image = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-image", optional = true }
 tinyinference-video = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-video", optional = true }
+# The Langfuse usage-data trace sink (`observability::langfuse_sink`): the
+# OTLP projection and proxy client. Same vendored path as the core's, which
+# builds it with default features (Langfuse included), so one copy resolves.
+# The managed-model stream tests also replay SSE through its harness loop.
+tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", default-features = false, features = ["langfuse"] }
 directories = "6"
 urlencoding = "2.1"
 tracing = "0.1"
@@ -127,8 +132,6 @@ openhuman-embed = { path = "../openhuman-embed", features = ["testkit", "storage
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "macros"] }
 tempfile = "3"
 tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false }
-# The managed-model stream tests replay SSE through the real harness loop.
-tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", default-features = false }
 # The in-memory session stores (`testkit`) the tests hand to a runtime. Same
 # features as openhuman-embed's and openhuman-cli's dev-dependency, so the dev
 # graphs stay equal (see the unification note below).

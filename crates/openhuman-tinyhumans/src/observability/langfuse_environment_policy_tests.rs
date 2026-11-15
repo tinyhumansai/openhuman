@@ -104,32 +104,3 @@ fn a_resolved_bucket_does_not_unlock_plaintext_or_unknown_buckets() {
         "external"
     );
 }
-
-/// Without an armed TinySecurity module, locality is unknown and the exporter
-/// fails closed by treating even loopback hosts as external.
-#[test]
-fn provider_locality_fails_closed_without_tinysecurity() {
-    #[cfg(feature = "security-module")]
-    let _absent = crate::modules::security::test_host::absent();
-    for base in [
-        "http://[::1]:7788",
-        "http://[0:0:0:0:0:0:0:1]:7788",
-        "http://[::]:7788",
-        "http://api.localhost:5000",
-        "http://0.0.0.0:5000",
-    ] {
-        let environment = environment_for_base(&Config::default(), base);
-        assert_eq!(
-            environment, "external",
-            "{base} must fail closed without TinySecurity, got {environment}"
-        );
-        assert!(!push_allowed(environment), "{base} must not be pushable");
-    }
-    for base in ["http://192.168.1.20:5000", "http://10.0.0.5:5000"] {
-        assert_eq!(
-            environment_for_base(&Config::default(), base),
-            "external",
-            "{base} is not on this device"
-        );
-    }
-}

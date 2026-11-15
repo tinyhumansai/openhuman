@@ -192,14 +192,14 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_session_expired_message(message) {
         return Some(ExpectedErrorKind::SessionExpired);
     }
-    // The backend rejected the stored TinyHumans API key (401 on an api-key
-    // credential, `BackendApiError::ApiKeyRejected`). User-state — the key was
-    // revoked or mistyped and only a new key recovers it — so it shares the
-    // credential-lapse bucket. Kept out of `is_session_expired_message` on
-    // purpose: that predicate feeds the `SessionExpired` publish, which must
-    // not clear a session because an API key failed.
-    if is_api_key_rejected_message(message) {
-        return Some(ExpectedErrorKind::SessionExpired);
+    // Sentinels the installed host produces for its own backend's refusals (a
+    // rejected API key, a billing or plan refusal). The host classifies them
+    // (`register_expected_error_classifier`); kept out of
+    // `is_session_expired_message` on purpose: that predicate feeds the
+    // `SessionExpired` publish, which must not clear a session because an API
+    // key failed.
+    if let Some(kind) = hooks::host_expected_error_kind(message) {
+        return Some(kind);
     }
     if is_embedding_backend_auth_failure(&lower) {
         return Some(ExpectedErrorKind::SessionExpired);
@@ -241,12 +241,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_local_ai_capability_unavailable_message(&lower) {
         return Some(ExpectedErrorKind::LocalAiCapabilityUnavailable);
     }
-    // TAURI-RUST-13BR / -11G3 — the backend refused a gated hosted feature
-    // (live voice) because the balance is below its reserve or the plan is
-    // free. Billing user state, same bucket as an exhausted budget.
-    if tinyinference_providers::is_budget_exhausted_message(message)
-        || is_hosted_billing_refusal_message(message)
-    {
+    if tinyinference_providers::is_budget_exhausted_message(message) {
         return Some(ExpectedErrorKind::BudgetExhausted);
     }
     if is_backend_unavailable_message(message) {
