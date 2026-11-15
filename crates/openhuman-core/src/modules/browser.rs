@@ -667,6 +667,23 @@ fn browser_allow_all() -> bool {
     )
 }
 
+/// Whether `raw` is an https URL on a public host (no userinfo, no private
+/// or local address): what the browser may be asked to open at all.
+pub(crate) fn is_public_https(raw: &str) -> bool {
+    let Ok(url) = url::Url::parse(raw) else {
+        return false;
+    };
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => !private_or_local(&ip.to_string()),
+        Some(url::Host::Ipv6(ip)) => !private_or_local(&ip.to_string()),
+        Some(url::Host::Domain(host)) => !private_or_local(host),
+        None => false,
+    }
+}
+
 fn private_or_local(host: &str) -> bool {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") {
