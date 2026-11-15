@@ -21,7 +21,7 @@ fn wallet_schema_wire_contracts_are_preserved() {
         ("tx_status", &["chain", "hash", "evmNetwork"][..]),
         ("execute_prepared", &["quoteId", "confirmed"][..]),
         ("account", &["chain", "accountIndex"][..]),
-        ("prepare_program", &["accountIndex", "transaction"][..]),
+        ("prepare_program", &["accountIndex", "transaction", "expectedDebits"][..]),
         ("execute_prepared_program", &["accountIndex", "quoteId"][..]),
     ] {
         let schema = wallet_schemas(function);

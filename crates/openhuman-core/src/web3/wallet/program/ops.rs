@@ -16,9 +16,11 @@ use crate::core::Outcome;
 
 use super::super::ledger::{LedgerKind, LedgerRecord, LedgerStatus, SpendLedger};
 use super::super::ops::WalletChain;
-use super::super::policy::{origin_refusal, refusal, ExecutionOrigin, RefusalKind};
+use super::super::policy::{origin_refusal, refusal, ExecutionOrigin, PolicyRefusal, RefusalKind};
+use super::simulate::{check_simulation, simulate, SimulationReport};
 use super::{
     attach_signature, base58, decode_transaction, evaluate_program, summarize, DecodedTransaction,
+    MintTotal,
     ProgramTransactionSummary, LOG_PREFIX, QUOTE_PREFIX, QUOTE_TTL_MS,
 };
 
@@ -34,6 +36,10 @@ pub struct PreparedProgram {
     /// The signing account's address (the fee payer).
     pub address: String,
     pub summary: ProgramTransactionSummary,
+    /// The token debits the caller declared, which the caps were applied to.
+    pub declared_debits: Vec<MintTotal>,
+    /// The simulation that confirmed them.
+    pub simulation: SimulationReport,
     pub created_at_ms: u64,
     pub expires_at_ms: u64,
 }
@@ -59,6 +65,11 @@ pub struct PrepareProgramParams {
     /// Base64 of the unsigned transaction's wire bytes (signature slots
     /// zeroed), e.g. `transaction.serialize({requireAllSignatures: false})`.
     pub transaction: String,
+    /// What the transaction debits from the account's token balances, per
+    /// mint (`[{mint, amountRaw}]`, empty when it debits nothing). The caps
+    /// apply to these amounts, and the simulation must debit exactly them.
+    #[serde(alias = "expected_debits")]
+    pub expected_debits: Vec<MintTotal>,
 }
 
 /// `wallet.execute_prepared_program` parameters.
@@ -147,24 +158,30 @@ pub async fn prepare_program(
     let summary = summarize(&decoded, &account.address).map_err(|refused| refused.to_string())?;
     let now = super::super::policy::wall_clock_ms();
     let (_, records) = ledger_records(&config)?;
+    let refused = |refused: PolicyRefusal| {
+        tracing::info!(account = %key, kind = ?refused.kind, "{LOG_PREFIX} prepare refused");
+        refused.to_string()
+    };
     evaluate_program(
         &config.wallet_policy,
         chain_name(chain),
         params.account_index,
         &summary,
+        &params.expected_debits,
         &records,
         now,
     )
-    .map_err(|refused| {
-        tracing::info!(account = %key, kind = ?refused.kind, "{LOG_PREFIX} prepare refused");
-        refused.to_string()
-    })?;
+    .map_err(refused)?;
+    let simulation = simulate_quote(ctx, &transaction, &decoded).await?;
+    check_simulation(&params.expected_debits, &simulation).map_err(refused)?;
     let prepared = PreparedProgram {
         quote_id: format!("{QUOTE_PREFIX}{}", uuid::Uuid::new_v4()),
         chain,
         account_index: params.account_index,
         address: account.address,
         summary,
+        declared_debits: params.expected_debits,
+        simulation,
         created_at_ms: now,
         expires_at_ms: now + QUOTE_TTL_MS,
     };
@@ -196,7 +213,10 @@ pub(crate) fn program_record(
     status: LedgerStatus,
     now_ms: u64,
 ) -> LedgerRecord {
-    let total = prepared.summary.totals.first();
+    let total = prepared
+        .declared_debits
+        .iter()
+        .find(|debit| debit.amount() > 0);
     let destination = match prepared.summary.movements.as_slice() {
         [] => String::new(),
         [only] => only.destination.clone(),
@@ -257,11 +277,21 @@ pub async fn execute_prepared_program(
     let prepared = stored.prepared.clone();
     let chain = chain_name(prepared.chain);
     let (ledger, _) = ledger_records(&config)?;
+    // Simulate again against the chain as it is now: the caps and the
+    // declaration must still hold when the key is used.
+    let simulated = match simulate_quote(ctx, &stored.transaction, &stored.decoded).await {
+        Ok(report) => check_simulation(&prepared.declared_debits, &report),
+        Err(error) => {
+            store_quote(stored, now);
+            return Err(error);
+        }
+    };
     let reserved = ledger
         .reserve(|records| {
             if let Some(refused) = origin_refusal(&origin) {
                 return Err(refused);
             }
+            simulated.clone()?;
             if let Some(earlier) = records.iter().rev().find(|record| {
                 record.quote_id == prepared.quote_id && record.status.counts_against_caps()
             }) {
@@ -278,6 +308,7 @@ pub async fn execute_prepared_program(
                 chain,
                 prepared.account_index,
                 &prepared.summary,
+                &prepared.declared_debits,
                 records,
                 now,
             )?;
@@ -408,4 +439,21 @@ async fn solana_rpc_url(ctx: &DispatchCtx) -> Result<String, String> {
         .find(|row| row.chain == WalletChain::Solana && row.rpc_source == RpcSource::Default)
         .map(|row| row.rpc_url)
         .ok_or_else(|| "the wallet module reports no default Solana endpoint".to_string())
+}
+
+/// Simulate `transaction` against the configured Solana endpoint and measure
+/// the fee payer's token debits.
+async fn simulate_quote(
+    ctx: &DispatchCtx,
+    transaction: &[u8],
+    decoded: &DecodedTransaction,
+) -> Result<SimulationReport, String> {
+    let owner = decoded
+        .account_keys
+        .first()
+        .ok_or_else(|| "the transaction lists no accounts".to_string())?;
+    let url = solana_rpc_url(ctx).await?;
+    simulate(&url, transaction, owner)
+        .await
+        .map_err(|error| format!("could not simulate the transaction: {error}"))
 }
