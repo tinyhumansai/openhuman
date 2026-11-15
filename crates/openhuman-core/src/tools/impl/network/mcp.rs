@@ -13,7 +13,6 @@ use tinytools::{IndirectCall, PermissionLevel, Tool, ToolCallOptions, ToolResult
 use crate::{
     config::Config,
     mcp::{host, module_client::McpConfiguredClient},
-    security::SecurityPolicy,
 };
 
 /// Lists configured MCP servers through TinyMCP's safe summary operation.
@@ -280,18 +279,13 @@ impl Tool for McpListToolsTool {
 /// call operation.
 pub struct McpCallTool {
     config: Arc<Config>,
-    security: Arc<SecurityPolicy>,
     spec: tinymcp_bus::agent_tools::AgentToolSpec,
 }
 
 impl McpCallTool {
-    fn new(config: Arc<Config>, security: Arc<SecurityPolicy>) -> Self {
+    fn new(config: Arc<Config>) -> Self {
         let spec = bridge_tool_spec("mcp_call_tool");
-        Self {
-            config,
-            security,
-            spec,
-        }
+        Self { config, spec }
     }
 }
 
@@ -475,8 +469,8 @@ impl Tool for McpCallTool {
 }
 
 /// Builds the host-policy adapter for the generic MCP call tool.
-pub fn mcp_call_tool(config: Arc<Config>, security: Arc<SecurityPolicy>) -> McpCallTool {
-    McpCallTool::new(config, security)
+pub fn mcp_call_tool(config: Arc<Config>) -> McpCallTool {
+    McpCallTool::new(config)
 }
 
 pub(super) fn classified_result(

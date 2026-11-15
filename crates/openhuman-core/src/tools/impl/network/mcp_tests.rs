@@ -92,7 +92,7 @@ fn classified_result_maps_rendered_content_and_preserves_outcome_metadata() {
 async fn disabled_module_returns_a_structured_unavailable_outcome() {
     let mut config = Config::default();
     config.modules.enabled = false;
-    let tool = mcp_call_tool(Arc::new(config), Arc::new(SecurityPolicy::default()));
+    let tool = mcp_call_tool(Arc::new(config));
 
     let result = tool
         .execute(json!({
