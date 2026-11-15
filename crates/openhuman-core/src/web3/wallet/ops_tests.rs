@@ -407,9 +407,19 @@ async fn secret_material_resolves_the_secondary_path_for_a_wallet_that_predates_
     let temp = tempfile::tempdir().expect("temp dir");
     let _wallet_lock = crate::web3::wallet::test_support::TEST_LOCK.lock().await;
     let ctx = DispatchCtx::process_default();
-    let _workspace = crate::web3::wallet::test_support::setup_wallet_in(&ctx, &temp)
-        .await
-        .expect("setup wallet");
+    let _workspace = crate::web3::wallet::test_support::set_workspace_env_for_test(&temp).await;
+    let config = ctx.load_config().await.expect("config");
+    {
+        // State as written before secondary accounts existed: four primary
+        // accounts, no index fields. Nothing here needs the phrase decrypted.
+        let mut state = stored_state();
+        state.accounts = WalletChain::ALL
+            .into_iter()
+            .map(crate::web3::wallet::test_support::sample_account)
+            .collect();
+        let _guard = WALLET_STATE_FILE_LOCK.lock();
+        save_stored_wallet_state_unlocked(&config, &state).expect("save state");
+    }
     let primary = secret_material(&ctx, WalletChain::Solana, 0)
         .await
         .expect("primary");
