@@ -112,22 +112,21 @@ async fn mock_local_endpoint() -> wiremock::MockServer {
     server
 }
 
-/// Builds the turn's model exactly as the session builder does
-/// (`resolve_session_model`, then the crate-native turn model set), sends one
-/// request through it, and returns the session's resolved model and the
-/// request body the endpoint received.
+/// Builds the turn's model the way the session builder does (the chat role's
+/// model id, as `resolve_session_model` resolves it, then the crate-native
+/// turn model set), sends one request through it, and returns the session's
+/// resolved model and the request body the endpoint received.
 async fn send_one_turn_request(
     config: &crate::config::Config,
     server: &wiremock::MockServer,
     reasoning: Option<tinyinference_llm::model::ReasoningConfig>,
 ) -> (String, serde_json::Value) {
     let ctx = crate::core::runtime::DispatchCtx::unbound();
-    let (role, model_name, _) =
-        crate::agent::session_host::builder::factory_resolution::resolve_session_model(
-            &ctx, config, "judge", None, None,
-        )
-        .await
-        .expect("session model resolves");
+    let role = "chat";
+    let (_, model_name) =
+        crate::inference::provider::create_chat_model_with_model_id_in(&ctx, role, config, 0.0)
+            .await
+            .expect("session model resolves");
     let models = crate::agent::tinyagents::TurnModelSource::new_crate_native(
         &ctx,
         role,

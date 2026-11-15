@@ -483,6 +483,13 @@ pub(super) fn apply_turn_overrides(
     }
 }
 
+pub(super) fn apply_turn_reasoning_effort(
+    _config: &mut Config,
+    _model_override: Option<&str>,
+    _effort: Option<String>,
+) {
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn agent_chat_reply_for_inner(
     config: &mut Config,
