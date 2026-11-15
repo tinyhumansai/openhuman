@@ -46,11 +46,17 @@ pub struct ComputerConfig {
     /// `None` keeps the module's default (5, also its maximum).
     pub max_rescues: Option<u32>,
     /// Let a browser task try a captcha or "verify you are human" check with
-    /// Jev's image questions before it asks a person. Needs a TypeSafe key
-    /// (the `typesafe` credential or `TYPESAFE_API_KEY`). Off by default.
+    /// Jev's image questions before it asks a person. Needs a key for the
+    /// [`captcha_provider`](Self::captcha_provider): TypeSafe (the `typesafe`
+    /// credential or `TYPESAFE_API_KEY`) or Surplus (the `surplus` credential
+    /// or `SURPLUS_API_KEY`). Off by default.
     pub captcha_solver: bool,
+    /// Where the captcha solver's Jev runs: `type_safe` (TypeSafe's own API)
+    /// or `surplus` (Surplus Intelligence). `None` means `type_safe`.
+    pub captcha_provider: Option<String>,
     /// The image-reading Jev model the captcha solver asks. `None` keeps the
-    /// module's default (`jev-preview`).
+    /// module's default for the provider (`jev-preview` on TypeSafe,
+    /// `jev-1.14` on Surplus).
     pub captcha_model: Option<String>,
     /// Image challenges one try may submit before the task asks a person;
     /// `None` keeps the module's default (3). At most 10.
