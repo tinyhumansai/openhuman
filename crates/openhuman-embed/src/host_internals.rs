@@ -37,12 +37,21 @@ pub mod core {
     /// RPC handler and classifier (rpc).
     pub mod observability {
         pub use openhuman_core::core::observability::{
-            contains_transient_transport_phrase, expected_error_kind, is_api_key_rejected_message,
+            contains_transient_transport_phrase, expected_error_kind, is_session_expired_error,
             is_session_expired_message, is_suppressed_usage_probe_backoff,
             is_transient_http_status_code, is_transient_message_failure, report_error,
             report_error_or_expected, report_warning_message, ExpectedErrorKind,
-            API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX, INSUFFICIENT_CREDITS_PREFIX,
-            PAID_PLAN_REQUIRED_PREFIX, REPORT_ERROR_TRACING_TARGET, USAGE_PROBE_BACKOFF_PREFIX,
+            BACKEND_UNAVAILABLE_PREFIX, REPORT_ERROR_TRACING_TARGET, USAGE_PROBE_BACKOFF_PREFIX,
+        };
+        // tinyhumans: the hosted classifiers and the usage-data trace sink it
+        // installs (`observability::register`).
+        pub use openhuman_core::core::observability::{
+            export_brand, register_expected_error_classifier, register_session_expiry_predicate,
+            register_trace_sink, TraceSink,
+        };
+        #[cfg(feature = "crash-reporting")]
+        pub use openhuman_core::core::observability::{
+            register_crash_noise_filter, CrashNoiseFilter,
         };
     }
 
@@ -89,11 +98,6 @@ pub mod core {
     }
     pub mod server_launcher {
         pub use openhuman_core::core::server_launcher::{install_server_launcher, ServeRequest};
-    }
-    pub mod session_expiry {
-        pub use openhuman_core::core::session_expiry::{
-            backend_status_means_session_expired, is_session_expired_error,
-        };
     }
     pub mod shutdown {
         pub use openhuman_core::core::shutdown::{register, signal};
@@ -339,6 +343,7 @@ pub mod util {
     pub mod url {
         pub use openhuman_core::util::url::{
             host_is_local, join_url, normalize_api_base_url, normalize_backend_api_base_url,
+            provider_host_is_local,
         };
     }
 }

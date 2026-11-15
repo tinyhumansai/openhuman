@@ -77,6 +77,12 @@ pub(crate) fn explicit_consent() -> ExplicitConsentGuard {
     ExplicitConsentGuard
 }
 
+/// Whether this thread is under [`absent`].
+#[cfg(test)]
+pub(super) fn is_absent() -> bool {
+    ABSENT.with(std::cell::Cell::get)
+}
+
 /// Whether this process has a test host, and it applies to this thread.
 pub(super) fn active() -> bool {
     #[cfg(test)]

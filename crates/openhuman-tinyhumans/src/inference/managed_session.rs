@@ -179,9 +179,7 @@ pub(super) fn publish_managed_auth_failure(error: &ProviderError, context: TinyH
         TinyHumansAuthFailureKind::Forbidden => 403,
         TinyHumansAuthFailureKind::Other => return,
     };
-    if !openhuman_embed::__host::core::session_expiry::backend_status_means_session_expired(
-        status, api_key,
-    ) {
+    if !crate::session::expiry::backend_status_means_session_expired(status, api_key) {
         log::warn!(
             "[providers][openhuman-backend] managed {status} (api_key={api_key}) is a refusal — keeping the session"
         );
