@@ -97,7 +97,7 @@ impl ExecutionOrigin {
         }
     }
 
-    fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         match self {
             Self::Interactive { .. } => "interactive",
             Self::Agent { .. } => "agent",
@@ -106,7 +106,7 @@ impl ExecutionOrigin {
         }
     }
 
-    fn class(&self) -> &str {
+    pub(crate) fn class(&self) -> &str {
         match self {
             Self::Interactive { class }
             | Self::Agent { class }
