@@ -384,14 +384,12 @@ pub fn summarize(
                 *total = total.saturating_add(amount);
                 movements.push(movement);
             }
-            ASSOCIATED_TOKEN_PROGRAM => {
-                // Create (empty data or 0) and CreateIdempotent (1) only;
-                // RecoverNested moves tokens.
-                if !matches!(instruction.data.as_slice(), [] | [0] | [1]) {
-                    return Err(forbidden(format!(
-                        "instruction {position} is not an associated token account create"
-                    )));
-                }
+            // Create (empty data or 0) and CreateIdempotent (1) only;
+            // RecoverNested moves tokens.
+            ASSOCIATED_TOKEN_PROGRAM if !matches!(instruction.data.as_slice(), [] | [0] | [1]) => {
+                return Err(forbidden(format!(
+                    "instruction {position} is not an associated token account create"
+                )));
             }
             _ => {}
         }
