@@ -396,7 +396,7 @@ pub(super) fn to_status(config: &Config, state: Option<StoredWalletState>) -> su
                 .map(|v| !v.trim().is_empty())
                 .unwrap_or(false);
             let secret_stored = secret_in_json || keychain_has_mnemonic(config);
-            let (accounts, additional_accounts) = state
+            let (accounts, additional_accounts): (Vec<_>, Vec<_>) = state
                 .accounts
                 .into_iter()
                 .partition(super::WalletAccount::is_primary);
