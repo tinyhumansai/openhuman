@@ -10,12 +10,12 @@ mod claude_code_handlers;
 mod prompt_handlers;
 mod settings_handlers;
 
+use crate::util::params::to_json;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 use crate::core::all::RegisteredController;
 use crate::core::ControllerSchema;
-use crate::core::Outcome;
 
 pub use catalog::schemas;
 use claude_code_handlers::*;
@@ -119,8 +119,4 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }

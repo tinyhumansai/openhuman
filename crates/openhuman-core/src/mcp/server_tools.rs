@@ -24,14 +24,12 @@ use tinytools::{PermissionLevel, Tool, ToolCategory, ToolExposure, ToolResult};
 
 use crate::config::Config;
 use crate::mcp::module_client::{McpConfiguredClient, SafeStaticToolsError};
-use crate::security::SecurityPolicy;
 
 /// Builds host adapters from TinyMCP-prepared declarations. Catalog retrieval,
 /// naming, schema normalization, and execution remain module-owned.
 pub fn configured_server_tools_from_presentations(
     config: &Config,
     presentations: Vec<tinymcp_bus::McpToolPresentation>,
-    security: &Arc<SecurityPolicy>,
 ) -> Vec<Box<dyn Tool>> {
     presentations
         .into_iter()
@@ -45,7 +43,6 @@ pub fn configured_server_tools_from_presentations(
                 presentation,
                 config: Arc::new(config.clone()),
                 server: server.server.clone(),
-                security: Arc::clone(security),
             }) as Box<dyn Tool>)
         })
         .collect()
@@ -55,7 +52,6 @@ struct ModuleConfiguredMcpServerTool {
     presentation: tinymcp_bus::McpToolPresentation,
     config: Arc<Config>,
     server: tinymcp_bus::McpServerConfig,
-    security: Arc<SecurityPolicy>,
 }
 
 #[async_trait]

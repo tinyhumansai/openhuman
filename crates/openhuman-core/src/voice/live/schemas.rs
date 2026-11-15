@@ -4,6 +4,7 @@
 //! WebSocket (`ws.rs`).
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::json_output;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -15,15 +16,6 @@ use crate::core::all::{
     RegisteredController,
 };
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
-    }
-}
 
 fn optional(name: &'static str, ty: TypeSchema, comment: &'static str) -> FieldSchema {
     FieldSchema {

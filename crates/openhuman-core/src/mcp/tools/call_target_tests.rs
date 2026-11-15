@@ -127,12 +127,15 @@ async fn valid_mcp_identifier_reports_module_unavailable_without_invalid_input_l
     let mut config = Config::default();
     config.workspace_dir = workspace.path().to_path_buf();
     config.modules.enabled = true;
-    let port = PreparePort {
-        transform_error: Some(tinybus::module::ModuleCallError::Unavailable),
-        ..PreparePort::default()
-    };
-    McpConfiguredClient::install_test_port(&config, Box::new(port.clone())).unwrap();
-    let tool = mcp_call_tool(Arc::new(config), Arc::new(SecurityPolicy::default()));
+    McpConfiguredClient::install_test_port(
+        &config,
+        Box::new(PreparePort {
+            transform_error: Some(tinybus::module::ModuleCallError::Unavailable),
+            ..PreparePort::default()
+        }),
+    )
+    .unwrap();
+    let tool = mcp_call_tool(Arc::new(config));
 
     let result = tool
         .execute_with_options(
@@ -158,7 +161,7 @@ async fn static_mcp_tool_call_uses_confidential_module_delivery() {
     config.modules.enabled = true;
     let port = PreparePort::default();
     McpConfiguredClient::install_test_port(&config, Box::new(port.clone())).unwrap();
-    let tool = mcp_call_tool(Arc::new(config), Arc::new(SecurityPolicy::default()));
+    let tool = mcp_call_tool(Arc::new(config));
 
     let result = tool
         .execute(json!({"server": "docs", "tool": "search", "arguments": {}}))
@@ -179,7 +182,7 @@ async fn indirect_mcp_target_uses_module_prepared_identity_and_facts() {
     config.modules.enabled = true;
     let port = PreparePort::default();
     McpConfiguredClient::install_test_port(&config, Box::new(port.clone())).unwrap();
-    let tool = mcp_call_tool(Arc::new(config), Arc::new(SecurityPolicy::default()));
+    let tool = mcp_call_tool(Arc::new(config));
 
     let call = tool
         .indirect_target_async(&json!({
@@ -213,7 +216,7 @@ async fn indirect_mcp_target_fails_closed_when_modules_are_disabled() {
     let mut config = Config::default();
     config.workspace_dir = workspace.path().to_path_buf();
     config.modules.enabled = false;
-    let tool = mcp_call_tool(Arc::new(config), Arc::new(SecurityPolicy::default()));
+    let tool = mcp_call_tool(Arc::new(config));
 
     let result = tool
         .indirect_target_async(&json!({

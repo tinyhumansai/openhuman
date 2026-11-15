@@ -9,6 +9,7 @@ pub mod system;
 #[cfg(feature = "mcp")]
 pub mod ui;
 
+#[cfg(feature = "modules")]
 pub use browser::*;
 #[cfg(feature = "documents")]
 pub use document::DocumentTool;

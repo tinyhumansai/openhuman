@@ -1,11 +1,11 @@
 //! Controller schemas and JSON-RPC dispatchers for the cost dashboard.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::{json_output, new_correlation_id, to_json};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use super::rpc as cost_rpc;
@@ -215,14 +215,6 @@ fn schema_for(function: &str) -> ControllerSchema {
     }
 }
 
-/// Short opaque correlation id for log threading across an async handler
-/// invocation. Eight hex chars are enough to disambiguate concurrent
-/// dashboard polls without bloating log lines, and the value is local
-/// so it does not leak across processes.
-fn new_correlation_id() -> String {
-    uuid::Uuid::new_v4().simple().to_string()[..8].to_string()
-}
-
 fn handle_cost_get_dashboard(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
@@ -401,19 +393,6 @@ fn filter_input() -> FieldSchema {
         comment: "Optional `{thread_id, agent_id, model, provider, route, origin, \
                   session_agent}`; every set field must match.",
         required: false,
-    }
-}
-
-fn to_json(outcome: Outcome<Value>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
     }
 }
 

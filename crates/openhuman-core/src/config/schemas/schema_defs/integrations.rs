@@ -1,8 +1,9 @@
 //! Schemas for third-party integration settings: web search and Composio triggers.
 
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::util::params::{json_output, optional_string};
 
-use super::super::helpers::{json_output, optional_bool, optional_string};
+use super::super::helpers::optional_bool;
 
 pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
     match function {

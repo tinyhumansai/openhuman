@@ -11,6 +11,7 @@
 //! mutators — `add`, `update`, `remove` — change ingestion behaviour and
 //! cascade history, so they ship default-OFF via `tools/user_filter.rs`.
 
+use crate::util::params::opt_trimmed_str_arg;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -33,14 +34,6 @@ fn read_required_str(args: &serde_json::Value, key: &str) -> anyhow::Result<Stri
 
 fn opt_u64(args: &serde_json::Value, key: &str) -> Option<u64> {
     args.get(key).and_then(serde_json::Value::as_u64)
-}
-
-fn opt_str(args: &serde_json::Value, key: &str) -> Option<String> {
-    args.get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
 }
 
 fn parse_provider(args: &serde_json::Value) -> anyhow::Result<ProviderSlug> {
@@ -297,7 +290,7 @@ impl Tool for TaskSourcePreviewFilterTool {
         log::debug!("[tool][task_sources] preview_filter invoked");
         let provider = parse_provider(&args)?;
         let filter = parse_filter(&args)?;
-        let connection_id = opt_str(&args, "connection_id");
+        let connection_id = opt_trimmed_str_arg(&args, "connection_id");
         let max = opt_u64(&args, "max").map(|v| v as u32);
         emit!(
             ops::preview_filter(&self.config, provider, filter, connection_id, max).await,
@@ -404,8 +397,8 @@ impl Tool for TaskSourceAddTool {
             ops::add(
                 &self.config,
                 provider,
-                opt_str(&args, "connection_id"),
-                opt_str(&args, "name"),
+                opt_trimmed_str_arg(&args, "connection_id"),
+                opt_trimmed_str_arg(&args, "name"),
                 filter,
                 opt_u64(&args, "interval_secs"),
                 target,

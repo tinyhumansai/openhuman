@@ -50,19 +50,18 @@
 //! and `audit` keep their own gate and their `stub`, so a build without the
 //! feature still serves `/rpc` without those namespaces.
 
-/// Registers the host-side MCP subscriber and lifecycle integration.
+/// Registers the host-side MCP lifecycle integration.
 ///
 /// Core startup calls this without knowing the MCP adapter details. This
 /// remembers the process default configuration and registers cleanup for the
 /// configured module client; opening the module remains lazy until a caller
 /// needs it.
 ///
-/// Idempotent: the subscriber and configured-client shutdown hook register at
-/// most once, so the RPC domain enable point and boot-jobs path can both call
-/// this function.
+/// Idempotent: the configured-client shutdown hook registers at most once, so
+/// the RPC domain enable point and boot-jobs path can both call this
+/// function.
 #[cfg(feature = "mcp")]
 pub fn start(config: &crate::config::Config) {
-    registry::bus::init();
     host::set_default_config(config);
 
     #[cfg(feature = "modules")]
@@ -233,8 +232,7 @@ pub(crate) fn all_controller_entries() -> Vec<crate::core::all::ControllerEntry>
 
 pub mod audit;
 pub(crate) mod gitbooks_tools;
-// Ungated, like the transport below and for the same reason: `tinymcp` is an
-// ordinary dependency, and the startup path calls `host::init` without a `cfg`
+// Ungated: `tinymcp` is an ordinary dependency, and the startup path calls `host::init` without a `cfg`
 // of its own. Gating this would break the build with the domain turned off.
 pub mod host;
 pub(crate) mod host_sandbox;
@@ -246,12 +244,3 @@ pub(crate) mod server_tools;
 pub(crate) mod tools;
 #[cfg(feature = "mcp")]
 pub mod ui;
-
-/// MCP wire-contract response types used by host adapters.
-pub mod http_client {
-    pub use tinymcp_bus::{
-        AuthorizationServerMetadata, McpAuthChallenge, McpAuthorizationContext,
-        McpInitializeResult, McpRemoteTool, McpServerToolResult, McpSseEvent,
-        ProtectedResourceMetadata,
-    };
-}

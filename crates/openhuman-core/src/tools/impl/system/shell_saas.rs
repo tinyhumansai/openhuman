@@ -21,12 +21,6 @@ pub(crate) fn saas_sandbox_refusal(why: &str) -> (bool, ToolResult) {
     )
 }
 
-/// Whether the managed runtime's `PATH` is passed into a sandboxed command.
-/// Not in SaaS: it names host directories a container cannot see.
-pub(crate) fn passes_runtime_path_with(saas: bool) -> bool {
-    !saas
-}
-
 #[cfg(test)]
 #[path = "shell_saas_tests.rs"]
 mod tests;

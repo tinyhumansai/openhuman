@@ -339,16 +339,7 @@ impl OpenHumanTurnPrelude {
             .mcp_tools
             .configured
             .clone();
-        let security = Arc::new(crate::security::SecurityPolicy::from_config(
-            &config.autonomy,
-            &config.workspace_dir,
-            &config.action_dir,
-        ));
-        crate::mcp::server_tools::configured_server_tools_from_presentations(
-            config,
-            presentations,
-            &security,
-        )
+        crate::mcp::server_tools::configured_server_tools_from_presentations(config, presentations)
     }
 
     pub(super) async fn refresh_cold_integrations(&self) {

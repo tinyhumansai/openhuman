@@ -7,8 +7,9 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, Outcome, TypeSchema};
 
-use super::super::{execute_inputs, json_result, opt_str, req_json};
+use super::super::{execute_inputs, json_result, req_json};
 use crate::modules::web3_service;
+use crate::util::params::optional_string;
 use tinywallet_bus::names::methods;
 
 pub fn schemas() -> Vec<ControllerSchema> {
@@ -46,19 +47,19 @@ pub fn schema(function: &str) -> ControllerSchema {
                     "Destination deBridge chain id (must differ from source).",
                 ),
                 req_json("dstChainTokenOut", "Destination token address."),
-                opt_str(
+                optional_string(
                     "dstChainTokenOutAmount",
                     "Destination amount, or 'auto' for market rate (default 'auto').",
                 ),
-                opt_str(
+                optional_string(
                     "dstChainTokenOutRecipient",
                     "Recipient on the destination chain. Defaults to the wallet's own address.",
                 ),
-                opt_str(
+                optional_string(
                     "srcChainOrderAuthorityAddress",
                     "Source-chain order authority. Defaults to the wallet's source address.",
                 ),
-                opt_str(
+                optional_string(
                     "dstChainOrderAuthorityAddress",
                     "Destination-chain order authority. Defaults to the wallet's destination address.",
                 ),
