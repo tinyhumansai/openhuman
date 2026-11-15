@@ -129,14 +129,14 @@ fn parse_decrypt_secret(params: Map<String, Value>) -> Result<String, String> {
 }
 
 fn run_encrypt_secret(_ctx: DispatchCtx, config: Config, plaintext: String) -> ControllerFuture {
-    Box::pin(async move {
-        to_json(crate::security::encryption::rpc::encrypt_secret(&config, &plaintext).await?)
-    })
+    Box::pin(
+        async move { to_json(crate::credentials::ops::encrypt_secret(&config, &plaintext).await?) },
+    )
 }
 
 fn run_decrypt_secret(_ctx: DispatchCtx, config: Config, ciphertext: String) -> ControllerFuture {
     Box::pin(async move {
-        to_json(crate::security::encryption::rpc::decrypt_secret(&config, &ciphertext).await?)
+        to_json(crate::credentials::ops::decrypt_secret(&config, &ciphertext).await?)
     })
 }
 
