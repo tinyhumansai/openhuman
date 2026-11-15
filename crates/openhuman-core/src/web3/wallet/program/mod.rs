@@ -460,8 +460,64 @@ fn token_transfer_checked(
 
 // ── Policy ──────────────────────────────────────────────────────────────────
 
+/// Check the caller's declared debits against what the transaction visibly
+/// moves: one entry per mint, each a whole number, and every mint a top-level
+/// `TransferChecked` moves declared with at least that amount. Programs that
+/// move tokens by CPI (a distributor funding its vault) are invisible here;
+/// simulation ([`simulate::check_simulation`]) holds the declaration to what
+/// the account's balances actually lose.
+///
+/// # Errors
+///
+/// The refusal.
+pub fn check_declared(
+    summary: &ProgramTransactionSummary,
+    declared: &[MintTotal],
+) -> Result<(), PolicyRefusal> {
+    let mut seen: Vec<&str> = Vec::new();
+    for debit in declared {
+        if seen.contains(&debit.mint.as_str()) {
+            return Err(structural(format!("mint {} is declared twice", debit.mint)));
+        }
+        seen.push(&debit.mint);
+        if debit.amount_raw.trim().parse::<u64>().is_err() {
+            return Err(structural(format!(
+                "the declared amount of mint {} is not a whole number of atomic units",
+                debit.mint
+            )));
+        }
+    }
+    for total in &summary.totals {
+        let visible: u128 = total.amount_raw.parse().unwrap_or(u128::MAX);
+        let stated = declared
+            .iter()
+            .find(|debit| debit.mint == total.mint)
+            .map_or(0, |debit| debit.amount());
+        if stated < visible {
+            return Err(refusal(
+                RefusalKind::SimulationMismatch,
+                format!(
+                    "the transaction transfers {visible} of mint {} but declares {stated}",
+                    total.mint
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+impl MintTotal {
+    /// The amount as an integer; unparseable reads as the maximum.
+    #[must_use]
+    pub fn amount(&self) -> u128 {
+        self.amount_raw.trim().parse().unwrap_or(u128::MAX)
+    }
+}
+
 /// Decide whether `chain`'s account `account_index` may sign a transaction
-/// with `summary`, given the ledger `records`.
+/// with `summary` that debits `declared` from the account, given the ledger
+/// `records`. Caps apply to the declared debits (which simulation then
+/// holds the transaction to); zero debits are ignored.
 ///
 /// # Errors
 ///
@@ -471,6 +527,7 @@ pub fn evaluate_program(
     chain: &str,
     account_index: u32,
     summary: &ProgramTransactionSummary,
+    declared: &[MintTotal],
     records: &[LedgerRecord],
     now_ms: u64,
 ) -> Result<(), PolicyRefusal> {
@@ -492,13 +549,15 @@ pub fn evaluate_program(
             format!("program {program} is not in {key}'s allowed_programs"),
         ));
     }
-    if summary.totals.len() > 1 {
+    check_declared(summary, declared)?;
+    let debits: Vec<&MintTotal> = declared.iter().filter(|debit| debit.amount() > 0).collect();
+    if debits.len() > 1 {
         return Err(structural(format!(
-            "the transaction moves {} mints; a program execute may move at most one",
-            summary.totals.len()
+            "the transaction debits {} mints; a program execute may move at most one",
+            debits.len()
         )));
     }
-    let Some(total) = summary.totals.first() else {
+    let Some(total) = debits.first() else {
         return Ok(());
     };
     let Some(cap) = section.mints.iter().find(|cap| cap.mint == total.mint) else {
@@ -507,7 +566,7 @@ pub fn evaluate_program(
             format!("mint {} is not in {key}'s mints", total.mint),
         ));
     };
-    let amount: u128 = total.amount_raw.parse().unwrap_or(u128::MAX);
+    let amount = total.amount();
     if amount > u128::from(cap.per_tx_max_raw) {
         return Err(refusal(
             RefusalKind::PerTransaction,
@@ -544,6 +603,7 @@ pub fn evaluate_program(
 
 mod ops;
 pub(crate) mod schemas;
+pub mod simulate;
 pub use ops::{
     execute_prepared_program, prepare_program, ExecuteProgramParams, ExecutedProgram,
     PrepareProgramParams, PreparedProgram,

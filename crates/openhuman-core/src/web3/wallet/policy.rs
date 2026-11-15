@@ -162,6 +162,9 @@ pub enum RefusalKind {
     /// The transaction itself cannot be signed by this account (wrong fee
     /// payer, extra signers, address lookup tables, malformed bytes).
     TransactionNotAllowed,
+    /// The declared token debits disagree with what the transaction moves
+    /// (its visible transfers, or its simulation), or the simulation failed.
+    SimulationMismatch,
 }
 
 /// A refused execute.
