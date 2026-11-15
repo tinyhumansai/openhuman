@@ -1,6 +1,6 @@
 use super::*;
-use crate::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::config::Config;
+use crate::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::inference::provider::factory::resolves_to_managed_backend;
 
 fn byok_openai_compatible_entry() -> CloudProviderCreds {
