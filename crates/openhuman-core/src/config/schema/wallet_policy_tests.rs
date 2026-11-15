@@ -92,3 +92,48 @@ fn a_misspelled_asset_cap_field_is_rejected_instead_of_leaving_the_cap_off() {
     .unwrap_err();
     assert!(error.to_string().contains("daily_max_raww"), "{error}");
 }
+
+#[test]
+fn per_account_program_sections_parse_and_round_trip() {
+    let config: crate::config::schema::Config = toml::from_str(
+        r#"
+[wallet_policy.accounts.solana_1]
+allowed_programs = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"]
+
+[[wallet_policy.accounts.solana_1.mints]]
+mint = "Mint1111111111111111111111111111111111111111"
+per_tx_max_raw = 1000
+daily_max_raw = 2000
+"#,
+    )
+    .unwrap();
+    let policy = config.wallet_policy;
+    assert!(policy.assets.is_empty());
+    let section = policy.account_policy("solana", 1).expect("section");
+    assert_eq!(section.allowed_programs.len(), 1);
+    assert_eq!(section.mints[0].per_tx_max_raw, 1000);
+    assert_eq!(section.mints[0].daily_max_raw, 2000);
+    assert!(policy.account_policy("solana", 0).is_none());
+    assert_eq!(WalletPolicyConfig::account_key("Solana", 1), "solana_1");
+
+    let text = toml::to_string(&policy).unwrap();
+    let back: WalletPolicyConfig = toml::from_str(&text).unwrap();
+    assert_eq!(back, policy);
+}
+
+#[test]
+fn an_empty_accounts_map_is_not_serialized() {
+    let text = toml::to_string(&WalletPolicyConfig::default()).unwrap();
+    assert!(!text.contains("accounts"), "{text}");
+}
+
+#[test]
+fn a_mint_cap_without_both_caps_or_with_a_typo_fails_to_parse() {
+    for body in [
+        "mint = \"m\"\nper_tx_max_raw = 1\n",
+        "mint = \"m\"\nper_tx_max_raw = 1\ndaily_max_raw = 1\ndaily_max_raww = 1\n",
+    ] {
+        let text = format!("[[wallet_policy.accounts.solana_1.mints]]\n{body}");
+        assert!(toml::from_str::<crate::config::schema::Config>(&text).is_err(), "{body}");
+    }
+}

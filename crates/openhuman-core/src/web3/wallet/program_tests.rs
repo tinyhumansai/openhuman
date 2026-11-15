@@ -3,7 +3,6 @@ use crate::config::schema::{WalletAccountPolicy, WalletMintCap};
 
 /// `m/44'/501'/1'/0'` of the BIP-39 test phrase (see `ops_tests.rs`).
 const SIGNER: &str = "Hh8QwFUA6MtVu1qAoq12ucvFHNwCcVTV7hpWjeY1Hztb";
-const DISTRIBUTOR: &str = "Distributor11111111111111111111111111111111";
 const NOW: u64 = 30 * DAY_MS;
 
 fn key(text: &str) -> [u8; 32] {
@@ -48,7 +47,7 @@ struct Ix {
 /// Serialize an unsigned transaction with `signer` as account 0.
 fn build(signer: [u8; 32], required: u8, instructions: &[Ix], v0_lookups: Option<usize>) -> Vec<u8> {
     let mut keys = vec![signer];
-    let mut index_of = |key: [u8; 32], keys: &mut Vec<[u8; 32]>| -> u8 {
+    let index_of = |key: [u8; 32], keys: &mut Vec<[u8; 32]>| -> u8 {
         if let Some(position) = keys.iter().position(|existing| *existing == key) {
             return position as u8;
         }
@@ -110,7 +109,7 @@ fn transfer_checked(mint: &str, amount: u64) -> Ix {
 
 fn distributor_call() -> Ix {
     Ix {
-        program: key(DISTRIBUTOR),
+        program: filled(11),
         accounts: vec![filled(3), key(SIGNER)],
         data: vec![0xaa, 0xbb],
     }
@@ -132,7 +131,7 @@ fn policy() -> WalletPolicyConfig {
             allowed_programs: vec![
                 TOKEN_PROGRAM.into(),
                 ASSOCIATED_TOKEN_PROGRAM.into(),
-                DISTRIBUTOR.into(),
+                base58(&filled(11)),
             ],
             mints: vec![WalletMintCap {
                 mint: mint(),
@@ -184,7 +183,7 @@ fn a_distributor_funding_transaction_decodes_into_its_summary() {
         vec![
             ASSOCIATED_TOKEN_PROGRAM.to_string(),
             TOKEN_PROGRAM.to_string(),
-            DISTRIBUTOR.to_string()
+            base58(&filled(11))
         ]
     );
     assert_eq!(summary.movements.len(), 1);
@@ -206,7 +205,7 @@ fn a_v0_message_without_lookup_tables_decodes() {
     let decoded = decode_transaction(&tx).unwrap();
     assert!(decoded.versioned);
     let summary = summarize(&decoded, SIGNER).unwrap();
-    assert_eq!(summary.programs, vec![DISTRIBUTOR.to_string()]);
+    assert_eq!(summary.programs, vec![base58(&filled(11))]);
     assert!(summary.totals.is_empty());
 }
 
