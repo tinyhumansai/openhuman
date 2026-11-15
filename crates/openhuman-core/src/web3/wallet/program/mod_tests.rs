@@ -1,5 +1,10 @@
 use super::*;
 use crate::config::schema::{WalletAccountPolicy, WalletMintCap};
+use crate::core::runtime::DispatchCtx;
+use crate::web3::wallet::ledger::LedgerStatus;
+use crate::web3::wallet::ops::WalletChain;
+use crate::web3::wallet::policy::ExecutionOrigin;
+use base64::Engine as _;
 
 /// `m/44'/501'/1'/0'` of the BIP-39 test phrase (see `ops_tests.rs`).
 const SIGNER: &str = "Hh8QwFUA6MtVu1qAoq12ucvFHNwCcVTV7hpWjeY1Hztb";
@@ -45,7 +50,12 @@ struct Ix {
 }
 
 /// Serialize an unsigned transaction with `signer` as account 0.
-fn build(signer: [u8; 32], required: u8, instructions: &[Ix], v0_lookups: Option<usize>) -> Vec<u8> {
+fn build(
+    signer: [u8; 32],
+    required: u8,
+    instructions: &[Ix],
+    v0_lookups: Option<usize>,
+) -> Vec<u8> {
     let mut keys = vec![signer];
     let index_of = |key: [u8; 32], keys: &mut Vec<[u8; 32]>| -> u8 {
         if let Some(position) = keys.iter().position(|existing| *existing == key) {
@@ -57,7 +67,11 @@ fn build(signer: [u8; 32], required: u8, instructions: &[Ix], v0_lookups: Option
     let compiled: Vec<(u8, Vec<u8>, Vec<u8>)> = instructions
         .iter()
         .map(|ix| {
-            let accounts = ix.accounts.iter().map(|k| index_of(*k, &mut keys)).collect();
+            let accounts = ix
+                .accounts
+                .iter()
+                .map(|k| index_of(*k, &mut keys))
+                .collect();
             let program = index_of(ix.program, &mut keys);
             (program, accounts, ix.data.clone())
         })
@@ -170,7 +184,11 @@ fn a_distributor_funding_transaction_decodes_into_its_summary() {
     let tx = build(
         key(SIGNER),
         1,
-        &[ata_create(), transfer_checked(&mint(), 600), distributor_call()],
+        &[
+            ata_create(),
+            transfer_checked(&mint(), 600),
+            distributor_call(),
+        ],
         None,
     );
     let decoded = decode_transaction(&tx).unwrap();
@@ -191,7 +209,13 @@ fn a_distributor_funding_transaction_decodes_into_its_summary() {
     assert_eq!(summary.movements[0].amount_raw, "600");
     assert_eq!(summary.movements[0].decimals, 6);
     assert_eq!(summary.movements[0].authority, SIGNER);
-    assert_eq!(summary.totals, vec![MintTotal { mint: mint(), amount_raw: "600".into() }]);
+    assert_eq!(
+        summary.totals,
+        vec![MintTotal {
+            mint: mint(),
+            amount_raw: "600".into()
+        }]
+    );
     assert_eq!(summary.instructions[2].data_hex, "aabb");
     assert_eq!(
         evaluate_program(&policy(), "solana", 1, &summary, &[], NOW),
@@ -224,13 +248,27 @@ fn malformed_bytes_are_rejected() {
 fn an_account_without_a_policy_section_is_refused() {
     let summary = summary_of(&[distributor_call()]);
     assert_eq!(
-        refusal_kind(evaluate_program(&WalletPolicyConfig::default(), "solana", 1, &summary, &[], NOW)),
+        refusal_kind(evaluate_program(
+            &WalletPolicyConfig::default(),
+            "solana",
+            1,
+            &summary,
+            &[],
+            NOW
+        )),
         RefusalKind::AccountNotAllowed
     );
     // A section for index 1 does not open index 0 or index 2.
     for index in [0, 2] {
         assert_eq!(
-            refusal_kind(evaluate_program(&policy(), "solana", index, &summary, &[], NOW)),
+            refusal_kind(evaluate_program(
+                &policy(),
+                "solana",
+                index,
+                &summary,
+                &[],
+                NOW
+            )),
             RefusalKind::AccountNotAllowed
         );
     }
@@ -246,8 +284,14 @@ fn an_unlisted_program_is_refused() {
     let summary = summary_of(&[distributor_call(), unlisted]);
     let refused = evaluate_program(&policy(), "solana", 1, &summary, &[], NOW).unwrap_err();
     assert_eq!(refused.kind, RefusalKind::ProgramNotAllowed);
-    assert!(refused.message.contains(&base58(&filled(42))), "{}", refused.message);
-    assert!(refused.to_string().starts_with(super::super::policy::POLICY_REFUSED_PREFIX));
+    assert!(
+        refused.message.contains(&base58(&filled(42))),
+        "{}",
+        refused.message
+    );
+    assert!(refused
+        .to_string()
+        .starts_with(crate::web3::wallet::policy::POLICY_REFUSED_PREFIX));
 }
 
 #[test]
@@ -263,7 +307,10 @@ fn a_transfer_over_the_per_transaction_cap_is_refused() {
         RefusalKind::PerTransaction
     );
     let at_cap = summary_of(&[transfer_checked(&mint(), 1_000)]);
-    assert_eq!(evaluate_program(&policy(), "solana", 1, &at_cap, &[], NOW), Ok(()));
+    assert_eq!(
+        evaluate_program(&policy(), "solana", 1, &at_cap, &[], NOW),
+        Ok(())
+    );
 }
 
 #[test]
@@ -278,15 +325,29 @@ fn the_rolling_day_cap_counts_only_this_accounts_program_records() {
     ];
     let refused = evaluate_program(&policy(), "solana", 1, &summary, &records, NOW).unwrap_err();
     assert_eq!(refused.kind, RefusalKind::Daily);
-    assert!(refused.message.contains("1000 already spent"), "{}", refused.message);
+    assert!(
+        refused.message.contains("1000 already spent"),
+        "{}",
+        refused.message
+    );
 
     let small = summary_of(&[transfer_checked(&mint(), 500)]);
-    assert_eq!(evaluate_program(&policy(), "solana", 1, &small, &records, NOW), Ok(()));
+    assert_eq!(
+        evaluate_program(&policy(), "solana", 1, &small, &records, NOW),
+        Ok(())
+    );
     // An in-doubt attempt counts as spent.
     let mut in_doubt = records.clone();
     in_doubt.push(spent(1, NOW - 10, 1, LedgerStatus::InDoubt));
     assert_eq!(
-        refusal_kind(evaluate_program(&policy(), "solana", 1, &small, &in_doubt, NOW)),
+        refusal_kind(evaluate_program(
+            &policy(),
+            "solana",
+            1,
+            &small,
+            &in_doubt,
+            NOW
+        )),
         RefusalKind::Daily
     );
 }
@@ -303,11 +364,16 @@ fn an_unlisted_mint_is_refused() {
 #[test]
 fn two_mints_in_one_transaction_are_refused() {
     let mut policy = policy();
-    policy.accounts.get_mut("solana_1").unwrap().mints.push(WalletMintCap {
-        mint: other_mint(),
-        per_tx_max_raw: 1_000,
-        daily_max_raw: 1_000,
-    });
+    policy
+        .accounts
+        .get_mut("solana_1")
+        .unwrap()
+        .mints
+        .push(WalletMintCap {
+            mint: other_mint(),
+            per_tx_max_raw: 1_000,
+            daily_max_raw: 1_000,
+        });
     let summary = summary_of(&[
         transfer_checked(&mint(), 1),
         transfer_checked(&other_mint(), 1),
@@ -327,15 +393,24 @@ fn summarize_kind(tx: &[u8], signer: &str) -> RefusalKind {
 #[test]
 fn a_transaction_another_key_pays_for_or_cosigns_is_refused() {
     let tx = build(filled(4), 1, &[distributor_call()], None);
-    assert_eq!(summarize_kind(&tx, SIGNER), RefusalKind::TransactionNotAllowed);
+    assert_eq!(
+        summarize_kind(&tx, SIGNER),
+        RefusalKind::TransactionNotAllowed
+    );
     let cosigned = build(key(SIGNER), 2, &[distributor_call()], None);
-    assert_eq!(summarize_kind(&cosigned, SIGNER), RefusalKind::TransactionNotAllowed);
+    assert_eq!(
+        summarize_kind(&cosigned, SIGNER),
+        RefusalKind::TransactionNotAllowed
+    );
 }
 
 #[test]
 fn address_lookup_tables_are_refused() {
     let tx = build(key(SIGNER), 1, &[distributor_call()], Some(1));
-    assert_eq!(summarize_kind(&tx, SIGNER), RefusalKind::TransactionNotAllowed);
+    assert_eq!(
+        summarize_kind(&tx, SIGNER),
+        RefusalKind::TransactionNotAllowed
+    );
 }
 
 #[test]
@@ -365,9 +440,18 @@ fn system_and_unaccountable_token_instructions_are_refused_whatever_the_policy()
         accounts: vec![key(SIGNER)],
         data: vec![2],
     };
-    for ix in [system_transfer, plain_transfer, approve, set_authority, recover_nested] {
+    for ix in [
+        system_transfer,
+        plain_transfer,
+        approve,
+        set_authority,
+        recover_nested,
+    ] {
         let tx = build(key(SIGNER), 1, &[ix], None);
-        assert_eq!(summarize_kind(&tx, SIGNER), RefusalKind::InstructionNotAllowed);
+        assert_eq!(
+            summarize_kind(&tx, SIGNER),
+            RefusalKind::InstructionNotAllowed
+        );
     }
 }
 
@@ -378,7 +462,10 @@ fn the_signature_lands_in_slot_zero_and_the_message_is_untouched() {
     let signed = attach_signature(&tx, &decoded, &[0xab; 64]).unwrap();
     assert_eq!(&signed[1..65], &[0xab; 64][..]);
     assert_eq!(&signed[65..], decoded.message.as_slice());
-    assert_eq!(decode_transaction(&signed).unwrap().message, decoded.message);
+    assert_eq!(
+        decode_transaction(&signed).unwrap().message,
+        decoded.message
+    );
 }
 
 #[test]

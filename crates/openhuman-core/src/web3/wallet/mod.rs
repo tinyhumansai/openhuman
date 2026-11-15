@@ -76,8 +76,8 @@ pub use execution::{
 };
 #[cfg(feature = "web3")]
 pub use ops::{
-    derive_recovery_material, ensure_account, generate_recovery_phrase, reveal_recovery_phrase, setup, status,
-    validate_recovery_phrase, GeneratedRecoveryPhrase, RecoveryPhraseValidation,
+    derive_recovery_material, ensure_account, generate_recovery_phrase, reveal_recovery_phrase,
+    setup, status, validate_recovery_phrase, GeneratedRecoveryPhrase, RecoveryPhraseValidation,
     RevealRecoveryPhraseResult, WalletAccount, WalletChain, WalletRecoveryMaterial,
     WalletSetupParams, WalletSetupSource, WalletStatus, WALLET_NOT_CONFIGURED_MESSAGE,
 };

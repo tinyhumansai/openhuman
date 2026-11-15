@@ -594,7 +594,10 @@ pub async fn ensure_account(
         .into_iter()
         .find(|account| account.chain == chain && account.index == index)
     else {
-        return Err(format!("no derivation for '{}' index {index}", chain.as_str()));
+        return Err(format!(
+            "no derivation for '{}' index {index}",
+            chain.as_str()
+        ));
     };
     let mnemonic = Zeroizing::new(
         crate::credentials::ops::decrypt_secret(&config, &encrypted_mnemonic)

@@ -38,22 +38,14 @@
 //! The pure parts (decoding, summarising, the policy decision) are separate
 //! functions so they are tested without a module or a chain.
 
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Mutex;
+use std::collections::BTreeMap;
 
-use base64::Engine as _;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use tinywallet_bus::wire::{RpcEndpointKey, RpcSource, Scheme, SecretMaterial, Signature};
-use zeroize::Zeroizing;
 
 use crate::config::schema::WalletPolicyConfig;
-use crate::core::runtime::DispatchCtx;
-use crate::core::Outcome;
 
-use super::ledger::{LedgerKind, LedgerRecord, LedgerStatus, SpendLedger};
-use super::ops::WalletChain;
-use super::policy::{origin_refusal, refusal, ExecutionOrigin, PolicyRefusal, RefusalKind};
+use super::ledger::{LedgerKind, LedgerRecord};
+use super::policy::{refusal, PolicyRefusal, RefusalKind};
 
 /// The System program.
 pub const SYSTEM_PROGRAM: &str = "11111111111111111111111111111111";
@@ -73,10 +65,10 @@ pub const MAX_TRANSACTION_BYTES: usize = 1232;
 /// Prefix of every program quote id.
 pub const QUOTE_PREFIX: &str = "prog-";
 
-const DAY_MS: u64 = 24 * 60 * 60 * 1000;
+pub(super) const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 /// SPL Token `TransferChecked`.
 const TOKEN_TRANSFER_CHECKED: u8 = 12;
-const LOG_PREFIX: &str = "[wallet:program]";
+pub(super) const LOG_PREFIX: &str = "[wallet:program]";
 
 // ── Decoding ────────────────────────────────────────────────────────────────
 
@@ -169,7 +161,11 @@ pub fn decode_transaction(bytes: &[u8]) -> Result<DecodedTransaction, String> {
     let mut reader = Reader { bytes, pos: 0 };
     let signature_count = reader.compact_u16()?;
     let signatures_offset = reader.pos;
-    reader.take(signature_count.checked_mul(64).ok_or("too many signatures")?)?;
+    reader.take(
+        signature_count
+            .checked_mul(64)
+            .ok_or("too many signatures")?,
+    )?;
     let message_start = reader.pos;
 
     let first = *bytes
@@ -251,7 +247,7 @@ pub fn attach_signature(
     Ok(signed)
 }
 
-fn base58(bytes: &[u8]) -> String {
+pub(super) fn base58(bytes: &[u8]) -> String {
     bs58::encode(bytes).into_string()
 }
 
@@ -378,7 +374,8 @@ pub fn summarize(
                 )));
             }
             TOKEN_PROGRAM | TOKEN_2022_PROGRAM => {
-                let movement = token_transfer_checked(position, &program_id, instruction, &accounts)?;
+                let movement =
+                    token_transfer_checked(position, &program_id, instruction, &accounts)?;
                 let amount: u128 = movement.amount_raw.parse().unwrap_or(u128::MAX);
                 let total = totals.entry(movement.mint.clone()).or_insert_with(|| {
                     mint_order.push(movement.mint.clone());
@@ -486,11 +483,12 @@ pub fn evaluate_program(
             format!("account {key} has no [wallet_policy.accounts.{key}] section"),
         ));
     };
-    if let Some(program) = summary
-        .programs
-        .iter()
-        .find(|program| !section.allowed_programs.iter().any(|allowed| allowed == *program))
-    {
+    if let Some(program) = summary.programs.iter().find(|program| {
+        !section
+            .allowed_programs
+            .iter()
+            .any(|allowed| allowed == *program)
+    }) {
         return Err(refusal(
             RefusalKind::ProgramNotAllowed,
             format!("program {program} is not in {key}'s allowed_programs"),

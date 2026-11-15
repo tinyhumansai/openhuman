@@ -305,7 +305,13 @@ fn primary_accounts_are_unchanged() {
     let primary: Vec<_> = plan
         .iter()
         .take(4)
-        .map(|account| (account.chain, account.derivation_path.as_str(), account.index))
+        .map(|account| {
+            (
+                account.chain,
+                account.derivation_path.as_str(),
+                account.index,
+            )
+        })
         .collect();
     assert_eq!(
         primary,
@@ -378,7 +384,9 @@ fn validate_setup_rejects_unknown_or_duplicate_secondary_accounts() {
 
     // A secondary account never stands in for a missing primary one.
     let mut params = sample_params();
-    params.accounts.retain(|account| account.chain != WalletChain::Solana);
+    params
+        .accounts
+        .retain(|account| account.chain != WalletChain::Solana);
     params.accounts.push(giveaway_account());
     assert!(validate_setup(&params)
         .expect_err("no primary solana")

@@ -134,6 +134,9 @@ fn a_mint_cap_without_both_caps_or_with_a_typo_fails_to_parse() {
         "mint = \"m\"\nper_tx_max_raw = 1\ndaily_max_raw = 1\ndaily_max_raww = 1\n",
     ] {
         let text = format!("[[wallet_policy.accounts.solana_1.mints]]\n{body}");
-        assert!(toml::from_str::<crate::config::schema::Config>(&text).is_err(), "{body}");
+        assert!(
+            toml::from_str::<crate::config::schema::Config>(&text).is_err(),
+            "{body}"
+        );
     }
 }

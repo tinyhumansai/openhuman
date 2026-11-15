@@ -103,7 +103,9 @@ fn chain_name(chain: WalletChain) -> &'static str {
     chain.as_str()
 }
 
-fn ledger_records(config: &crate::config::Config) -> Result<(SpendLedger, Vec<LedgerRecord>), String> {
+fn ledger_records(
+    config: &crate::config::Config,
+) -> Result<(SpendLedger, Vec<LedgerRecord>), String> {
     let ledger = SpendLedger::open(&config.workspace_dir)
         .map_err(|error| format!("wallet spend ledger is unavailable: {error:#}"))?;
     let records = ledger
@@ -188,7 +190,7 @@ pub async fn prepare_program(
 }
 
 /// The ledger record of one program execute.
-fn program_record(
+pub(crate) fn program_record(
     prepared: &PreparedProgram,
     origin: &ExecutionOrigin,
     status: LedgerStatus,
@@ -279,7 +281,12 @@ pub async fn execute_prepared_program(
                 records,
                 now,
             )?;
-            Ok(program_record(&prepared, &origin, LedgerStatus::Pending, now))
+            Ok(program_record(
+                &prepared,
+                &origin,
+                LedgerStatus::Pending,
+                now,
+            ))
         })
         .map_err(|error| format!("wallet spend ledger is unavailable: {error:#}"))?;
     let mut record = match reserved {
