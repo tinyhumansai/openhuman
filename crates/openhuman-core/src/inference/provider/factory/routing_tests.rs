@@ -158,6 +158,18 @@ fn cloud_turn_override_replaces_primary_byok_default_model() {
 }
 
 #[test]
+fn cloud_turn_override_supplies_model_when_primary_byok_has_no_default() {
+    let mut config = config_with_byok_provider();
+    config.primary_cloud = Some("p_my-openai".to_string());
+
+    assert_eq!(
+        route_for_turn_model("cloud", "B", &config),
+        "my-openai:B",
+        "a turn override must make an otherwise incomplete primary BYOK route usable"
+    );
+}
+
+#[test]
 fn cloud_turn_override_keeps_managed_primary_route() {
     let config = Config::default();
 
