@@ -70,6 +70,19 @@ pub(super) fn recovery_policy_with_effect(
     Some((class, budget))
 }
 
+/// Whether `error` is the browser's report of a page an action led to and
+/// the session left (`the page reached, <url>, is not permitted ...; the
+/// session left it`).
+fn is_browser_left_page(error: &str) -> bool {
+    let text = error.trim_start();
+    let text = text
+        .strip_prefix("BlockedByPolicy:")
+        .unwrap_or(text)
+        .trim_start();
+    text.starts_with("the page reached, ")
+        && text.contains("is not permitted by this session's allowed origins; the session left it")
+}
+
 /// Tools that reach a service on the user's behalf: an external connector,
 /// the hosted backend, or the memory store. Work can go on without them.
 pub(super) fn is_optional_service(tool: &str) -> bool {
@@ -187,6 +200,17 @@ pub(super) fn classified_recovery_policy(
     }
     if let Some(policy) = fetched_site_policy(tool, error) {
         return policy;
+    }
+    // A browser action that ran and took the session to a page on another
+    // site, which the session then left (TinyComputer's `LeftRefusedPage`).
+    // The keyword classifier reads its "is not permitted" as a missing
+    // permission, a zero-retry class: one click on a link to another site
+    // ended nine operator runs in a row before the agent could report. The
+    // tool answers it as a result naming the page now; should the text still
+    // arrive as a failure, it is a refusal the agent can work around (open
+    // the page itself, or carry on), not a reason to end the run.
+    if tool == "browser" && is_browser_left_page(error) {
+        return Some(("blocked_by_policy", 2));
     }
     // A tool-owned JSON error contract is less ambiguous than rendered prose;
     // the harness reads only its explicit status/code fields.

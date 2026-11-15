@@ -46,7 +46,10 @@ fn other_failures_are_not_a_page_left_for_another_site() {
 
 #[test]
 fn the_reply_tells_the_agent_to_open_the_page_itself() {
-    let reply = left_reply("click", "https://www.spacex.com/launches/starship-flight-15");
+    let reply = left_reply(
+        "click",
+        "https://www.spacex.com/launches/starship-flight-15",
+    );
     assert_eq!(reply["ran"], serde_json::json!(true));
     assert_eq!(
         reply["left_for_another_site"],
@@ -54,5 +57,8 @@ fn the_reply_tells_the_agent_to_open_the_page_itself() {
     );
     let next = reply["next"].as_str().unwrap();
     assert!(next.contains("action=open"), "{next}");
-    assert!(next.contains("https://www.spacex.com/launches/starship-flight-15"), "{next}");
+    assert!(
+        next.contains("https://www.spacex.com/launches/starship-flight-15"),
+        "{next}"
+    );
 }

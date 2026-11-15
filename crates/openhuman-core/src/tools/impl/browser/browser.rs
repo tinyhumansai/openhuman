@@ -5,6 +5,8 @@ mod capture;
 mod cleanup;
 #[path = "browser_keychain.rs"]
 mod keychain;
+#[path = "browser_offsite.rs"]
+mod offsite;
 #[path = "browser_pending.rs"]
 mod pending;
 #[path = "browser_session_pool.rs"]
@@ -474,10 +476,18 @@ impl BrowserTool {
         let id = self.session_for_url(starting_url).await?;
         match verb {
             "open" => {
-                let page = self
+                let page = match self
                     .client
                     .navigate(&id, NavigateRequest::new(required(args, "url")?))
-                    .await?;
+                    .await
+                {
+                    Ok(page) => page,
+                    // A redirect to another site: say where, never fail the turn.
+                    Err(error) => match offsite::left_for(&error) {
+                        Some(url) => return Ok(offsite::left_reply("open", &url)),
+                        None => return Err(error.into()),
+                    },
+                };
                 self.capture(&id, "open").await;
                 Ok(serde_json::to_value(page)?)
             }
@@ -566,6 +576,15 @@ impl BrowserTool {
                 let done = self.client.perform(&id, action).await;
                 if secret.is_none() && done.is_ok() && capture::follows(&kind) {
                     self.capture(&id, &kind).await;
+                }
+                if let Err(error) = &done {
+                    if let Some(url) = offsite::left_for(error) {
+                        let reply = offsite::left_reply(&kind, &url);
+                        return Ok(match &secret {
+                            Some(secret) => keychain::redact_value(reply, secret),
+                            None => reply,
+                        });
+                    }
                 }
                 match secret {
                     None => Ok(serde_json::to_value(done?)?),
