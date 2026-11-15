@@ -243,6 +243,32 @@ pub(super) fn route_with_model(provider: String, model: Option<&str>) -> String 
     }
 }
 
+/// The route a pinned role should use for one turn whose caller asked for
+/// `model` (`model_override`).
+///
+/// A pinned role route (`chat_provider = "local-openai:A"`) outranks
+/// `default_model` in [`provider_for_role`], so an override written only to
+/// `default_model` never reaches the endpoint. This rewrites the pin instead:
+///
+/// * `model` that is itself an explicit provider route (`ollama:llama3.1:8b`,
+///   a configured `<slug>:<model>`, `claude-code:…`) replaces the pin, the way
+///   it would be routed with nothing pinned;
+/// * a bare model id keeps the pinned provider, its credentials, endpoint and
+///   `@temperature`, and swaps only the model ([`route_with_model`]);
+/// * a pin with no model of its own (`cloud`, `openhuman`) is returned
+///   unchanged: the managed backend already takes the model from
+///   `default_model` / the request pin.
+///
+/// `hint:<role>` overrides select a workload rather than a model and must not
+/// be passed here.
+pub(crate) fn route_for_turn_model(pinned: &str, model: &str, config: &Config) -> String {
+    let model = model.trim();
+    if is_explicit_provider_default(model, config) {
+        return model.to_string();
+    }
+    route_with_model(pinned.to_string(), Some(model))
+}
+
 #[cfg(test)]
 #[path = "routing_tests.rs"]
 mod routing_tests;
