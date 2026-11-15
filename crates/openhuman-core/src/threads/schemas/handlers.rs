@@ -1,6 +1,7 @@
 //! Thin JSON-RPC handlers that parse params and delegate to [`super::super::ops`].
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
@@ -252,8 +253,4 @@ pub(super) fn handle_regenerate(ctx: DispatchCtx, params: Map<String, Value>) ->
 
 pub(super) fn parse<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn to_json<T: serde::Serialize>(outcome: crate::core::Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }

@@ -13,9 +13,10 @@ use serde_json::{json, Value};
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolExposure, ToolResult, ToolRunContext};
 
 use super::cache::{self, InlineEntry};
-use super::resolve::{MAX_RESOURCE_BYTES, MAX_STRUCTURED_BYTES};
-use super::types::{McpUiPresentation, UiCsp, UiFlavor, UiResource, MCP_APP_MIME, MCP_UI_KIND};
-use tinymcp_bus::ui::extract_links;
+use tinymcp_bus::ui::{
+    extract_links, McpUiPresentation, UiCsp, UiFlavor, UiResource, MAX_STRUCTURED_BYTES,
+    MAX_WIDGET_BYTES, MCP_APP_MIME, MCP_UI_KIND,
+};
 
 /// The tool's registered name.
 pub const SHOW_UI_TOOL: &str = "show_ui";
@@ -104,7 +105,7 @@ pub fn confine_path_in(roots: &[PathBuf], path: &str) -> Result<(PathBuf, PathBu
 }
 
 /// Reads `resolved` through one handle opened without following links below
-/// `root`, bounded by [`MAX_RESOURCE_BYTES`].
+/// `root`, bounded by [`MAX_WIDGET_BYTES`].
 ///
 /// # Errors
 ///
@@ -127,14 +128,14 @@ pub async fn read_confined(
         if !metadata.is_file() {
             return Err("only regular files can be shown".to_string());
         }
-        if metadata.len() > MAX_RESOURCE_BYTES as u64 {
+        if metadata.len() > MAX_WIDGET_BYTES as u64 {
             return Err("the file is too large to show".to_string());
         }
         let mut html = String::new();
-        file.take(MAX_RESOURCE_BYTES as u64 + 1)
+        file.take(MAX_WIDGET_BYTES as u64 + 1)
             .read_to_string(&mut html)
             .map_err(|_| "could not read the file".to_string())?;
-        if html.len() > MAX_RESOURCE_BYTES {
+        if html.len() > MAX_WIDGET_BYTES {
             return Err("the file is too large to show".to_string());
         }
         Ok(html)
@@ -218,7 +219,7 @@ impl Tool for ShowUiTool {
         if html.trim().is_empty() {
             return Ok(ToolResult::error("show_ui: the document is empty"));
         }
-        if html.len() > MAX_RESOURCE_BYTES {
+        if html.len() > MAX_WIDGET_BYTES {
             return Ok(ToolResult::error(
                 "show_ui: the document is too large to show",
             ));

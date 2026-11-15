@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-use crate::mcp::ui::types::MCP_UI_KIND;
+use tinymcp_bus::ui::MCP_UI_KIND;
 
 fn view() -> UiCallView {
     UiCallView {

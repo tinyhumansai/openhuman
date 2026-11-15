@@ -8,8 +8,9 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, Outcome, TypeSchema};
 
-use super::super::{execute_inputs, json_result, opt_str, req_json};
+use super::super::{execute_inputs, json_result, req_json};
 use crate::modules::web3_service;
+use crate::util::params::optional_string;
 use tinywallet_bus::names::methods;
 
 pub fn schemas() -> Vec<ControllerSchema> {
@@ -53,15 +54,15 @@ pub fn schema(function: &str) -> ControllerSchema {
                     "Input amount in the token's smallest unit.",
                 ),
                 req_json("tokenOut", "Output token address."),
-                opt_str(
+                optional_string(
                     "tokenOutRecipient",
                     "Address receiving output. Defaults to the wallet's own address on this chain.",
                 ),
-                opt_str(
+                optional_string(
                     "senderAddress",
                     "Sender. Defaults to the wallet's own address on this chain.",
                 ),
-                opt_str("slippage", "Slippage percent or 'auto' (default 'auto')."),
+                optional_string("slippage", "Slippage percent or 'auto' (default 'auto')."),
             ],
             outputs: vec![json_result(
                 "Prepared web3 quote {quoteId, kind, expiresAtMs, quote}.",

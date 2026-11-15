@@ -78,29 +78,6 @@ fn read_required_errors_on_missing_key() {
     assert!(err.contains("missing required param 'server_id'"));
 }
 
-// ── read_optional_u32 ─────────────────────────────────────────────────────
-
-#[test]
-fn read_optional_u32_absent_is_none() {
-    assert_eq!(read_optional_u32(&Map::new(), "page").unwrap(), None);
-}
-
-#[test]
-fn read_optional_u32_valid_number() {
-    let mut p = Map::new();
-    p.insert("page".into(), json!(2));
-    assert_eq!(read_optional_u32(&p, "page").unwrap(), Some(2));
-}
-
-#[test]
-fn read_optional_u32_rejects_negative() {
-    let mut p = Map::new();
-    p.insert("page".into(), json!(-1));
-    assert!(read_optional_u32(&p, "page").is_err());
-}
-
-// ── type_name ─────────────────────────────────────────────────────────────
-
 #[test]
 fn registry_get_shared_parser_preserves_value_and_validation_errors() {
     let valid = Map::from_iter([("qualified_name".into(), json!("example/server"))]);

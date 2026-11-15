@@ -6,6 +6,7 @@
 //! machinery; new scripts should call `skill_runtime_*` directly.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -57,10 +58,6 @@ fn deserialize_params<T: serde::de::DeserializeOwned>(
     params: Map<String, Value>,
 ) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 pub fn all_skill_runtime_controller_schemas() -> Vec<ControllerSchema> {

@@ -6,10 +6,10 @@
 //! delegate to [`super::ops`].
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::util::{read_optional, read_required};
 
@@ -539,10 +539,6 @@ fn read_optional_u32(params: &Map<String, Value>, key: &str) -> Result<Option<u3
         }
         None => Ok(None),
     }
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

@@ -1,24 +1,5 @@
 use super::*;
 
-/// One valid section carrying a heading + a paragraph + a bullet.
-fn section() -> DocumentSection {
-    DocumentSection {
-        heading: Some("Overview".to_string()),
-        paragraphs: vec!["A body paragraph.".to_string()],
-        bullets: vec!["A bullet".to_string()],
-    }
-}
-
-/// A minimal valid input; individual tests mutate one field to drive a
-/// single rejection branch.
-fn base() -> GenerateDocumentInput {
-    GenerateDocumentInput {
-        title: "Charter".to_string(),
-        author: Some("Alice".to_string()),
-        sections: vec![section()],
-    }
-}
-
 #[test]
 fn tinydocs_invalid_input_keeps_its_field_and_reason() {
     // The structured pair is what the agent self-corrects on, so the
