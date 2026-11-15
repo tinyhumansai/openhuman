@@ -1,4 +1,5 @@
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
@@ -7,7 +8,6 @@ use crate::core::all::{
     BoundRegisteredController, ControllerEntry, ControllerFuture, ControllerTask,
     RegisteredController,
 };
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -129,14 +129,14 @@ fn parse_decrypt_secret(params: Map<String, Value>) -> Result<String, String> {
 }
 
 fn run_encrypt_secret(_ctx: DispatchCtx, config: Config, plaintext: String) -> ControllerFuture {
-    Box::pin(async move {
-        to_json(crate::security::encryption::rpc::encrypt_secret(&config, &plaintext).await?)
-    })
+    Box::pin(
+        async move { to_json(crate::credentials::ops::encrypt_secret(&config, &plaintext).await?) },
+    )
 }
 
 fn run_decrypt_secret(_ctx: DispatchCtx, config: Config, ciphertext: String) -> ControllerFuture {
     Box::pin(async move {
-        to_json(crate::security::encryption::rpc::decrypt_secret(&config, &ciphertext).await?)
+        to_json(crate::credentials::ops::decrypt_secret(&config, &ciphertext).await?)
     })
 }
 
@@ -146,10 +146,6 @@ fn read_required<T: DeserializeOwned>(params: &Map<String, Value>, key: &str) ->
         .cloned()
         .ok_or_else(|| format!("missing required param '{key}'"))?;
     serde_json::from_value(value).map_err(|e| format!("invalid '{key}': {e}"))
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

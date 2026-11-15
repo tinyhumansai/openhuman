@@ -52,3 +52,11 @@ async fn choosing_backend_resets_a_legacy_nondefault_stt_engine() {
         assert_eq!(crate::voice::effective_stt_provider(&persisted), "cloud");
     }
 }
+
+#[test]
+fn stt_test_module_wait_stays_under_the_frontend_abort() {
+    // `testVoiceProvider` aborts at 30 s; the bounded module wait must answer
+    // first so the user sees the still-loading result, not a client timeout.
+    assert!(STT_TEST_MODULE_LOAD_WAIT > std::time::Duration::ZERO);
+    assert!(STT_TEST_MODULE_LOAD_WAIT <= std::time::Duration::from_secs(25));
+}

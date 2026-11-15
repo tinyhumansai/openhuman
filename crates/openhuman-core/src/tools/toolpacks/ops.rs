@@ -79,23 +79,6 @@ pub fn bind_synthesized_pack_registry(
     );
 }
 
-/// Apply `edit` to every pack tool's handle in `tools`, returning how many.
-fn for_each_pack_tool(
-    tools: &Arc<Vec<Box<dyn Tool>>>,
-    mut edit: impl FnMut(&PackRegistryHandle),
-) -> usize {
-    let mut bound = 0usize;
-    for tool in tools.iter() {
-        if tool.name() != USE_SKILL {
-            continue;
-        }
-        if let Some(handle) = crate::tools::host_extensions::pack_registry_handle(tool.as_ref()) {
-            edit(&handle);
-            bound += 1;
-        }
-    }
-    bound
-}
 /// Remove packed tool names from an agent's advertised set.
 ///
 /// This is the whole compression: the tools stay registered and executable, but

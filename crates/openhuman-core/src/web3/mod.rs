@@ -68,17 +68,6 @@ pub(crate) fn req_json(name: &'static str, comment: &'static str) -> FieldSchema
     }
 }
 
-/// An optional string controller input.
-#[cfg(feature = "web3")]
-pub(crate) fn opt_str(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
-}
-
 /// Standard `result` output field.
 #[cfg(feature = "web3")]
 pub(crate) fn json_result(comment: &'static str) -> FieldSchema {

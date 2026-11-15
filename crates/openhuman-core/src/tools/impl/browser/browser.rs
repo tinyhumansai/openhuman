@@ -18,7 +18,6 @@ mod unattended;
 use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::modules::browser::BrowserClient;
 use crate::security::approval::{ApprovalGate, GateOutcome};
-use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use pending::{approval_target, needs_host_confirmation, Pending};
 use serde_json::{json, Value};
@@ -118,7 +117,6 @@ async fn approve_browser_action(
 }
 
 pub struct BrowserTool {
-    security: Arc<SecurityPolicy>,
     client: Arc<BrowserClient>,
     session: Mutex<Option<SessionId>>,
     bound_origin: Mutex<Option<String>>,
@@ -131,13 +129,8 @@ pub struct BrowserTool {
 }
 
 impl BrowserTool {
-    pub fn new(
-        security: Arc<SecurityPolicy>,
-        client: Arc<BrowserClient>,
-        max_steps: usize,
-    ) -> Self {
+    pub fn new(client: Arc<BrowserClient>, max_steps: usize) -> Self {
         Self {
-            security,
             client,
             session: Mutex::new(None),
             bound_origin: Mutex::new(None),
@@ -148,6 +141,7 @@ impl BrowserTool {
         }
     }
 
+    #[cfg(test)]
     async fn session(&self) -> anyhow::Result<SessionId> {
         self.session_for_url(None).await
     }

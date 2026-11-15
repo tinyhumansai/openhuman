@@ -1,11 +1,11 @@
 use openhuman_embed::__host::core::runtime::DispatchCtx;
+use openhuman_embed::__host::util::params::{json_output, to_json};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use tinyhumans_sdk::api::webhooks::UpdateWebhookTunnelRequest;
 
 use openhuman_embed::__host::core::all::{ControllerFuture, RegisteredController};
-use openhuman_embed::__host::core::Outcome;
 use openhuman_embed::__host::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 #[derive(Debug, Deserialize)]
@@ -238,19 +238,6 @@ fn handle_get_bandwidth(ctx: DispatchCtx, _params: Map<String, Value>) -> Contro
 
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
-    }
 }
 
 #[cfg(test)]

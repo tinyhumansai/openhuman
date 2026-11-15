@@ -8,8 +8,9 @@ redaction, URL normalization, JSON-RPC param decoding and the platform TLS choic
 ## How it works
 
 There is no flow here, only a rule about direction. Domains depend on `util`;
-`util` depends on no domain. No file in this folder has a `use crate::` line.
-A helper that needs a `Config`, a `Tool`, a workspace or security policy
+`util` depends on no domain. The one `use crate::` line is in
+[`params.rs`](./params.rs), which imports `Outcome`, `FieldSchema` and
+`TypeSchema` from `crate::core`, the kernel those types live in. A helper that needs a `Config`, a `Tool`, a workspace or security policy
 belongs in the domain that owns those things. Domains import LLM-facing text
 sanitization directly from `tinytools::sanitize`.
 
@@ -19,7 +20,7 @@ sanitization directly from `tinytools::sanitize`.
       +-----+------+--------+--------+----------+--------+
                               |
                               v
-                        crate::util            (no `use crate::`)
+                        crate::util            (only `crate::core` kernel types)
                               |
                               v
         external crates: serde_json, url, reqwest, tokio,
@@ -39,7 +40,7 @@ URL redaction stays here as a small logging helper.
 | [`retry.rs`](./retry.rs) | `retry_with_backoff` (sync, `std::thread::sleep`) and `retry_with_backoff_async` (`tokio::time::sleep`), plus `is_transient_fs_error`. |
 | [`redact.rs`](./redact.rs) | `redact_url_for_log` replaces URL userinfo with `redacted`. |
 | [`url.rs`](./url.rs) | `normalize_api_base_url`, `normalize_backend_api_base_url`, `join_url`, `host_is_local`. |
-| [`params.rs`](./params.rs) | `read_required` and `read_optional`, the shared param decoders for controller handlers. |
+| [`params.rs`](./params.rs) | The shared controller-schema helpers: param decoders (`read_required`, `read_optional`, `read_optional_u32`, `type_name`, `opt_trimmed_str_arg`), outcome conversion (`to_json`, `value_to_json`, `outcome_value_to_json`), `new_correlation_id`, and the `FieldSchema` builders `json_output`, `required_string` and `optional_string`. |
 | [`types.rs`](./types.rs) | `MaybeSet<T>` (`Set`, `Unset`, `Null`). |
 | [`tls/`](tls/README.md) | `tls_client_builder()`, the platform-conditional TLS backend for `reqwest` clients. |
 
@@ -92,8 +93,20 @@ classifies loopback, unspecified, RFC 1918 IPv4 and `localhost` /
 
 `read_required::<T>(params, key)` fails with `missing required param '<key>'`
 or `invalid '<key>': <serde error>`. `read_optional` treats an absent key and
-`null` the same (`Ok(None)`). Domain `schemas.rs` files use these so the error
-wording stays one contract.
+`null` the same (`Ok(None)`). `read_optional_u32` is the stricter variant
+whose errors name the JSON type (`invalid '<key>': expected number, got
+string`, or `invalid '<key>': expected u32`); `type_name` gives that type name.
+Domain `schemas.rs` files use these so the error wording stays one contract.
+
+`to_json(outcome)` is `Outcome::into_cli_compatible_json` (a bare value, or
+`{result, logs}` when there are logs), and `value_to_json(value)` does the
+same for a bare value. `outcome_value_to_json(outcome, err_prefix)` serializes
+`outcome.value` alone and drops the logs; its serde error is
+`"{err_prefix}{e}"`, so `mcp_clients` passes `""` and the voice controllers
+pass `"serialize error: "`. `json_output`, `required_string` and
+`optional_string` build the three common `FieldSchema`s. The hosted
+controllers in `openhuman-tinyhumans` reach the ones they use through
+`openhuman_embed::__host::util::params`.
 
 ### Sanitization
 
@@ -130,8 +143,8 @@ uses.
 
 ## Gotchas
 
-- Do not add `use crate::` here. If a helper needs domain types, it belongs in
-  that domain.
+- Do not add `use crate::` here beyond the `crate::core` kernel types in
+  `params.rs`. If a helper needs domain types, it belongs in that domain.
 - Do not add external dependencies casually. The kernel-floor ratchet only
   goes down, and raising it needs a written justification.
 - `retry_with_backoff` blocks the thread while it sleeps. Call

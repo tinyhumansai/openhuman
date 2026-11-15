@@ -319,9 +319,16 @@ pub mod credentials {
     }
 }
 
-/// tinyhumans: TLS, URL and redaction helpers for the backend client.
+/// tinyhumans: TLS, URL and redaction helpers for the backend client, and the
+/// shared controller-schema helpers for the hosted `schemas.rs` files.
 pub mod util {
     pub use openhuman_core::util::{redact_url_for_log, truncate_at_byte_boundary};
+
+    pub mod params {
+        pub use openhuman_core::util::params::{
+            json_output, optional_string, outcome_value_to_json, required_string, to_json,
+        };
+    }
 
     pub mod redact {
         pub use openhuman_core::util::redact::redact_url_for_log;

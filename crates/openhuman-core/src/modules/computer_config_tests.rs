@@ -149,14 +149,17 @@ async fn a_persistent_profile_is_the_module_browser_profile() {
     let dir = tempfile::tempdir().unwrap();
     let mut config = config_in(dir.path());
     config.browser.chrome_path = Some("/usr/bin/chromium".into());
+    // Built from the temp dir so it is absolute on every platform: a
+    // Unix-rooted literal has no drive prefix and is relative on Windows.
+    let profile = dir.path().join("profile").to_string_lossy().into_owned();
     config.browser.profile_mode = "persistent".into();
-    config.browser.profile_path = Some("/srv/teeny/state/browser/profile".into());
+    config.browser.profile_path = Some(profile.clone());
     let value = module_config(&config).await;
     assert_eq!(
         value["browser"],
         json!({
             "executable": "/usr/bin/chromium",
-            "profile": "/srv/teeny/state/browser/profile"
+            "profile": profile
         })
     );
 }
@@ -166,8 +169,9 @@ async fn a_persistent_profile_is_the_module_browser_profile() {
 #[tokio::test]
 async fn a_fresh_or_unusable_profile_sends_no_module_profile() {
     let dir = tempfile::tempdir().unwrap();
+    let absolute = dir.path().join("profile").to_string_lossy().into_owned();
     for (mode, path) in [
-        ("fresh", Some("/srv/teeny/state/browser/profile")),
+        ("fresh", Some(absolute.as_str())),
         ("persistent", None),
         ("persistent", Some("relative/profile")),
     ] {

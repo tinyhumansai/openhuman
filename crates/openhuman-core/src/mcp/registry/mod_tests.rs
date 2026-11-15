@@ -14,7 +14,6 @@ use crate::core::runtime::DispatchCtx;
 async fn shared_surface(config: &Config, ctx: &DispatchCtx) {
     let _: Vec<crate::core::all::RegisteredController> = all_mcp_registry_registered_controllers();
     let (): () = boot::spawn_installed_servers(config).await;
-    let (): () = bus::init();
     let (): () = supervisor::run().await;
     let _: Result<String, String> = oauth::complete(config, "state", "code").await;
     let _: Vec<connections::ConnectedServerOverview> = connections::connected_overview(ctx).await;
