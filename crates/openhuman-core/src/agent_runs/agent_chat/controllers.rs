@@ -155,7 +155,7 @@ fn handle_agent_chat(
         let reasoning_effort = match route {
             Some(_) => params.inference_reasoning_effort,
             None => {
-                super::session_turn::apply_turn_reasoning_effort(
+                super::turn_overrides::apply_turn_reasoning_effort(
                     &mut config,
                     params.common.model_override.as_deref(),
                     params.inference_reasoning_effort,
