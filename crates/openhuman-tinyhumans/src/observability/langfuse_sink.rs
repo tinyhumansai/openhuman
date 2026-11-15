@@ -54,8 +54,8 @@ pub(crate) fn reject_partial_success(response: &serde_json::Value) -> Result<(),
     // rejection, not an acceptance.
     let count_rejected = match &partial["rejectedSpans"] {
         serde_json::Value::Null => false,
-        serde_json::Value::String(count) => count.parse::<u64>().map_or(true, |count| count > 0),
-        serde_json::Value::Number(count) => count.as_u64().map_or(true, |count| count > 0),
+        serde_json::Value::String(count) => count.parse::<i64>().map_or(true, |count| count > 0),
+        serde_json::Value::Number(count) => count.as_i64().map_or(true, |count| count > 0),
         _ => true,
     };
     if message_rejected || count_rejected {
