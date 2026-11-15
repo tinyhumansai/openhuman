@@ -543,6 +543,7 @@ pub fn evaluate_program(
 }
 
 mod ops;
+pub(crate) mod schemas;
 pub use ops::{
     execute_prepared_program, prepare_program, ExecuteProgramParams, ExecutedProgram,
     PrepareProgramParams, PreparedProgram,
