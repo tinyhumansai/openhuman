@@ -46,7 +46,7 @@
 //! allowed_programs = [
 //!   "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",   # SPL Token
 //!   "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",  # Associated Token Account
-//!   "mERKcfxMC5SqJn4Ld4BUris3WKZZ1ojjWJ3A3J5CKxv",   # merkle distributor
+//!   "<distributor program id>",                     # the program being called
 //! ]
 //!
 //! [[wallet_policy.accounts.solana_1.mints]]
