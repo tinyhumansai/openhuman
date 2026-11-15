@@ -206,11 +206,14 @@ the approval-gate session id. `verify_bearer_token` and `bearer_matches` do
 the comparison.
 
 Browser `EventSource` cannot send an `Authorization` header, so `/events`
-uses separate bind tokens from [`event_bind_tokens.rs`](./event_bind_tokens.rs). An authenticated
-caller invokes `core.events_subscribe_token { client_id }` and then opens
-`/events?client_id=<id>&token=<bind>`. A bind token is 256 random bits, tied
-to one `client_id`, consumed on first use, and expires after 60 seconds by
-default (30 minutes at most). The store caps at 4096 live tokens.
+uses separate bind tokens. An authenticated caller invokes
+`core.events_subscribe_token { client_id }` and then opens
+`/events?client_id=<id>&token=<bind>`. The store belongs to the server
+(`openhuman-rpc`'s `server/http/events_bind_tokens.rs`), which installs its
+minter through the [`event_bind_tokens.rs`](./event_bind_tokens.rs) hook when
+it builds its router. A bind token is 256 random bits, tied to one
+`client_id`, consumed on first use, and expires after 60 seconds by default
+(30 minutes at most). The store caps at 4096 live tokens.
 
 This is the RPC transport bearer only. User credentials (session JWT, API
 key, offline local token) arrive through `auth.set_credential` in
@@ -314,7 +317,7 @@ Dispatch and auth:
 | [`legacy_aliases.rs`](./legacy_aliases.rs) | `resolve_legacy`: retired method names to canonical ones; mirrors `LEGACY_METHOD_ALIASES` in [`app/src/services/rpcMethods.ts`](../../../../app/src/services/rpcMethods.ts). |
 | [`observability_hooks.rs`](./observability_hooks.rs) | Host-installed classifiers: the session-expiry predicate behind `is_session_expired_error`, the expected-error classifier for host sentinels, and (crash-reporting) extra Sentry noise filters. |
 | `auth.rs` | The per-process RPC bearer: init paths, `get_rpc_token`, `verify_bearer_token`, `bearer_matches`. |
-| `event_bind_tokens.rs` | Single-shot bind tokens for the `/events` SSE stream (`issue`, `consume`). |
+| `event_bind_tokens.rs` | The mint hook behind `core.events_subscribe_token` (`install_minter`); the token store is the RPC server's. |
 | `server_launcher.rs` | `ServerLauncher` port that `run` / `serve` start a server through. |
 | `http_server_status.rs` | `HTTP_SERVER_COMPILED_IN`, an ungated marker the desktop shell asserts so a core built without `http-server` fails the build. |
 

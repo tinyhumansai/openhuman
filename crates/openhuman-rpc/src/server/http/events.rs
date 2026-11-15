@@ -96,7 +96,7 @@ pub(super) async fn events_handler(
             )
                 .into_response();
         };
-        if !crate::core_host::core::event_bind_tokens::consume(&query.client_id, supplied_token) {
+        if !super::events_bind_tokens::consume(&query.client_id, supplied_token) {
             let client_id_len = query.client_id.len();
             log::warn!(
                 "[events] reject subscribe: bind token invalid or expired (client_id_len={})",

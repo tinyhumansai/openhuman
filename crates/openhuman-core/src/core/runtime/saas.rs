@@ -80,7 +80,7 @@ pub struct SaasConfig {
     #[serde(default)]
     pub custom_definitions: bool,
     /// Require `X-OpenHuman-User-Sig` on every request made for a user
-    /// (see `profiles::gateway`).
+    /// (checked by `openhuman-rpc`'s `saas_gateway`).
     #[serde(default = "default_true")]
     pub require_user_signature: bool,
     /// The storage backend every node of a deployment shares (`sqlite:…`,

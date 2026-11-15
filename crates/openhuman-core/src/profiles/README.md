@@ -390,7 +390,7 @@ set.
 | `recovery.rs` | Workspace and session-store recovery after an unclean takeover |
 | `lease.rs` | The profile lease as the host uses it: `OpenError`, the lease store choice (`DocumentLeases` over a backend, else `LocalLeases`), and the heartbeat that renews every open profile's lease and fences the ones lost |
 | `registry.rs` | `ProfileRegistry`: which profiles are provisioned, in the backend's `cluster` scope or as `profile.toml` files |
-| `gateway.rs` | Which context a gateway request runs under: the operator plane, or the profile of the user named in `X-OpenHuman-User`, after the signature check; the typed refusal (`409` holder) |
+| `gateway.rs` | `ProfileHost::resolve_user`: the profile of the user named in `X-OpenHuman-User`, after the caller's signature check, or a typed `ResolveUserError`. The headers, the HMAC and the HTTP statuses (`409` holder) are `openhuman-rpc`'s `saas_gateway` |
 | `surface.rs` | What a user may call: `USER_METHODS`, applied at dispatch, in the controller list and in `/schema`; user thread-id rules |
 | `background.rs` | The SaaS background loop: idle sweeps and each profile's queued memory jobs under its context |
 | `tools.rs` | Which agent tools a user gets: the host tool groups, the hard-deny list, the tool-list filter, the approval gate's SaaS verdict, and the container policy for a user's shell |

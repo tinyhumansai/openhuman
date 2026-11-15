@@ -74,7 +74,7 @@ pub mod core {
         };
     }
     pub mod event_bind_tokens {
-        pub use openhuman_core::core::event_bind_tokens::{consume, issue};
+        pub use openhuman_core::core::event_bind_tokens::{install_minter, BindToken};
     }
     pub mod events {
         // `DomainEvent` is matched variant by variant by the Socket.IO bridge.
@@ -262,9 +262,6 @@ pub mod security {
     pub use openhuman_core::security::{AutonomyLevel, SecurityPolicy};
     pub mod live_policy {
         pub use openhuman_core::security::live_policy::install;
-    }
-    pub mod pairing {
-        pub use openhuman_core::security::pairing::is_public_bind;
     }
     /// TinyHumans' hosted device-tunnel adapter and the semantic device events
     /// it forwards into the core.
@@ -532,14 +529,6 @@ pub mod platform {
     pub mod llm_gate {
         pub use openhuman_core::platform::llm_gate::is_signed_out;
     }
-
-    pub mod connectivity {
-        pub mod rpc {
-            pub use openhuman_core::platform::connectivity::rpc::{
-                pick_listen_port_for_host_with, OccupiedByCore,
-            };
-        }
-    }
     pub mod health {
         pub use openhuman_core::platform::health::{snapshot, verdict};
     }
@@ -575,6 +564,12 @@ pub mod storage {
         pub use openhuman_core::storage::secrets::{current, MemorySecrets, SecretStore};
     }
 
+    /// The lease record behind a `409` from the SaaS gateway (rpc: its refusal
+    /// tests build one).
+    pub mod lease {
+        pub use openhuman_core::storage::lease::LeaseRecord;
+    }
+
     /// The layout v1 -> v2 migration the host runs at boot when
     /// `[storage] auto_migrate_layout` is set. The core builds it only with
     /// `legacy-import`.
@@ -596,11 +591,11 @@ pub mod storage {
 }
 
 pub mod profiles {
+    // The SaaS gateway: resolving a named user to a profile, and the
+    // refusal for a profile that cannot open.
+    pub use openhuman_core::profiles::{OpenError, Profile, ProfileHost, ProfileId};
     pub mod gateway {
-        pub use openhuman_core::profiles::gateway::{
-            resolve_scope, sign, verify, GatewayRefusal, GatewayScope, HeldBy, PROFILE_HELD,
-            PROFILE_OWNER_HEADER, USER_HEADER, USER_SIG_HEADER,
-        };
+        pub use openhuman_core::profiles::gateway::ResolveUserError;
     }
     pub mod host {
         pub use openhuman_core::profiles::host::host;

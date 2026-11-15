@@ -10,7 +10,6 @@
 //! `PROPTEST_RNG_SEED`.
 
 use super::*;
-use crate::core_host::profiles::gateway::sign;
 use axum::body::Body;
 use axum::http::HeaderValue;
 use proptest::prelude::*;

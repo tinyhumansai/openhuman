@@ -150,6 +150,16 @@
     "verification": "config/schema/cloud_providers_tests.rs: hosted_presets_and_classification_are_context_scoped"
   },
   {
+    "file": "crates/openhuman-core/src/core/event_bind_tokens.rs",
+    "scope": "",
+    "name": "MINTER",
+    "type": "OnceLock<BindTokenMinter>",
+    "count": 1,
+    "category": "A",
+    "reason": "Holds the one function pointer the RPC server installs to mint `/events` bind tokens; it carries no tenant data, and the tokens themselves live in the server's own store, bound to a client id.",
+    "verification": "core/event_bind_tokens_tests.rs: the_installed_minter_mints_and_reports_a_full_store"
+  },
+  {
     "file": "crates/openhuman-core/src/core/observability_hooks.rs",
     "scope": "",
     "name": "SESSION_EXPIRY_PREDICATES",
