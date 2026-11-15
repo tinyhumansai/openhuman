@@ -5691,6 +5691,7 @@ dependencies = [
  "directories",
  "dirs 6.0.0",
  "dotenvy",
+ "ed25519-dalek",
  "env_logger",
  "flate2",
  "fs2",
