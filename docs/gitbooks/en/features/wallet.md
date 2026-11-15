@@ -127,6 +127,28 @@ The caps of one asset are counted separately from the other's. `OPENHUMAN_WALLET
 
 Every execute is written to a ledger before it is signed and updated afterwards. A failed execute is marked *in doubt*: it still counts against the caps and is never retried, so check its status before preparing a new transfer. Scheduled (cron) agent turns are read-only and cannot pay. x402 payments from automation are limited by the x402 budget instead.
 
+### Secondary accounts and program transactions
+
+Besides the one account per chain, the same recovery phrase gives a second Solana account at `m/44'/501'/1'/0'` (index 1, labelled `giveaway`). New and imported wallets derive it at setup; a wallet set up earlier derives it the first time `wallet.account` asks for it. It is listed under `additionalAccounts` in `wallet.status`, never moves funds through transfers, and is not covered by `[wallet_policy.assets]`.
+
+It can sign one thing: a Solana transaction another program built, through `wallet.prepare_program` and then `wallet.execute_prepared_program`. Each account that may do this needs its own section, and an account without one is refused:
+
+```toml
+[wallet_policy.accounts.solana_1]
+allowed_programs = [
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",   # SPL Token
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",  # Associated Token Account
+  "<program id>",
+]
+
+[[wallet_policy.accounts.solana_1.mints]]
+mint = "<mint address>"
+per_tx_max_raw = 1000000000
+daily_max_raw = 2000000000
+```
+
+The transaction is refused if it calls a program not on the list, moves a mint not on the list, moves more than either cap, or needs any signer besides the account. Token movements must be `TransferChecked` instructions, and System program instructions are not signed this way. Executes are written to the same ledger, but they are counted separately from the primary account's caps.
+
 ## See also
 
 - [Approval gate](approval-gate.md)
