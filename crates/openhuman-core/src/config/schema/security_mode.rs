@@ -94,16 +94,6 @@ impl SecurityJudgeRoute {
         }
     }
 
-    /// Jev through an OpenRouter-compatible endpoint supplied by the host.
-    #[must_use]
-    pub fn open_router_endpoint(endpoint: impl Into<String>, api_key: impl Into<String>) -> Self {
-        Self {
-            api_key: api_key.into(),
-            endpoint: endpoint.into(),
-            dialect: SecurityJudgeDialect::OpenRouter,
-        }
-    }
-
     /// The open Jev endpoint.
     #[must_use]
     pub fn open_jev(api_key: impl Into<String>) -> Self {

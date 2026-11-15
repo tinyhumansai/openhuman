@@ -1,4 +1,5 @@
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::{required_string, to_json};
 use std::str::FromStr;
 
 use serde::de::DeserializeOwned;
@@ -6,7 +7,6 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::platform::about_app::CapabilityCategory;
 
@@ -144,19 +144,6 @@ fn handle_about_app_search(ctx: DispatchCtx, params: Map<String, Value>) -> Cont
 
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
-}
-
-fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
-    }
 }
 
 fn optional_category(name: &'static str, comment: &'static str) -> FieldSchema {

@@ -107,7 +107,7 @@ impl SessionExpiredSubscriber {
                     return;
                 }
                 let is_local_session =
-                    crate::security::credentials::jwt::get_session_token(&config)
+                    crate::security::credentials::session_support::get_session_token(&config)
                         .await
                         .ok()
                         .flatten()
@@ -138,7 +138,7 @@ impl SessionExpiredSubscriber {
                 //     we've at least pinned the scheduler gate so background work
                 //     can't make things worse.
                 if let Err(err) =
-                    crate::security::credentials::rpc::clear_session(ctx, &config).await
+                    crate::security::credentials::ops::clear_session(ctx, &config).await
                 {
                     tracing::warn!(
                         source = %source,

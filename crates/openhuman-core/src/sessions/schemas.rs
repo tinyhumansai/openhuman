@@ -1,10 +1,12 @@
 //! Controller schemas and JSON-RPC dispatchers for the durable run ledger.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::{
+    json_output, new_correlation_id, optional_string, required_string, value_to_json,
+};
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use tinyagents_session::run_ledger::{AgentRunListRequest, RunEventListRequest};
@@ -42,10 +44,10 @@ fn schema_for(function: &str) -> ControllerSchema {
             description:
                 "List durable agent/workflow run ledger rows with optional filters and pagination.",
             inputs: vec![
-                optional_str("status", "Filter by run status."),
-                optional_str("kind", "Filter by run kind."),
-                optional_str("parentRunId", "Filter by parent run id."),
-                optional_str("parentThreadId", "Filter by parent thread id."),
+                optional_string("status", "Filter by run status."),
+                optional_string("kind", "Filter by run kind."),
+                optional_string("parentRunId", "Filter by parent run id."),
+                optional_string("parentThreadId", "Filter by parent thread id."),
                 optional_u64("limit", "Max runs to return (default 50, max 500)."),
                 optional_u64("offset", "Pagination offset."),
             ],
@@ -58,7 +60,7 @@ fn schema_for(function: &str) -> ControllerSchema {
             namespace: "run_ledger",
             function: "get",
             description: "Get a durable agent/workflow run ledger row by id.",
-            inputs: vec![required_str("id", "Run id.")],
+            inputs: vec![required_string("id", "Run id.")],
             outputs: vec![json_output("run", "AgentRun payload or null.")],
         },
         "run_ledger_events" => ControllerSchema {
@@ -66,7 +68,7 @@ fn schema_for(function: &str) -> ControllerSchema {
             function: "events",
             description: "List recent durable events for a run, ordered by sequence.",
             inputs: vec![
-                required_str("runId", "Run id."),
+                required_string("runId", "Run id."),
                 optional_u64("afterSequence", "Only return events after this sequence."),
                 optional_u64("limit", "Max events to return (default 100, max 1000)."),
             ],
@@ -88,10 +90,6 @@ fn schema_for(function: &str) -> ControllerSchema {
             }],
         },
     }
-}
-
-fn new_correlation_id() -> String {
-    uuid::Uuid::new_v4().simple().to_string()[..8].to_string()
 }
 
 fn handle_run_ledger_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
@@ -120,7 +118,7 @@ fn handle_run_ledger_list(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
             log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] list.error err={s}");
             s
         })?;
-        to_json(response)
+        value_to_json(response)
     })
 }
 
@@ -144,7 +142,7 @@ fn handle_run_ledger_get(ctx: DispatchCtx, params: Map<String, Value>) -> Contro
             log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] get.error id={id} err={s}");
             s
         })?;
-        to_json(serde_json::json!({ "run": run }))
+        value_to_json(serde_json::json!({ "run": run }))
     })
 }
 
@@ -171,30 +169,8 @@ fn handle_run_ledger_events(ctx: DispatchCtx, params: Map<String, Value>) -> Con
             log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] events.error err={s}");
             s
         })?;
-        to_json(response)
+        value_to_json(response)
     })
-}
-
-fn to_json<T: serde::Serialize>(value: T) -> Result<Value, String> {
-    Outcome::new(value, vec![]).into_cli_compatible_json()
-}
-
-fn required_str(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
-    }
-}
-
-fn optional_str(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
 }
 
 fn optional_u64(name: &'static str, comment: &'static str) -> FieldSchema {
@@ -203,15 +179,6 @@ fn optional_u64(name: &'static str, comment: &'static str) -> FieldSchema {
         ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
         comment,
         required: false,
-    }
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
     }
 }
 

@@ -1,8 +1,7 @@
 //! Cross-cutting system tools: shell, Node/npm/Python execution, tool
-//! detection/install, time helpers, LSP, proxy config, update check/apply.
+//! detection/install, time helpers, LSP, proxy config.
 //! Each family, its tool structs, and its registration gates are catalogued in
-//! `tools/impl/README.md`; `security_for_tool_context` below is the shared
-//! `SecurityPolicy` resolver that must stay in step with the `filesystem` copy.
+//! `tools/impl/README.md`.
 
 mod exec_adapters;
 mod install_tool;
@@ -15,12 +14,6 @@ mod shell_process;
 mod shell_run;
 mod shell_saas;
 mod shell_support;
-mod update_apply;
-mod update_check;
-
-use crate::security::SecurityPolicy;
-use crate::tools::implementations::filesystem::gate::security_scoped_to_root;
-use tinytools::ToolRunContext;
 
 pub use crate::config::proxy_tool::ProxyConfigTool;
 pub use install_tool::InstallToolTool;
@@ -30,44 +23,3 @@ pub use schedule::ScheduleTool;
 pub use shell::ShellTool;
 pub use shell_process::ShellProcessTool;
 pub(crate) use shell_support::YIELD_AFTER_ARG;
-pub use update_apply::UpdateApplyTool;
-pub use update_check::UpdateCheckTool;
-
-/// Clone `security` and scope it to the run's workspace descriptor, if any.
-///
-/// The process-tool counterpart of
-/// `tools/impl/filesystem/gate.rs` (`security_scoped_to_root`), and it must stay in step
-/// with it: the descriptor's root becomes both the relative-path resolution
-/// root (`action_dir`) **and** a `ReadWrite` trusted root. The grant is the
-/// load-bearing half — `action_dir` only decides where a relative path lands,
-/// while the allow/deny decision reads `workspace_dir` + `trusted_roots`
-/// (TinySecurity's scoped path authorization). Granting it in the
-/// filesystem copy alone would let an agent read and edit a checkout it could
-/// not then build, test, or commit, because the shell tool resolves its path through here.
-///
-/// The grant is *additive and per-call*: it is pushed onto a clone, so nothing
-/// process-global is mutated and concurrent turns cannot race each other. It
-/// cannot widen the hard invariants either — TinySecurity's protected-path and
-/// internal-state reservations are both evaluated *before* any trusted-root
-/// shortcut.
-///
-/// The root always originates from trusted in-process code (the session
-/// builder, the sub-agent runner, or the `cwd` RPC parameter) — never from
-/// model-supplied text.
-pub(in crate::tools::implementations) fn security_for_tool_context(
-    security: &SecurityPolicy,
-    context: Option<&dyn ToolRunContext>,
-    tool: &str,
-) -> SecurityPolicy {
-    if let Some(workspace) = context.and_then(|ctx| ctx.workspace()) {
-        tracing::debug!(
-            tool,
-            workspace_root = %workspace.root.display(),
-            policy_id = %workspace.policy_id,
-            "[tools:system] granting TinyAgents workspace descriptor as action dir + trusted root"
-        );
-        security_scoped_to_root(security, &workspace.root)
-    } else {
-        security.clone()
-    }
-}
