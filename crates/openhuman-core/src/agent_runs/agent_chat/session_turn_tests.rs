@@ -161,7 +161,8 @@ async fn send_one_turn_request(
 #[tokio::test]
 async fn model_override_reaches_the_endpoint_under_a_pinned_local_route() {
     let _guard = crate::inference::inference_test_guard_async().await;
-    let _env = crate::config::test_env::EnvVarGuard::locked_unset_many_async(LOCAL_ENDPOINT_ENV).await;
+    let _env =
+        crate::config::test_env::EnvVarGuard::locked_unset_many_async(LOCAL_ENDPOINT_ENV).await;
     let server = mock_local_endpoint().await;
     let tmp = tempfile::tempdir().unwrap();
     let mut config = pinned_local_route_config(&tmp, &server);
@@ -194,7 +195,8 @@ async fn model_override_reaches_the_endpoint_under_a_pinned_local_route() {
 #[tokio::test]
 async fn turn_without_model_override_keeps_the_pinned_route_model() {
     let _guard = crate::inference::inference_test_guard_async().await;
-    let _env = crate::config::test_env::EnvVarGuard::locked_unset_many_async(LOCAL_ENDPOINT_ENV).await;
+    let _env =
+        crate::config::test_env::EnvVarGuard::locked_unset_many_async(LOCAL_ENDPOINT_ENV).await;
     let server = mock_local_endpoint().await;
     let tmp = tempfile::tempdir().unwrap();
     let mut config = pinned_local_route_config(&tmp, &server);
@@ -255,7 +257,8 @@ fn provider_route_model_override_replaces_the_pinned_route() {
 #[tokio::test]
 async fn reasoning_effort_reaches_the_endpoint_without_an_inference_url() {
     let _guard = crate::inference::inference_test_guard_async().await;
-    let _env = crate::config::test_env::EnvVarGuard::locked_unset_many_async(LOCAL_ENDPOINT_ENV).await;
+    let _env =
+        crate::config::test_env::EnvVarGuard::locked_unset_many_async(LOCAL_ENDPOINT_ENV).await;
     let server = mock_local_endpoint().await;
     let tmp = tempfile::tempdir().unwrap();
     let mut config = pinned_local_route_config(&tmp, &server);

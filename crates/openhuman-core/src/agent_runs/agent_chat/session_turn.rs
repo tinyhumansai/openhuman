@@ -526,12 +526,17 @@ fn pin_turn_roles_to_model(config: &mut Config, model: &str) {
         config.coding_provider.as_deref(),
     ]
     .map(|pinned| {
-        pinned.map(str::trim).filter(|p| !p.is_empty()).map(|pinned| {
-            (
-                pinned.to_string(),
-                crate::inference::provider::factory::route_for_turn_model(pinned, model, config),
-            )
-        })
+        pinned
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(|pinned| {
+                (
+                    pinned.to_string(),
+                    crate::inference::provider::factory::route_for_turn_model(
+                        pinned, model, config,
+                    ),
+                )
+            })
     });
     let slots = [
         ("chat", &mut config.chat_provider),
