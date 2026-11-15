@@ -396,14 +396,19 @@ pub(super) fn to_status(config: &Config, state: Option<StoredWalletState>) -> su
                 .map(|v| !v.trim().is_empty())
                 .unwrap_or(false);
             let secret_stored = secret_in_json || keychain_has_mnemonic(config);
+            let (accounts, additional_accounts) = state
+                .accounts
+                .into_iter()
+                .partition(super::WalletAccount::is_primary);
             super::WalletStatus {
                 configured: true,
-                onboarding_completed: state.consent_granted && !state.accounts.is_empty(),
+                onboarding_completed: state.consent_granted && !accounts.is_empty(),
                 consent_granted: state.consent_granted,
                 secret_stored,
                 source: Some(state.source),
                 mnemonic_word_count: Some(state.mnemonic_word_count),
-                accounts: state.accounts,
+                accounts,
+                additional_accounts,
                 updated_at_ms: Some(state.updated_at_ms),
             }
         }
@@ -415,6 +420,7 @@ pub(super) fn to_status(config: &Config, state: Option<StoredWalletState>) -> su
             source: None,
             mnemonic_word_count: None,
             accounts: Vec::new(),
+            additional_accounts: Vec::new(),
             updated_at_ms: None,
         },
     }
