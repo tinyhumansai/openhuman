@@ -102,7 +102,7 @@ async fn captcha(config: &Config) -> Option<Value> {
         );
         return None;
     };
-    tracing::debug!(captcha_provider = provider, "[computer] captcha solver provider");
+    tracing::debug!("[computer] captcha solver provider={provider}");
     let mut jev = json!({ "api_key": api_key, "provider": provider });
     if let Some(model) = computer
         .captcha_model
