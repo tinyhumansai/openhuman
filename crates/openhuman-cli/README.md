@@ -70,7 +70,7 @@ never written back to the config file.
 | `run`, `serve` | Start the HTTP JSON-RPC and Socket.IO server. Flags: `--host`, `--port`, `--jsonrpc-only` (no Socket.IO), `--headless-api` (JSON-RPC only, no background services), `-v`/`--verbose`. |
 | `call --method <name> [--params '<json>' \| --params-stdin]` | Invoke one controller in-process (no server needed) and print the JSON result. Runs on a runtime with the agent worker stack size, so methods that run a turn work. |
 | `mcp`, `mcp-server` | Run the stdio MCP server. No banner, since stdout carries JSON-RPC. |
-| `agent <dump-prompt \| dump-all \| prompt-size \| list>` | Inspect agent definitions and rendered prompts (`core/agent_cli.rs`), for example `agent dump-prompt --agent <id> --json --with-tools`. |
+| `agent <dump-prompt \| dump-all \| prompt-size \| list>` | Inspect agent definitions and rendered prompts (`agent/cli.rs`), for example `agent dump-prompt --agent <id> --json --with-tools`. |
 | `sentry-test [--message <text>] [--panic]` | Send a test event to verify Sentry wiring. Reports a disabled-build error without `crash-reporting`. |
 | `tui`, `chat` | Print a migration notice: the terminal UI is the separate `openhuman-tui` executable. |
 | `<namespace> <function> [--param value ...]` | Generic dispatch to any registered controller, for example `skills ...` or `voice ...`. `<namespace> --help` lists functions; `<namespace> <function> --help` lists parameters. |
@@ -165,7 +165,7 @@ directly. Gates local to this crate:
 ## Boundaries
 
 - Subcommand parsing and dispatch live in the core
-  ([`crates/openhuman-core/src/core/cli.rs`](../openhuman-core/src/core/cli.rs), `core/agent_cli.rs`). New
+  ([`crates/openhuman-core/src/core/cli.rs`](../openhuman-core/src/core/cli.rs), `agent/cli.rs`). New
   functionality is a controller registered in `core/all.rs`, reached through
   the generic namespace dispatch, not a new branch in `cli.rs`.
 - The JSON-RPC server, Socket.IO and the listener belong to

@@ -1,67 +1,34 @@
 //! Handing finished spans to their sink(s): the local NDJSON/log exporter and
-//! the remote Langfuse usage-data push.
+//! the usage-data [`TraceSink`](super::TraceSink)s a host registered.
 
 use crate::config::schema::AgentTracingConfig;
 use crate::config::Config;
 
 use crate::config::schema::AgentTracingBackend;
-use std::time::Duration;
-use tinyagents_harness::observability::trace_export::otlp::otlp_requests;
 use tinyagents_harness::observability::trace_export::serialize::{spans_to_ndjson, SpanEnvelope};
 use tinyagents_harness::observability::trace_export::{TraceContext, TraceSpan};
 use tinyagents_harness::observability::AgentObservation;
-use tinyagents_harness::observability::LangfuseClient;
 
-const PUSH_TIMEOUT: Duration = Duration::from_secs(10);
-
-fn reject_partial_success(response: &serde_json::Value) -> Result<(), String> {
-    if response["partialSuccess"]["errorMessage"]
-        .as_str()
-        .is_some_and(|message| !message.is_empty())
-    {
-        Err("Langfuse OTLP proxy reported partial success".to_string())
-    } else {
-        Ok(())
-    }
-}
-
-async fn push_spans(config: &Config, spans: &[TraceSpan]) -> Result<(), String> {
+/// Hand `spans` to `sinks`. Best-effort: a failure is logged per sink and never
+/// reaches the run.
+async fn push_to_sinks(
+    sinks: Vec<(String, std::sync::Arc<dyn super::TraceSink>)>,
+    config: &Config,
+    spans: &[TraceSpan],
+    label: &str,
+) {
     if spans.is_empty() {
-        return Ok(());
+        return;
     }
-    let url = crate::core::observability::telemetry::langfuse::otlp_url(config);
-    let environment =
-        crate::core::observability::telemetry::langfuse::environment_for_base(config, &url);
-    if crate::core::observability::telemetry::langfuse::skip_push(environment) {
-        return Ok(());
+    if sinks.is_empty() {
+        log::debug!("[agent-tracing] {label}: no usage-data trace sink registered");
+        return;
     }
-    if !url.starts_with("http") {
-        return Err("Langfuse backend proxy URL is unavailable".to_string());
+    for (id, sink) in sinks {
+        if let Err(err) = sink.push(config, spans).await {
+            log::warn!("[agent-tracing] {label} push to sink {id} failed ({err})");
+        }
     }
-    let token = match crate::credentials::backend_credential::direct_backend_credential(
-        config,
-        "langfuse otlp push",
-    )
-    .await
-    {
-        Some(crate::credentials::backend_credential::BackendCredential::Session(token)) => token,
-        _ => return Ok(()),
-    };
-    let client = LangfuseClient::proxy_with_transport(
-        url,
-        token,
-        crate::config::build_runtime_proxy_client_with_timeouts("telemetry.otlp", 10, 10),
-        config.resolved_endpoints.attribution_header_map(),
-    )
-    .map_err(|_| "Langfuse OTLP proxy client could not be configured".to_string())?;
-    for payload in otlp_requests(spans, environment, &super::export_brand()) {
-        let response = tokio::time::timeout(PUSH_TIMEOUT, client.send_otlp(payload))
-            .await
-            .map_err(|_| "Langfuse OTLP proxy request timed out".to_string())?
-            .map_err(|_| "Langfuse OTLP proxy request failed".to_string())?;
-        reject_partial_success(&response)?;
-    }
-    Ok(())
 }
 
 /// Map the configured backend onto the upstream NDJSON envelope.
@@ -130,11 +97,10 @@ pub(crate) fn export_spans(config: &AgentTracingConfig, spans: &[TraceSpan]) {
 /// Two independent paths, both best-effort and never fatal to a turn:
 ///
 /// 1. **Usage-data sharing** (`observability.share_usage_data`, on by default):
-///    push the run's spans to the backend Langfuse proxy — endpoint derived from
-///    the current backend host, authed with the session bearer (see
-///    [`push_spans`]). A failure (no live session, network, rejected
-///    payload) just logs; there is no local fallback, since sharing and local
-///    export are distinct opt-ins.
+///    hand the run's spans to every registered [`TraceSink`](super::TraceSink)
+///    (the TinyHumans layer registers its Langfuse proxy push). A failure (no
+///    live session, network, rejected payload) just logs; there is no local
+///    fallback, since sharing and local export are distinct opt-ins.
 /// 2. **Local exporter** (`observability.agent_tracing.enabled`, opt-in): append
 ///    OTel/Langfuse-format NDJSON to the configured file or the app log via
 ///    [`export_spans`].
@@ -147,9 +113,7 @@ pub(crate) async fn export_run_trace(config: &Config, spans: &[TraceSpan]) {
     let observability = &config.observability;
 
     if observability.share_usage_data {
-        if let Err(err) = push_spans(config, spans).await {
-            log::warn!("[agent-tracing] Langfuse usage-data push failed ({err})");
-        }
+        push_to_sinks(super::sinks::sinks(), config, spans, "usage-data").await;
     }
 
     if observability.agent_tracing.enabled {
@@ -223,9 +187,10 @@ pub(crate) async fn export_subagent_journal_trace(
     if !config.observability.share_usage_data {
         return;
     }
-    if !crate::core::observability::telemetry::langfuse::journal_push_ready(config).await {
+    let ready = super::sinks::ready_sinks(config).await;
+    if ready.is_empty() {
         log::debug!(
-            "[agent-tracing] child trace export skipped: push not possible run_id={journal_run_id}"
+            "[agent-tracing] child trace export skipped: no ready sink run_id={journal_run_id}"
         );
         return;
     }
@@ -252,11 +217,7 @@ pub(crate) async fn export_subagent_journal_trace(
             .as_millis()
             .min(u128::from(u64::MAX)) as u64,
     );
-    if let Err(err) = push_spans(config, &spans).await {
-        log::warn!(
-            "[agent-tracing] child Langfuse OTLP push failed run_id={journal_run_id}: {err}"
-        );
-    }
+    push_to_sinks(ready, config, &spans, "child trace").await;
 }
 
 pub(crate) fn build_subagent_trace(

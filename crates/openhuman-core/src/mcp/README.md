@@ -56,9 +56,13 @@ session; a rejected DELETE leaves the host session intact.
 - `audit/` exposes the module-owned write-audit records as OpenHuman RPC.
 - `server/` owns the OpenHuman tool catalog and dispatch policy for the local
   MCP server. TinyMCP owns the wire protocol and session lifecycle.
-- `tools/impl/network/` contains host tool adapters for configured MCP tools
-  and the GitBooks docs tool. They use confidential bus calls and keep product
-  approval checks on the host.
+- `tools/` holds the generic bridge agent tools (`mcp_list_servers`,
+  `mcp_list_tools`, `mcp_call_tool`), one file each; `server_tools.rs` builds
+  the direct `mcp_<server>_<tool>` executors; `gitbooks_tools.rs` is the
+  GitBooks docs tool. They use confidential bus calls and keep product
+  approval checks on the host. Every static-server path gets its tools through
+  `McpConfiguredClient::safe_static_tools` (list, scrub, prompt-injection
+  screen).
 
 The static server set comes from OpenHuman config (`[[mcp_client.servers]]`).
 The installed server set comes from the user's `mcp.json` document. The host

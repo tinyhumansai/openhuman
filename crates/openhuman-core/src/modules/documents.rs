@@ -24,11 +24,11 @@
 //! deadline underneath would make the effective limit the smaller of two numbers
 //! nobody picked together.
 
-use crate::tools::implementations::document::format::spec::{DocumentSpec, WirePresentationSpec};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use tinybus::stream::StreamRef;
 use tinydocs_bus::names::methods;
+use tinydocs_bus::spec::{DocumentSpec, WirePresentationSpec};
 use tinydocs_bus::OutputRef;
 
 use super::{ops, registry};

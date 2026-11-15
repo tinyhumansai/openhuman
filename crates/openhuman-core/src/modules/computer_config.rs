@@ -10,7 +10,8 @@
 //!   TinyHumans proxy when signed in, else the user's OpenRouter key.
 //! - `browser` — the Chrome executable the user picked, if any.
 //! - `captcha` — the captcha solver's image-reading Jev route, on TypeSafe
-//!   with the user's TypeSafe key, when `[computer] captcha_solver` is on.
+//!   or Surplus (`[computer] captcha_provider`) with the user's key for it,
+//!   when `[computer] captcha_solver` is on.
 //! - `trace_path` — where desktop commands are traced, when tracing is on.
 
 #[cfg(unix)]
@@ -68,19 +69,41 @@ async fn jev(config: &Config, hosted: Option<&str>) -> Option<Value> {
     }
 }
 
-/// The captcha solver's section: TypeSafe's own Jev route (the one that
-/// takes images), the chosen image model and attempt bound. `None` when the
-/// solver is off or there is no TypeSafe key.
+/// The captcha solver's section: the chosen provider's Jev route (one that
+/// takes images) with its key, the chosen image model and attempt bound.
+/// `None` when the solver is off, the provider is unknown, or there is no key
+/// for it.
 async fn captcha(config: &Config) -> Option<Value> {
     let computer = &config.computer;
     if !computer.captcha_solver {
         return None;
     }
-    let Some(api_key) = provider_key(config, "typesafe", "TYPESAFE_API_KEY").await else {
-        tracing::debug!("[computer] captcha_solver is on but no TypeSafe key is configured");
+    let provider = computer
+        .captcha_provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty())
+        .unwrap_or("type_safe");
+    let (slug, env) = match provider {
+        "type_safe" => ("typesafe", "TYPESAFE_API_KEY"),
+        "surplus" => ("surplus", "SURPLUS_API_KEY"),
+        other => {
+            tracing::warn!(
+                captcha_provider = other,
+                "[computer] captcha_solver is on but captcha_provider is unknown; use type_safe or surplus"
+            );
+            return None;
+        }
+    };
+    let Some(api_key) = provider_key(config, slug, env).await else {
+        tracing::debug!(
+            captcha_provider = provider,
+            "[computer] captcha_solver is on but no {provider} key is configured"
+        );
         return None;
     };
-    let mut jev = json!({ "api_key": api_key, "provider": "type_safe" });
+    tracing::debug!("[computer] captcha solver provider={provider}");
+    let mut jev = json!({ "api_key": api_key, "provider": provider });
     if let Some(model) = computer
         .captcha_model
         .as_deref()

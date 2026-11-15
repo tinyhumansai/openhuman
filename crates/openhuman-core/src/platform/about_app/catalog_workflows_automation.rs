@@ -102,7 +102,7 @@ Capability {
         privacy: Some(CapabilityPrivacy {
             leaves_device: true,
             data_kind: PrivacyDataKind::Raw,
-            destinations: &["Visited websites", "OpenRouter, OpenHuman backend, OpenJev or Sage for task decisions"],
+            destinations: &["Visited websites", "OpenRouter, OpenHuman backend, OpenJev or Sage for task decisions", "TypeSafe or Surplus Intelligence for captcha images, only when the captcha solver is on (captcha_provider)"],
         }),
     },
 Capability {

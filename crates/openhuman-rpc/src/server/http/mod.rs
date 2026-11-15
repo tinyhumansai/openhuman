@@ -16,6 +16,7 @@ use crate::core_host::core::types::AppState;
 
 pub(crate) mod cors;
 mod events;
+mod events_bind_tokens;
 mod health;
 mod live_voice;
 mod oauth_mcp;
@@ -62,6 +63,7 @@ fn build_core_http_router_mode(
     preflight_gate: Option<crate::server::auth::PreflightGate>,
 ) -> Router {
     crate::http_host::ensure_registered();
+    events_bind_tokens::install();
     let rpc_route = match &preflight_gate {
         Some(_) => post(rpc_handler::preflight_rpc_handler),
         None => post(rpc_handler::rpc_handler),

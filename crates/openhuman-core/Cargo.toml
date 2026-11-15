@@ -310,8 +310,6 @@ async-trait = "0.1"
 # crates); declared directly so the keyring module can `use zeroize::Zeroizing`.
 zeroize = "1"
 hex = "0.4"
-# The host-owned SaaS gateway signature uses HMAC with SHA-256.
-hmac = "0.12"
 tokio-util = { version = "0.7", features = ["rt", "io"] }
 # tokio-tungstenite is declared per-target below so the TLS backend
 # (native-tls on Windows, rustls on macOS / Linux) matches the reqwest

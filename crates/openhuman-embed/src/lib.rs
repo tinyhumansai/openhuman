@@ -171,8 +171,6 @@ pub use openhuman_core::core::all::schema_for_rpc_method;
 /// Whether this build carries the HTTP server surface the router mounts.
 pub use openhuman_core::core::http_server_status::HTTP_SERVER_COMPILED_IN;
 pub use openhuman_core::core::ControllerSchema;
-/// Why a listen-port pick failed (another live core holds the port, ...).
-pub use openhuman_core::platform::connectivity::rpc::PickListenPortError;
 /// Whether this build carries the voice domain.
 pub use openhuman_core::voice::VOICE_COMPILED_IN;
 

@@ -356,3 +356,18 @@ async fn a_failed_browser_task_nudges_toward_its_hint_then_stops_on_a_repeat() {
     let summary = slot.lock().unwrap().clone().unwrap();
     assert!(summary.contains("task_failed"), "{summary}");
 }
+
+/// What the browser tool said when a click on Hacker News took the session
+/// to another site (production, 2026-11-15): TinyComputer left the page,
+/// the call itself ran. Read as a missing permission (budget 0), it ended
+/// nine operator runs in a row before the agent could report.
+const BROWSER_LEFT_PAGE: &str = "BlockedByPolicy: the page reached, \
+    https://www.spacex.com/launches/starship-flight-15, is not permitted by this session's \
+    allowed origins; the session left it";
+
+#[test]
+fn a_browser_page_left_for_another_site_does_not_end_the_turn() {
+    let policy = recovery_policy("browser", BROWSER_LEFT_PAGE, false).expect("classified");
+    assert_eq!(policy.0, "blocked_by_policy");
+    assert!(policy.1 >= 1, "{policy:?}");
+}

@@ -19,6 +19,8 @@ use tinycomputer_bus::DesktopResponse;
 
 use crate::config::Config;
 
+#[path = "browser_never_open.rs"]
+pub(crate) mod never_open;
 #[path = "browser_output.rs"]
 mod output;
 use output::{append_output_chunk, check_output_size, finish_output, ReleaseOnDrop};
@@ -480,6 +482,11 @@ impl BrowserClient {
                 "local/private host '{host}' is blocked"
             )));
         }
+        // The operator's never-open list holds whatever allow-all says; a
+        // list that cannot be read refuses every page (fails closed).
+        if let Some(reason) = never_open::refusal(url.as_str()) {
+            return Err(BrowserCallError::Policy(reason));
+        }
         if !allow_all
             && !self.allows_any_site()
             && !self.browser_domains().iter().any(|allowed| {
@@ -665,6 +672,23 @@ fn browser_allow_all() -> bool {
         std::env::var("OPENHUMAN_BROWSER_ALLOW_ALL").ok().as_deref(),
         Some("1" | "true" | "TRUE" | "yes" | "YES")
     )
+}
+
+/// Whether `raw` is an https URL on a public host (no userinfo, no private
+/// or local address): what the browser may be asked to open at all.
+pub(crate) fn is_public_https(raw: &str) -> bool {
+    let Ok(url) = url::Url::parse(raw) else {
+        return false;
+    };
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => !private_or_local(&ip.to_string()),
+        Some(url::Host::Ipv6(ip)) => !private_or_local(&ip.to_string()),
+        Some(url::Host::Domain(host)) => !private_or_local(host),
+        None => false,
+    }
 }
 
 fn private_or_local(host: &str) -> bool {

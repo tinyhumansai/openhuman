@@ -58,9 +58,7 @@ pub mod embed {
         RuntimeModule, ServiceSet, SkillsPolicy, StorageInfo, TokenSource, WeightClass, Workspace,
     };
     // Process-level facts a host reads.
-    pub use openhuman_embed::{
-        schema_for_rpc_method, PickListenPortError, HTTP_SERVER_COMPILED_IN, VOICE_COMPILED_IN,
-    };
+    pub use openhuman_embed::{schema_for_rpc_method, HTTP_SERVER_COMPILED_IN, VOICE_COMPILED_IN};
     // The curated facades (each is an explicit list inside embed).
     pub use openhuman_embed::modules;
     pub use openhuman_embed::{
@@ -79,6 +77,7 @@ pub(crate) mod channels;
 pub mod client;
 mod devices;
 pub(crate) mod doctor;
+pub mod errors;
 pub mod hosted;
 mod hosted_config;
 pub(crate) mod inference;
@@ -88,6 +87,7 @@ pub mod integrations;
 pub mod jev;
 pub mod jwt;
 pub(crate) mod memory;
+pub mod observability;
 mod provider_oauth;
 mod register;
 mod runtime;

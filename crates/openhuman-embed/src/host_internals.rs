@@ -37,12 +37,21 @@ pub mod core {
     /// RPC handler and classifier (rpc).
     pub mod observability {
         pub use openhuman_core::core::observability::{
-            contains_transient_transport_phrase, expected_error_kind, is_api_key_rejected_message,
+            contains_transient_transport_phrase, expected_error_kind, is_session_expired_error,
             is_session_expired_message, is_suppressed_usage_probe_backoff,
             is_transient_http_status_code, is_transient_message_failure, report_error,
             report_error_or_expected, report_warning_message, ExpectedErrorKind,
-            API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX, INSUFFICIENT_CREDITS_PREFIX,
-            PAID_PLAN_REQUIRED_PREFIX, REPORT_ERROR_TRACING_TARGET, USAGE_PROBE_BACKOFF_PREFIX,
+            BACKEND_UNAVAILABLE_PREFIX, REPORT_ERROR_TRACING_TARGET, USAGE_PROBE_BACKOFF_PREFIX,
+        };
+        // tinyhumans: the hosted classifiers and the usage-data trace sink it
+        // installs (`observability::register`).
+        pub use openhuman_core::core::observability::{
+            export_brand, register_expected_error_classifier, register_session_expiry_predicate,
+            register_trace_sink, TraceSink,
+        };
+        #[cfg(feature = "crash-reporting")]
+        pub use openhuman_core::core::observability::{
+            register_crash_noise_filter, CrashNoiseFilter,
         };
     }
 
@@ -65,7 +74,7 @@ pub mod core {
         };
     }
     pub mod event_bind_tokens {
-        pub use openhuman_core::core::event_bind_tokens::{consume, issue};
+        pub use openhuman_core::core::event_bind_tokens::{install_minter, BindToken};
     }
     pub mod events {
         // `DomainEvent` is matched variant by variant by the Socket.IO bridge.
@@ -89,11 +98,6 @@ pub mod core {
     }
     pub mod server_launcher {
         pub use openhuman_core::core::server_launcher::{install_server_launcher, ServeRequest};
-    }
-    pub mod session_expiry {
-        pub use openhuman_core::core::session_expiry::{
-            backend_status_means_session_expired, is_session_expired_error,
-        };
     }
     pub mod shutdown {
         pub use openhuman_core::core::shutdown::{register, signal};
@@ -259,9 +263,6 @@ pub mod security {
     pub mod live_policy {
         pub use openhuman_core::security::live_policy::install;
     }
-    pub mod pairing {
-        pub use openhuman_core::security::pairing::is_public_bind;
-    }
     /// TinyHumans' hosted device-tunnel adapter and the semantic device events
     /// it forwards into the core.
     pub mod devices {
@@ -339,6 +340,7 @@ pub mod util {
     pub mod url {
         pub use openhuman_core::util::url::{
             host_is_local, join_url, normalize_api_base_url, normalize_backend_api_base_url,
+            provider_host_is_local,
         };
     }
 }
@@ -527,14 +529,6 @@ pub mod platform {
     pub mod llm_gate {
         pub use openhuman_core::platform::llm_gate::is_signed_out;
     }
-
-    pub mod connectivity {
-        pub mod rpc {
-            pub use openhuman_core::platform::connectivity::rpc::{
-                pick_listen_port_for_host_with, OccupiedByCore,
-            };
-        }
-    }
     pub mod health {
         pub use openhuman_core::platform::health::{snapshot, verdict};
     }
@@ -570,6 +564,12 @@ pub mod storage {
         pub use openhuman_core::storage::secrets::{current, MemorySecrets, SecretStore};
     }
 
+    /// The lease record behind a `409` from the SaaS gateway (rpc: its refusal
+    /// tests build one).
+    pub mod lease {
+        pub use openhuman_core::storage::lease::LeaseRecord;
+    }
+
     /// The layout v1 -> v2 migration the host runs at boot when
     /// `[storage] auto_migrate_layout` is set. The core builds it only with
     /// `legacy-import`.
@@ -591,11 +591,11 @@ pub mod storage {
 }
 
 pub mod profiles {
+    // The SaaS gateway: resolving a named user to a profile, and the
+    // refusal for a profile that cannot open.
+    pub use openhuman_core::profiles::{OpenError, Profile, ProfileHost, ProfileId};
     pub mod gateway {
-        pub use openhuman_core::profiles::gateway::{
-            resolve_scope, sign, verify, GatewayRefusal, GatewayScope, HeldBy, PROFILE_HELD,
-            PROFILE_OWNER_HEADER, USER_HEADER, USER_SIG_HEADER,
-        };
+        pub use openhuman_core::profiles::gateway::ResolveUserError;
     }
     pub mod host {
         pub use openhuman_core::profiles::host::host;

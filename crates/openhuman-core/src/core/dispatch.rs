@@ -183,8 +183,11 @@ fn try_core_dispatch(
 /// middleware as the rest of `/rpc`) and then opens
 /// `/events?client_id=<id>&token=<bind>`. The `/events` handler removes
 /// the token from the store on first use, so a leaked URL cannot be
-/// replayed by a second subscriber.
-fn handle_events_subscribe_token(params: serde_json::Value) -> Result<InvocationResult, String> {
+/// replayed by a second subscriber. The store is the server's, reached
+/// through the [`event_bind_tokens`](crate::core::event_bind_tokens) hook.
+pub(crate) fn handle_events_subscribe_token(
+    params: serde_json::Value,
+) -> Result<InvocationResult, String> {
     let obj = params.as_object();
     let client_id = obj
         .and_then(|m| m.get("client_id"))
@@ -203,15 +206,21 @@ fn handle_events_subscribe_token(params: serde_json::Value) -> Result<Invocation
         .and_then(|v| v.as_u64())
         .map(std::time::Duration::from_secs);
 
-    let issued =
-        crate::core::event_bind_tokens::issue(client_id.to_string(), ttl).ok_or_else(|| {
+    use crate::core::event_bind_tokens::{mint, MintError};
+    let issued = mint(client_id.to_string(), ttl).map_err(|error| match error {
+        MintError::AtCapacity => {
             log::warn!(
                 "[events-bind] reject mint: store at capacity (client_id_len={} ttl_secs={:?})",
                 client_id.len(),
                 ttl.map(|d| d.as_secs())
             );
             "events bind-token store at capacity; try again shortly".to_string()
-        })?;
+        }
+        MintError::NoServer => {
+            log::warn!("[events-bind] reject mint: no server installed a bind-token store");
+            "events bind tokens need the core's HTTP server, which is not running".to_string()
+        }
+    })?;
 
     let ttl_remaining_secs = issued
         .valid_until

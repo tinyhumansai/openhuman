@@ -7,6 +7,7 @@
 pub mod artifact_rows;
 pub(crate) mod attachments;
 pub(crate) mod channel_projection;
+pub mod envelope;
 pub mod error;
 pub mod ops;
 pub mod rpc_models;

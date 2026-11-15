@@ -339,10 +339,7 @@ impl OpenHumanTurnPrelude {
             .mcp_tools
             .configured
             .clone();
-        crate::tools::implementations::network::configured_server_tools_from_presentations(
-            config,
-            presentations,
-        )
+        crate::mcp::server_tools::configured_server_tools_from_presentations(config, presentations)
     }
 
     pub(super) async fn refresh_cold_integrations(&self) {

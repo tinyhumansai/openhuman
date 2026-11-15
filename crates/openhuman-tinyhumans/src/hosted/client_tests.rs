@@ -1,7 +1,8 @@
 use super::*;
+use crate::errors::is_api_key_rejected_message;
 use crate::hosted::test_support::store_session;
 use openhuman_embed::__host::core::observability::{
-    expected_error_kind, is_api_key_rejected_message, is_session_expired_message,
+    expected_error_kind, is_session_expired_message,
 };
 use serde_json::json;
 use tempfile::TempDir;
@@ -50,6 +51,8 @@ fn session_401_maps_to_session_expired_sentinel() {
 
 #[test]
 fn api_key_401_maps_to_api_key_rejected_not_session_expiry() {
+    // As installed: the sentinel classifier is this layer's.
+    crate::errors::register();
     let err = map_error(
         CredentialKind::ApiKey,
         "GET /teams/me/usage",

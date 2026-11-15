@@ -25,6 +25,7 @@
 pub mod cache;
 pub mod client;
 pub mod credential;
+pub mod expiry;
 pub mod identity;
 pub mod link;
 pub mod manager;

@@ -23,19 +23,6 @@ fn event_with_message(msg: &str) -> sentry::protocol::Event<'static> {
     event
 }
 
-#[cfg(feature = "crash-reporting")]
-fn channel_message_404_event(method: &str) -> sentry::protocol::Event<'static> {
-    let mut event = sentry::protocol::Event::default();
-    event.tags.insert("domain".into(), "backend_api".into());
-    event.tags.insert("failure".into(), "non_2xx".into());
-    event.tags.insert("status".into(), "404".into());
-    event.tags.insert("method".into(), method.into());
-    event.message = Some(
-        "PATCH /channels/telegram/messages/1103 failed (404); response_body_len=172".to_string(),
-    );
-    event
-}
-
 fn managed_body(status: &str, code: &str) -> String {
     let body = format!(
         "OpenHuman API error ({status}): {{\"error\":{{\"errorCode\":\"{code}\",\"message\":\"x\"}}}}"
@@ -122,8 +109,6 @@ fn event_with_exception_value(value: &str) -> sentry::protocol::Event<'static> {
 mod crash_filter_integrations;
 #[path = "observability_crash_filter_messages_tests.rs"]
 mod crash_filter_messages;
-#[path = "observability_error_classification_billing_refusal_tests.rs"]
-mod error_classification_billing_refusal;
 #[path = "observability_error_classification_composio_backoff_tests.rs"]
 mod error_classification_composio_backoff;
 #[path = "observability_error_classification_core_tests.rs"]

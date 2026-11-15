@@ -222,6 +222,13 @@ impl BrowserEgressHost {
         if !is_alias(&target.policy_id, target.expected_generation) {
             return Err(refused());
         }
+        // The operator's never-open list holds for every connection the
+        // browser makes: a click, a redirect or a task's own navigation all
+        // dial here before the request is sent. Refused hosts get no grant.
+        if let Some(reason) = super::browser::never_open::dial_refusal(&target.hostname) {
+            tracing::info!(%reason, "[computer] browser dial refused by the never-open list");
+            return Err(refused());
+        }
         let config = crate::core::runtime::DispatchCtx::ambient()
             .load_config()
             .await

@@ -1,6 +1,6 @@
 use super::*;
-use crate::core::agent_cli::debug::prompt_size::PromptSizeReport;
-use crate::core::agent_cli::debug::DumpedPrompt;
+use crate::agent::cli::debug::prompt_size::PromptSizeReport;
+use crate::agent::cli::debug::DumpedPrompt;
 
 fn sample_dump() -> DumpedPrompt {
     DumpedPrompt {
@@ -44,7 +44,7 @@ fn tools_section_rolls_up_every_tool_into_one_row() {
 fn est_tokens_divides_by_the_shared_bytes_per_token_constant() {
     assert_eq!(
         est_tokens(400),
-        400 / crate::core::agent_cli::debug::prompt_size::EST_BYTES_PER_TOKEN
+        400 / crate::agent::cli::debug::prompt_size::EST_BYTES_PER_TOKEN
     );
     assert_eq!(est_tokens(0), 0);
 }

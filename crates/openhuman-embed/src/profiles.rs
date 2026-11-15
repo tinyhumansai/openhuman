@@ -68,13 +68,13 @@ pub use handle::RelayAccepted;
 pub use handle::{ChatReply, ProfileEvents, ProfileHandle};
 #[cfg(feature = "channels")]
 pub use openhuman_core::channels::providers::relay::RelayInboundParams as RelayMessage;
-/// Validated operator-owned direct inference settings.
-pub use openhuman_core::core::runtime::direct_profile_provider::DirectProfileProvider;
 pub use openhuman_core::core::runtime::saas::{SaasCronConfig, SaasSandboxConfig};
 pub use openhuman_core::core::runtime::SaasConfig;
 pub use openhuman_core::cron::host_delivery::{CronDelivery, CronReply};
 pub use openhuman_core::cron::JobOrigin;
 pub use openhuman_core::profiles::cron::SweepReport as CronSweepReport;
+/// Validated operator-owned direct inference settings.
+pub use openhuman_core::profiles::direct_profile_provider::DirectProfileProvider;
 pub use openhuman_core::profiles::{OpenError, ProfileId, ProfileIdMode, ProfileSummary};
 pub use openhuman_core::storage::lease::LeaseRecord;
 pub use openhuman_core::threads::{ConversationMessageRecord, ConversationThreadSummary};

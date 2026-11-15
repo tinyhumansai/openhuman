@@ -2,10 +2,11 @@
 //!
 //! [`classify_failure`] is pure so the routing can be tested without a server.
 //! Whether an error is a session expiry is core's call
-//! (`openhuman::core::session_expiry`); this module only decides how
+//! (`openhuman::core::observability::is_session_expired_error`, extended by
+//! the predicate the TinyHumans layer installs); this module only decides how
 //! loudly the transport reports it.
 
-use crate::core_host::core::session_expiry::is_session_expired_error;
+use crate::core_host::core::observability::is_session_expired_error;
 
 /// Returns `true` when the error is the wallet's "not configured yet" message.
 ///

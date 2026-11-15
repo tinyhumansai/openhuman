@@ -39,7 +39,7 @@ Errors travel as `Err(String)`. When a controller needs a typed error, it
 encodes a `StructuredRpcError` ([`structured_error.rs`](./structured_error.rs)) into that string behind
 the `STRUCTURED_RPC_ERROR_SENTINEL` prefix, and the transport decodes it. A
 few surfaces (`threads`, desktop provider surfaces) wrap results in the
-`{data, error, meta}` envelope built by [`envelope.rs`](./envelope.rs).
+`{data, error, meta}` envelope built by [`threads/envelope.rs`](../threads/envelope.rs).
 
 ### Registration
 
@@ -140,11 +140,14 @@ transport decides severity: names in `KNOWN_PROBE_METHODS` (generic probes
 such as `rpc.discover`, and retired calls) stay debug-only, and anything else
 is reported to Sentry at warn.
 
-Session expiry is classified narrowly by [`session_expiry.rs`](./session_expiry.rs). Only OpenHuman
-backend failures (explicit "Session expired" text, the scheduler-gate
-`SESSION_EXPIRED` sentinel, missing session guards, and 401s formatted as
-`"{METHOD} /path failed (401 ...)"`) count. A provider's 401 does not, so a
-broken BYOK key or Discord token never signs the user out.
+Session expiry is classified narrowly by `observability::is_session_expired_error`
+([`observability_hooks.rs`](./observability_hooks.rs)). The core's own markers
+(explicit "Session expired" text, the scheduler-gate `SESSION_EXPIRED`
+sentinel, missing session guards) always count; the installed host adds its
+backend's wire shapes through `register_session_expiry_predicate` (the
+TinyHumans layer registers its `"{METHOD} /path failed (401 ...)"` shape). A
+provider's 401 does not count, so a broken BYOK key or Discord token never
+signs the user out.
 
 ### Event bus
 
@@ -203,11 +206,14 @@ the approval-gate session id. `verify_bearer_token` and `bearer_matches` do
 the comparison.
 
 Browser `EventSource` cannot send an `Authorization` header, so `/events`
-uses separate bind tokens from [`event_bind_tokens.rs`](./event_bind_tokens.rs). An authenticated
-caller invokes `core.events_subscribe_token { client_id }` and then opens
-`/events?client_id=<id>&token=<bind>`. A bind token is 256 random bits, tied
-to one `client_id`, consumed on first use, and expires after 60 seconds by
-default (30 minutes at most). The store caps at 4096 live tokens.
+uses separate bind tokens. An authenticated caller invokes
+`core.events_subscribe_token { client_id }` and then opens
+`/events?client_id=<id>&token=<bind>`. The store belongs to the server
+(`openhuman-rpc`'s `server/http/events_bind_tokens.rs`), which installs its
+minter through the [`event_bind_tokens.rs`](./event_bind_tokens.rs) hook when
+it builds its router. A bind token is 256 random bits, tied to one
+`client_id`, consumed on first use, and expires after 60 seconds by default
+(30 minutes at most). The store caps at 4096 live tokens.
 
 This is the RPC transport bearer only. User credentials (session JWT, API
 key, offline local token) arrive through `auth.set_credential` in
@@ -227,7 +233,7 @@ the first argument:
 | `mcp`, `mcp-server` | run the stdio MCP server (`mcp::server::run_stdio_from_cli`) |
 | `tui`, `chat` | print a pointer to the separate `openhuman-tui` binary |
 | `call --method <m> --params <json>` | one raw RPC call through `invoke_method` (`--params-stdin` reads params from stdin) |
-| `agent dump-prompt / dump-all / prompt-size / list` | prompt inspection tools in [`agent_cli.rs`](./agent_cli.rs) |
+| `agent dump-prompt / dump-all / prompt-size / list` | prompt inspection tools in [`agent/cli.rs`](../agent/cli.rs) |
 | `sentry-test` | send a test event to Sentry |
 | `<namespace> <function> [--flags]` | generic dispatcher over the registry schemas |
 
@@ -236,7 +242,7 @@ from their descriptions (`namespace_description` in `all.rs`), and turns
 flags into params. A namespace with no function can fall through to a
 standalone `RegisteredCliAdapter`: today `voice` (which stays registered with
 the `voice` feature off and reports that voice is disabled) and `subsystems`
-([`subsystems_cli.rs`](./subsystems_cli.rs), which prints the subsystem table). Wire new CLI
+([`memory/status.rs`](../memory/status.rs), which prints the subsystem table). Wire new CLI
 behavior through the registry; do not add namespace branches to [`cli.rs`](./cli.rs) or
 the JSON-RPC server.
 
@@ -282,15 +288,12 @@ through `openhuman_rpc::server::serve` or `CoreRuntime::start_services`.
 `MAX_BLOCKING_THREADS` (64). One agent turn is a very large async state
 machine and a sub-agent nests another, which overflows tokio's default 2 MiB
 worker stack, so every multi-thread runtime that can host a turn (the desktop
-shell, `openhuman-core run`, `agent_cli`) sets both.
+shell, `openhuman-core run`, `agent::cli`) sets both.
 
-`subsystem/` serves the `subsystems` RPC namespace and its CLI table: one
-`SubsystemStatus` row per kernel capability slot (class, health, contract
-version, advertised capabilities). It is the one controller registered from
-`core/` itself, tagged `DomainGroup::Platform`, because the subsystem table is
-a kernel binding table like the controller registry. Memory is the only
-occupant today; `crate::memory::status` builds its row, and a new subsystem
-appends its adapter call in `subsystem::schemas::subsystems_status`.
+The `subsystems` RPC namespace and its CLI table (one `SubsystemStatus` row
+per kernel capability slot) live in [`memory/status.rs`](../memory/status.rs),
+because memory is the only slot. `all.rs` still tags it
+`DomainGroup::Platform`, like `health`.
 
 ## Layout
 
@@ -301,7 +304,6 @@ Contract and registry:
 | `mod.rs` | `ControllerSchema`, `FieldSchema`, `TypeSchema`; module declarations; re-exports `Outcome` and `StructuredRpcError`. |
 | `outcome.rs` | `Outcome<T>`, `apply_log_envelope` (the one wire-shape rule) and `unwrap_rpc`. |
 | `structured_error.rs` | `StructuredRpcError`, a typed error sentinel-encoded into a controller's `Err(String)`. |
-| `envelope.rs` | `ApiEnvelope`, `ApiError`, `ApiMeta`, `PaginationMeta`: the `{data, error, meta}` shape some namespaces use. |
 | `params.rs` | Params shape (`params_to_object`, `parse_json_params`), validation messages and `is_param_validation_error`. |
 | `all.rs` | The registry: `RegisteredController`, `RegisteredCliAdapter`, `DomainGroup`, `ControllerExtension`, `register_controller_extension`, `validate_params`, `schema_for_rpc_method`, `try_invoke_registered_rpc`, `all_http_method_schemas` (adds `core.ping` and `core.version` for `/schema`), `namespace_description`. |
 | [`types.rs`](./types.rs) | `AppState`, `HostKind`, `InvocationResult`, `approval_gate_boot_decision`. |
@@ -313,9 +315,9 @@ Dispatch and auth:
 | [`invoke.rs`](./invoke.rs) | `invoke_method` and `default_state`: the in-process entry point and the session-expiry hook. |
 | [`dispatch.rs`](./dispatch.rs) | `dispatch`: legacy rewrite, `core.*` methods, registry fallback, unknown-method handling, `KNOWN_PROBE_METHODS`. |
 | [`legacy_aliases.rs`](./legacy_aliases.rs) | `resolve_legacy`: retired method names to canonical ones; mirrors `LEGACY_METHOD_ALIASES` in [`app/src/services/rpcMethods.ts`](../../../../app/src/services/rpcMethods.ts). |
-| `session_expiry.rs` | `is_session_expired_error`, `is_unconfirmed_unauthorized_error`, and `backend_status_means_session_expired` (the one status rule: only a session-credential 401 expires the session). |
+| [`observability_hooks.rs`](./observability_hooks.rs) | Host-installed classifiers: the session-expiry predicate behind `is_session_expired_error`, the expected-error classifier for host sentinels, and (crash-reporting) extra Sentry noise filters. |
 | `auth.rs` | The per-process RPC bearer: init paths, `get_rpc_token`, `verify_bearer_token`, `bearer_matches`. |
-| `event_bind_tokens.rs` | Single-shot bind tokens for the `/events` SSE stream (`issue`, `consume`). |
+| `event_bind_tokens.rs` | The mint hook behind `core.events_subscribe_token` (`install_minter`); the token store is the RPC server's. |
 | `server_launcher.rs` | `ServerLauncher` port that `run` / `serve` start a server through. |
 | `http_server_status.rs` | `HTTP_SERVER_COMPILED_IN`, an ungated marker the desktop shell asserts so a core built without `http-server` fails the build. |
 
@@ -332,8 +334,6 @@ CLI:
 | Path | What it does |
 | --- | --- |
 | `cli.rs` | `run_from_cli_args`, launch flags, help output, `call` and the generic namespace dispatcher. |
-| `agent_cli.rs` | `openhuman-core agent ...`: `dump-prompt`, `dump-all`, `prompt-size`, `list`. |
-| `subsystems_cli.rs` | `run_subsystems_command`, the table printed by bare `openhuman-core subsystems`. |
 
 Process plumbing:
 
@@ -346,7 +346,6 @@ Process plumbing:
 | `sentry_transport.rs` | Sentry transport over reqwest (`crash-reporting` feature). |
 | `shutdown.rs` | SIGINT/SIGTERM signal and the registered shutdown hooks. |
 | `runtime/` | `CoreBuilder`, `CoreRuntime`, `CoreContext`, `ServiceSet`, `DomainSet`, bootstrap and subscribers. See [runtime/README.md](runtime/README.md). |
-| `subsystem/` | `SubsystemStatus` and the `subsystems` controller. |
 
 ## Key types and entry points
 

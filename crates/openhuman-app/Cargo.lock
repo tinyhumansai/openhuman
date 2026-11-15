@@ -4558,7 +4558,6 @@ dependencies = [
  "futures",
  "futures-util",
  "hex",
- "hmac 0.12.1",
  "hostname",
  "iana-time-zone",
  "libc",
@@ -4740,6 +4739,7 @@ dependencies = [
  "chrono",
  "futures",
  "hex",
+ "hmac 0.12.1",
  "keyring",
  "log",
  "once_cell",
@@ -4748,6 +4748,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "socketioxide",
  "tinyagents-harness",
  "tinyagents-session",
@@ -4783,6 +4784,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "tiny-artifacts",
+ "tinyagents-harness",
  "tinyagents-live",
  "tinychannels-bus",
  "tinyhumans-sdk",
@@ -7899,7 +7901,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-bus"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "base64 0.22.1",
  "serde",

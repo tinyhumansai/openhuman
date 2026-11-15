@@ -77,7 +77,7 @@ async fn events_require_a_credential_and_reject_unknown_bind_tokens() {
 
 #[tokio::test]
 async fn events_bind_token_is_client_bound_and_single_use() {
-    let token = crate::core_host::core::event_bind_tokens::issue("right", None)
+    let token = crate::server::http::events_bind_tokens::issue("right", None)
         .expect("bind token")
         .token;
 
@@ -101,7 +101,7 @@ async fn events_stream_forwards_only_the_bound_client() {
     use crate::core_host::web_chat::{publish_web_channel_event, WebChannelEvent};
     use tokio_stream::StreamExt;
 
-    let token = crate::core_host::core::event_bind_tokens::issue("stream-client", None)
+    let token = crate::server::http::events_bind_tokens::issue("stream-client", None)
         .expect("bind token")
         .token;
     let response =

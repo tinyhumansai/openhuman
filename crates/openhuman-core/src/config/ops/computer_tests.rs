@@ -109,3 +109,43 @@ fn patch_turns_the_captcha_solver_on_with_its_model_and_attempts() {
     assert_eq!(next.max_captcha_attempts, Some(4));
     assert!(!ComputerConfig::default().captcha_solver, "off by default");
 }
+
+#[test]
+fn patch_selects_the_captcha_provider() {
+    let base = ComputerConfig::default();
+    for (raw, stored) in [
+        ("surplus", Some("surplus")),
+        (" Surplus ", Some("surplus")),
+        ("type_safe", Some("type_safe")),
+        ("Type-Safe", Some("type_safe")),
+        ("typesafe", Some("type_safe")),
+        ("  ", None),
+    ] {
+        let next = patched(
+            &base,
+            ComputerSettingsPatch {
+                captcha_provider: Some(raw.into()),
+                ..ComputerSettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(next.captcha_provider.as_deref(), stored, "{raw:?}");
+    }
+}
+
+#[test]
+fn an_unknown_captcha_provider_is_refused_with_the_accepted_values() {
+    let error = patched(
+        &ComputerConfig::default(),
+        ComputerSettingsPatch {
+            captcha_provider: Some("open_router".into()),
+            ..ComputerSettingsPatch::default()
+        },
+    )
+    .unwrap_err();
+    assert!(error.contains("open_router"), "{error}");
+    assert!(
+        error.contains("type_safe") && error.contains("surplus"),
+        "{error}"
+    );
+}

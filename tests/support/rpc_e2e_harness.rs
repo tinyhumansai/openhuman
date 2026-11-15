@@ -33,8 +33,8 @@ pub use tinyinference_llm::message::Message;
 pub use tinyinference_llm::model::ModelRequest;
 
 pub use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
-pub use openhuman_core::platform::connectivity::rpc::pick_listen_port;
 pub use openhuman_rpc::server::build_core_http_router;
+pub use openhuman_rpc::server::listen_port::pick_listen_port;
 
 pub(crate) const TEST_RPC_TOKEN: &str = "json-rpc-e2e-local-token";
 pub(crate) static JSON_RPC_AUTH_INIT: OnceLock<()> = OnceLock::new();

@@ -1,8 +1,8 @@
 ---
 description: >-
   The trust boundary for the autonomous core: the autonomy and risk policy,
-  sandbox selection, the audit log, the encrypted secret store, the pairing
-  guard and the adapters to TinySecurity's redactor.
+  sandbox selection, the audit log, the encrypted secret store and the
+  adapters to TinySecurity's redactor.
 icon: shield-halved
 ---
 
@@ -16,10 +16,9 @@ It owns:
 - The sandbox selection that confines calls when the host supports it.
 - The append-only audit log of every agent action.
 - The encrypted secret store.
-- The pairing guard that gates public binding of the RPC server.
 - The fail-closed adapters to TinySecurity's shared redactor (`scrub.rs`).
 
-It does not own the `encryption.*` RPC compatibility namespace (in `security/encryption/`, which delegates to `credentials/` and owns no cipher code) or per-channel credential storage (in `credentials/`).
+It does not own the `encryption.*` RPC compatibility namespace (in `security/encryption/`, which delegates to `credentials/` and owns no cipher code), per-channel credential storage (in `credentials/`), or the public-bind guard (in `openhuman-rpc/src/server/public_bind.rs`).
 
 ## Public surface
 
@@ -30,7 +29,6 @@ It does not own the `encryption.*` RPC compatibility namespace (in `security/enc
 | `CommandRiskLevel`, `ToolOperation`, `ActionTracker`                                                                          | `policy/types.rs` | Risk classification and per-session counting.                             |
 | `SecretStore`                                                                                                                 | `secret_storage/encrypted_store.rs` (`secrets.rs` re-exports it) | OS-keychain / encrypted-file secret persistence with round-trip helpers. |
 | `AuditLogger`, `AuditEventType`, `AuditEvent`, `Actor`, `Action`, `ExecutionResult`, `SecurityContext`, `CommandExecutionLog` | `audit.rs`   | Append-only audit trail.                                                |
-| `PairingGuard`, `constant_time_eq`, `is_public_bind`                                                                          | `pairing.rs` (`PairingGuard` and `constant_time_eq` are re-exported from `tinychannels_bus::security`) | Pairing-token check before binding the RPC server publicly.             |
 | `security_policy_info_for_config(&Config) -> Outcome<serde_json::Value>`                                                    | `ops.rs`     | RPC handler for the doctor / settings UI.                               |
 
 ## Sandboxing
@@ -57,9 +55,9 @@ One check never turns off. `is_always_forbidden` blocks credential stores (`~/.s
 
 `audit.rs` writes an append-only stream of `AuditEvent`s under the workspace dir. Every executable tool call lands here with its `Actor` (agent or user), `Action`, `ExecutionResult` and the `SecurityContext` (autonomy level, sandbox backend and so on) it ran under. The log tells you afterwards what the agent did and why it was allowed.
 
-## Pairing guard
+## Public binds
 
-`PairingGuard` (in `pairing.rs`) stands between the RPC server and any attempt to bind to a non-loopback address. `is_public_bind` detects that case. `PairingGuard` then requires a pairing token, compared in constant time with `constant_time_eq`, before the bind is allowed. The iOS and LAN-companion pairing flow relies on this to keep an unpaired peer from attaching to the desktop core.
+The RPC server refuses to bind a non-loopback address without an operator-supplied RPC token. That check belongs to the server: `is_public_bind` lives in `crates/openhuman-rpc/src/server/public_bind.rs`, and `serve` applies it before picking a port.
 
 ## Secret store
 
@@ -72,7 +70,6 @@ One check never turns off. `is_always_forbidden` blocks credential stores (`~/.s
 | `policy/` (`mod.rs`, `types.rs`, `path_checks.rs`, `command_checks.rs`, `enforcement.rs`, `policy_*_tests.rs`, `proptest_tests.rs`) | `SecurityPolicy`, `AutonomyLevel`, risk classification, path and command checks, action tracking. |
 | `audit.rs`                                                    | Append-only audit log types.                                              |
 | `secrets.rs`, `secret_storage/`                                      | `SecretStore` (implemented in `secret_storage/encrypted_store.rs`) + round-trip tests. |
-| `pairing.rs`, `pairing_tests.rs`                              | `PairingGuard` + constant-time helpers.                                   |
 | `ops.rs`                                                      | RPC handler (`security_policy_info_for_config`).                          |
 | `schemas.rs`                                                  | Controller schemas + handler dispatch.                                    |
 | `mod.rs`                                                      | Re-exports of the public surface above.                                   |
@@ -89,15 +86,15 @@ Local PII detection belongs to [`tinymemory_api::safety`](https://github.com/tin
 ## Called by
 
 - `crates/openhuman-core/src/cron/ops.rs`: wraps shell jobs in `SecurityPolicy::from_config`.
-- `crates/openhuman-core/src/tools/ops.rs` and `tools/impl/{browser,document,filesystem,network,presentation,system}/`: every executable tool consults `SecurityPolicy`.
-- `crates/openhuman-core/src/tools/impl/network/{gate,mcp,mcp_server_tools}.rs`: risk-classify outbound calls.
+- `crates/openhuman-core/src/tools/ops.rs` and `tools/impl/{browser,filesystem,network,system}/` and `artifacts/tools/` (document, presentation): every executable tool consults `SecurityPolicy`.
+- `crates/openhuman-core/src/tools/impl/network/gate.rs`, `crates/openhuman-core/src/mcp/tools/` and `crates/openhuman-core/src/mcp/server_tools.rs`: risk-classify outbound calls.
 - `crates/openhuman-core/src/memory/host_policy.rs`: supplies TinyMemory's corroborated policy to memory write scrubbers.
 - `crates/openhuman-core/src/agent/subagent_host/`: sub-agent execution applies the host's tool policy and autonomy gate.
 - `crates/openhuman-core/src/credentials/`: uses `SecretStore`.
 
 ## Tests
 
-- Unit: `pairing_tests.rs`, `policy/policy_tests*.rs`, `policy/proptest_tests.rs`, `secret_storage/encrypted_store_tests*.rs`.
+- Unit: `policy/policy_tests*.rs`, `policy/proptest_tests.rs`, `secret_storage/encrypted_store_tests*.rs`.
 
 ## Related
 

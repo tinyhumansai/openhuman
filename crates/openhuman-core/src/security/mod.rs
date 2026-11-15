@@ -16,7 +16,6 @@ pub mod egress;
 pub mod encryption;
 pub mod keyring_consent;
 pub mod live_policy;
-pub mod pairing;
 pub mod policy;
 pub mod prompt_injection;
 pub mod scrub;
