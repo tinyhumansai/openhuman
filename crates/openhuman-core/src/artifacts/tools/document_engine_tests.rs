@@ -1,5 +1,6 @@
 use super::*;
-use crate::tools::implementations::document::types::DocumentSection;
+
+use super::super::document_types::DocumentSection;
 
 fn sample_input() -> GenerateDocumentInput {
     GenerateDocumentInput {

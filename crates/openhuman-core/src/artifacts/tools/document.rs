@@ -36,27 +36,17 @@ use crate::artifacts::production::Production;
 use crate::security::SecurityPolicy;
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
-mod engine;
-/// The document wire contract, shared with the `tinydocs` module.
-///
-/// This was 1,873 lines of this repository — `format/error/`, `format/spec/` —
-/// and every line of it also existed in `crates/tinydocs-bus/src/` upstream,
-/// differing only in the paths inside doc links. Two definitions of a contract
-/// is the drift risk the contract exists to remove: the specs here are what an
-/// LLM is shown as a JSON tool schema and what the module validates against,
-/// so a limit that moved on one side would become a tool description promising
-/// something the module does not enforce.
-///
-/// Aliased rather than re-exported item by item so the ~30 existing
-/// `…::document::format::…` paths keep resolving unchanged.
-pub(crate) use tinydocs_bus as format;
-mod types;
+// The document wire contract (specs, limits, errors) is `tinydocs_bus`, shared
+// with the `tinydocs` module, so the JSON schema shown to the LLM and the
+// module's validation cannot drift apart.
+use super::document_engine as engine;
+use super::document_types as types;
 
 #[cfg(test)]
 #[path = "document_tests.rs"]
 mod tests;
 
-use self::types::{validate_input, GenerateDocumentInput, GenerateDocumentOutput};
+use types::{validate_input, GenerateDocumentInput, GenerateDocumentOutput};
 
 /// Generation timeout. `docx-rs` typically completes the full section cap
 /// in well under a second; the 30 s ceiling is a defensive bound against

@@ -18,13 +18,13 @@ use std::time::Duration;
 
 use tokio::time::timeout;
 
-use super::types::{DocumentError, GenerateDocumentInput};
+use super::document_types::{DocumentError, GenerateDocumentInput};
 use crate::modules::documents;
 
 /// Generate the `.docx` bytes for `input`, giving up after `deadline`.
 ///
 /// `config` is the host config the tool was built with. `None` only for a
-/// tool constructed without one ([`super::DocumentTool::new`]), which falls
+/// tool constructed without one ([`super::document::DocumentTool::new`]), which falls
 /// back to `load_or_init` — the same contract as the presentation engine.
 ///
 /// The `deadline` covers the entire blocking call, including `spawn_blocking`
@@ -127,5 +127,5 @@ async fn generate_with(
 }
 
 #[cfg(test)]
-#[path = "engine_tests.rs"]
+#[path = "document_engine_tests.rs"]
 mod tests;

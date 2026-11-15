@@ -11,8 +11,9 @@
 //! path doubles as a contract check that generation produces a valid,
 //! openable `.docx` from the tool's perspective.
 
-use super::types::{DocumentError, MAX_SECTIONS, MAX_TEXT_CHARS};
 use super::*;
+
+use super::types::{DocumentError, MAX_SECTIONS, MAX_TEXT_CHARS};
 
 use std::path::Path;
 

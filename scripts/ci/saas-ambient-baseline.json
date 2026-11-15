@@ -28,6 +28,20 @@
     "occurrence": 1
   },
   {
+    "rule": "ambient-config",
+    "path": "crates/openhuman-core/src/artifacts/tools/document_engine.rs",
+    "line": 41,
+    "text": "let config = match crate::config::Config::load_or_init().await {",
+    "occurrence": 1
+  },
+  {
+    "rule": "ambient-config",
+    "path": "crates/openhuman-core/src/artifacts/tools/presentation_engine.rs",
+    "line": 63,
+    "text": "loaded_config = match crate::config::Config::load_or_init().await {",
+    "occurrence": 1
+  },
+  {
     "rule": "home-dir",
     "path": "crates/openhuman-core/src/channels/host/adapters.rs",
     "line": 32,
@@ -921,20 +935,6 @@
     "path": "crates/openhuman-core/src/threads/ops/usage.rs",
     "line": 75,
     "text": "let spend = tokio::task::spawn_blocking(move || thread_spend_in(locator.as_ref(), &thread_id))",
-    "occurrence": 1
-  },
-  {
-    "rule": "ambient-config",
-    "path": "crates/openhuman-core/src/tools/impl/document/engine.rs",
-    "line": 33,
-    "text": "let config = match crate::config::Config::load_or_init().await {",
-    "occurrence": 1
-  },
-  {
-    "rule": "ambient-config",
-    "path": "crates/openhuman-core/src/tools/impl/presentation/engine.rs",
-    "line": 63,
-    "text": "loaded_config = match crate::config::Config::load_or_init().await {",
     "occurrence": 1
   },
   {

@@ -1,7 +1,7 @@
 //! What is left to test on this side of the bus.
 //!
 //! The deck shape, the image layout and the OOXML container are tested in
-//! `crate::tools::implementations::document::format::pptx`, where the code now lives — reproducing them here would
+//! `tinydocs_bus::pptx`, where the code now lives — reproducing them here would
 //! assert the same behaviour twice and drift the moment one copy changed.
 //!
 //! What only exists here is [`build_request`]: the deck and the concatenated
@@ -9,7 +9,8 @@
 //! call. That agreement is this file's job.
 
 use super::*;
-use crate::tools::implementations::presentation::types::{GeneratePresentationInput, SlideRequest};
+
+use super::super::presentation_types::{GeneratePresentationInput, SlideRequest};
 use tinydocs_bus::spec::presentation::{PresentationSpec, SlideImage};
 
 fn slide(title: &str) -> SlideRequest {
@@ -43,7 +44,7 @@ fn resolved(bytes: &[u8], caption: Option<&str>) -> SlideImage {
 }
 
 fn spec(input: GeneratePresentationInput, images: Vec<Vec<SlideImage>>) -> PresentationSpec {
-    super::super::types::to_bus_spec(&input, images).expect("matching slide count")
+    super::super::presentation_types::to_bus_spec(&input, images).expect("matching slide count")
 }
 
 #[test]
@@ -105,7 +106,7 @@ fn captions_survive_onto_the_wire_images() {
 
 #[test]
 fn a_slide_with_no_resolved_images_declares_none() {
-    // `resolve_images` skips an unreadable image with a warning rather than
+    // Image resolution skips an unreadable image with a warning rather than
     // failing the deck, so a slide can arrive here with fewer images than it
     // asked for — and the deck must declare what is actually being sent.
     let images = vec![vec![]];

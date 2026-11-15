@@ -4,12 +4,10 @@ use super::*;
 fn tinydocs_invalid_input_keeps_its_field_and_reason() {
     // The structured pair is what the agent self-corrects on, so the
     // crate-boundary mapping must not flatten it into a message string.
-    let mapped = DocumentError::from(
-        crate::tools::implementations::document::format::Error::InvalidInput {
-            field: "sections[3].bullets[1]".to_string(),
-            reason: "must be ≤ 20000 chars".to_string(),
-        },
-    );
+    let mapped = DocumentError::from(tinydocs_bus::Error::InvalidInput {
+        field: "sections[3].bullets[1]".to_string(),
+        reason: "must be ≤ 20000 chars".to_string(),
+    });
     match mapped {
         DocumentError::InvalidInput { field, reason } => {
             assert_eq!(field, "sections[3].bullets[1]");
@@ -23,14 +21,10 @@ fn tinydocs_invalid_input_keeps_its_field_and_reason() {
 fn tinydocs_generation_failure_maps_without_re_truncating() {
     // `tinydocs` already truncated this detail; re-truncating would eat
     // the suffix and misreport how much was dropped.
-    let detail = crate::tools::implementations::document::format::Error::truncate_detail(
-        &"x".repeat(10_000),
-    );
-    let mapped = DocumentError::from(
-        crate::tools::implementations::document::format::Error::GenerationFailed {
-            detail: detail.clone(),
-        },
-    );
+    let detail = tinydocs_bus::Error::truncate_detail(&"x".repeat(10_000));
+    let mapped = DocumentError::from(tinydocs_bus::Error::GenerationFailed {
+        detail: detail.clone(),
+    });
     match mapped {
         DocumentError::GenerationFailed { stderr_truncated } => {
             assert_eq!(stderr_truncated, detail);
@@ -42,10 +36,7 @@ fn tinydocs_generation_failure_maps_without_re_truncating() {
 #[test]
 fn truncate_stderr_bounds_the_payload() {
     let out = DocumentError::truncate_stderr(&"x".repeat(10_000));
-    assert_eq!(
-        out.chars().count(),
-        crate::tools::implementations::document::format::Error::MAX_DETAIL_CHARS
-    );
+    assert_eq!(out.chars().count(), tinydocs_bus::Error::MAX_DETAIL_CHARS);
     assert!(out.ends_with("[…truncated]"));
 }
 

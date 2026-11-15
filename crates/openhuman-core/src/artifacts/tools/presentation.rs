@@ -3,8 +3,9 @@
 //!
 //! Flow:
 //! 1. Validate source-agnostic request metadata through the bus contract before
-//!    touching image references, resolve readable images under host policy,
-//!    then validate the resolved bus spec before artifact production.
+//!    touching image references, resolve readable images under host policy
+//!    ([`super::presentation_images`]), then validate the resolved bus spec
+//!    before artifact production.
 //! 2. Start a [`Production`]: it reserves `<title>.pptx` in the files folder
 //!    (the card shows "generating…") and opens the versioned artifact — or,
 //!    with an `artifact_id` arg or a regenerate in scope, a new version of
@@ -36,23 +37,20 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::artifacts::production::Production;
-use crate::artifacts::read_artifact_bytes;
 use crate::security::SecurityPolicy;
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
-mod engine;
-mod types;
+use super::presentation_engine as engine;
+use super::presentation_images::{HostImageResolver, ImageResolver, ImageSources};
+use super::presentation_types as types;
 
 #[cfg(test)]
 #[path = "presentation_tests.rs"]
 mod tests;
 
-use tinydocs_bus::spec::SlideImage;
-
-use self::types::{
+use types::{
     to_bus_spec, validate_image_references, validate_request, GeneratePresentationInput,
-    GeneratePresentationOutput, PresentationError, SlideImageRequest, SlideImageSource,
-    MAX_IMAGE_BYTES,
+    GeneratePresentationOutput, PresentationError,
 };
 
 /// Generation timeout. `ppt-rs` typically completes the full 64-slide
@@ -65,68 +63,6 @@ const GENERATION_TIMEOUT: Duration = Duration::from_secs(30);
 /// Tool name surfaced to the agent. Stable; do not rename without
 /// coordinating with the orchestrator agent definition list.
 pub const TOOL_NAME: &str = "generate_presentation";
-
-#[async_trait]
-trait ImageInspector: Sync {
-    async fn inspect(&self, bytes: &[u8]) -> Result<tinydocs_bus::ImageFacts, String>;
-}
-
-#[async_trait]
-trait ImageResolver: Sync {
-    async fn resolve(
-        &self,
-        tool: &PresentationTool,
-        input: &GeneratePresentationInput,
-        ctx: &DispatchCtx,
-    ) -> (Vec<Vec<SlideImage>>, Vec<String>);
-}
-
-struct HostImageResolver;
-
-#[async_trait]
-impl ImageResolver for HostImageResolver {
-    async fn resolve(
-        &self,
-        tool: &PresentationTool,
-        input: &GeneratePresentationInput,
-        ctx: &DispatchCtx,
-    ) -> (Vec<Vec<SlideImage>>, Vec<String>) {
-        tool.resolve_images(input, ctx).await
-    }
-}
-
-struct ModuleImageInspector<'a> {
-    config: Option<&'a crate::config::Config>,
-    ctx: &'a DispatchCtx,
-}
-
-#[async_trait]
-impl ImageInspector for ModuleImageInspector<'_> {
-    async fn inspect(&self, bytes: &[u8]) -> Result<tinydocs_bus::ImageFacts, String> {
-        let loaded;
-        let config = match self.config {
-            Some(config) => config,
-            None => {
-                loaded = self
-                    .ctx
-                    .load_config()
-                    .await
-                    .map_err(|error| format!("config unavailable: {error}"))?;
-                &loaded
-            }
-        };
-        crate::modules::documents::ensure_ready(config)
-            .await
-            .map_err(|error| error.to_string())?;
-        tokio::time::timeout(
-            GENERATION_TIMEOUT,
-            crate::modules::documents::inspect_image(config, bytes),
-        )
-        .await
-        .map_err(|_| "image inspection timed out".to_string())?
-        .map_err(|error| error.to_string())
-    }
-}
 
 /// One-shot `.pptx` generator. See module docs for the request flow.
 pub struct PresentationTool {
@@ -199,6 +135,17 @@ impl PresentationTool {
     pub(crate) fn with_regenerate_target(mut self, artifact_id: impl Into<String>) -> Self {
         self.regenerate_target = Some(artifact_id.into());
         self
+    }
+
+    /// The image sources this tool may embed from, under its policy.
+    pub(super) fn image_sources(&self) -> ImageSources<'_> {
+        ImageSources {
+            workspace_dir: &self.workspace_dir,
+            files_dir: &self.files_dir,
+            security: &self.security,
+            config: self.config.as_ref(),
+            inspection_timeout: GENERATION_TIMEOUT,
+        }
     }
 }
 
@@ -377,7 +324,8 @@ impl PresentationTool {
         // Resolve + validate per-slide images at the async boundary. A
         // bad image is skipped with a warning (partial success) rather
         // than failing the whole deck — mirrors the #3076 ethos.
-        let (resolved_images, image_warnings) = resolver.resolve(self, &input, ctx).await;
+        let (resolved_images, image_warnings) =
+            resolver.resolve(&self.image_sources(), &input, ctx).await;
         if !image_warnings.is_empty() {
             tracing::info!(
                 target: "presentation",
@@ -510,121 +458,5 @@ impl PresentationTool {
             }
         }
         Ok(ToolResult::success_with_markdown(payload, markdown))
-    }
-}
-
-impl PresentationTool {
-    /// Resolve + validate every slide's images at the async boundary,
-    /// returning a per-slide vec of embeddable images (aligned 1:1 with
-    /// `input.slides`) plus a flat list of human-readable warnings for
-    /// images that were skipped.
-    ///
-    /// A skip is never fatal: a deck with one bad image still renders,
-    /// minus that image, and the agent is told why via the warning list.
-    async fn resolve_images(
-        &self,
-        input: &GeneratePresentationInput,
-        ctx: &DispatchCtx,
-    ) -> (Vec<Vec<SlideImage>>, Vec<String>) {
-        self.resolve_images_with_inspector(
-            input,
-            &ModuleImageInspector {
-                config: self.config.as_ref(),
-                ctx,
-            },
-        )
-        .await
-    }
-
-    async fn resolve_images_with_inspector(
-        &self,
-        input: &GeneratePresentationInput,
-        inspector: &impl ImageInspector,
-    ) -> (Vec<Vec<SlideImage>>, Vec<String>) {
-        let mut per_slide: Vec<Vec<SlideImage>> = Vec::with_capacity(input.slides.len());
-        let mut warnings: Vec<String> = Vec::new();
-
-        for (slide_idx, spec) in input.slides.iter().enumerate() {
-            let mut resolved = Vec::with_capacity(spec.images.len());
-            for (img_idx, image) in spec.images.iter().enumerate() {
-                match self.resolve_one_image(image, inspector).await {
-                    Ok(r) => resolved.push(r),
-                    Err(reason) => {
-                        // 1-based indices in the message (matches how the
-                        // agent thinks about "slide 2, image 1").
-                        warnings.push(format!(
-                            "slide {} image {}: {reason}",
-                            slide_idx + 1,
-                            img_idx + 1
-                        ));
-                    }
-                }
-            }
-            per_slide.push(resolved);
-        }
-
-        (per_slide, warnings)
-    }
-
-    /// Resolve a single [`SlideImageRequest`] to validated, embeddable bytes.
-    /// Returns `Err(reason)` (a short human-readable string) when the
-    /// image cannot be embedded — the caller turns that into a skip
-    /// warning.
-    async fn resolve_one_image(
-        &self,
-        image: &SlideImageRequest,
-        inspector: &impl ImageInspector,
-    ) -> Result<SlideImage, String> {
-        let bytes = match &image.source {
-            SlideImageSource::Artifact { artifact_id } => {
-                read_artifact_bytes(&self.workspace_dir, &self.files_dir, artifact_id)
-                    .await
-                    .map_err(|e| format!("artifact {artifact_id} unreadable: {e}"))?
-            }
-            SlideImageSource::File { path } => {
-                // Validate the agent-supplied path against the security
-                // policy BEFORE touching the filesystem. This enforces the
-                // same allowed-location / symlink-escape / forbidden-dir
-                // checks as every other file-read tool — without it an
-                // agent could embed `/etc/shadow` or `~/.ssh/id_rsa`.
-                // `validate_path` returns the canonical, in-policy path.
-                let resolved = self
-                    .security
-                    .validate_path(path)
-                    .await
-                    .map_err(|e| format!("file {path} not allowed: {e}"))?;
-                // Stat first so a pathologically large file is rejected
-                // before we pull it into memory.
-                let meta = tokio::fs::metadata(&resolved)
-                    .await
-                    .map_err(|e| format!("file {path} unreadable: {e}"))?;
-                if meta.len() as usize > MAX_IMAGE_BYTES {
-                    return Err(format!(
-                        "file {path} is {} bytes, exceeds {MAX_IMAGE_BYTES}-byte cap",
-                        meta.len()
-                    ));
-                }
-                tokio::fs::read(&resolved)
-                    .await
-                    .map_err(|e| format!("file {path} unreadable: {e}"))?
-            }
-        };
-
-        if bytes.len() > MAX_IMAGE_BYTES {
-            return Err(format!(
-                "image is {} bytes, exceeds {MAX_IMAGE_BYTES}-byte cap",
-                bytes.len()
-            ));
-        }
-
-        let facts = inspector.inspect(&bytes).await?;
-
-        Ok(SlideImage {
-            bytes,
-            format: facts.format,
-            width_px: facts.width_px,
-            height_px: facts.height_px,
-            caption: image.caption.clone(),
-        })
     }
 }

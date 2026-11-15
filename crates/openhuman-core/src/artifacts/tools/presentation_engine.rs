@@ -28,7 +28,7 @@ use tinydocs_bus::spec::presentation::PresentationSpec;
 use tinydocs_bus::spec::{WirePresentationSpec, WireSlideImage, WireSlideSpec};
 use tokio::time::timeout;
 
-use super::types::PresentationError;
+use super::presentation_types::PresentationError;
 use crate::modules::documents;
 
 /// Run the synthesis. Returns the serialised `.pptx` bytes ready to be written
@@ -164,5 +164,5 @@ fn build_request(spec: &PresentationSpec) -> (WirePresentationSpec, Vec<u8>) {
 }
 
 #[cfg(test)]
-#[path = "engine_tests.rs"]
+#[path = "presentation_engine_tests.rs"]
 mod tests;

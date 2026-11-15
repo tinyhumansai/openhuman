@@ -1,6 +1,20 @@
 [
   {
     "rule": "json-write",
+    "path": "crates/openhuman-core/src/artifacts/tools/document.rs",
+    "line": 324,
+    "text": "if let Err(err) = tokio::fs::write(&output_path, &bytes).await {",
+    "occurrence": 1
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-core/src/artifacts/tools/presentation.rs",
+    "line": 403,
+    "text": "if let Err(err) = tokio::fs::write(&output_path, &bytes).await {",
+    "occurrence": 1
+  },
+  {
+    "rule": "json-write",
     "path": "crates/openhuman-core/src/attachments/legacy.rs",
     "line": 143,
     "text": "let mut file = tokio::fs::OpenOptions::new()",
@@ -249,20 +263,6 @@
     "path": "crates/openhuman-core/src/skills/webhooks/router.rs",
     "line": 537,
     "text": "if let Err(e) = std::fs::write(&path, json) {",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
-    "path": "crates/openhuman-core/src/tools/impl/document/mod.rs",
-    "line": 311,
-    "text": "if let Err(err) = tokio::fs::write(&output_path, &bytes).await {",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
-    "path": "crates/openhuman-core/src/tools/impl/presentation/mod.rs",
-    "line": 455,
-    "text": "if let Err(err) = tokio::fs::write(&output_path, &bytes).await {",
     "occurrence": 1
   }
 ]

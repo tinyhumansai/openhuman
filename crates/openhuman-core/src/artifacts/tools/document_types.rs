@@ -9,7 +9,7 @@
 //!   the bus contract has no notion of.
 //! - [`DocumentError`] — the agent-facing error shape, which carries a
 //!   [`DocumentError::GenerationTimeout`] variant the document module cannot produce:
-//!   the deadline is OpenHuman's policy, applied by [`engine`](super::engine)
+//!   the deadline is OpenHuman's policy, applied by [`document_engine`](super::document_engine)
 //!   around a synchronous crate call.
 //!
 //! [`GenerateDocumentInput`] names the bus `DocumentSpec` under its historical
@@ -23,7 +23,7 @@ use crate::modules::documents::DocumentCallError;
 // the writer, so the gated `docx` module is not compiled here at all. The types
 // are the same ones the module validates against, which is the whole reason
 // `spec` is separable.
-pub use crate::tools::implementations::document::format::spec::document::{
+pub use tinydocs_bus::spec::document::{
     DocumentSpec as GenerateDocumentInput, MAX_BULLETS_PER_SECTION, MAX_PARAGRAPHS_PER_SECTION,
     MAX_PARAGRAPH_CHARS, MAX_SECTIONS, MAX_TEXT_CHARS,
 };
@@ -34,7 +34,7 @@ pub use crate::tools::implementations::document::format::spec::document::{
 // is private, so the re-export reads as unused to the compiler — hence the
 // explicit allow rather than dropping a name callers legitimately need.
 #[allow(unused_imports)]
-pub use crate::tools::implementations::document::format::spec::DocumentSection;
+pub use tinydocs_bus::spec::DocumentSection;
 
 /// Tool output returned via [`tinytools::ToolResult`]
 /// as the JSON `data` field.
@@ -52,7 +52,7 @@ pub struct GenerateDocumentOutput {
 }
 
 /// Structured error variants surfaced to the agent. Mirrors
-/// [`presentation::types::PresentationError`](super::super::presentation)
+/// [`PresentationError`](super::presentation_types::PresentationError)
 /// so downstream error handling stays uniform across artifact producers.
 #[derive(Debug, thiserror::Error)]
 pub enum DocumentError {
@@ -78,11 +78,11 @@ impl DocumentError {
     /// the variant never carries an unbounded payload back to the agent.
     /// Same cap/suffix as the presentation tool's `truncate_stderr`.
     pub(super) fn truncate_stderr(raw: &str) -> String {
-        crate::tools::implementations::document::format::Error::truncate_detail(raw)
+        tinydocs_bus::Error::truncate_detail(raw)
     }
 }
 
-impl From<crate::tools::implementations::document::format::Error> for DocumentError {
+impl From<tinydocs_bus::Error> for DocumentError {
     /// Map a spec-validation failure onto the agent-facing shape.
     ///
     /// This is the *local* path: `validate_input` below checks the spec against
@@ -93,24 +93,21 @@ impl From<crate::tools::implementations::document::format::Error> for DocumentEr
     /// been flattened by the wire.
     ///
     /// `GenerationTimeout` is deliberately absent: validation has no deadline,
-    /// so only [`engine`](super::engine) produces that variant.
+    /// so only [`document_engine`](super::document_engine) produces that variant.
     ///
-    /// `crate::tools::implementations::document::format::Error` is `#[non_exhaustive]`, so the catch-all arm is
+    /// `tinydocs_bus::Error` is `#[non_exhaustive]`, so the catch-all arm is
     /// required by the compiler rather than chosen. It degrades a variant added
     /// by a future release to `GenerationFailed` carrying that variant's own
     /// `Display` text, and logs, so a crate bump that introduces a case worth
     /// handling structurally shows up rather than being swallowed.
-    fn from(err: crate::tools::implementations::document::format::Error) -> Self {
+    fn from(err: tinydocs_bus::Error) -> Self {
         match err {
-            crate::tools::implementations::document::format::Error::InvalidInput {
-                field,
-                reason,
-            } => Self::InvalidInput { field, reason },
-            crate::tools::implementations::document::format::Error::GenerationFailed { detail } => {
-                Self::GenerationFailed {
-                    stderr_truncated: detail,
-                }
+            tinydocs_bus::Error::InvalidInput { field, reason } => {
+                Self::InvalidInput { field, reason }
             }
+            tinydocs_bus::Error::GenerationFailed { detail } => Self::GenerationFailed {
+                stderr_truncated: detail,
+            },
             other => {
                 tracing::warn!(
                     target: "document",
@@ -168,7 +165,7 @@ impl From<DocumentCallError> for DocumentError {
 /// generic engine error.
 ///
 /// Delegates to `tinydocs`, which validates again inside
-/// [`crate::tools::implementations::document::format::docx::generate`]. The double check is intentional: validating
+/// [`tinydocs_bus::docx::generate`]. The double check is intentional: validating
 /// here lets the tool reject a bad call before allocating an artifact record,
 /// and the crate-side check keeps `generate` safe for any other caller.
 pub(super) fn validate_input(input: &GenerateDocumentInput) -> Result<(), DocumentError> {
@@ -226,5 +223,5 @@ pub(super) fn validate_input(input: &GenerateDocumentInput) -> Result<(), Docume
 }
 
 #[cfg(test)]
-#[path = "types_tests.rs"]
+#[path = "document_types_tests.rs"]
 mod tests;

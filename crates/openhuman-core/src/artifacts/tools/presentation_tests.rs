@@ -12,9 +12,10 @@
 //! swap continues to produce a valid `.pptx` from this tool's
 //! perspective.
 
+use super::*;
+
 use super::types::GeneratePresentationInput;
 use super::types::{PresentationError, MAX_BULLETS_PER_SLIDE, MAX_SLIDES, MAX_TEXT_CHARS};
-use super::*;
 
 use std::path::Path;
 
@@ -124,10 +125,10 @@ async fn assert_rejected_before_image_resolution(args: serde_json::Value, expect
     impl ImageResolver for CountingResolver {
         async fn resolve(
             &self,
-            _tool: &PresentationTool,
+            _sources: &ImageSources<'_>,
             input: &GeneratePresentationInput,
             _ctx: &DispatchCtx,
-        ) -> (Vec<Vec<SlideImage>>, Vec<String>) {
+        ) -> (Vec<Vec<tinydocs_bus::spec::SlideImage>>, Vec<String>) {
             self.0.fetch_add(1, Ordering::SeqCst);
             (vec![Vec::new(); input.slides.len()], Vec::new())
         }
@@ -376,130 +377,6 @@ async fn execute_embeds_file_image_into_deck() {
         names.iter().any(|n| n == "ppt/media/image1.png"),
         "embedded PNG missing from artifact (got: {names:?})"
     );
-}
-
-#[tokio::test]
-async fn execute_skips_unsupported_mime_image_with_warning() {
-    struct UnsupportedImage;
-    #[async_trait]
-    impl ImageInspector for UnsupportedImage {
-        async fn inspect(&self, bytes: &[u8]) -> Result<tinydocs_bus::ImageFacts, String> {
-            assert_eq!(bytes, b"i am plain text, not an image");
-            Err("unsupported image type (only PNG and JPEG are embeddable)".into())
-        }
-    }
-    let ws = workspace();
-    let txt_path = ws.path().join("notanimage.txt");
-    std::fs::write(&txt_path, b"i am plain text, not an image").expect("write txt");
-
-    let tool = make_tool(ws.path());
-    let args = json!({
-        "title": "Deck",
-        "slides": [{
-            "title": "Slide",
-            "bullets": ["text"],
-            "images": [{ "source": { "type": "file", "path": txt_path.to_string_lossy() } }]
-        }]
-    });
-    let input: GeneratePresentationInput = serde_json::from_value(args).expect("args parse");
-    let (resolved, warnings) = tool
-        .resolve_images_with_inspector(&input, &UnsupportedImage)
-        .await;
-    // Partial success: the deck still renders, the bad image is reported.
-    assert!(
-        resolved.iter().all(Vec::is_empty),
-        "a rejected image must not reach the deck"
-    );
-    assert_eq!(warnings.len(), 1, "exactly one image warning expected");
-    assert!(
-        !warnings[0].is_empty(),
-        "the image rejection should be explained: {:?}",
-        warnings[0]
-    );
-}
-
-#[tokio::test]
-async fn image_inspection_does_not_fall_back_when_modules_are_disabled() {
-    let ws = workspace();
-    let img_path = ws.path().join("chart.png");
-    std::fs::write(&img_path, png_1x1()).expect("write png");
-    let mut config = crate::config::Config::default();
-    config.workspace_dir = ws.path().to_path_buf();
-    config.modules.enabled = false;
-    let tool = PresentationTool::with_config(
-        ws.path().to_path_buf(),
-        ws.path().join("Files"),
-        test_security(ws.path()),
-        config,
-    );
-    let input: GeneratePresentationInput = serde_json::from_value(json!({
-        "title": "No host image parser",
-        "slides": [{
-            "title": "Chart",
-            "bullets": ["See below"],
-            "images": [{ "source": { "type": "file", "path": img_path.to_string_lossy() } }]
-        }]
-    }))
-    .expect("parse presentation input");
-    validate_image_references(&input).expect("valid host image reference");
-
-    let (resolved, warnings) = tool.resolve_images(&input, &DispatchCtx::ambient()).await;
-    assert!(resolved.iter().all(Vec::is_empty));
-    assert_eq!(warnings.len(), 1);
-    assert!(warnings[0].contains("disabled"), "{warnings:?}");
-}
-
-#[tokio::test]
-async fn execute_skips_oversize_image_with_warning() {
-    let ws = workspace();
-    let big_path = ws.path().join("huge.png");
-    // 5 MB + 1 byte — exceeds the per-image cap. Caught at metadata stat
-    // before the bytes are pulled into memory.
-    std::fs::write(&big_path, vec![0u8; 5 * 1024 * 1024 + 1]).expect("write big file");
-
-    let tool = make_tool(ws.path());
-    let args = json!({
-        "title": "Deck",
-        "slides": [{
-            "title": "Slide",
-            "bullets": ["text"],
-            "images": [{ "source": { "type": "file", "path": big_path.to_string_lossy() } }]
-        }]
-    });
-    let input: GeneratePresentationInput = serde_json::from_value(args).expect("args parse");
-    let (resolved, warnings) = tool.resolve_images(&input, &DispatchCtx::ambient()).await;
-    assert!(
-        resolved.iter().all(Vec::is_empty),
-        "a rejected image must not reach the deck"
-    );
-    assert_eq!(warnings.len(), 1);
-    assert!(
-        warnings[0].contains("cap"),
-        "warning should mention the size cap: {:?}",
-        warnings[0]
-    );
-}
-
-#[tokio::test]
-async fn execute_skips_missing_artifact_with_warning() {
-    let ws = workspace();
-    let tool = make_tool(ws.path());
-    let args = json!({
-        "title": "Deck",
-        "slides": [{
-            "title": "Slide",
-            "bullets": ["text"],
-            "images": [{ "source": { "type": "artifact", "artifact_id": "does-not-exist" } }]
-        }]
-    });
-    let input: GeneratePresentationInput = serde_json::from_value(args).expect("args parse");
-    let (resolved, warnings) = tool.resolve_images(&input, &DispatchCtx::ambient()).await;
-    assert!(
-        resolved.iter().all(Vec::is_empty),
-        "a rejected image must not reach the deck"
-    );
-    assert_eq!(warnings.len(), 1);
-    assert!(warnings[0].contains("unreadable"));
 }
 
 #[tokio::test]
