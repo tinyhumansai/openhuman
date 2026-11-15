@@ -45,7 +45,7 @@ fn other_failures_are_not_a_page_left_for_another_site() {
 }
 
 #[test]
-fn the_reply_tells_the_agent_to_open_the_page_itself() {
+fn the_reply_names_the_page_without_telling_the_agent_to_open_it() {
     let reply = left_reply(
         "click",
         "https://www.spacex.com/launches/starship-flight-15",
@@ -56,9 +56,21 @@ fn the_reply_tells_the_agent_to_open_the_page_itself() {
         serde_json::json!("https://www.spacex.com/launches/starship-flight-15")
     );
     let next = reply["next"].as_str().unwrap();
-    assert!(next.contains("action=open"), "{next}");
+    assert!(!next.contains("action=open"), "{next}");
     assert!(
         next.contains("https://www.spacex.com/launches/starship-flight-15"),
         "{next}"
+    );
+}
+
+#[test]
+fn the_reported_url_is_the_normalized_one() {
+    assert_eq!(
+        left_for(&left("https://EXAMPLE.com/a b?x")).as_deref(),
+        None
+    );
+    assert_eq!(
+        left_for(&left("https://Example.COM:443/path")).as_deref(),
+        Some("https://example.com/path")
     );
 }

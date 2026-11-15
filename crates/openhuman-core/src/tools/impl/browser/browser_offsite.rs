@@ -34,7 +34,11 @@ pub(super) fn left_for(error: &BrowserCallError) -> Option<String> {
         .strip_prefix(LEFT_PREFIX)?
         .strip_suffix(LEFT_SUFFIX)?
         .trim();
-    crate::modules::browser::is_public_https(url).then(|| url.to_owned())
+    if !crate::modules::browser::is_public_https(url) {
+        return None;
+    }
+    // The normalized form, as the browser's own URL policy reads it.
+    url::Url::parse(url).ok().map(|parsed| parsed.as_str().to_owned())
 }
 
 /// What the tool answers for an action of `kind` that led to `url`.
@@ -44,10 +48,10 @@ pub(super) fn left_reply(kind: &str, url: &str) -> Value {
         "action": kind,
         "left_for_another_site": url,
         "next": format!(
-            "The {kind} ran and led to {url}, on another site, which this browser session \
-             does not show. To read that page, call this tool with action=open and url={url} \
-             (only if your task's rules let you open it); otherwise carry on from the page \
-             you were on."
+            "The {kind} ran and led to {url} on another site, which this browser session \
+             does not show. Going there is a separate decision under your task's rules: \
+             a host on the never-open list is refused by the browser. Otherwise carry on \
+             from the page you were on."
         ),
     })
 }
