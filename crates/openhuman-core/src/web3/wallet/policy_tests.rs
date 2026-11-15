@@ -23,6 +23,7 @@ fn policy() -> WalletPolicyConfig {
         automation_enabled: true,
         apply_to_interactive: false,
         assets: vec![usdc_cap()],
+        ..WalletPolicyConfig::default()
     }
 }
 

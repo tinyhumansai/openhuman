@@ -18,6 +18,8 @@ pub(super) fn record(quote_id: &str, created_at_ms: u64, status: LedgerStatus) -
         status,
         transaction_hash: None,
         error: None,
+        kind: LedgerKind::Transfer,
+        account_index: 0,
     }
 }
 
