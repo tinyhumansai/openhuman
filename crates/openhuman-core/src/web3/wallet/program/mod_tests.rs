@@ -5,7 +5,6 @@ use crate::web3::wallet::ledger::LedgerStatus;
 use crate::web3::wallet::ops::WalletChain;
 use crate::web3::wallet::policy::ExecutionOrigin;
 use base64::Engine as _;
-use simulate::SimulationReport;
 
 /// `m/44'/501'/1'/0'` of the BIP-39 test phrase (see `ops_tests.rs`).
 const SIGNER: &str = "Hh8QwFUA6MtVu1qAoq12ucvFHNwCcVTV7hpWjeY1Hztb";
