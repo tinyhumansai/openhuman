@@ -19,10 +19,10 @@ use tinycomputer_bus::DesktopResponse;
 
 use crate::config::Config;
 
-#[path = "browser_output.rs"]
-mod output;
 #[path = "browser_never_open.rs"]
 pub(crate) mod never_open;
+#[path = "browser_output.rs"]
+mod output;
 use output::{append_output_chunk, check_output_size, finish_output, ReleaseOnDrop};
 
 pub const MODULE_ID: &str = super::desktop::MODULE_ID;
