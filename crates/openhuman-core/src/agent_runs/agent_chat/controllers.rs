@@ -75,7 +75,9 @@ pub(crate) fn schemas(function: &str) -> ControllerSchema {
                 },
                 optional_string(
                     "inference_reasoning_effort",
-                    "Reasoning effort for the model selected by inference_url.",
+                    "Reasoning effort for this turn's model (none, minimal, low, medium, \
+                     high, xhigh): the inference_url route's model when one is given, else \
+                     the model the turn resolves (model_override or the configured model).",
                 ),
             ],
             outputs: vec![json_output(
@@ -144,6 +146,23 @@ fn handle_agent_chat(
             _ => super::AgentChatTarget::Orchestrator,
         };
         let headless = ctx.is_headless_agent_chat();
+        let route = crate::config::schema::EphemeralRoute::from_params(
+            params.inference_url,
+            params.api_key,
+        );
+        // Without an `inference_url` there is no route to carry the effort;
+        // set it on this call's config instead of dropping it.
+        let reasoning_effort = match route {
+            Some(_) => params.inference_reasoning_effort,
+            None => {
+                super::session_turn::apply_turn_reasoning_effort(
+                    &mut config,
+                    params.common.model_override.as_deref(),
+                    params.inference_reasoning_effort,
+                );
+                None
+            }
+        };
         let reply = super::session_turn::agent_chat_reply_for_with_headless(
             &mut config,
             target,
@@ -152,15 +171,11 @@ fn handle_agent_chat(
             params.common.temperature,
             params.common.thread_id,
             params.common.cwd,
-            crate::config::schema::EphemeralRoute::from_params(
-                params.inference_url,
-                params.api_key,
-            )
-            .map(|route| {
+            route.map(|route| {
                 route
                     .with_headers(params.inference_headers)
                     .with_provider_options(params.inference_provider_options)
-                    .with_reasoning_effort(params.inference_reasoning_effort)
+                    .with_reasoning_effort(reasoning_effort)
             }),
             super::AgentChatEnv {
                 host: crate::agent::turn_env::HostTurnEnv {
