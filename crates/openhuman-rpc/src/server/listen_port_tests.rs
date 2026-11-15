@@ -1,6 +1,16 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[test]
+fn unknown_listener_fingerprint_does_not_include_response_body() {
+    let fingerprint = fingerprint_root_body(r#"{"token":"local-secret"}"#);
+    assert_eq!(
+        fingerprint.as_human_readable(),
+        "probe body did not identify as openhuman"
+    );
+    assert!(!fingerprint.as_human_readable().contains("local-secret"));
+}
+
 fn reserve_port() -> std::net::TcpListener {
     std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral test port")
 }

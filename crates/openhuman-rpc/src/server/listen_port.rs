@@ -393,13 +393,14 @@ async fn identify_listener(host: &str, port: u16) -> ListenerFingerprint {
         }
     };
 
-    if is_openhuman_root_body(&body) {
+    fingerprint_root_body(&body)
+}
+
+fn fingerprint_root_body(body: &str) -> ListenerFingerprint {
+    if is_openhuman_root_body(body) {
         ListenerFingerprint::OpenHumanCore
     } else {
-        let preview: String = body.chars().take(80).collect();
-        ListenerFingerprint::Other(format!(
-            "probe body did not identify as openhuman ({preview:?})"
-        ))
+        ListenerFingerprint::Other("probe body did not identify as openhuman".to_string())
     }
 }
 
