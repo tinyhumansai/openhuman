@@ -269,6 +269,16 @@ pub(crate) fn route_for_turn_model(pinned: &str, model: &str, config: &Config) -
     }
     if pinned.trim() == "cloud" {
         let primary = crate::config::ops::resolve_primary_cloud_provider_string(config);
+        if primary == BYOK_INCOMPLETE_SENTINEL {
+            // The primary BYOK entry's model is optional when the caller
+            // supplies a per-turn model. Resolve the provider from the entry
+            // itself so the incomplete sentinel does not swallow that model.
+            if let Some(entry) = config.primary_cloud.as_deref().and_then(|id| {
+                config.cloud_providers.iter().find(|entry| entry.id == id)
+            }) {
+                return format!("{}:{model}", entry.slug);
+            }
+        }
         return route_with_model(primary, Some(model));
     }
     route_with_model(pinned.to_string(), Some(model))
