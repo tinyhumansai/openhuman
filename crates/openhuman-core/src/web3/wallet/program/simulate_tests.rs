@@ -80,7 +80,11 @@ fn the_simulated_debit_must_equal_the_declaration() {
         vec![total(TINY_MINT, 600), total(&other_mint(), 1)],
     ] {
         let refused = check_simulation(&declared, &report).unwrap_err();
-        assert_eq!(refused.kind, RefusalKind::SimulationMismatch, "{declared:?}");
+        assert_eq!(
+            refused.kind,
+            RefusalKind::SimulationMismatch,
+            "{declared:?}"
+        );
     }
     // A declared zero debit that simulates as zero is fine.
     let nothing = SimulationReport::default();
@@ -99,7 +103,10 @@ fn a_failing_simulation_is_refused() {
 }
 
 fn encoded(data: &[u8]) -> Value {
-    json!([base64::engine::general_purpose::STANDARD.encode(data), "base64"])
+    json!([
+        base64::engine::general_purpose::STANDARD.encode(data),
+        "base64"
+    ])
 }
 
 #[tokio::test]
@@ -157,6 +164,9 @@ async fn simulate_reads_the_owners_token_accounts_and_measures_the_cpi_debit() {
     assert_eq!(report.debits, vec![total(TINY_MINT, 1_000_000)]);
     assert_eq!(report.token_accounts, vec![vault_source.to_string()]);
     assert_eq!(report.units_consumed, Some(42_000));
-    assert_eq!(check_simulation(&[total(TINY_MINT, 1_000_000)], &report), Ok(()));
+    assert_eq!(
+        check_simulation(&[total(TINY_MINT, 1_000_000)], &report),
+        Ok(())
+    );
     assert!(check_simulation(&[total(TINY_MINT, 999_999)], &report).is_err());
 }

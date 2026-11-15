@@ -113,10 +113,15 @@ derives and stores its address on first use.
 under its own `[wallet_policy.accounts.<chain>_<index>]` section
 (`allowed_programs`, `mints` with `per_tx_max_raw` and `daily_max_raw`). The
 host decodes the transaction and refuses it unless the account is the fee
-payer and sole signer, every program is listed, token instructions are
-`TransferChecked` of one listed mint within its caps, ATA instructions are
-creates, and there is no System instruction or lookup table. The quote holds
-the exact bytes for 60 seconds; execute re-checks and reserves in the ledger
+payer and sole signer, every program is listed, token instructions (SPL
+Token or Token-2022) are `TransferChecked`, ATA instructions are creates, and
+there is no System instruction or lookup table. The caller declares what the
+transaction debits from the account's token balances (`expectedDebits`); the
+caps apply to that, it must cover every visible transfer, and
+`simulateTransaction` must lower the account's token balances by exactly that
+much (`program/simulate.rs`), which is what pins a program that moves tokens
+by CPI. The quote holds the exact bytes for 60 seconds; execute simulates
+again, re-checks and reserves in the ledger
 (`kind = program`, `accountIndex`), signs the message bytes with a
 confidential `SignMessage`, and sends the transaction to the Solana RPC (the
 host override, else the module's default for the cluster). Program records

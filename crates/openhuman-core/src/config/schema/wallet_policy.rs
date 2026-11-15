@@ -44,7 +44,7 @@
 //! ```toml
 //! [wallet_policy.accounts.solana_1]
 //! allowed_programs = [
-//!   "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",   # SPL Token
+//!   "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",   # Token-2022
 //!   "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",  # Associated Token Account
 //!   "<distributor program id>",                     # the program being called
 //! ]
@@ -107,8 +107,9 @@ impl WalletPolicyConfig {
 
 /// What one account may sign through `wallet.execute_prepared_program`.
 ///
-/// Every instruction of the transaction must invoke a listed program, and
-/// every SPL token movement must be of a listed mint within its caps.
+/// Every instruction of the transaction must invoke a listed program, and the
+/// token debits the caller declares (and simulation confirms) must be of a
+/// listed mint within its caps.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct WalletAccountPolicy {

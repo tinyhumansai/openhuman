@@ -8,32 +8,41 @@
 //! them sign anything:
 //!
 //! 1. **Prepare.** The caller hands over an unsigned Solana transaction
-//!    (base64 wire bytes, legacy or v0 without address lookup tables) and the
-//!    account index to sign with. The host decodes it and refuses it unless
+//!    (base64 wire bytes, legacy or v0 without address lookup tables), the
+//!    account index to sign with, and `expectedDebits`: what the transaction
+//!    takes from the account's token balances, per mint. The host decodes it
+//!    and refuses it unless
 //!    - the account is the fee payer and the only signer;
 //!    - every instruction invokes a program in the account's
 //!      `allowed_programs` (`[wallet_policy.accounts.solana_<index>]`);
-//!    - every SPL Token / Token-2022 instruction is a `TransferChecked` (the
-//!      only form that names its mint), and every Associated Token Account
-//!      instruction is a create; no top-level System program instruction;
-//!    - the mint moved is listed in the account's `mints`, at most one mint
-//!      per transaction, within its per-transaction cap and, with the spend
-//!      ledger, its rolling 24-hour cap.
+//!    - every SPL Token or Token-2022 instruction is a `TransferChecked` (the
+//!      only form that names its mint), every Associated Token Account
+//!      instruction is a create, and no instruction is the System program's;
+//!    - the declared debits cover every visible transfer and name at most one
+//!      mint, listed in the account's `mints`, within its per-transaction
+//!      cap and, with the spend ledger, its rolling 24-hour cap;
+//!    - `simulateTransaction` succeeds and lowers the account's token
+//!      balances by exactly the declared debits ([`simulate`]). This is what
+//!      holds a program that moves tokens by CPI (a distributor funding its
+//!      vault) to the amount the caps were applied to.
 //!
 //!    It stores the exact bytes under a quote id for [`QUOTE_TTL_MS`] and
 //!    returns the decoded summary (programs, instructions, token movements,
-//!    totals) for the caller to check against what it meant to build.
+//!    totals), the declared debits and the simulation, for the caller to
+//!    check against what it meant to build.
 //! 2. **Execute.** The caller names the quote and the account index again.
-//!    The host re-evaluates the policy against the ledger and reserves the
-//!    spend atomically (`ledger::SpendLedger::reserve`), asks the TinyWallet
-//!    module to sign the message bytes with the account's key (a confidential
-//!    `SignMessage`; the key never leaves the module), attaches the signature
-//!    and sends the transaction to the Solana RPC. The ledger record moves to
-//!    `broadcast` or `in_doubt`; a quote is never executed twice.
+//!    The host simulates again, re-evaluates the policy against the ledger
+//!    and reserves the spend atomically (`ledger::SpendLedger::reserve`),
+//!    asks the TinyWallet module to sign the message bytes with the account's
+//!    key (a confidential `SignMessage`; the key never leaves the module),
+//!    attaches the signature and sends the transaction to the Solana RPC. The
+//!    ledger record moves to `broadcast` or `in_doubt`; a quote is never
+//!    executed twice.
 //!
 //! Programs other than SPL Token, Token-2022 and Associated Token Account are
 //! opaque here: listing one is trusting it with the account's signature. The
-//! caps bound only what top-level token instructions move.
+//! caps bound the declared token debits, which simulation verifies; SOL spent
+//! on fees and rent is not capped.
 //!
 //! The pure parts (decoding, summarising, the policy decision) are separate
 //! functions so they are tested without a module or a chain.

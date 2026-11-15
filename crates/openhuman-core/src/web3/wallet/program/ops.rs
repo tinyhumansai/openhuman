@@ -20,8 +20,7 @@ use super::super::policy::{origin_refusal, refusal, ExecutionOrigin, PolicyRefus
 use super::simulate::{check_simulation, simulate, SimulationReport};
 use super::{
     attach_signature, base58, decode_transaction, evaluate_program, summarize, DecodedTransaction,
-    MintTotal,
-    ProgramTransactionSummary, LOG_PREFIX, QUOTE_PREFIX, QUOTE_TTL_MS,
+    MintTotal, ProgramTransactionSummary, LOG_PREFIX, QUOTE_PREFIX, QUOTE_TTL_MS,
 };
 
 // ── Quotes ──────────────────────────────────────────────────────────────────

@@ -136,7 +136,7 @@ It can sign one thing: a Solana transaction another program built, through `wall
 ```toml
 [wallet_policy.accounts.solana_1]
 allowed_programs = [
-  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",   # SPL Token
+  "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",   # Token-2022 (or the classic SPL Token program)
   "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",  # Associated Token Account
   "<program id>",
 ]
@@ -147,7 +147,7 @@ per_tx_max_raw = 1000000000
 daily_max_raw = 2000000000
 ```
 
-The transaction is refused if it calls a program not on the list, moves a mint not on the list, moves more than either cap, or needs any signer besides the account. Token movements must be `TransferChecked` instructions, and System program instructions are not signed this way. Executes are written to the same ledger, but they are counted separately from the primary account's caps.
+The caller states what the transaction will take from the account's token balances. The transaction is refused if it calls a program not on the list, moves a mint not on the list, moves more than either cap, needs any signer besides the account, or, when simulated, takes a different amount than stated. Token movements must be `TransferChecked` instructions, and System program instructions are not signed this way. Executes are written to the same ledger, but they are counted separately from the primary account's caps.
 
 ## See also
 

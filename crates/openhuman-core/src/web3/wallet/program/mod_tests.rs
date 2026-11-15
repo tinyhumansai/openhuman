@@ -259,13 +259,29 @@ fn malformed_bytes_are_rejected() {
 fn an_account_without_a_policy_section_is_refused() {
     let summary = summary_of(&[distributor_call()]);
     assert_eq!(
-        refusal_kind(evaluate_program(&WalletPolicyConfig::default(), "solana", 1, &summary, &summary.totals, &[], NOW)),
+        refusal_kind(evaluate_program(
+            &WalletPolicyConfig::default(),
+            "solana",
+            1,
+            &summary,
+            &summary.totals,
+            &[],
+            NOW
+        )),
         RefusalKind::AccountNotAllowed
     );
     // A section for index 1 does not open index 0 or index 2.
     for index in [0, 2] {
         assert_eq!(
-            refusal_kind(evaluate_program(&policy(), "solana", index, &summary, &summary.totals, &[], NOW)),
+            refusal_kind(evaluate_program(
+                &policy(),
+                "solana",
+                index,
+                &summary,
+                &summary.totals,
+                &[],
+                NOW
+            )),
             RefusalKind::AccountNotAllowed
         );
     }
@@ -279,7 +295,8 @@ fn an_unlisted_program_is_refused() {
         data: vec![],
     };
     let summary = summary_of(&[distributor_call(), unlisted]);
-    let refused = evaluate_program(&policy(), "solana", 1, &summary, &summary.totals, &[], NOW).unwrap_err();
+    let refused =
+        evaluate_program(&policy(), "solana", 1, &summary, &summary.totals, &[], NOW).unwrap_err();
     assert_eq!(refused.kind, RefusalKind::ProgramNotAllowed);
     assert!(
         refused.message.contains(&base58(&filled(42))),
@@ -300,7 +317,15 @@ fn a_transfer_over_the_per_transaction_cap_is_refused() {
     ]);
     assert_eq!(summary.totals[0].amount_raw, "1200");
     assert_eq!(
-        refusal_kind(evaluate_program(&policy(), "solana", 1, &summary, &summary.totals, &[], NOW)),
+        refusal_kind(evaluate_program(
+            &policy(),
+            "solana",
+            1,
+            &summary,
+            &summary.totals,
+            &[],
+            NOW
+        )),
         RefusalKind::PerTransaction
     );
     let at_cap = summary_of(&[transfer_checked(&mint(), 1_000)]);
@@ -320,7 +345,16 @@ fn the_rolling_day_cap_counts_only_this_accounts_program_records() {
         spent(1_000, NOW - DAY_MS - 1, 1, LedgerStatus::Broadcast),
         spent(1_000, NOW - 500, 2, LedgerStatus::Broadcast),
     ];
-    let refused = evaluate_program(&policy(), "solana", 1, &summary, &summary.totals, &records, NOW).unwrap_err();
+    let refused = evaluate_program(
+        &policy(),
+        "solana",
+        1,
+        &summary,
+        &summary.totals,
+        &records,
+        NOW,
+    )
+    .unwrap_err();
     assert_eq!(refused.kind, RefusalKind::Daily);
     assert!(
         refused.message.contains("1000 already spent"),
@@ -337,7 +371,15 @@ fn the_rolling_day_cap_counts_only_this_accounts_program_records() {
     let mut in_doubt = records.clone();
     in_doubt.push(spent(1, NOW - 10, 1, LedgerStatus::InDoubt));
     assert_eq!(
-        refusal_kind(evaluate_program(&policy(), "solana", 1, &small, &small.totals, &in_doubt, NOW)),
+        refusal_kind(evaluate_program(
+            &policy(),
+            "solana",
+            1,
+            &small,
+            &small.totals,
+            &in_doubt,
+            NOW
+        )),
         RefusalKind::Daily
     );
 }
@@ -346,7 +388,15 @@ fn the_rolling_day_cap_counts_only_this_accounts_program_records() {
 fn an_unlisted_mint_is_refused() {
     let summary = summary_of(&[transfer_checked(&other_mint(), 1)]);
     assert_eq!(
-        refusal_kind(evaluate_program(&policy(), "solana", 1, &summary, &summary.totals, &[], NOW)),
+        refusal_kind(evaluate_program(
+            &policy(),
+            "solana",
+            1,
+            &summary,
+            &summary.totals,
+            &[],
+            NOW
+        )),
         RefusalKind::MintNotAllowed
     );
 }
@@ -369,7 +419,15 @@ fn two_mints_in_one_transaction_are_refused() {
         transfer_checked(&other_mint(), 1),
     ]);
     assert_eq!(
-        refusal_kind(evaluate_program(&policy, "solana", 1, &summary, &summary.totals, &[], NOW)),
+        refusal_kind(evaluate_program(
+            &policy,
+            "solana",
+            1,
+            &summary,
+            &summary.totals,
+            &[],
+            NOW
+        )),
         RefusalKind::TransactionNotAllowed
     );
 }
@@ -492,6 +550,7 @@ async fn prepare_refuses_an_account_without_a_section_before_touching_the_wallet
         PrepareProgramParams {
             account_index: 1,
             transaction: base64::engine::general_purpose::STANDARD.encode(tx),
+            expected_debits: Vec::new(),
         },
     )
     .await
@@ -516,4 +575,109 @@ async fn execute_refuses_an_unknown_quote() {
     .expect_err("unknown quote");
     assert!(error.contains("unavailable"), "{error}");
     assert!(!has_quote_for_test("prog-missing"));
+}
+
+fn declared(mint: &str, amount: u64) -> Vec<MintTotal> {
+    vec![MintTotal {
+        mint: mint.to_string(),
+        amount_raw: amount.to_string(),
+    }]
+}
+
+#[test]
+fn a_rewards_program_call_is_capped_by_its_declared_debit() {
+    // CreateMerkleDistribution funds the vault by CPI: no visible transfer,
+    // so the declaration carries the amount and the caps apply to it.
+    let summary = summary_of(&[ata_create(), distributor_call()]);
+    assert!(summary.totals.is_empty());
+    let check =
+        |debits: &[MintTotal]| evaluate_program(&policy(), "solana", 1, &summary, debits, &[], NOW);
+    assert_eq!(check(&declared(&mint(), 1_000)), Ok(()));
+    assert_eq!(check(&[]), Ok(()), "a call that debits nothing (clawback)");
+    assert_eq!(
+        refusal_kind(check(&declared(&mint(), 1_001))),
+        RefusalKind::PerTransaction
+    );
+    assert_eq!(
+        refusal_kind(check(&declared(&other_mint(), 1))),
+        RefusalKind::MintNotAllowed
+    );
+    let records = vec![spent(1_000, NOW - 1_000, 1, LedgerStatus::Broadcast)];
+    assert_eq!(
+        refusal_kind(evaluate_program(
+            &policy(),
+            "solana",
+            1,
+            &summary,
+            &declared(&mint(), 600),
+            &records,
+            NOW
+        )),
+        RefusalKind::Daily
+    );
+}
+
+#[test]
+fn the_declaration_must_cover_every_visible_transfer() {
+    let summary = summary_of(&[transfer_checked(&mint(), 600), distributor_call()]);
+    let check =
+        |debits: &[MintTotal]| evaluate_program(&policy(), "solana", 1, &summary, debits, &[], NOW);
+    assert_eq!(
+        refusal_kind(check(&declared(&mint(), 599))),
+        RefusalKind::SimulationMismatch
+    );
+    assert_eq!(refusal_kind(check(&[])), RefusalKind::SimulationMismatch);
+    // More than visible is allowed (the rest moves by CPI); simulation pins it.
+    assert_eq!(check(&declared(&mint(), 900)), Ok(()));
+    let twice = [declared(&mint(), 600), declared(&mint(), 600)].concat();
+    assert_eq!(
+        refusal_kind(check(&twice)),
+        RefusalKind::TransactionNotAllowed
+    );
+    let fractional = vec![MintTotal {
+        mint: mint(),
+        amount_raw: "1.5".into(),
+    }];
+    assert_eq!(
+        refusal_kind(check(&fractional)),
+        RefusalKind::TransactionNotAllowed
+    );
+}
+
+#[test]
+fn classic_token_transfer_checked_is_read_like_token_2022() {
+    let mut classic = transfer_checked(&mint(), 5);
+    classic.program = key(TOKEN_PROGRAM);
+    let summary = summary_of(&[classic]);
+    assert_eq!(summary.movements[0].program_id, TOKEN_PROGRAM);
+    assert_eq!(summary.totals, declared(&mint(), 5));
+    // Not listed in this account's allowed_programs (only Token-2022 is).
+    assert_eq!(
+        refusal_kind(evaluate_program(
+            &policy(),
+            "solana",
+            1,
+            &summary,
+            &summary.totals,
+            &[],
+            NOW
+        )),
+        RefusalKind::ProgramNotAllowed
+    );
+}
+
+#[test]
+fn prepare_params_require_the_declared_debits() {
+    let missing = serde_json::from_value::<PrepareProgramParams>(serde_json::json!({
+        "accountIndex": 1,
+        "transaction": "AA=="
+    }));
+    assert!(missing.is_err());
+    let parsed: PrepareProgramParams = serde_json::from_value(serde_json::json!({
+        "accountIndex": 1,
+        "transaction": "AA==",
+        "expectedDebits": [{"mint": TINY_MINT, "amountRaw": "1000000"}]
+    }))
+    .unwrap();
+    assert_eq!(parsed.expected_debits, declared(TINY_MINT, 1_000_000));
 }
