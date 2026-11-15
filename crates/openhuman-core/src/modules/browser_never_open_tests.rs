@@ -18,7 +18,10 @@ fn a_listed_host_and_its_subdomains_are_denied_but_not_a_lookalike() {
 #[test]
 fn comments_blank_lines_and_case_in_the_file_are_ignored() {
     let deny = parse("# X and its kin\n\n  X.com   # the account keys\nMail.Google.com\n");
-    assert_eq!(deny, vec!["x.com".to_string(), "mail.google.com".to_string()]);
+    assert_eq!(
+        deny,
+        vec!["x.com".to_string(), "mail.google.com".to_string()]
+    );
     assert!(check("https://mail.google.com/mail", &deny).is_some());
 }
 
@@ -35,7 +38,8 @@ fn no_list_set_denies_nothing() {
 #[test]
 fn a_list_that_cannot_be_read_refuses_every_page() {
     let missing = std::env::temp_dir().join("openhuman-never-open-does-not-exist.txt");
-    let reason = refusal_for(Some(missing.as_os_str()), "https://example.com/").expect("fails closed");
+    let reason =
+        refusal_for(Some(missing.as_os_str()), "https://example.com/").expect("fails closed");
     assert!(reason.contains("could not be read"), "{reason}");
 }
 
@@ -45,5 +49,8 @@ fn the_file_named_by_the_environment_is_the_list() {
     let file = dir.path().join("browser-deny.txt");
     std::fs::write(&file, "never-open.example\n").unwrap();
     assert!(refusal_for(Some(file.as_os_str()), "https://www.never-open.example/a").is_some());
-    assert_eq!(refusal_for(Some(file.as_os_str()), "https://example.com/"), None);
+    assert_eq!(
+        refusal_for(Some(file.as_os_str()), "https://example.com/"),
+        None
+    );
 }

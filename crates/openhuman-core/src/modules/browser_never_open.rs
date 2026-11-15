@@ -43,9 +43,11 @@ pub(crate) fn parse(text: &str) -> Vec<String> {
 
 /// Why `url` is denied by `list`, when it is: its host is an entry or under one.
 pub(crate) fn check(url: &str, list: &[String]) -> Option<String> {
-    let host = url::Url::parse(url)
-        .ok()
-        .and_then(|parsed| parsed.host_str().map(|h| h.trim_end_matches('.').to_ascii_lowercase()));
+    let host = url::Url::parse(url).ok().and_then(|parsed| {
+        parsed
+            .host_str()
+            .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
+    });
     let Some(host) = host else {
         return Some(format!("'{url}' has no host the never-open list can check"));
     };

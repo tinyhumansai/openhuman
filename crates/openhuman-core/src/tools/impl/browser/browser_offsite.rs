@@ -38,7 +38,9 @@ pub(super) fn left_for(error: &BrowserCallError) -> Option<String> {
         return None;
     }
     // The normalized form, as the browser's own URL policy reads it.
-    url::Url::parse(url).ok().map(|parsed| parsed.as_str().to_owned())
+    url::Url::parse(url)
+        .ok()
+        .map(|parsed| parsed.as_str().to_owned())
 }
 
 /// What the tool answers for an action of `kind` that led to `url`.
