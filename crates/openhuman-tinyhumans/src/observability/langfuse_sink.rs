@@ -3,7 +3,7 @@
 //!
 //! Spans go to the backend's Langfuse OTLP proxy — the endpoint the host
 //! resolved for the current backend (`resolved_endpoints.tracing_otlp_url`),
-//! authed with the live session bearer (the backend injects the real Langfuse
+//! authed with the live session bearer or API key (the backend injects the real Langfuse
 //! keys server-side). The deployment-environment gate
 //! ([`super::langfuse_environment`]) runs before the credential is read, so
 //! an unknown origin never receives the bearer.
@@ -44,10 +44,21 @@ impl TraceSink for LangfuseSink {
 }
 
 pub(crate) fn reject_partial_success(response: &serde_json::Value) -> Result<(), String> {
-    if response["partialSuccess"]["errorMessage"]
+    let partial = &response["partialSuccess"];
+    let message_rejected = partial["errorMessage"]
         .as_str()
-        .is_some_and(|message| !message.is_empty())
-    {
+        .is_some_and(|message| !message.is_empty());
+    // A positive count rejects on its own: OTLP allows rejectedSpans with no
+    // errorMessage, and those spans would otherwise be lost silently. An
+    // unreadable count fails closed: a present count we cannot parse is a
+    // rejection, not an acceptance.
+    let count_rejected = match &partial["rejectedSpans"] {
+        serde_json::Value::Null => false,
+        serde_json::Value::String(count) => count.parse::<u64>().map_or(true, |count| count > 0),
+        serde_json::Value::Number(count) => count.as_u64().map_or(true, |count| count > 0),
+        _ => true,
+    };
+    if message_rejected || count_rejected {
         Err("Langfuse OTLP proxy reported partial success".to_string())
     } else {
         Ok(())
@@ -55,7 +66,7 @@ pub(crate) fn reject_partial_success(response: &serde_json::Value) -> Result<(),
 }
 
 /// Push `spans` to the Langfuse OTLP proxy. A skipped environment or a missing
-/// session is `Ok(())`: skipping is the configured outcome, not a fault.
+/// credential is `Ok(())`: skipping is the configured outcome, not a fault.
 pub(crate) async fn push_spans(config: &Config, spans: &[TraceSpan]) -> Result<(), String> {
     if spans.is_empty() {
         return Ok(());
@@ -69,7 +80,7 @@ pub(crate) async fn push_spans(config: &Config, spans: &[TraceSpan]) -> Result<(
         return Err("Langfuse backend proxy URL is unavailable".to_string());
     }
     let token = match direct_backend_credential(config, "langfuse otlp push").await {
-        Some(BackendCredential::Session(token)) => token,
+        Some(BackendCredential::Session(token)) | Some(BackendCredential::ApiKey(token)) => token,
         _ => return Ok(()),
     };
     let client = LangfuseClient::proxy_with_transport(

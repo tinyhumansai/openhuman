@@ -99,7 +99,7 @@ pub(crate) fn export_spans(config: &AgentTracingConfig, spans: &[TraceSpan]) {
 /// 1. **Usage-data sharing** (`observability.share_usage_data`, on by default):
 ///    hand the run's spans to every registered [`TraceSink`](super::TraceSink)
 ///    (the TinyHumans layer registers its Langfuse proxy push). A failure (no
-///    live session, network, rejected payload) just logs; there is no local
+///    live credential, network, rejected payload) just logs; there is no local
 ///    fallback, since sharing and local export are distinct opt-ins.
 /// 2. **Local exporter** (`observability.agent_tracing.enabled`, opt-in): append
 ///    OTel/Langfuse-format NDJSON to the configured file or the app log via
