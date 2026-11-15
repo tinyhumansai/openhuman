@@ -48,6 +48,10 @@ mod ops;
 pub mod policy;
 #[cfg(feature = "web3")]
 pub mod policy_ops;
+/// Host-built program transactions signed by one account under its own
+/// policy (`prepare_program` / `execute_prepared_program`).
+#[cfg(feature = "web3")]
+pub mod program;
 #[cfg(feature = "web3")]
 pub(crate) mod rpc;
 
@@ -72,7 +76,7 @@ pub use execution::{
 };
 #[cfg(feature = "web3")]
 pub use ops::{
-    derive_recovery_material, generate_recovery_phrase, reveal_recovery_phrase, setup, status,
+    derive_recovery_material, ensure_account, generate_recovery_phrase, reveal_recovery_phrase, setup, status,
     validate_recovery_phrase, GeneratedRecoveryPhrase, RecoveryPhraseValidation,
     RevealRecoveryPhraseResult, WalletAccount, WalletChain, WalletRecoveryMaterial,
     WalletSetupParams, WalletSetupSource, WalletStatus, WALLET_NOT_CONFIGURED_MESSAGE,
