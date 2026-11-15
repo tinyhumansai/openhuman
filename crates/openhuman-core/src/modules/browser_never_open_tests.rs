@@ -86,5 +86,8 @@ fn an_empty_list_refuses_no_dial_and_no_page() {
     let file = dir.path().join("empty.txt");
     std::fs::write(&file, "# nothing yet\n").unwrap();
     assert_eq!(dial_refusal_for(Some(file.as_os_str()), "x.com"), None);
-    assert_eq!(refusal_for(Some(file.as_os_str()), "https://example.com/path"), None);
+    assert_eq!(
+        refusal_for(Some(file.as_os_str()), "https://example.com/path"),
+        None
+    );
 }

@@ -89,7 +89,9 @@ pub(crate) fn check(url: &str, list: &[String]) -> Option<String> {
 /// Why `hostname` is denied by `list`, when it is.
 pub(crate) fn check_host(hostname: &str, list: &[String]) -> Option<String> {
     let Some(host) = canonical(hostname) else {
-        return Some(format!("'{hostname}' is not a host the never-open list can check"));
+        return Some(format!(
+            "'{hostname}' is not a host the never-open list can check"
+        ));
     };
     list.iter()
         .find(|denied| host == **denied || host.ends_with(&format!(".{denied}")))
