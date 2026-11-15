@@ -16,6 +16,7 @@ use tinymcp_bus::{
 #[derive(Clone, Default)]
 struct PreparePort {
     requests: Arc<Mutex<Vec<PrepareAgentToolsRequest>>>,
+    confidential_calls: Arc<Mutex<Vec<bool>>>,
     transform_error: Option<tinybus::module::ModuleCallError>,
 }
 
@@ -46,11 +47,18 @@ impl McpModulePort for PreparePort {
     async fn call_object(
         &self,
         _: &str,
-        _: &str,
+        _member: &str,
         _: Value,
-        _: bool,
+        confidential: bool,
     ) -> Result<Value, tinybus::module::ModuleCallError> {
-        Err(tinybus::module::ModuleCallError::IncompatibleContract)
+        self.confidential_calls.lock().unwrap().push(confidential);
+        serde_json::to_value(tinymcp_bus::ClassifiedStaticToolCall {
+            outcome: tinymcp_bus::McpCallOutcome::answered("docs", "search"),
+            rendered: Some(tinymcp_bus::McpToolResult::default()),
+            envelope: None,
+            error_message: None,
+        })
+        .map_err(|_| tinybus::module::ModuleCallError::ModuleFault)
     }
 
     async fn prepare_agent_tools(
@@ -143,6 +151,27 @@ async fn valid_mcp_identifier_reports_module_unavailable_without_invalid_input_l
     let outcome = tinymcp_bus::McpCallOutcome::from_metadata(result.metadata.as_ref().unwrap())
         .expect("sanitized outcome remains available");
     assert_eq!(outcome.error.unwrap().code, tinymcp_bus::errors::BUS);
+}
+
+#[tokio::test]
+async fn static_mcp_tool_call_uses_confidential_module_delivery() {
+    let workspace = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.workspace_dir = workspace.path().to_path_buf();
+    config.modules.enabled = true;
+    let port = PreparePort::default();
+    McpConfiguredClient::install_test_port(&config, Box::new(port.clone())).unwrap();
+    let tool = mcp_call_tool(Arc::new(config));
+
+    let result = tool
+        .execute(json!({"server": "docs", "tool": "search", "arguments": {}}))
+        .await
+        .expect("tool failures are returned as a model-visible result");
+
+    assert!(!result.is_error);
+    let calls = port.confidential_calls.lock().unwrap();
+    assert!(!calls.is_empty());
+    assert!(calls.iter().all(|confidential| *confidential));
 }
 
 #[tokio::test]

@@ -1,7 +1,8 @@
-#[cfg(feature = "mcp")]
-use super::implementations::network::{McpListServersTool, McpListToolsTool};
 use super::*;
 use crate::config::Config;
+use crate::mcp::gitbooks_tools::{GitbooksGetPageTool, GitbooksSearchTool};
+#[cfg(feature = "mcp")]
+use crate::mcp::tools::{mcp_call_tool, McpListServersTool, McpListToolsTool};
 use crate::modules::tinybox::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::security::{AuditSink, SecurityPolicy};
 use std::sync::Arc;
@@ -419,7 +420,7 @@ pub async fn all_tools_with_runtime_and_pack_handle(
     // `mcp::registry` domain gated above. Both are compiled out by the `mcp`
     // feature; see the static-vs-dynamic note in AGENTS.md.
     #[cfg(feature = "mcp")]
-    tools.push(crate::mcp::ui::show_ui_tool(root_config));
+    tools.push(Box::new(ShowUiTool::for_config(root_config)));
     #[cfg(feature = "mcp")]
     if root_config.mcp_client.enabled && !root_config.mcp_client.servers.is_empty() {
         // Catalog retrieval runs in the async turn prelude. This synchronous

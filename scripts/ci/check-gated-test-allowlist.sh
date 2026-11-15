@@ -43,7 +43,7 @@ core/runtime/services.rs
 core/schema_test_support_tests.rs
 core/runtime/subscribers.rs
 mcp/server/resources.rs
-mcp/ui/tools.rs
+tools/impl/ui/show_ui.rs
 mcp/server/tools/mod.rs
 modules/mod.rs
 modules/ops_components_tests.rs

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolExposure, ToolResult, ToolRunContext};
 
-use super::cache::{self, InlineEntry};
+use crate::mcp::ui::cache::{self, InlineEntry};
 use tinymcp_bus::ui::{
     extract_links, McpUiPresentation, UiCsp, UiFlavor, UiResource, MAX_STRUCTURED_BYTES,
     MAX_WIDGET_BYTES, MCP_APP_MIME, MCP_UI_KIND,
@@ -268,5 +268,5 @@ impl Tool for ShowUiTool {
 }
 
 #[cfg(test)]
-#[path = "tools_tests.rs"]
+#[path = "show_ui_tests.rs"]
 mod tests;

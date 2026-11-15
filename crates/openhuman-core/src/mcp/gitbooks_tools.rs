@@ -277,5 +277,5 @@ fn map_module_rendered_result(
 }
 
 #[cfg(test)]
-#[path = "gitbooks_tests.rs"]
+#[path = "gitbooks_tools_tests.rs"]
 mod tests;

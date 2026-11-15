@@ -17,6 +17,13 @@
 //! - [`server`] — the `openhuman mcp` host adapter for stdio and HTTP entry
 //!   points. The tool catalog, permission model, and agent dispatch stay here;
 //!   TinyMCP owns protocol sessions and transport behavior.
+//! - `tools` — the generic configured-server bridge as agent tools
+//!   (`mcp_list_servers`, `mcp_list_tools`, `mcp_call_tool`), one file each.
+//! - `server_tools` — each configured server's tools as direct
+//!   `mcp_<server>_<tool>` agent tools.
+//! - `gitbooks_tools` — `gitbooks_search` / `gitbooks_get_page`, the
+//!   OpenHuman docs over TinyMCP's one-shot call. Not gated on `mcp`: it is a
+//!   docs tool that only borrows the module's transport.
 //!
 //! # Where the boundary fell
 //!
@@ -224,11 +231,16 @@ pub(crate) fn all_controller_entries() -> Vec<crate::core::all::ControllerEntry>
 }
 
 pub mod audit;
+pub(crate) mod gitbooks_tools;
 // Ungated: `tinymcp` is an ordinary dependency, and the startup path calls `host::init` without a `cfg`
 // of its own. Gating this would break the build with the domain turned off.
 pub mod host;
 pub(crate) mod host_sandbox;
 pub mod registry;
 pub mod server;
+#[cfg(feature = "mcp")]
+pub(crate) mod server_tools;
+#[cfg(feature = "mcp")]
+pub(crate) mod tools;
 #[cfg(feature = "mcp")]
 pub mod ui;

@@ -7,7 +7,8 @@
 //! - [`decorate`] applies that to every MCP tool path.
 //! - [`ops`] / `schemas` serve a widget its document and run the tool calls
 //!   it asks for (`mcp_ui` namespace), through [`port::UiServerPort`].
-//! - [`tools`] is `show_ui`, the host tool a skill renders HTML with.
+//! - `show_ui`, the host tool a skill renders HTML with, lives in
+//!   `tools/impl/ui` and puts its document in [`cache`].
 //!
 //! Widget HTML stays in [`cache`], in memory; events and transcripts carry
 //! only the bounded presentation.
@@ -19,20 +20,12 @@ pub mod ops;
 pub mod port;
 pub mod resolve;
 mod schemas;
-pub mod tools;
 
 pub use decorate::{decorate_result, UiAwareTool};
 pub use schemas::{
     all_controller_schemas as all_mcp_ui_controller_schemas,
     all_registered_controllers as all_mcp_ui_registered_controllers,
 };
-pub use tools::ShowUiTool;
-
-/// `show_ui`, boxed for the tool list.
-#[must_use]
-pub fn show_ui_tool(config: &crate::config::Config) -> Box<dyn tinytools::Tool> {
-    Box::new(ShowUiTool::for_config(config))
-}
 
 /// `mcp_call_tool` over the configured servers, presenting the UI of the
 /// remote tool it calls.
