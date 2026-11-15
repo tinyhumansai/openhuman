@@ -433,7 +433,7 @@ loadable:
 - Callers outside this folder: `runtime::client` re-exports `execute`,
   `resolve` and `RuntimeCallError` from `modules::runtime` so `runtime/`
   compiles without the gate; wallet, Web3, and x402 adapters use `wallet.rs`;
-  `tools/impl/document`, `tools/impl/presentation`,
+  `artifacts/tools/` (document and presentation),
   `agent/multimodal.rs` and `attachments/` use `documents.rs`;
   `tools/impl/browser/` and `desktop/control/` use the TinyComputer files;
   `integrations/composio/module_client.rs` uses [`connectors.rs`](./connectors.rs);

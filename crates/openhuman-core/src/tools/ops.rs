@@ -303,23 +303,14 @@ pub async fn all_tools_with_runtime_and_pack_handle(
     // `juice_find` / `juice_extract` / `juice_summarize`: only while a handle can name them.
     tools.extend(crate::inference::tokenjuice::repl_tools_for(root_config));
 
-    // Presentation generation (#2778), backed by the native Rust engine.
-    // Always registered.
+    // Presentation then document generation (#2778, #4847): native-Rust
+    // engines emitting through the artifact pipeline. Always registered
+    // while `documents` is on.
     #[cfg(feature = "documents")]
-    tools.push(Box::new(PresentationTool::for_config(
+    tools.extend(crate::artifacts::tools::registered_tools(
         root_config,
         security.clone(),
-    )));
-
-    // Document generation (#4847, Problem 3). Native-Rust engine
-    // (docx-rs backed) — no managed runtime, no subprocess — emitting a
-    // real `.docx` through the same byte-agnostic artifact pipeline as
-    // the presentation tool. Always registered; same constructor shape.
-    #[cfg(feature = "documents")]
-    tools.push(Box::new(DocumentTool::for_config(
-        root_config,
-        security.clone(),
-    )));
+    ));
 
     // Thread-level goal tools (Codex-style per-thread completion contract).
     // Visible only to agents that allowlist them (orchestrator). The target

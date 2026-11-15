@@ -8,7 +8,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use crate::core::envelope::{ApiEnvelope, ApiError, ApiMeta, EmptyRequest, PaginationMeta};
+pub use super::envelope::{ApiEnvelope, ApiError, ApiMeta, EmptyRequest, PaginationMeta};
 
 /// Typed acknowledgement returned when a web chat message starts immediately.
 #[derive(Debug, Clone, Serialize, JsonSchema)]

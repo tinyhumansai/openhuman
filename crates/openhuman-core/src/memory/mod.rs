@@ -15,6 +15,7 @@
 //! | [`tools`] | The single `memory` agent tool |
 //! | [`bus`] | The cron subscriber (source sync, background jobs) |
 //! | [`schemas`] | The `openhuman.memory_*` controllers |
+//! | [`status`] | The `subsystems` slot table (RPC and CLI); memory is its only row |
 //!
 //! Chat thread persistence is not memory: it lives in [`crate::threads::store`].
 

@@ -161,6 +161,7 @@ See [store/README.md](store/README.md).
 | --- | --- |
 | [`mod.rs`](./mod.rs) | Module declarations, re-exports of the RPC models, error type and controller aggregators. |
 | [`rpc_models.rs`](./rpc_models.rs) | Serde request and response types for the namespace (`ConversationThreadSummary`, `ConversationMessageRecord`, the `*Request` types). |
+| [`envelope.rs`](./envelope.rs) | `ApiEnvelope`, `ApiError`, `ApiMeta`, `PaginationMeta`, `EmptyRequest` and the `envelope` / `counts` builders: the `{data, error, meta}` shape `threads.*` returns, also reused by `desktop::provider_surfaces`. |
 | [`error.rs`](./error.rs) | `ThreadsError` (`NotFound`, `Message`) and its structured RPC error with kind `ThreadNotFound`, so the frontend can drop a stale thread. |
 | [`ops.rs`](./ops.rs) | Re-exports the operations from [`ops/`](./ops/). |
 | [`ops/crud.rs`](./ops/crud.rs) | List, upsert, create, message list/append/update, `delete_after`, delete, labels, title, and `transcript_search`. `message_append` enforces the multimodal attachment limits for user messages. |

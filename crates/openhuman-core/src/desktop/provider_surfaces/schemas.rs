@@ -9,8 +9,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 use crate::core::all::RegisteredController;
-use crate::core::envelope::EmptyRequest;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::threads::envelope::EmptyRequest;
 
 use super::ops;
 use super::types::ProviderEvent;

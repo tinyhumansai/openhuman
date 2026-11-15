@@ -397,6 +397,7 @@ set.
 | `credentials.rs` | A profile's TinyHumans credential, stored beside its config or in the backend |
 | `ops.rs` | `provision` / `deprovision` / `list` / `status` / `set_credential` / `clear_credential` / `release`, returning `Outcome<T>` |
 | `schemas.rs` | The `profiles.*` controllers (`profile_id` in and out) |
+| `direct_profile_provider.rs` | `DirectProfileProvider`: the validated operator-owned OpenAI-compatible route and model behind `SaasConfig::chat_provider`, shared by profile chat, relay and cron; `provider_settings.rs` carries it into each profile context |
 
 Each file's tests sit beside it (`*_tests.rs`), including property suites for
 ids (`types_proptest_tests.rs`) and the tenant key

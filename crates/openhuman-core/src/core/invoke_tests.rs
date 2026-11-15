@@ -1,11 +1,12 @@
 use crate::core::runtime::DispatchCtx;
 use serde_json::json;
 
-use super::super::session_expiry::is_session_expired_error;
 use super::{
-    default_state, invoke_method, request_session_failure_is_actionable, session_failure_outcome,
-    translate_local_session_error, SessionFailureOutcome,
+    default_state, invoke_method, is_unconfirmed_unauthorized_error,
+    request_session_failure_is_actionable, session_failure_outcome, translate_local_session_error,
+    SessionFailureOutcome,
 };
+use crate::core::observability::is_session_expired_error;
 
 #[tokio::test]
 async fn invoke_health_snapshot_via_registry() {
@@ -543,4 +544,26 @@ async fn invoke_method_core_version_via_tier1_reflects_state() {
         .await
         .expect("core.version should succeed");
     assert_eq!(result, json!({ "version": "0.0.1-abc" }));
+}
+
+#[test]
+fn unconfirmed_unauthorized_error_matches_generic_401_for_diagnostics_only() {
+    // Generic 401+unauthorized text feeds the diagnostic-only branch — never
+    // SessionExpired publication.
+    for msg in [
+        "backend returned 401 Unauthorized",
+        "401 UNAUTHORIZED",
+        "got 401 and unauthorized body",
+        "Invalid Token",
+        "got an invalid token here",
+    ] {
+        assert!(is_unconfirmed_unauthorized_error(msg), "{msg}");
+        assert!(!is_session_expired_error(msg), "{msg}");
+    }
+    // Issue #2537: a backend 500 wrapping a Composio upstream 401 is logged
+    // diagnostically, never treated as an expired session.
+    let wrapped = r#"[composio] list_connections failed: Backend returned 500 Internal Server Error for GET https://backend.example.test/composio/connections: 401 {"error":{"message":"Invalid API key: ak_o1Og5*****","code":10401,"slug":"HTTP_Unauthorized","status":401}}"#;
+    assert!(is_unconfirmed_unauthorized_error(wrapped));
+    assert!(!is_session_expired_error(wrapped));
+    assert!(!is_unconfirmed_unauthorized_error("network timeout"));
 }

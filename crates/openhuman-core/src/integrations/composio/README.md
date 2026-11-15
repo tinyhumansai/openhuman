@@ -173,7 +173,7 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 - `crates/openhuman-core/src/core/all.rs`: registers the controllers.
 - `crates/openhuman-core/src/tools/{mod,ops}.rs`, [`tools/schemas/composio.rs`](../../tools/schemas/composio.rs): wires agent tools into the tool registry.
 - `crates/openhuman-core/src/core/runtime/subscribers.rs`: at startup initializes trigger history and registers the three bus subscribers.
-- `crates/openhuman-core/src/agent/**`: session-host tool assembly (deferred per-action tools, recorded-tool rebuild) and triage escalation (e.g. [`agent/subagent_host/`](../../agent/subagent_host/), [`agent/orchestration/tools/`](../../agent/orchestration/tools/), [`triage/`](../../triage/)). Prompt debug helpers live at [`core/agent_cli/debug/mod.rs`](../../core/agent_cli/debug/mod.rs).
+- `crates/openhuman-core/src/agent/**`: session-host tool assembly (deferred per-action tools, recorded-tool rebuild) and triage escalation (e.g. [`agent/subagent_host/`](../../agent/subagent_host/), [`agent/orchestration/tools/`](../../agent/orchestration/tools/), [`triage/`](../../triage/)). Prompt debug helpers live at [`agent/cli/debug/mod.rs`](../../agent/cli/debug/mod.rs).
 - [`crates/openhuman-core/src/platform/socket/event_handlers.rs`](../../platform/socket/event_handlers.rs): parses `composio:trigger` and publishes `ComposioTriggerReceived`.
 - [`crates/openhuman-core/src/integrations/connected_identities.rs`](../../integrations/connected_identities.rs): renders connected identities into the agent prompt.
 - [`crates/openhuman-core/src/skills/preflight.rs`](../../skills/preflight.rs): identity gate via `connection_identity`.

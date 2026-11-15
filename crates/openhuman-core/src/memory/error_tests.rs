@@ -98,7 +98,7 @@ fn a_plan_refusal_is_plan_required_not_unauthorized() {
         let structured = plan.to_structured();
         assert!(structured.expected_user_state);
         assert!(
-            !crate::core::session_expiry::is_session_expired_error(&String::from(plan)),
+            !crate::core::observability::is_session_expired_error(&String::from(plan)),
             "{}",
             structured.message
         );

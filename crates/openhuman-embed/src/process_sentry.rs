@@ -201,22 +201,21 @@ const NOISE_FILTERS: &[NoiseFilter] = &[
         "skills-install-4xx",
         obs::is_skills_install_client_error_event,
     ),
-    (
-        "channel-message-404",
-        obs::is_channel_message_not_found_event,
-    ),
     ("user-config-provider", obs::is_user_config_provider_event),
     ("connectivity", obs::is_connectivity_event),
     ("stale-release", obs::is_stale_release_event),
     ("session-expired", obs::is_session_expired_event),
 ];
 
-/// The name of the first filter that classifies `event` as known noise.
+/// The name of the first filter that classifies `event` as known noise: the
+/// built-in chain first, then the filters the installed host registered
+/// (`core::observability::register_crash_noise_filter`).
 pub fn known_noise(event: &Event<'static>) -> Option<&'static str> {
     NOISE_FILTERS
         .iter()
         .find(|(_, matches)| matches(event))
         .map(|(name, _)| *name)
+        .or_else(|| obs::registered_crash_noise(event))
 }
 
 /// The `before_send` hook: drop known noise, otherwise strip the hostname,

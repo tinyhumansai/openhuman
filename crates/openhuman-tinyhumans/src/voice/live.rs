@@ -6,10 +6,8 @@
 //! credential code. They register with the core's live-provider registry
 //! ([`register`]); the core carries no hosted entry of its own.
 
+use crate::errors::{INSUFFICIENT_CREDITS_PREFIX, PAID_PLAN_REQUIRED_PREFIX};
 use openhuman_embed::__host::config::Config;
-use openhuman_embed::__host::core::observability::{
-    INSUFFICIENT_CREDITS_PREFIX, PAID_PLAN_REQUIRED_PREFIX,
-};
 use openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential;
 use openhuman_embed::__host::voice_registry::{
     register_live_provider, LiveProviderEntry, LiveProviderKind, LiveProviderPlacement,
