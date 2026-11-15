@@ -17,6 +17,7 @@ pub struct ComputerSettingsPatch {
     pub rescue_model: Option<String>,
     pub max_rescues: Option<u32>,
     pub captcha_solver: Option<bool>,
+    pub captcha_provider: Option<String>,
     pub captcha_model: Option<String>,
     pub max_captcha_attempts: Option<u32>,
 }

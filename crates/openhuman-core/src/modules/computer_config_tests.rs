@@ -248,3 +248,65 @@ async fn the_captcha_solver_without_a_key_is_left_out() {
         assert!(module_config(&config).await.get("captcha").is_none());
     }
 }
+
+#[tokio::test]
+async fn the_captcha_solver_on_surplus_uses_the_surplus_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config_in(dir.path());
+    store(&config, "typesafe", "ts-test-key").await;
+    store(&config, "surplus", "sp-test-key").await;
+    config.computer.captcha_solver = true;
+    config.computer.captcha_provider = Some("surplus".into());
+    let value = module_config(&config).await;
+    assert_eq!(value["captcha"]["jev"]["provider"], "surplus");
+    assert_eq!(value["captcha"]["jev"]["api_key"], "sp-test-key");
+    assert!(
+        value["captcha"]["jev"].get("model").is_none(),
+        "the module picks Surplus's default model"
+    );
+    assert!(value["captcha"].get("max_attempts").is_none());
+
+    config.computer.captcha_model = Some("jev-1.14".into());
+    config.computer.max_captcha_attempts = Some(2);
+    let value = module_config(&config).await;
+    assert_eq!(value["captcha"]["jev"]["model"], "jev-1.14");
+    assert_eq!(value["captcha"]["max_attempts"], 2);
+}
+
+#[tokio::test]
+async fn an_explicit_type_safe_captcha_provider_matches_the_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config_in(dir.path());
+    store(&config, "typesafe", "ts-test-key").await;
+    config.computer.captcha_solver = true;
+    config.computer.captcha_model = Some("jev-preview".into());
+    let default = module_config(&config).await["captcha"].clone();
+    config.computer.captcha_provider = Some("type_safe".into());
+    assert_eq!(module_config(&config).await["captcha"], default);
+    assert_eq!(default["jev"]["provider"], "type_safe");
+}
+
+#[tokio::test]
+async fn the_captcha_solver_on_surplus_without_a_surplus_key_is_left_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config_in(dir.path());
+    store(&config, "typesafe", "ts-test-key").await;
+    config.computer.captcha_solver = true;
+    config.computer.captcha_provider = Some("surplus".into());
+    if std::env::var("SURPLUS_API_KEY").is_err() {
+        assert!(
+            module_config(&config).await.get("captcha").is_none(),
+            "a TypeSafe key is never sent to Surplus"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_captcha_provider_sends_no_captcha_section() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config_in(dir.path());
+    store(&config, "typesafe", "ts-test-key").await;
+    config.computer.captcha_solver = true;
+    config.computer.captcha_provider = Some("open_router".into());
+    assert!(module_config(&config).await.get("captcha").is_none());
+}

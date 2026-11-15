@@ -27,3 +27,15 @@ fn parses_every_decision_model_and_rescue_settings() {
     }
     assert!(toml::from_str::<ComputerConfig>("decision_model = \"jet\"").is_err());
 }
+
+#[test]
+fn the_captcha_provider_defaults_to_absent_and_round_trips() {
+    assert_eq!(ComputerConfig::default().captcha_provider, None);
+    let config: ComputerConfig =
+        toml::from_str("captcha_solver = true\ncaptcha_provider = \"surplus\"").unwrap();
+    assert_eq!(config.captcha_provider.as_deref(), Some("surplus"));
+    let saved = toml::to_string(&config).unwrap();
+    assert!(saved.contains("captcha_provider = \"surplus\""), "{saved}");
+    let reloaded: ComputerConfig = toml::from_str(&saved).unwrap();
+    assert_eq!(reloaded, config);
+}

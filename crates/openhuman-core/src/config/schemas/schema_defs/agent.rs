@@ -204,11 +204,15 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 ),
                 optional_bool(
                     "captcha_solver",
-                    "Let browser tasks try a captcha with Jev's image questions before asking a person; needs a TypeSafe key.",
+                    "Let browser tasks try a captcha with Jev's image questions before asking a person; needs a key for the captcha provider.",
+                ),
+                optional_string(
+                    "captcha_provider",
+                    "Captcha solver's Jev provider: type_safe (TYPESAFE_API_KEY) or surplus (SURPLUS_API_KEY); empty restores type_safe.",
                 ),
                 optional_string(
                     "captcha_model",
-                    "Image-reading Jev model for the captcha solver; empty restores the module default (jev-preview).",
+                    "Image-reading Jev model for the captcha solver; empty restores the provider's default (jev-preview on type_safe, jev-1.14 on surplus).",
                 ),
                 optional_number(
                     "max_captcha_attempts",
