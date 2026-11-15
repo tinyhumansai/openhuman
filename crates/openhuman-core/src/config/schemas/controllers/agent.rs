@@ -146,7 +146,7 @@ pub(super) fn handle_update_computer_settings(
             rescue_model: update.rescue_model,
             max_rescues: update.max_rescues,
             captcha_solver: update.captcha_solver,
-            captcha_provider: update.captcha_provider,
+            captcha_provider: None,
             captcha_model: update.captcha_model,
             max_captcha_attempts: update.max_captcha_attempts,
         };

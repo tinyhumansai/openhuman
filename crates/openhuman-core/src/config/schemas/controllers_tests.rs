@@ -48,7 +48,7 @@ async fn update_computer_settings_saves_the_captcha_provider() {
     let saved = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
     assert!(saved.contains("captcha_provider = \"surplus\""), "{saved}");
 
-    let schema = super::schemas("update_computer_settings");
+    let schema = super::super::schema_defs::schemas("update_computer_settings");
     let field = schema
         .inputs
         .iter()
