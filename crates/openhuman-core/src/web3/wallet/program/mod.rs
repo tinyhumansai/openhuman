@@ -181,13 +181,9 @@ pub fn decode_transaction(bytes: &[u8]) -> Result<DecodedTransaction, String> {
                 .checked_mul(64)
                 .ok_or("too many signatures")?,
         )?
-        .chunks_exact(64)
-        .map(|chunk| {
-            let mut signature = [0u8; 64];
-            signature.copy_from_slice(chunk);
-            signature
-        })
-        .collect();
+        .as_chunks::<64>()
+        .0
+        .to_vec();
     let message_start = reader.pos;
 
     let first = *bytes
@@ -696,6 +692,9 @@ pub use ops::{
 #[cfg(test)]
 pub(crate) use ops::{has_quote_for_test, program_record};
 
+#[cfg(test)]
+#[path = "cosign_tests.rs"]
+mod cosign_tests;
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
