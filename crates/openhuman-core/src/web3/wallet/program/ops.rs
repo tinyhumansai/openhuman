@@ -409,7 +409,23 @@ async fn sign_and_send(
         }
         _ => return Err("wallet module returned a non-ed25519 signature".to_string()),
     };
-    let signed_transaction = attach_signature(&stored.transaction, &stored.decoded, &signature)?;
+    let signer = stored
+        .decoded
+        .account_keys
+        .first()
+        .ok_or_else(|| "the transaction lists no accounts".to_string())?;
+    let signed_transaction =
+        attach_signature(&stored.transaction, &stored.decoded, signer, &signature)?;
+    // Every slot must now hold a valid signature: the co-signers' were checked
+    // at prepare, and this proves the module signed with the fee payer's key.
+    let signed = decode_transaction(&signed_transaction)?;
+    for (slot, signature) in signed.signatures.iter().enumerate() {
+        if !super::signature_is_valid(&signed.account_keys[slot], &signed.message, signature) {
+            return Err(format!(
+                "signature {slot} does not verify; the transaction was not sent"
+            ));
+        }
+    }
     let url = solana_rpc_url(ctx).await?;
     let encoded = base64::engine::general_purpose::STANDARD.encode(signed_transaction);
     let hash: String = super::super::rpc::rpc_call_to(

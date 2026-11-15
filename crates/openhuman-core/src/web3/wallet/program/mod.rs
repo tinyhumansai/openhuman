@@ -12,7 +12,9 @@
 //!    account index to sign with, and `expectedDebits`: what the transaction
 //!    takes from the account's token balances, per mint. The host decodes it
 //!    and refuses it unless
-//!    - the account is the fee payer and the only signer;
+//!    - the account is the fee payer, and every other required signer (a
+//!      throwaway keypair the caller generated, say) has already signed the
+//!      message with a valid signature;
 //!    - every instruction invokes a program in the account's
 //!      `allowed_programs` (`[wallet_policy.accounts.solana_<index>]`);
 //!    - every SPL Token or Token-2022 instruction is a `TransferChecked` (the
@@ -35,7 +37,8 @@
 //!    and reserves the spend atomically (`ledger::SpendLedger::reserve`),
 //!    asks the TinyWallet module to sign the message bytes with the account's
 //!    key (a confidential `SignMessage`; the key never leaves the module),
-//!    attaches the signature and sends the transaction to the Solana RPC. The
+//!    puts the signature in the account's signer slot, verifies every
+//!    signature, and sends the transaction to the Solana RPC. The
 //!    ledger record moves to `broadcast` or `in_doubt`; a quote is never
 //!    executed twice.
 //!
@@ -97,6 +100,8 @@ pub struct DecodedTransaction {
     pub signature_count: usize,
     /// Byte offset of the first signature slot.
     pub signatures_offset: usize,
+    /// The signature slots as given (all zeros when unsigned).
+    pub signatures: Vec<[u8; 64]>,
     /// The serialized message, exactly as it is signed.
     pub message: Vec<u8>,
     /// Whether the message is versioned (v0).
@@ -170,11 +175,19 @@ pub fn decode_transaction(bytes: &[u8]) -> Result<DecodedTransaction, String> {
     let mut reader = Reader { bytes, pos: 0 };
     let signature_count = reader.compact_u16()?;
     let signatures_offset = reader.pos;
-    reader.take(
-        signature_count
-            .checked_mul(64)
-            .ok_or("too many signatures")?,
-    )?;
+    let signatures = reader
+        .take(
+            signature_count
+                .checked_mul(64)
+                .ok_or("too many signatures")?,
+        )?
+        .chunks_exact(64)
+        .map(|chunk| {
+            let mut signature = [0u8; 64];
+            signature.copy_from_slice(chunk);
+            signature
+        })
+        .collect();
     let message_start = reader.pos;
 
     let first = *bytes
@@ -228,6 +241,7 @@ pub fn decode_transaction(bytes: &[u8]) -> Result<DecodedTransaction, String> {
     Ok(DecodedTransaction {
         signature_count,
         signatures_offset,
+        signatures,
         message: bytes[message_start..].to_vec(),
         versioned,
         num_required_signatures,
@@ -238,22 +252,73 @@ pub fn decode_transaction(bytes: &[u8]) -> Result<DecodedTransaction, String> {
     })
 }
 
-/// `bytes` with signature slot 0 replaced by `signature`.
+/// `bytes` with `signature` in every signer slot whose key is `signer`.
 ///
 /// # Errors
 ///
-/// When the transaction has no signature slot.
+/// When `signer` holds no signer slot.
 pub fn attach_signature(
     bytes: &[u8],
     decoded: &DecodedTransaction,
+    signer: &[u8; 32],
     signature: &[u8; 64],
 ) -> Result<Vec<u8>, String> {
-    if decoded.signature_count == 0 {
-        return Err("transaction has no signature slot".to_string());
-    }
     let mut signed = bytes.to_vec();
-    signed[decoded.signatures_offset..decoded.signatures_offset + 64].copy_from_slice(signature);
+    let mut placed = false;
+    for slot in 0..decoded.signature_count {
+        if decoded.account_keys.get(slot) == Some(signer) {
+            let at = decoded.signatures_offset + slot * 64;
+            signed[at..at + 64].copy_from_slice(signature);
+            placed = true;
+        }
+    }
+    if !placed {
+        return Err("the signing account holds no signer slot in the transaction".to_string());
+    }
     Ok(signed)
+}
+
+/// Whether `signature` is a valid ed25519 signature by `key` over `message`.
+#[must_use]
+pub fn signature_is_valid(key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> bool {
+    ed25519_dalek::VerifyingKey::from_bytes(key).is_ok_and(|key| {
+        key.verify_strict(message, &ed25519_dalek::Signature::from_bytes(signature))
+            .is_ok()
+    })
+}
+
+/// Refuse unless every required signer other than `signer` has already
+/// signed the message validly (the caller co-signs before preparing; a
+/// throwaway `seed` keypair, say). `signer`'s own slots may hold anything:
+/// the module's signature replaces them.
+///
+/// # Errors
+///
+/// The refusal naming the first unsigned or wrongly signed signer.
+pub fn check_cosigners(tx: &DecodedTransaction, signer: &[u8; 32]) -> Result<(), PolicyRefusal> {
+    for slot in 0..tx.signature_count {
+        let key = tx
+            .account_keys
+            .get(slot)
+            .ok_or_else(|| structural("a signer slot has no account key"))?;
+        if key == signer {
+            continue;
+        }
+        let signature = &tx.signatures[slot];
+        if signature.iter().all(|byte| *byte == 0) {
+            return Err(structural(format!(
+                "required signer {} has not signed; co-sign before preparing",
+                base58(key)
+            )));
+        }
+        if !signature_is_valid(key, &tx.message, signature) {
+            return Err(structural(format!(
+                "the signature of required signer {} does not verify over the message",
+                base58(key)
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn base58(bytes: &[u8]) -> String {
@@ -300,8 +365,11 @@ pub struct MintTotal {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProgramTransactionSummary {
-    /// The fee payer and only signer: the signing account's address.
+    /// The fee payer: the signing account's address.
     pub fee_payer: String,
+    /// Every required signer, fee payer first. All but the signing account
+    /// have already signed (verified).
+    pub signers: Vec<String>,
     pub recent_blockhash: String,
     /// Distinct program ids, in first-use order.
     pub programs: Vec<String>,
@@ -321,7 +389,8 @@ fn forbidden(message: impl Into<String>) -> PolicyRefusal {
 }
 
 /// Decode `tx` into its summary and check what the host refuses whatever the
-/// policy says: `signer` must be the fee payer and the only signer, no lookup
+/// policy says: `signer` must be the fee payer, every other required signer
+/// must already have signed validly ([`check_cosigners`]), no lookup
 /// tables, and only the token, ATA and System instructions this path can
 /// account for.
 ///
@@ -338,10 +407,11 @@ pub fn summarize(
              list every account in the message",
         ));
     }
-    if tx.num_required_signatures != 1 || tx.signature_count != 1 {
+    if tx.num_required_signatures == 0
+        || usize::from(tx.num_required_signatures) != tx.signature_count
+    {
         return Err(structural(format!(
-            "the transaction needs {} signatures over {} slots; only a transaction the \
-             account signs alone is supported",
+            "the transaction needs {} signatures but carries {} slots",
             tx.num_required_signatures, tx.signature_count
         )));
     }
@@ -355,6 +425,11 @@ pub fn summarize(
             "the fee payer {fee_payer} is not the signing account {signer}"
         )));
     }
+    check_cosigners(tx, &tx.account_keys[0])?;
+    let signers = tx.account_keys[..tx.signature_count]
+        .iter()
+        .map(|key| base58(key))
+        .collect();
 
     let key = |index: u8| -> Result<String, PolicyRefusal> {
         tx.account_keys
@@ -420,6 +495,7 @@ pub fn summarize(
         .collect();
     Ok(ProgramTransactionSummary {
         fee_payer,
+        signers,
         recent_blockhash: base58(&tx.recent_blockhash),
         programs,
         instructions,
