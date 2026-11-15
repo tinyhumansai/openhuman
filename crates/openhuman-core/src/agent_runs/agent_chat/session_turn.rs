@@ -510,27 +510,39 @@ pub(super) fn apply_turn_overrides(
 
 /// Points the pinned agent-turn roles of this call's `config` at `model`.
 ///
-/// A `hint:<role>` override selects a workload (see
-/// [`provider_role_for`](crate::agent::session_host::builder)) rather than a
-/// model, so the pins are left alone for it. Unpinned roles need nothing:
-/// they already fall back to `default_model`.
+/// A `hint:<role>` override selects a workload (the session builder's
+/// `provider_role_for`) rather than a model, so the pins are left alone for
+/// it. Unpinned roles need nothing: they already fall back to
+/// `default_model`.
 fn pin_turn_roles_to_model(config: &mut Config, model: &str) {
     if model.trim().starts_with("hint:") {
         log::debug!("[inference] agent_chat model_override is a workload hint; role pins kept");
         return;
     }
-    let snapshot = config.clone();
-    for (role, slot) in [
+    let pins = [
+        config.chat_provider.as_deref(),
+        config.reasoning_provider.as_deref(),
+        config.agentic_provider.as_deref(),
+        config.coding_provider.as_deref(),
+    ]
+    .map(|pinned| {
+        pinned.map(str::trim).filter(|p| !p.is_empty()).map(|pinned| {
+            (
+                pinned.to_string(),
+                crate::inference::provider::factory::route_for_turn_model(pinned, model, config),
+            )
+        })
+    });
+    let slots = [
         ("chat", &mut config.chat_provider),
         ("reasoning", &mut config.reasoning_provider),
         ("agentic", &mut config.agentic_provider),
         ("coding", &mut config.coding_provider),
-    ] {
-        let Some(pinned) = slot.as_deref().map(str::trim).filter(|p| !p.is_empty()) else {
+    ];
+    for ((role, slot), pin) in slots.into_iter().zip(pins) {
+        let Some((pinned, routed)) = pin else {
             continue;
         };
-        let routed =
-            crate::inference::provider::factory::route_for_turn_model(pinned, model, &snapshot);
         if routed != pinned {
             log::debug!(
                 "[inference] agent_chat model_override re-pins role={role} from={pinned} to={routed}"
