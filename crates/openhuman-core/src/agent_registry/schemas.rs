@@ -1,11 +1,11 @@
 //! Controller-registry schemas for `openhuman.agent_registry_*`.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::{optional_string, required_string, to_json};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use super::rpc;
@@ -270,24 +270,6 @@ fn handle_remove(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFutu
     })
 }
 
-fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
-    }
-}
-
-fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
-}
-
 fn optional_bool(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
@@ -333,10 +315,6 @@ fn agent_output() -> FieldSchema {
 
 fn parse_value<T: DeserializeOwned>(v: Value) -> Result<T, String> {
     serde_json::from_value(v).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

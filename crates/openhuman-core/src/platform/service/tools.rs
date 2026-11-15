@@ -6,6 +6,7 @@
 //! service, so they ship default-OFF via `tools/user_filter.rs`
 //! (`service_lifecycle` toggle). shutdown/install/uninstall are `Dangerous`.
 
+use crate::util::params::opt_trimmed_str_arg;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -21,14 +22,6 @@ macro_rules! emit {
         let outcome = $outcome.map_err(|e| anyhow::anyhow!(concat!($name, ": {}"), e))?;
         Ok(ToolResult::success(serde_json::to_string(&outcome.value)?))
     }};
-}
-
-fn opt_str(args: &serde_json::Value, key: &str) -> Option<String> {
-    args.get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
 }
 
 /// Macro to define a simple `&Config`-only service tool.
@@ -195,7 +188,11 @@ impl Tool for ServiceRestartTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][service] restart invoked");
         emit!(
-            ops::service_restart(opt_str(&args, "source"), opt_str(&args, "reason")).await,
+            ops::service_restart(
+                opt_trimmed_str_arg(&args, "source"),
+                opt_trimmed_str_arg(&args, "reason")
+            )
+            .await,
             "service_restart"
         )
     }
@@ -237,7 +234,11 @@ impl Tool for ServiceShutdownTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][service] shutdown invoked");
         emit!(
-            ops::service_shutdown(opt_str(&args, "source"), opt_str(&args, "reason")).await,
+            ops::service_shutdown(
+                opt_trimmed_str_arg(&args, "source"),
+                opt_trimmed_str_arg(&args, "reason")
+            )
+            .await,
             "service_shutdown"
         )
     }

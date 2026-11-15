@@ -15,13 +15,15 @@
 //! cancelled.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::{
+    json_output, new_correlation_id, optional_string, required_string, value_to_json,
+};
 use serde_json::{json, Map, Value};
 
 use crate::agent::orchestration::running_subagents::CancelledSubagent;
 use crate::agent::orchestration::{background_completions, running_subagents, subagent_sessions};
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
-use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::core::ControllerSchema;
 
 /// Controller schemas exposed for detached sub-agent control.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -46,11 +48,11 @@ fn schema_for(function: &str) -> ControllerSchema {
                           the parent chat thread. No-op (cancelled=false) if the sub-agent already \
                           finished or the id is unknown.",
             inputs: vec![
-                required_str(
+                required_string(
                     "taskId",
                     "Spawn task id (`sub-…`) of the background sub-agent.",
                 ),
-                optional_str(
+                optional_string(
                     "reason",
                     "Optional reason, included in the cancelled notice shown in chat.",
                 ),
@@ -199,7 +201,7 @@ fn handle_subagent_cancel(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
         if let Some(outcome) = outcome {
             reply["outcome"] = json!(outcome);
         }
-        to_json(reply)
+        value_to_json(reply)
     })
 }
 
@@ -250,41 +252,6 @@ async fn settle_paused_driver_cancel(
         .await;
     }
     Ok(transitioned)
-}
-
-fn to_json<T: serde::Serialize>(value: T) -> Result<Value, String> {
-    Outcome::new(value, vec![]).into_cli_compatible_json()
-}
-
-fn new_correlation_id() -> String {
-    uuid::Uuid::new_v4().simple().to_string()[..8].to_string()
-}
-
-fn required_str(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
-    }
-}
-
-fn optional_str(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
-    }
 }
 
 /// Extract a required non-empty string param, **trimmed**, or an RPC-facing

@@ -7,8 +7,9 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, Outcome, TypeSchema};
 
-use super::super::{execute_inputs, json_result, opt_str, req_json};
+use super::super::{execute_inputs, json_result, req_json};
 use crate::modules::web3_service;
+use crate::util::params::optional_string;
 use tinywallet_bus::names::methods;
 
 pub fn schemas() -> Vec<ControllerSchema> {
@@ -37,11 +38,11 @@ pub fn schema(function: &str) -> ControllerSchema {
             inputs: vec![
                 req_json("contractAddress", "Target contract address."),
                 req_json("calldata", "0x-prefixed hex calldata."),
-                opt_str(
+                optional_string(
                     "valueRaw",
                     "Native value attached, smallest unit. Defaults to '0'.",
                 ),
-                opt_str(
+                optional_string(
                     "evmNetwork",
                     "EVM network selector. Defaults to ethereum_mainnet.",
                 ),

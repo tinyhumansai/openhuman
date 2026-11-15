@@ -3,37 +3,12 @@
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
-use crate::core::Outcome;
 use crate::core::{FieldSchema, TypeSchema};
-
-pub(super) fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    let json_val =
-        serde_json::to_value(outcome.value).map_err(|e| format!("serialize error: {e}"))?;
-    Ok(json_val)
-}
 
 pub(super) fn deserialize_params<T: DeserializeOwned>(
     params: Map<String, Value>,
 ) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-pub(super) fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
-    }
-}
-
-pub(super) fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
 }
 
 pub(super) fn optional_bool(name: &'static str, comment: &'static str) -> FieldSchema {
@@ -42,15 +17,6 @@ pub(super) fn optional_bool(name: &'static str, comment: &'static str) -> FieldS
         ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
         comment,
         required: false,
-    }
-}
-
-pub(super) fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
     }
 }
 
