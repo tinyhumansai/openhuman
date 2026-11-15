@@ -452,6 +452,10 @@ tinyhosts-bus = { path = "../../vendor/tinyhosts/crates/tinyhosts-bus", optional
 # derive a known account. Dev-dependency features are not linked into the
 # shipped binary, so that does not undo the shed.
 tinywallet-bus = { path = "../../vendor/tinywallet/crates/tinywallet-bus", default-features = false, features = ["wire"], optional = true }
+# Base58 for Solana public keys and signatures in `web3::wallet::program`,
+# which decodes a host-built transaction to check it against the account's
+# policy before the module signs it. A codec only; no key material.
+bs58 = { version = "0.5", optional = true }
 
 
 [target.'cfg(windows)'.dependencies]
@@ -721,6 +725,7 @@ voice = [
 # feature carries only the lightweight bus contract and generic HTTP client.
 web3 = [
     "dep:tinywallet-bus",
+    "dep:bs58",
     "modules",
 ]
 
