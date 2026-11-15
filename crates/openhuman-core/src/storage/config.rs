@@ -32,10 +32,6 @@ use crate::config::Config;
 /// The directory under the workspace the v1 default backend lives in.
 pub const DEFAULT_DIR: &str = "storage";
 
-/// The retired opt-out values (`classic`, `legacy`). They are no longer a mode:
-/// a URL set to one of them is read as unset, with a warning.
-const RETIRED_OPT_OUTS: [&str; 2] = ["classic", "legacy"];
-
 /// Where the URL came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageMode {
@@ -46,25 +42,14 @@ pub enum StorageMode {
     Default,
 }
 
-/// The mode `env` and `config` ask for. Blank values count as unset, a blank
-/// override falls through to the file, and a retired opt-out value
-/// (`classic`) is skipped with a warning.
+/// The mode `env` and `config` ask for. Blank values count as unset, and a
+/// blank override falls through to the file.
 pub fn mode_from(env: Option<String>, config: &Config) -> StorageMode {
     let chosen = env
         .into_iter()
         .chain(config.storage.url.clone())
         .map(|url| url.trim().to_string())
-        .filter(|url| !url.is_empty())
-        .find(|url| {
-            let retired = RETIRED_OPT_OUTS.iter().any(|a| url.eq_ignore_ascii_case(a));
-            if retired {
-                tracing::warn!(
-                    target: "openhuman::storage",
-                    "[storage] the `classic` storage mode was retired; using the default backend"
-                );
-            }
-            !retired
-        });
+        .find(|url| !url.is_empty());
     match chosen {
         None => StorageMode::Default,
         Some(url) => StorageMode::Url(url),
