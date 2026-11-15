@@ -7,6 +7,7 @@ pub mod network;
 pub mod presentation;
 pub mod system;
 
+#[cfg(feature = "modules")]
 pub use browser::*;
 #[cfg(feature = "documents")]
 pub use document::DocumentTool;

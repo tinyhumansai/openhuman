@@ -2,6 +2,7 @@
 
 use crate::core::all::{ControllerEntry, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::util::params::{json_output, optional_string, required_string};
 
 use super::handlers::{
     handle_voice_list_models, handle_voice_reply_synthesize, handle_voice_set_providers,
@@ -13,7 +14,7 @@ use super::handlers::{
     voice_transcribe_bytes_controller, voice_transcribe_controller, voice_tts_controller,
     voice_tts_dispatch_controller, voice_update_provider_settings_controller,
 };
-use super::helpers::{json_output, optional_bool, optional_string, required_string};
+use super::helpers::optional_bool;
 
 pub fn all_voice_controller_schemas() -> Vec<ControllerSchema> {
     vec![

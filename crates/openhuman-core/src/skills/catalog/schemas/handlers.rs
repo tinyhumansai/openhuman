@@ -1,6 +1,7 @@
 //! RPC handler functions for `openhuman.skill_registry_*` controllers.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::core::all::ControllerFuture;
@@ -18,10 +19,6 @@ fn deserialize_params<T: serde::de::DeserializeOwned>(
     params: Map<String, Value>,
 ) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 fn registry_error(error: tinyskills::RegistryError) -> String {

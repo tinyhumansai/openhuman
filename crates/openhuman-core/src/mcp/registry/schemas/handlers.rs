@@ -6,9 +6,7 @@ use serde_json::{Map, Value};
 
 use crate::core::all::ControllerFuture;
 
-use super::params::{
-    read_optional, read_optional_string, read_optional_u32, read_required, to_json,
-};
+use crate::util::params::{outcome_value_to_json, read_optional, read_optional_u32, read_required};
 
 // ── Handler implementations ──────────────────────────────────────────────────
 
@@ -18,15 +16,16 @@ pub(super) fn handle_registry_search(
 ) -> ControllerFuture {
     Box::pin(async move {
         let config = ctx.load_config().await?;
-        let query = read_optional_string(&params, "query")?;
-        let transport = read_optional_string(&params, "transport")?;
+        let query = read_optional::<String>(&params, "query")?;
+        let transport = read_optional::<String>(&params, "transport")?;
         let page = read_optional_u32(&params, "page")?;
         let page_size = read_optional_u32(&params, "page_size")?;
-        to_json(
+        outcome_value_to_json(
             crate::mcp::registry::ops::mcp_clients_registry_search(
                 &config, query, transport, page, page_size,
             )
             .await?,
+            "",
         )
     })
 }
@@ -45,7 +44,10 @@ pub(super) fn handle_installed_list(
     Box::pin(async move {
         let _ = params;
         let config = ctx.load_config().await?;
-        to_json(crate::mcp::registry::ops::mcp_clients_installed_list(&config).await?)
+        outcome_value_to_json(
+            crate::mcp::registry::ops::mcp_clients_installed_list(&config).await?,
+            "",
+        )
     })
 }
 
@@ -54,7 +56,10 @@ pub(super) fn handle_update_env(ctx: DispatchCtx, params: Map<String, Value>) ->
         let config = ctx.load_config().await?;
         let server_id = read_required::<String>(&params, "server_id")?;
         let env = read_required::<std::collections::HashMap<String, String>>(&params, "env")?;
-        to_json(crate::mcp::registry::ops::mcp_clients_update_env(&config, server_id, env).await?)
+        outcome_value_to_json(
+            crate::mcp::registry::ops::mcp_clients_update_env(&config, server_id, env).await?,
+            "",
+        )
     })
 }
 
@@ -62,7 +67,10 @@ pub(super) fn handle_uninstall(ctx: DispatchCtx, params: Map<String, Value>) -> 
     Box::pin(async move {
         let config = ctx.load_config().await?;
         let server_id = read_required::<String>(&params, "server_id")?;
-        to_json(crate::mcp::registry::ops::mcp_clients_uninstall(&config, server_id).await?)
+        outcome_value_to_json(
+            crate::mcp::registry::ops::mcp_clients_uninstall(&config, server_id).await?,
+            "",
+        )
     })
 }
 
@@ -70,7 +78,10 @@ pub(super) fn handle_detect_auth(ctx: DispatchCtx, params: Map<String, Value>) -
     Box::pin(async move {
         let config = ctx.load_config().await?;
         let server_id = read_required::<String>(&params, "server_id")?;
-        to_json(crate::mcp::registry::ops::mcp_clients_detect_auth(&config, server_id).await?)
+        outcome_value_to_json(
+            crate::mcp::registry::ops::mcp_clients_detect_auth(&config, server_id).await?,
+            "",
+        )
     })
 }
 
@@ -78,7 +89,10 @@ pub(super) fn handle_oauth_begin(ctx: DispatchCtx, params: Map<String, Value>) -
     Box::pin(async move {
         let config = ctx.load_config().await?;
         let server_id = read_required::<String>(&params, "server_id")?;
-        to_json(crate::mcp::registry::ops::mcp_clients_oauth_begin(&config, server_id).await?)
+        outcome_value_to_json(
+            crate::mcp::registry::ops::mcp_clients_oauth_begin(&config, server_id).await?,
+            "",
+        )
     })
 }
 
@@ -86,7 +100,10 @@ pub(super) fn handle_connect(ctx: DispatchCtx, params: Map<String, Value>) -> Co
     Box::pin(async move {
         let config = ctx.load_config().await?;
         let server_id = read_required::<String>(&params, "server_id")?;
-        to_json(crate::mcp::registry::ops::mcp_clients_connect(&config, server_id).await?)
+        outcome_value_to_json(
+            crate::mcp::registry::ops::mcp_clients_connect(&config, server_id).await?,
+            "",
+        )
     })
 }
 
@@ -94,7 +111,10 @@ pub(super) fn handle_disconnect(ctx: DispatchCtx, params: Map<String, Value>) ->
     Box::pin(async move {
         let config = ctx.load_config().await?;
         let server_id = read_required::<String>(&params, "server_id")?;
-        to_json(crate::mcp::registry::ops::mcp_clients_disconnect(&config, server_id).await?)
+        outcome_value_to_json(
+            crate::mcp::registry::ops::mcp_clients_disconnect(&config, server_id).await?,
+            "",
+        )
     })
 }
 
@@ -103,8 +123,9 @@ pub(super) fn handle_set_enabled(ctx: DispatchCtx, params: Map<String, Value>) -
         let config = ctx.load_config().await?;
         let server_id = read_required::<String>(&params, "server_id")?;
         let enabled = read_required::<bool>(&params, "enabled")?;
-        to_json(
+        outcome_value_to_json(
             crate::mcp::registry::ops::mcp_clients_set_enabled(&config, server_id, enabled).await?,
+            "",
         )
     })
 }
@@ -113,7 +134,10 @@ pub(super) fn handle_status(ctx: DispatchCtx, params: Map<String, Value>) -> Con
     Box::pin(async move {
         let _ = params;
         let config = ctx.load_config().await?;
-        to_json(crate::mcp::registry::ops::mcp_clients_status(&config).await?)
+        outcome_value_to_json(
+            crate::mcp::registry::ops::mcp_clients_status(&config).await?,
+            "",
+        )
     })
 }
 
@@ -121,13 +145,14 @@ pub(super) fn handle_list_tools(ctx: DispatchCtx, params: Map<String, Value>) ->
     Box::pin(async move {
         let config = ctx.load_config().await?;
         let server_id = read_required::<String>(&params, "server_id")?;
-        to_json(
+        outcome_value_to_json(
             crate::mcp::registry::ops::mcp_clients_list_tools(
                 &config,
                 server_id,
                 crate::mcp::registry::ops::Caller::Rpc,
             )
             .await?,
+            "",
         )
     })
 }
@@ -141,11 +166,12 @@ pub(super) fn handle_tool_call(ctx: DispatchCtx, params: Map<String, Value>) -> 
             .cloned()
             .unwrap_or(Value::Object(Map::new()));
         let config = ctx.load_config().await?;
-        to_json(
+        outcome_value_to_json(
             crate::mcp::registry::ops::mcp_clients_tool_call(
                 &config, server_id, tool_name, arguments,
             )
             .await?,
+            "",
         )
     })
 }
@@ -154,7 +180,10 @@ pub(super) fn handle_config_get(ctx: DispatchCtx, params: Map<String, Value>) ->
     Box::pin(async move {
         let _ = params;
         let config = ctx.load_config().await?;
-        to_json(crate::mcp::registry::config_ops::mcp_clients_config_get(&config).await?)
+        outcome_value_to_json(
+            crate::mcp::registry::config_ops::mcp_clients_config_get(&config).await?,
+            "",
+        )
     })
 }
 
@@ -165,7 +194,10 @@ pub(super) fn handle_config_set(ctx: DispatchCtx, params: Map<String, Value>) ->
         // is what a user pastes, and wrapping it in another key would make the
         // wire shape differ from the file shape for no reason.
         let doc = Value::Object(params);
-        to_json(crate::mcp::registry::config_ops::mcp_clients_config_set(&config, doc).await?)
+        outcome_value_to_json(
+            crate::mcp::registry::config_ops::mcp_clients_config_set(&config, doc).await?,
+            "",
+        )
     })
 }
 
@@ -176,7 +208,10 @@ pub(super) fn handle_registry_settings_get(
     Box::pin(async move {
         let _ = params;
         let config = ctx.load_config().await?;
-        to_json(crate::mcp::registry::ops::mcp_clients_registry_settings_get(&config).await?)
+        outcome_value_to_json(
+            crate::mcp::registry::ops::mcp_clients_registry_settings_get(&config).await?,
+            "",
+        )
     })
 }
 
@@ -189,7 +224,7 @@ pub(super) fn handle_registry_settings_set(
         let mcp_official_base = read_optional::<String>(&params, "mcp_official_base")?;
         let mcp_official_token = read_optional::<String>(&params, "mcp_official_token")?;
         let mut config = ctx.load_config().await?;
-        to_json(
+        outcome_value_to_json(
             crate::mcp::registry::ops::mcp_clients_registry_settings_set(
                 &mut config,
                 smithery_api_key,
@@ -197,6 +232,7 @@ pub(super) fn handle_registry_settings_set(
                 mcp_official_token,
             )
             .await?,
+            "",
         )
     })
 }

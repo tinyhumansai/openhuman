@@ -3,13 +3,13 @@
 //! `inbound.results` and `inbound.result_ack`. Each answers
 //! `COMPONENT_DISABLED:eventqueues` when the component is off.
 
+use crate::util::params::{json_output, to_json};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::runtime::DispatchCtx;
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 #[derive(Debug, Deserialize)]
@@ -268,19 +268,6 @@ fn u64_input(name: &'static str, comment: &'static str) -> FieldSchema {
 
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
-    }
 }
 
 #[cfg(test)]

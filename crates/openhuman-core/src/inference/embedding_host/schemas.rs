@@ -1,15 +1,14 @@
 //! Controller schemas and handler registrations for the embeddings domain.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
+use crate::util::params::{json_output, optional_string, required_string};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
-use crate::inference::schema_fields::{
-    json_output, optional_string, optional_u64, required_string,
-};
+use crate::inference::schema_fields::optional_u64;
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
@@ -238,10 +237,6 @@ fn handle_test_connection(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
 }
 
 // ── Helpers ────────────────────────────────────────────────
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
-}
 
 fn deserialize_params<T: serde::de::DeserializeOwned>(
     params: Map<String, Value>,

@@ -1031,7 +1031,7 @@ pub(crate) async fn encrypt_test_mnemonic() -> String {
         .await
         .expect("load config for encrypted test mnemonic");
     openhuman_core::security::secret_storage::init_workspace(&config.workspace_dir);
-    openhuman_core::security::encryption::rpc::encrypt_secret(
+    openhuman_core::credentials::ops::encrypt_secret(
         &config,
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
     )

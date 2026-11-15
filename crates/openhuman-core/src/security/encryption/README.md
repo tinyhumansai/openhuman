@@ -7,10 +7,8 @@ storage adapters. This module owns no cipher implementation or key material.
 
 ## Public surface
 
-- `pub async fn encrypt_secret(config: &Config, plaintext: &str) -> Result<Outcome<String>, String>` (`ops.rs:6`): RPC handler, delegates to `credentials::ops::encrypt_secret`.
-- `pub async fn decrypt_secret(config: &Config, ciphertext: &str) -> Result<Outcome<String>, String>` (`ops.rs:13`): RPC handler, delegates to `credentials::ops::decrypt_secret`.
+- No Rust functions of its own: the handlers in [`schemas.rs`](./schemas.rs) call `credentials::ops::{encrypt_secret, decrypt_secret}` directly, and Rust callers do the same.
 - RPC `encryption.{encrypt_secret, decrypt_secret}`, defined in [`schemas.rs`](./schemas.rs) (re-exported via `all_encryption_controller_schemas` / `all_encryption_registered_controllers`).
-- Constants: `SALT_LENGTH = 16`, `NONCE_LENGTH = 12`, `KEY_LENGTH = 32` (private but stable parameters).
 
 ## Calls into
 

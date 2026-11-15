@@ -821,7 +821,7 @@
   {
     "rule": "bare-spawn",
     "path": "crates/openhuman-core/src/storage/import_state.rs",
-    "line": 457,
+    "line": 443,
     "text": "std::thread::spawn(move || {",
     "occurrence": 1
   },

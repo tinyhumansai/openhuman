@@ -338,7 +338,6 @@ pub async fn all_tools_with_runtime_and_pack_handle(
             browser_client.clone(),
         )));
         tools.push(Box::new(BrowserTool::new(
-            security.clone(),
             browser_client,
             browser_config.max_task_steps,
         )));
@@ -438,7 +437,7 @@ pub async fn all_tools_with_runtime_and_pack_handle(
         let mcp_config = Arc::new(root_config.clone());
         tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_config))));
         tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_config))));
-        let call = Box::new(mcp_call_tool(Arc::clone(&mcp_config), security.clone()));
+        let call = Box::new(mcp_call_tool(Arc::clone(&mcp_config)));
         tools.push(crate::mcp::ui::ui_aware_call(call, &mcp_config));
     }
 

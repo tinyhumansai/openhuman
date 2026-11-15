@@ -4,6 +4,7 @@
 //! listing endpoint suitable for local-first assistive UI surfaces.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::json_output;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
@@ -123,15 +124,6 @@ fn optional(name: &'static str, ty: TypeSchema, comment: &'static str) -> FieldS
         ty: TypeSchema::Option(Box::new(ty)),
         comment,
         required: false,
-    }
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
     }
 }
 

@@ -16,7 +16,7 @@ Thin RPC adapter domain for the referral program. It does **not** own any busine
 | --- | --- |
 | [`crates/openhuman-tinyhumans/src/hosted/referral/mod.rs`](mod.rs) | Export-only. Re-exports `ops::*` and the schema/controller pair (`all_referral_controller_schemas`, `all_referral_registered_controllers`, `referral_schemas`). |
 | [`crates/openhuman-tinyhumans/src/hosted/referral/ops.rs`](ops.rs) | Business logic: `get_stats`, `claim_referral`, each through `HostedClient` (see `../client.rs`). Tests in [`ops_tests.rs`](ops_tests.rs) run against an Axum mock backend. |
-| [`crates/openhuman-tinyhumans/src/hosted/referral/schemas.rs`](schemas.rs) | Controller schemas + `handle_*` fns that load config and delegate to `ops`. Defines `ReferralClaimParams` (camelCase deserialization) and helpers (`to_json`, `deserialize_params`, `json_output`). |
+| [`crates/openhuman-tinyhumans/src/hosted/referral/schemas.rs`](schemas.rs) | Controller schemas + `handle_*` fns that load config and delegate to `ops`. Defines `ReferralClaimParams` (camelCase deserialization) and the local `deserialize_params` helper; `to_json` and `json_output` come from the core's shared `util::params` (through `openhuman_embed::__host`). |
 
 ## Public surface
 

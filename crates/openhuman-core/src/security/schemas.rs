@@ -1,8 +1,8 @@
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -54,8 +54,4 @@ fn handle_policy_info(ctx: DispatchCtx, _params: Map<String, Value>) -> Controll
             }
         }
     })
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }

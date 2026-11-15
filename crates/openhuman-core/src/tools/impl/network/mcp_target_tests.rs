@@ -127,7 +127,7 @@ async fn valid_mcp_identifier_reports_module_unavailable_without_invalid_input_l
         }),
     )
     .unwrap();
-    let tool = mcp_call_tool(Arc::new(config), Arc::new(SecurityPolicy::default()));
+    let tool = mcp_call_tool(Arc::new(config));
 
     let result = tool
         .execute_with_options(
@@ -153,7 +153,7 @@ async fn indirect_mcp_target_uses_module_prepared_identity_and_facts() {
     config.modules.enabled = true;
     let port = PreparePort::default();
     McpConfiguredClient::install_test_port(&config, Box::new(port.clone())).unwrap();
-    let tool = mcp_call_tool(Arc::new(config), Arc::new(SecurityPolicy::default()));
+    let tool = mcp_call_tool(Arc::new(config));
 
     let call = tool
         .indirect_target_async(&json!({
@@ -187,7 +187,7 @@ async fn indirect_mcp_target_fails_closed_when_modules_are_disabled() {
     let mut config = Config::default();
     config.workspace_dir = workspace.path().to_path_buf();
     config.modules.enabled = false;
-    let tool = mcp_call_tool(Arc::new(config), Arc::new(SecurityPolicy::default()));
+    let tool = mcp_call_tool(Arc::new(config));
 
     let result = tool
         .indirect_target_async(&json!({
