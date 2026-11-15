@@ -12,7 +12,7 @@
 #                      numbers describe the repo, not whoever is logged in.
 #   --workspace <dir>  Measure a real, signed-in workspace instead.
 #
-# Units are bytes. `~tok` is bytes / `EST_BYTES_PER_TOKEN` (core/agent_cli/debug/
+# Units are bytes. `~tok` is bytes / `EST_BYTES_PER_TOKEN` (agent/cli/debug/
 # prompt_size.rs, read at run time), the same reading aid `prompt-size` prints —
 # a divisor, not a tokenizer. A real token count is true for one model only, and the fleet
 # spans several.
@@ -30,7 +30,7 @@ done
 
 # The divisor is read from the Rust constant so the two cannot drift.
 TOK="$(grep -oE 'EST_BYTES_PER_TOKEN: usize = [0-9]+' \
-  crates/openhuman-core/src/core/agent_cli/debug/prompt_size.rs | grep -oE '[0-9]+$')" \
+  crates/openhuman-core/src/agent/cli/debug/prompt_size.rs | grep -oE '[0-9]+$')" \
   || { echo "EST_BYTES_PER_TOKEN not found in prompt_size.rs" >&2; exit 1; }
 
 if [[ -n "$REAL_WORKSPACE" ]]; then

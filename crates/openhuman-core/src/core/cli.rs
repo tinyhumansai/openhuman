@@ -125,7 +125,7 @@ pub fn run_from_cli_args_with(
                 "[cli] dispatching to agent subcommand, args={:?}",
                 &args[1..]
             );
-            crate::core::agent_cli::run_agent_command(&args[1..])
+            crate::agent::cli::run_agent_command(&args[1..])
         }
         "sentry-test" => run_sentry_test_command(&args[1..]),
         // Generic namespace dispatcher: `openhuman <namespace> <function> ...`

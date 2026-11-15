@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use tinyagents_harness::title::{title_from_user_message, title_log_fingerprint};
 
 // One envelope/counts implementation for every ApiEnvelope-returning domain.
-pub(super) use crate::core::envelope::{counts, envelope};
+pub(super) use crate::threads::envelope::{counts, envelope};
 
 pub(super) async fn workspace_dir() -> Result<PathBuf, String> {
     Config::load_or_init()

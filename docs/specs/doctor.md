@@ -365,6 +365,6 @@ make billable calls or write remote state.
 ## Implementation references
 
 - Existing doctor being replaced: `crates/openhuman-core/src/doctor/`
-- Existing subsystem status projection: `crates/openhuman-core/src/core/subsystem/status.rs`
+- Existing subsystem status projection: `crates/openhuman-core/src/memory/status.rs`
 - Capability ids: `crates/openhuman-core/src/platform/about_app/`
 - OpenClaw reference: [structured health-check contract](https://github.com/openclaw/openclaw/blob/main/docs/cli/doctor/health-contract.md), [lint mode and selectors](https://github.com/openclaw/openclaw/blob/main/docs/cli/doctor/lint.md), and [running doctor](https://github.com/openclaw/openclaw/blob/main/docs/cli/doctor/running.md)

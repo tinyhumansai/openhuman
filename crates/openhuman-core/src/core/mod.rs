@@ -6,7 +6,6 @@
 
 use serde::Serialize;
 
-pub mod agent_cli;
 pub mod all;
 pub mod auth;
 pub mod bus;
@@ -15,7 +14,6 @@ pub mod cli;
 mod cli_serve;
 pub mod dispatch;
 pub mod domain_group;
-pub mod envelope;
 pub mod event_bind_tokens;
 pub mod events;
 // Ungated compile-time marker for the `http-server` gate (#5048) — the desktop
@@ -37,8 +35,6 @@ pub mod server_launcher;
 pub mod shutdown;
 pub mod slots;
 pub mod structured_error;
-pub mod subsystem;
-pub mod subsystems_cli;
 pub mod types;
 
 pub use outcome::{apply_log_envelope, unwrap_rpc, Outcome};

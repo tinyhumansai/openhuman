@@ -99,35 +99,35 @@
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/core/agent_cli/debug/dump_writer.rs",
+    "path": "crates/openhuman-core/src/agent/cli/debug/dump_writer.rs",
     "line": 48,
     "text": "std::fs::write(&prompt_path, &dumped.text)",
     "occurrence": 1
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/core/agent_cli/debug/dump_writer.rs",
+    "path": "crates/openhuman-core/src/agent/cli/debug/dump_writer.rs",
     "line": 50,
     "text": "std::fs::write(&meta_path, render_meta(dumped))",
     "occurrence": 1
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/core/agent_cli/debug/dump_writer.rs",
+    "path": "crates/openhuman-core/src/agent/cli/debug/dump_writer.rs",
     "line": 56,
     "text": "std::fs::write(",
     "occurrence": 1
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/core/agent_cli/debug/dump_writer.rs",
+    "path": "crates/openhuman-core/src/agent/cli/debug/dump_writer.rs",
     "line": 69,
     "text": "std::fs::write(&wire_path, super::wire::render(dumped))",
     "occurrence": 1
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/core/agent_cli/debug/dump_writer.rs",
+    "path": "crates/openhuman-core/src/agent/cli/debug/dump_writer.rs",
     "line": 86,
     "text": "std::fs::write(&summary_path, &summary)",
     "occurrence": 1

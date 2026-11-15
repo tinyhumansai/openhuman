@@ -225,14 +225,14 @@
   },
   {
     "rule": "env-mutation",
-    "path": "crates/openhuman-core/src/core/agent_cli.rs",
+    "path": "crates/openhuman-core/src/agent/cli.rs",
     "line": 726,
     "text": "std::env::set_var(\"RUST_LOG\", \"error\");",
     "occurrence": 1
   },
   {
     "rule": "ambient-config",
-    "path": "crates/openhuman-core/src/core/agent_cli/debug/mod.rs",
+    "path": "crates/openhuman-core/src/agent/cli/debug/mod.rs",
     "line": 165,
     "text": "Config::load_or_init()",
     "occurrence": 1

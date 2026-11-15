@@ -20,6 +20,9 @@
 //!   within a parent agent's tool loop, enabling hierarchical delegation.
 pub use crate::attachments::HostAttachment;
 pub mod bus;
+/// `openhuman agent ...`: the developer CLI that dumps and sizes agent
+/// prompts, and the prompt-dump helpers `agent.context_breakdown` reuses.
+pub mod cli;
 pub mod context;
 pub(crate) mod cost;
 pub mod goals;

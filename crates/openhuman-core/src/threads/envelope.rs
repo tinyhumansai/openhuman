@@ -1,5 +1,9 @@
-//! The `{data, error, meta}` response envelope a few JSON-RPC surfaces share
-//! (`threads`, desktop provider surfaces), and the helpers that build it.
+//! The `{data, error, meta}` response envelope a few JSON-RPC surfaces share,
+//! and the helpers that build it.
+//!
+//! `threads` owns it (its `threads.*` responses use it); the desktop
+//! provider surfaces (`crate::desktop::provider_surfaces`) reuse the same
+//! shape and helpers rather than declaring a second copy.
 
 use std::collections::BTreeMap;
 
