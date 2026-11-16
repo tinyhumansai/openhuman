@@ -30,7 +30,7 @@ export function assertExampleOutput(name, result) {
     throw new Error(`${name}: successful exit without behavioral assertion marker\n${result.stdout}`);
   }
 }
-export function runExamples({ run = spawnSync, examples = discoverExamples(), environment = process.env, profile = null } = {}) {
+export function runExamples({ run = spawnSync, examples = discoverExamples(), environment = process.env, profile = null, platform = process.platform } = {}) {
   // `profile` forces every example into one Cargo profile (PR CI passes "dev"
   // so a release-declared measurement shares the plain dev build instead of
   // paying a thin-LTO build nothing else can reuse). Without it each example
@@ -47,6 +47,15 @@ export function runExamples({ run = spawnSync, examples = discoverExamples(), en
     for (const feature of example.features) features.add(feature);
     featureGroups.set(key, features);
   }
+  // Windows cannot spawn a .sh file directly: spawnSync fails with ENOENT.
+  // Prefer bash so the CI cancellation wrapper still runs; without bash,
+  // invoke cargo directly and skip the wrapper.
+  const wrapper = resolve(root, "scripts/ci-cancel-aware.sh");
+  const launch = platform === "win32"
+    ? (bashAvailable(run)
+      ? (args) => ["bash", [wrapper, "cargo", ...args]]
+      : (args) => ["cargo", args])
+    : (args) => [wrapper, ["cargo", ...args]];
   for (const example of examples) {
     const args = ["run", "--quiet", "-p", "openhuman-embed", "--example", example.name];
     const effective = profileOf(example);
@@ -55,11 +64,23 @@ export function runExamples({ run = spawnSync, examples = discoverExamples(), en
     if (example.defaultFeatures === false) args.push("--no-default-features");
     const features = [...featureGroups.get(configuration(example))].sort();
     if (features.length) args.push("--features", features.join(","));
-    const result = run(resolve(root, "scripts/ci-cancel-aware.sh"), ["cargo", ...args], {
+    const [command, commandArgs] = launch(args);
+    const result = run(command, commandArgs, {
       cwd: root, encoding: "utf8", env: offlineEnvironment(environment), timeout: 1800000, maxBuffer: 16 * 1024 * 1024,
     });
     assertExampleOutput(example.name, result);
     console.log(`PASS ${example.name}`);
+  }
+}
+
+// Probe once per run: a missing bash reports { error } from spawnSync rather
+// than throwing, and a nonzero exit means it is not usable as a shell.
+function bashAvailable(run) {
+  try {
+    const probe = run("bash", ["--version"], { encoding: "utf8", timeout: 10000 });
+    return !probe.error && probe.status === 0;
+  } catch {
+    return false;
   }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -21,6 +21,36 @@ test("runner executes feature gated examples and checks stdout", () => {
   assert.ok(calls[0].args.includes("channels"));
   assert.equal(calls[0].options.env.OPENHUMAN_EXAMPLE_LIVE, undefined);
 });
+test("on win32 with bash the wrapper runs through bash instead of being spawned directly", () => {
+  const calls = [];
+  runExamples({examples:[{name:"telegram",features:["channels"]}],environment:{},platform:"win32", run(command,args,options) {
+    calls.push({command,args,options});
+    if (command === "bash" && args[0] === "--version") return {status:0,stdout:"GNU bash, version 5.2\n",stderr:""};
+    return {status:0,stdout:"EXAMPLE_OK telegram\n",stderr:""};
+  }});
+  assert.equal(calls[0].command, "bash");
+  assert.equal(calls[0].args[0], "--version");
+  assert.equal(calls[1].command, "bash");
+  assert.ok(calls[1].args[0].endsWith("ci-cancel-aware.sh"));
+  assert.equal(calls[1].args[1], "cargo");
+  assert.ok(calls[1].args.includes("--example"));
+  assert.ok(calls[1].args.includes("telegram"));
+  assert.ok(calls[1].args.includes("--features"));
+});
+test("on win32 without bash cargo runs directly and the wrapper is skipped", () => {
+  const calls = [];
+  runExamples({examples:[{name:"telegram",features:["channels"]}],environment:{},platform:"win32", run(command,args,options) {
+    calls.push({command,args,options});
+    if (command === "bash") return {error:new Error("spawnSync bash ENOENT"),status:null,stdout:"",stderr:""};
+    return {status:0,stdout:"EXAMPLE_OK telegram\n",stderr:""};
+  }});
+  assert.equal(calls[0].command, "bash");
+  assert.equal(calls[1].command, "cargo");
+  assert.equal(calls[1].args[0], "run");
+  assert.ok(calls[1].args.includes("--example"));
+  assert.ok(calls[1].args.includes("telegram"));
+  assert.ok(!calls[1].args.join(" ").includes("ci-cancel-aware.sh"));
+});
 test("every discoverable example has an offline output contract", () => {
   const examples = discoverExamples();
   assert.ok(examples.length >= 18);
