@@ -170,7 +170,7 @@ async fn signing_secret(
     config: &Config,
     chain: crate::web3::wallet::WalletChain,
 ) -> Result<tinywallet_bus::wire::SecretMaterial, WalletCallError> {
-    let stored = crate::web3::wallet::secret_material(ctx, chain)
+    let stored = crate::web3::wallet::secret_material(ctx, chain, 0)
         .await
         .map_err(WalletCallError::Failed)?;
     let phrase = crate::credentials::ops::decrypt_secret(config, &stored.encrypted_mnemonic)

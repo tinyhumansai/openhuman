@@ -37,19 +37,35 @@ fn registered_scopes() -> &'static parking_lot::Mutex<Vec<BrowserScope>> {
 pub(crate) const BROWSER_POLICY_ALIAS: &str = "openhuman-browser-egress";
 pub(crate) const BROWSER_POLICY_ALIAS_GENERATION: u64 = 1;
 
-/// The `browser.egress` value TinyComputer is loaded and refreshed with.
-pub(crate) fn browser_dial_alias() -> Value {
-    serde_json::json!({
+/// The `browser.egress` value TinyComputer is loaded and refreshed with: the
+/// stable alias, plus `[browser] upstream_proxies` when any are configured.
+/// Those stay in this host-private section because their URLs carry
+/// credentials; every dial they cause, the proxy's own included, still comes
+/// back through [`BrowserEgressHost::authorize`].
+pub(crate) fn browser_dial_alias(config: &crate::config::Config) -> Value {
+    let mut alias = serde_json::json!({
         "policy_id": BROWSER_POLICY_ALIAS,
         "generation": BROWSER_POLICY_ALIAS_GENERATION,
-    })
+    });
+    let upstreams = &config.browser.upstream_proxies;
+    if !upstreams.is_empty() {
+        tracing::debug!(
+            upstream_proxies = upstreams.len(),
+            "[computer] browser egress routes domains through upstream proxies"
+        );
+        alias["upstream_proxies"] = upstreams
+            .iter()
+            .map(|proxy| serde_json::json!({ "url": proxy.url, "domains": proxy.domains }))
+            .collect();
+    }
+    alias
 }
 
 /// Make sure the browser's destination-only policy is registered for this
 /// host context, then return the stable alias for TinyComputer config.
 pub(crate) async fn browser_dial_config(config: &crate::config::Config) -> Result<Value, String> {
     current_browser_policy(config).await?;
-    Ok(browser_dial_alias())
+    Ok(browser_dial_alias(config))
 }
 
 /// The id and generation of the current browser policy, registering a new one

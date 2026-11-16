@@ -391,7 +391,7 @@ pub(super) async fn computer_callback_config(
     let mut module_config = module_config(config, id).await;
     super::desktop::inject_security_browser_config(
         &mut module_config,
-        super::browser_egress_host::browser_dial_alias(),
+        super::browser_egress_host::browser_dial_alias(config),
         callback_destination,
     );
     module_config
