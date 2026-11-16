@@ -183,7 +183,7 @@ fn the_config_names_a_stable_alias_not_the_rotating_policy() {
 #[test]
 fn configured_upstream_proxies_ride_in_the_private_egress_section() {
     let mut config = crate::config::Config::default();
-    config.browser.upstream_proxies = vec![crate::config::schema::tools::BrowserUpstreamProxy {
+    config.browser.upstream_proxies = vec![crate::config::schema::BrowserUpstreamProxy {
         domains: vec!["reddit.com".into(), "redd.it".into()],
         url: "http://resi:secret@gate.example:7000".into(),
     }];

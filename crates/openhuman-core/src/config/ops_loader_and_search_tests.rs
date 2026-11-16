@@ -357,7 +357,7 @@ async fn snapshot_config_json_redacts_every_search_key_but_keeps_settings() {
 #[tokio::test]
 async fn snapshot_config_json_redacts_browser_upstream_proxy_credentials() {
     let mut cfg = Config::default();
-    cfg.browser.upstream_proxies = vec![crate::config::schema::tools::BrowserUpstreamProxy {
+    cfg.browser.upstream_proxies = vec![crate::config::schema::BrowserUpstreamProxy {
         domains: vec!["reddit.com".into()],
         url: "http://resi-user:hunter2@gate.example:7000".into(),
     }];
