@@ -196,7 +196,9 @@ upstream_proxies = [
   exactly as it would a direct one, and the never-open list still applies.
   The proxy's own host and port also go through TinySecurity's browser dial
   authorization before TinyComputer opens a socket to them. TinyComputer then
-  asks the proxy for a `CONNECT` tunnel to the page's host. Plain `http://`
+  asks the proxy for a `CONNECT` tunnel to an address TinySecurity approved
+  for the page's host, so the proxy resolves nothing. The browser's `Host`
+  header and TLS SNI pass through the tunnel unchanged. Plain `http://`
   pages use the same tunnel.
 - Only `http://` proxy URLs work. Percent-encode any `@`, `:` or `/` in the
   user name or password. The credentials go to the proxy as
