@@ -21,7 +21,10 @@ pub(crate) struct RecordingReporter {
 }
 
 impl RecordingReporter {
-    /// `(operation, message)` for every report so far.
+    /// `(operation, message)` for every report so far. Only the missing-asset
+    /// test reads it, and that test is compiled off Linux (Linux release
+    /// assets are always published).
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn reports(&self) -> Vec<(String, String)> {
         self.reports.lock().expect("reports lock").clone()
     }
