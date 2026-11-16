@@ -90,11 +90,14 @@ pub fn all_wallet_controller_schemas() -> Vec<ControllerSchema> {
         wallet_schemas("policy_get"),
         wallet_schemas("policy_update"),
         wallet_schemas("ledger_list"),
+        wallet_schemas("account"),
+        wallet_schemas("prepare_program"),
+        wallet_schemas("execute_prepared_program"),
     ]
 }
 
 pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
-    vec![
+    let mut controllers = vec![
         RegisteredController {
             schema: wallet_schemas("status"),
             handler: handle_status,
@@ -175,7 +178,9 @@ pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
             schema: wallet_schemas("ledger_list"),
             handler: handle_ledger_list,
         },
-    ]
+    ];
+    controllers.extend(super::program::schemas::registered());
+    controllers
 }
 
 pub fn wallet_schemas(function: &str) -> ControllerSchema {
@@ -486,6 +491,9 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "account" | "prepare_program" | "execute_prepared_program" => {
+            super::program::schemas::schema(function)
+        }
         _ => ControllerSchema {
             namespace: "wallet",
             function: "unknown",

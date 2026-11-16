@@ -47,6 +47,8 @@ changing the facade.
 | `prepare_transfer`, `execute_prepared` | Prepare a module-owned quote, then explicitly confirm and execute it (through the spend policy, as an interactive execute). |
 | `policy_get`, `policy_update` | Read and persist the `[wallet_policy]` spend policy. |
 | `ledger_list` | Recent execute records from the persistent spend ledger (`{limit}`, default 50, max 500). |
+| `account` | One account by `{chain, accountIndex}`; derives and stores a known secondary account (Solana index 1, `giveaway`) that the stored state predates. |
+| `prepare_program`, `execute_prepared_program` | Check a host-built unsigned Solana transaction against `[wallet_policy.accounts.solana_<index>]`, then sign it in the module with that account's key and send it (`program.rs`). |
 | `tx_status`, `tx_receipt`, `lookup_tx` | Read transaction lifecycle and raw transaction data through the module. |
 
 The four chain families are EVM, Bitcoin, Solana, and Tron. EVM network
@@ -94,6 +96,37 @@ harness gate and is refused by the policy; a cron job whose agent opted into
 `wallet_balances` and `wallet_execute_prepared` within the caps (its
 sub-agents stay read-only). x402 payments from the same origin are approved
 within the per-request budget.
+
+## Secondary accounts and program transactions
+
+Each chain has one primary account (index 0), the only one the module's
+transfers, swaps and x402 payments use. `ops::SECONDARY_ACCOUNTS` lists the
+extra accounts derived from the same phrase: today Solana index 1 at
+`m/44'/501'/1'/0'`, labelled `giveaway`. Recovery derives it with the others;
+`setup` stores it; `status` reports it under `additionalAccounts` so callers
+that expect one account per chain (and the module's `WalletAccounts`
+callback) see only the primaries. A wallet set up before an entry existed
+signs with its canonical path anyway, and `ensure_account` (`wallet.account`)
+derives and stores its address on first use.
+
+`program.rs` lets such an account sign a transaction the caller built,
+under its own `[wallet_policy.accounts.<chain>_<index>]` section
+(`allowed_programs`, `mints` with `per_tx_max_raw` and `daily_max_raw`). The
+host decodes the transaction and refuses it unless the account is the fee
+payer, every other required signer has already signed validly, every program is listed, token instructions (SPL
+Token or Token-2022) are `TransferChecked`, ATA instructions are creates, and
+there is no System instruction or lookup table. The caller declares what the
+transaction debits from the account's token balances (`expectedDebits`); the
+caps apply to that, it must cover every visible transfer, and
+`simulateTransaction` must lower the account's token balances by exactly that
+much (`program/simulate.rs`), which is what pins a program that moves tokens
+by CPI. The quote holds the exact bytes for 60 seconds; execute simulates
+again, re-checks and reserves in the ledger
+(`kind = program`, `accountIndex`), signs the message bytes with a
+confidential `SignMessage`, and sends the transaction to the Solana RPC (the
+host override, else the module's default for the cluster). Program records
+never count against the primary account's caps, and transfer records never
+count against a program account's.
 
 ## Persistence and lifecycle
 
