@@ -31,9 +31,11 @@
 //! protocol and server that expose them live in `openhuman-rpc`, which depends
 //! on this crate.
 //!
-//! [`CoreBuilder`], [`CoreRuntime`], [`DomainSet`], [`ServiceSet`],
-//! [`TokenSource`] and [`HostKind`] are the embeddable composition API;
-//! `openhuman-embed` layers a typed facade on top of them.
+//! [`CoreRuntime`], [`DomainSet`], [`ServiceSet`], [`TokenSource`] and
+//! [`HostKind`] are the composition types; `openhuman-embed`'s
+//! `RuntimeBuilder` is the builder that assembles them (through the
+//! doc-hidden `core::runtime::CoreBuilder` seam) and layers a typed facade on
+//! top.
 //! [`run_core_from_args`] is the CLI entry point shared by `src/main.rs` and
 //! the desktop shell binary's `core` and `mcp` subcommands.
 //!
@@ -118,13 +120,10 @@ pub mod voice;
 pub mod web3;
 pub mod web_chat;
 
-/// Embeddable core composition API. Host the OpenHuman core in any process —
-/// the Tauri shell, a CLI, a stdio MCP server, or a cloud/team server — via
-/// [`CoreBuilder`] → [`CoreRuntime`]. See `crates/openhuman-embed/README.md`
-/// and [`crate::core::runtime`] for the composition this builds on.
-pub use core::runtime::{
-    CoreBootMode, CoreBuilder, CoreRuntime, DomainSet, ServiceSet, TokenSource,
-};
+/// Core composition types. A host builds a [`CoreRuntime`] with
+/// `openhuman_embed::RuntimeBuilder`, which takes these as its knobs; see
+/// `crates/openhuman-embed/README.md` and [`crate::core::runtime`].
+pub use core::runtime::{CoreBootMode, CoreRuntime, DomainSet, ServiceSet, TokenSource};
 pub use core::types::HostKind;
 
 /// Runs the core logic based on the provided command-line arguments.

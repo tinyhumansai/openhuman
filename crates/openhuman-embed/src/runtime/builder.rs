@@ -3,8 +3,8 @@
 //! The builder turns typed inputs into one in-memory base [`Config`] plus a
 //! [`DomainSet`]/[`ServiceSet`]/[`ToolGroups`] triple, installs the API key
 //! into the credential store, installs the host's process-global seams, and
-//! hands everything to [`CoreBuilder`](openhuman_core::core::runtime::CoreBuilder).
-//! Nothing here mutates the process environment.
+//! hands everything to the core's doc-hidden `CoreBuilder` seam, for which
+//! this is the only public front. Nothing here mutates the process environment.
 //!
 //! The pieces live beside this file: [`presets`](super::presets) (the
 //! per-host starting points), [`seams`](super::seams) (process-global

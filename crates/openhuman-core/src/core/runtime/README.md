@@ -1,9 +1,13 @@
 # core/runtime
 
-The embeddable composition surface: `CoreBuilder` → `CoreRuntime`. This is
-what `openhuman-embed`'s `Harness` and the standalone `openhuman-core`
-binary both build on to host the core without duplicating
-`run_server_inner`.
+The core's initializer and the runtime it produces: `CoreBuilder` →
+`CoreRuntime`. Hosts and embedders do not call `CoreBuilder` themselves:
+`openhuman_embed::RuntimeBuilder` is the one public builder (its host presets
+carry each host's `ServiceSet`, `TokenSource` and `HostKind`), and its
+`build()` hands the resolved config, seams and effective host kind to
+`CoreBuilder`. `CoreBuilder` is `#[doc(hidden)] pub` only because that
+builder lives in another crate; the SaaS boot (`saas::build`) and test
+fixtures are its other callers.
 
 ## Two-phase model
 
@@ -75,7 +79,7 @@ registry filters on.
   `OPENHUMAN_CORE_TOKEN` from the environment if present, otherwise generate
   a fresh token and write `{root}/core.token` (0o600 on Unix).
 
-## `CoreBuilder` setters
+## `CoreBuilder` setters (the seam's inputs)
 
 `CoreBuilder::new(host_kind)` defaults to `TokenSource::EnvOrFile`,
 `ServiceSet::desktop()`, `DomainSet::full()`, and `ToolGroups::default()`
@@ -92,12 +96,10 @@ are compiled out, or whose `DomainGroup` is off, stays absent.
 - `.config(Config)`: supply the config outright instead of letting
   `build()` discover one from `config.toml` + environment; used verbatim, no
   env overlay applied automatically.
-- `.workspace(dir)`: sugar over `.config()`: roots `workspace_dir` at `dir`
-  and sets `config_path` to `dir/config.toml` so credentials and sessions
-  resolve beside the workspace rather than a previous config root.
-- `.action_dir(dir)`: sugar over `.config()` for the agent's read/write
-  root.
-- `.backend_url(url)`.
+- `.boot_mode(CoreBootMode)`, `.extensions(Extensions)`.
+
+Workspace, action-dir and backend-URL knobs live on `RuntimeBuilder`, which
+folds them into the config before it reaches `.config()`.
 
 ## `CoreContext` and initialization order
 

@@ -251,7 +251,7 @@ fn handle_resolve_policy(ctx: DispatchCtx, params: Map<String, Value>) -> Contro
         // resolves this field on every path: `load_or_init` sets it from the
         // env `OPENHUMAN_ACTION_DIR` > persisted `action_dir_override` > default
         // precedence (`resolve_action_dir` + `apply_env_overrides`), and an
-        // embedder-supplied config carries whatever `CoreBuilder::action_dir(..)`
+        // embedder-supplied config carries whatever `RuntimeBuilder::action_dir(..)`
         // set directly. Re-deriving it here from `action_dir_override` alone
         // would silently ignore an embedder's programmatic `action_dir` (#6081).
         let policy = super::policy::route_for_mode(

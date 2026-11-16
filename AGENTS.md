@@ -527,9 +527,12 @@ seed history by hand, or pick a transcript by recency.
   session, read it back, list its generations
   (`agent/session_host/session_api.rs`).
 
-`CoreBuilder` controls background services with `ServiceSet`, runtime domains
-with `DomainSet`, and tool visibility with `ToolGroups`. These controls only
-narrow capabilities.
+`openhuman_embed::RuntimeBuilder` is the one public builder: its host presets
+(`library`, `desktop`, `cli`, `tui`) carry each host's `HostKind`, `ServiceSet`
+and `TokenSource`. It controls background services with `ServiceSet`, runtime
+domains with `DomainSet`, and tool visibility with `ToolGroups`, then hands
+them to the core's doc-hidden `CoreBuilder` seam. These controls only narrow
+capabilities.
 
 Cargo default features define the contributor build;
 `scripts/ci/product-features.txt` defines the shipped product. The Tauri shell
@@ -753,7 +756,8 @@ them through `register_all` (`src/register.rs`), reaching the core via
 | Hosted RPC proxies (`billing`, `team`, `referral`, `announcements`, `webhooks`, `channel_link`, `oauth`) | controller extension via `core::all::register_controller_extension` (`DomainGroup::Hosted`) |
 
 Registrations bind per process, or per `CoreContext` through
-`CoreBuilder::extensions` (the `*_in` variants). A core with nothing registered
+the runtime's core extensions (`RuntimeBuilder::configure_core_extensions`,
+the `*_in` variants). A core with nothing registered
 runs agents, memory, tools and RPC without any TinyHumans connection; hosted
 surfaces are missing and backend-touching calls answer `BACKEND_UNAVAILABLE:`
 (the generic sentinel prefixes stay in `core::observability`). The core reads

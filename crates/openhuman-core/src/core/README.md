@@ -4,7 +4,8 @@
 contract every domain implements, keeps the one registry of those
 controllers, dispatches calls to them in-process, and owns the process-wide
 event bus, the RPC bearer token, the CLI, logging and crash reporting, and
-the `CoreBuilder` runtime composition API. It holds no business logic: every
+the runtime composition layer (`CoreBuilder`, the doc-hidden seam under
+`openhuman_embed::RuntimeBuilder`). It holds no business logic: every
 controller it exposes is implemented by a domain under
 `crates/openhuman-core/src/<domain>/` and only wired in here.
 
@@ -277,7 +278,7 @@ hooks that domains `register`, sequentially in registration order.
 
 ### Runtime composition and subsystems
 
-`runtime/` is the embeddable composition API. `CoreBuilder::build()` does
+`runtime/` is the composition layer under `openhuman_embed::RuntimeBuilder`. `CoreBuilder::build()` (the doc-hidden seam that builder calls) does
 initialization only (controllers, master key, RPC bearer, workspace stores,
 event subscribers) and returns a `CoreRuntime` that can already `invoke`
 methods and run agent turns. Serving and background services come second,
@@ -359,7 +360,7 @@ Process plumbing:
 - `auth::init_rpc_token` / `init_rpc_token_with_value`: seed the transport bearer.
 - `cli::run_from_cli_args`: the CLI entry point a host binary calls.
 - `HostKind` (`types.rs`): which host booted the core; affects approval-gate policy and log tags.
-- `runtime::CoreBuilder`: compose a runtime for an embedding host.
+- `runtime::CoreBuilder`: the doc-hidden initializer behind `openhuman_embed::RuntimeBuilder` (and the SaaS boot); not an embedding API.
 
 ## RPC / CLI surface
 
