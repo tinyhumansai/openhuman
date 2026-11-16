@@ -19,11 +19,7 @@ use crate::security::{GateDecision, SecurityPolicy};
 /// also leaves the device — so a header-only call is not under-reported as
 /// URL-only (codex P2, PR #4812). Pure over its inputs so it is unit-testable
 /// off the network path.
-pub(super) fn network_egress_descriptor(
-    host: &str,
-    has_body: bool,
-    has_headers: bool,
-) -> EgressDescriptor {
+fn network_egress_descriptor(host: &str, has_body: bool, has_headers: bool) -> EgressDescriptor {
     let mut desc = EgressDescriptor::network_fetch(host);
     if has_body {
         desc = desc.with_data_kind(DataKind::ToolArguments);
@@ -156,5 +152,5 @@ impl NetGate for SecurityPolicy {
 }
 
 #[cfg(test)]
-#[path = "gate_tests.rs"]
+#[path = "net_tests.rs"]
 mod tests;

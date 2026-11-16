@@ -28,7 +28,7 @@ use super::{
 use super::{EngineError, Result};
 
 /// [`HttpClient`] adapter over `HttpRequestTool`
-/// (`tinyagents_harness_tools::net::network::HttpRequestTool`, built by `tools/impl/network/host.rs`). Allowlist + DNS-rebind
+/// (`tinyagents_harness_tools::net::network::HttpRequestTool`, built by `tools/impl/network.rs`). Allowlist + DNS-rebind
 /// guard live inside `execute`, so this adapter gets them for free.
 ///
 /// **B2:** also routes through the OpenHuman `ApprovalGate` before dispatch
