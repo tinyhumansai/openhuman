@@ -12,7 +12,9 @@
 //! - **RPC controllers** (`schemas.rs` / `ops.rs`) — `openhuman.composio_*`
 //!   methods for listing toolkits, managing connections, listing tools,
 //!   and executing actions. These are registered in
-//!   [`crate::core::all`] alongside other domains.
+//!   [`crate::core::all`] alongside other domains. `tools_execute_rpc.rs`
+//!   holds the one `tools.composio_execute` controller the Tauri onboarding
+//!   flow calls.
 //!
 //! - **Agent tools** (`tools.rs`) — model-facing `composio_*` tools the
 //!   autonomous agent loop can call. Registered from
@@ -64,6 +66,7 @@ pub mod schemas;
 #[cfg(test)]
 pub(crate) mod test_backend_route;
 pub mod tools;
+mod tools_execute_rpc;
 pub(crate) mod trigger_history;
 pub mod types;
 
@@ -88,6 +91,10 @@ pub use schemas::{
     all_registered_controllers as all_composio_registered_controllers,
 };
 pub use tools::all_composio_agent_tools;
+pub(crate) use tools_execute_rpc::{
+    all_controller_schemas as all_composio_tools_controller_schemas,
+    all_registered_controllers as all_composio_tools_registered_controllers,
+};
 pub use trigger_history::{
     global as global_composio_trigger_history, init_global as init_composio_trigger_history,
 };

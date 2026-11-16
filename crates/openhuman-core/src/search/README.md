@@ -138,6 +138,8 @@ as a direct-only provider, and a keyless managed-Parallel selection is dropped.
 | [`providers.rs`](./providers.rs) | `ResolvedProvider`, `ProviderStatus`, `resolve`, `role_order`, `effective_role_providers`, and role key helpers (`ROLES`, `role_key`, `parse_role`). |
 | [`render.rs`](./render.rs) | `render`, `subject`, `provider_label`, and the text, markdown, and metadata builders. |
 | [`tools.rs`](./tools.rs) | `TinySearchTool` (the `tinytools::Tool` bridge), `build_search_tools`, `user_facing_error`, the exhaustion latch, and the egress check. `modules` feature only. |
+| [`schemas.rs`](./schemas.rs) | The `tools.web_search`, `tools.web_answer`, `tools.web_contents` and `tools.searxng_search` controller schemas and registration. |
+| [`rpc.rs`](./rpc.rs) | Handlers for those controllers: argument parsing, the `search` enable and LocalOnly checks, provider servability, and the RPC response shape. |
 | [`bus.rs`](./bus.rs) | `CredentialRefreshSubscriber` (`search::credential_refresh`). `modules` feature only. |
 
 ## Key types and entry points
@@ -157,8 +159,9 @@ as a direct-only provider, and a keyless managed-Parallel selection is dropped.
 
 ## RPC / CLI surface
 
-This module registers no controllers itself. The search controllers live in
-the tools domain (`tools/schemas/web_search.rs`) and call into this policy:
+The search controllers keep their `tools.*` wire names but live here:
+[`schemas.rs`](./schemas.rs) declares and registers them, and
+[`rpc.rs`](./rpc.rs) holds the handlers, which call into this policy:
 
 | Method | What it does |
 | --- | --- |
@@ -205,7 +208,8 @@ read and written through `config/ops/search.rs`.
 ## Tests
 
 Tests sit beside each file ([`providers_tests.rs`](./providers_tests.rs), [`render_tests.rs`](./render_tests.rs),
-[`tools_tests.rs`](./tools_tests.rs), [`bus_tests.rs`](./bus_tests.rs)). Module config tests are in
+[`tools_tests.rs`](./tools_tests.rs), [`bus_tests.rs`](./bus_tests.rs), [`schemas_tests.rs`](./schemas_tests.rs),
+[`rpc_tests.rs`](./rpc_tests.rs)). Module config tests are in
 `modules/search/config_tests.rs`.
 
 ```bash

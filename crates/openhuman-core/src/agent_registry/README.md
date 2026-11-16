@@ -52,6 +52,11 @@ the harness runs come from [`agents/`](agents/) below.
   `all_agent_registry_registered_controllers` in [`core/all.rs`](../../core/all.rs).
 - [`rpc.rs`](rpc.rs): request/response payload types and the `*_rpc` handler
   functions that [`schemas.rs`](./schemas.rs) wires up, delegating into [`ops.rs`](./ops.rs).
+- [`snapshot.rs`](snapshot.rs): the `agent.registry_snapshot` controller's
+  schema and handler (a read-only `CapabilityRegistry` projection) plus
+  `local_catalog_models_from_config`, the local-model catalog overlay.
+  [`agent_runs/schemas.rs`](../agent_runs/schemas.rs) lists it in the `agent`
+  namespace's catalogue order.
 - [`tools.rs`](tools.rs): backwards-compatible re-export of
   `agent::orchestration::tools::*`; nothing in the tree imports it any more.
 - [`agents/`](agents/): the built-in agent archetypes and their loader.
@@ -158,8 +163,8 @@ dir. See [`cron/README.md`](../cron/README.md#scheduled-workspace).
 - [`agent/session_host/builder/factory.rs`](../agent/session_host/builder/factory.rs):
   `Agent::from_config_for_agent` falls back to `find_custom_in_config` +
   `definition_from_registry_entry` when an id is not in the harness registry.
-- [`agent_runs/schemas.rs`](../agent_runs/schemas.rs): `agent.registry_snapshot`
-  enumerate `load_builtins()`.
+- [`snapshot.rs`](./snapshot.rs): `agent.registry_snapshot`
+  enumerates `load_builtins()`.
 - `flows/` (`ops/inference_readiness.rs`, `ops/builder_gates.rs`,
   `builder_tools/kind_reads.rs`, `tinyflows/caps/agent.rs`): resolve a flow
   `agent` node's `agent_ref` through `list_agents`/`get_agent`/`find_custom_in_config`.

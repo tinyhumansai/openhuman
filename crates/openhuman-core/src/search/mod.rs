@@ -4,10 +4,18 @@
 //! `vendor/tinysearch`. This domain owns what OpenHuman decides: which
 //! providers are usable for this process (`providers`), how a response is shown
 //! to the model and the chat UI (`render`), the agent tool bridge (`tools`),
-//! and refreshing the module when the credential changes (`bus`).
+//! the `tools.web_*` / `tools.searxng_search` RPC controllers (`schemas`,
+//! `rpc`), and refreshing the module when the credential changes (`bus`).
 
 pub mod providers;
 pub mod render;
+mod rpc;
+mod schemas;
+
+pub(crate) use schemas::{
+    all_controller_schemas as all_search_controller_schemas,
+    all_registered_controllers as all_search_registered_controllers,
+};
 
 #[cfg(feature = "modules")]
 pub mod bus;

@@ -1,7 +1,8 @@
 //! Handlers for the search controllers: `tools_web_search`, `tools_web_answer`,
 //! `tools_web_contents`, and the provider-pinned `tools_searxng_search` that
 //! MCP clients use. All of them call the TinySearch module's role tools, so an
-//! RPC caller gets the same provider choice and fallback as the agent.
+//! RPC caller gets the same provider choice and fallback as the agent. Their
+//! schemas and registration live in [`super::schemas`].
 
 use crate::core::runtime::DispatchCtx;
 use serde_json::{json, Map, Value};
@@ -260,3 +261,7 @@ pub(super) fn optional_string_array(
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "rpc_tests.rs"]
+mod tests;

@@ -35,17 +35,6 @@ fn schemas_expose_expected_inputs() {
         .inputs
         .iter()
         .any(|input| input.name == "thread_id" && !input.required));
-
-    let triage = schemas("triage_evaluate");
-    assert_eq!(triage.inputs.len(), 7);
-    assert!(triage
-        .inputs
-        .iter()
-        .any(|input| input.name == "payload" && input.required));
-    assert!(triage
-        .inputs
-        .iter()
-        .any(|input| input.name == "dry_run" && !input.required));
 }
 
 #[test]
@@ -62,33 +51,6 @@ fn deserialize_params_preserves_chat_overrides_and_missing_definition_error() {
 
     let err = deserialize_params::<GetDefinitionParams>(Map::new()).expect_err("missing id");
     assert!(err.contains("invalid params"));
-}
-
-#[tokio::test]
-async fn registry_snapshot_omits_retired_graphs() {
-    let result = handle_registry_snapshot(DispatchCtx::process_default(), Map::new())
-        .await
-        .expect("registry snapshot is available");
-    let components = result
-        .get("components")
-        .and_then(Value::as_array)
-        .expect("component snapshot");
-    let ids: Vec<_> = components
-        .iter()
-        .filter_map(|component| component.get("id").and_then(Value::as_str))
-        .collect();
-    assert!(
-        !ids.contains(&"delegation"),
-        "snapshot includes the retired delegation graph: {ids:?}"
-    );
-    assert!(
-        !ids.iter().any(|id| id.starts_with("agent_teams:")),
-        "snapshot includes a retired team graph: {ids:?}"
-    );
-    assert!(
-        !ids.iter().any(|id| id.starts_with("workflow_runs:")),
-        "snapshot includes a retired workflow graph: {ids:?}"
-    );
 }
 
 #[tokio::test]
@@ -124,20 +86,8 @@ async fn reload_and_definition_handlers_cover_missing_registry_paths() {
     );
 }
 
-#[tokio::test]
-async fn triage_handler_rejects_unknown_source_and_to_json_maps_outcome() {
-    let err = handle_triage_evaluate(
-        DispatchCtx::process_default(),
-        Map::from_iter([
-            ("source".into(), Value::String("__unknown_source__".into())),
-            ("display_label".into(), Value::String("lbl".into())),
-            ("payload".into(), json!({})),
-        ]),
-    )
-    .await
-    .expect_err("unsupported source should fail before runtime dispatch");
-    assert!(err.contains("unsupported trigger source"));
-
+#[test]
+fn to_json_maps_outcome() {
     let value = to_json(Outcome::new(json!({ "ok": true }), Vec::new())).expect("json outcome");
     assert_eq!(value["ok"], json!(true));
 }
