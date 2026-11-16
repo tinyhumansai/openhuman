@@ -27,6 +27,18 @@ describe('sanitizeAuthError — embedded JSON error bodies', () => {
     expect(sanitizeAuthError('{"detail":"Token expired"}')).toBe('Token expired');
   });
 
+  it('does not surface an internal message from a 5xx body', () => {
+    // A server-side failure is not actionable and its body can carry backend
+    // internals, so it stays behind the raw-JSON guard.
+    const err = new Error(
+      'Authorization failed: Backend returned 500 Internal Server Error for POST <backend>/agent-integrations/composio/authorize: ' +
+        '{"error":{"message":"internal server error payload","code":500}}'
+    );
+    const result = sanitizeAuthError(err);
+    expect(result).not.toContain('internal server error payload');
+    expect(result).not.toContain('"message"');
+  });
+
   it('still drops opaque JSON and falls back to the generic message', () => {
     // No readable field: the payload must not reach the UI.
     expect(sanitizeAuthError('{"foo":123}')).toBe('Authorization failed.');
