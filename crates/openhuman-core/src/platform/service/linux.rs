@@ -3,7 +3,7 @@
 use crate::config::Config;
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::common::{self, run_capture, run_checked};
@@ -35,6 +35,7 @@ pub(crate) fn install(config: &Config) -> Result<()> {
     );
 
     fs::write(&file, unit)?;
+    remove_legacy_service_file(config, &file);
     let _ = run_checked(Command::new("systemctl").args(["--user", "enable", "openhuman.service"]));
     Ok(())
 }
@@ -91,6 +92,7 @@ pub(crate) fn uninstall(config: &Config) -> Result<ServiceStatus> {
     if file.exists() {
         fs::remove_file(&file).with_context(|| format!("Failed to remove {}", file.display()))?;
     }
+    remove_legacy_service_file(config, &file);
     let _ = run_checked(Command::new("systemctl").args(["--user", "daemon-reload"]));
     Ok(ServiceStatus {
         state: ServiceState::NotInstalled,
@@ -100,17 +102,60 @@ pub(crate) fn uninstall(config: &Config) -> Result<ServiceStatus> {
     })
 }
 
-pub(crate) fn linux_service_file(config: &Config) -> Result<PathBuf> {
-    let config_dir = config
+/// Path of the systemd user unit, in the directory systemd actually loads user
+/// units from (`$XDG_CONFIG_HOME/systemd/user` or `~/.config/systemd/user`).
+///
+/// Shared by `install`, `status` and `uninstall` so they always agree.
+pub(crate) fn linux_service_file(_config: &Config) -> Result<PathBuf> {
+    let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME");
+    let home = dirs::home_dir();
+    let dir = common::systemd_user_unit_dir(xdg_config_home.as_deref(), home.as_deref())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Cannot resolve the systemd user unit directory: XDG_CONFIG_HOME is unset, \
+                 empty or relative and no home directory is available"
+            )
+        })?;
+    Ok(dir.join(common::SYSTEMD_USER_UNIT_NAME))
+}
+
+/// Where releases before this fix wrote the unit (under the OpenHuman config
+/// dir, e.g. `~/.openhuman/.config/systemd/user/openhuman.service`). systemd
+/// never loaded it from there; it is only kept to clean that file up.
+fn legacy_linux_service_file(config: &Config) -> PathBuf {
+    config
         .config_path
         .parent()
-        .map_or_else(|| PathBuf::from("."), PathBuf::from);
-
-    Ok(config_dir
+        .map_or_else(|| PathBuf::from("."), PathBuf::from)
         .join(".config")
         .join("systemd")
         .join("user")
-        .join("openhuman.service"))
+        .join(common::SYSTEMD_USER_UNIT_NAME)
+}
+
+/// Best-effort removal of the stale unit left by older releases. Only that
+/// exact file is touched, and never when it coincides with the real unit path.
+fn remove_legacy_service_file(config: &Config, current: &Path) {
+    let legacy = legacy_linux_service_file(config);
+    if legacy == current || !legacy.is_file() {
+        return;
+    }
+    // Same file reached through a symlink (e.g. the config dir links to $HOME).
+    if let (Ok(a), Ok(b)) = (fs::canonicalize(&legacy), fs::canonicalize(current)) {
+        if a == b {
+            return;
+        }
+    }
+    match fs::remove_file(&legacy) {
+        Ok(()) => log::info!(
+            "[service] Removed stale systemd unit from legacy location {}",
+            legacy.display()
+        ),
+        Err(e) => log::warn!(
+            "[service] Failed to remove stale systemd unit {}: {e}",
+            legacy.display()
+        ),
+    }
 }
 
 fn is_service_enabled_linux() -> Result<bool> {
