@@ -453,3 +453,50 @@ async fn secret_material_resolves_the_secondary_path_for_a_wallet_that_predates_
         crate::web3::wallet::test_support::sample_solana_address()
     );
 }
+
+#[test]
+fn validate_setup_rejects_a_primary_at_a_secondary_path() {
+    // An index-0 account at the giveaway path would resolve to the same key
+    // as index 1, so the secondary program policy would sign for the primary.
+    let mut params = sample_params();
+    let mut alias = sample_account(WalletChain::Solana);
+    alias.derivation_path = giveaway_account().derivation_path;
+    params.accounts.retain(|account| account.chain != WalletChain::Solana);
+    params.accounts.push(alias);
+    assert!(validate_setup(&params)
+        .expect_err("primary aliasing the secondary path")
+        .contains("secondary account path"));
+}
+
+#[tokio::test]
+async fn a_stored_primary_at_the_secondary_path_is_quarantined_before_signing() {
+    // A wallet state written with its Solana primary on the giveaway path (by a
+    // build that did not refuse it) must not sign for index 1: load validation
+    // quarantines it, so no secondary key is ever resolved from it.
+    let temp = tempfile::tempdir().expect("temp dir");
+    let _wallet_lock = crate::web3::wallet::test_support::TEST_LOCK.lock().await;
+    let ctx = DispatchCtx::process_default();
+    let _workspace = crate::web3::wallet::test_support::set_workspace_env_for_test(&temp).await;
+    let config = ctx.load_config().await.expect("config");
+    {
+        let mut state = stored_state();
+        state.accounts = WalletChain::ALL
+            .into_iter()
+            .map(crate::web3::wallet::test_support::sample_account)
+            .collect();
+        for account in state.accounts.iter_mut() {
+            if account.chain == WalletChain::Solana {
+                account.derivation_path = giveaway_account().derivation_path;
+            }
+        }
+        let _guard = WALLET_STATE_FILE_LOCK.lock();
+        save_stored_wallet_state_unlocked(&config, &state).expect("save state");
+    }
+    let error = secret_material(&ctx, WalletChain::Solana, 1)
+        .await
+        .expect_err("an aliased primary must not sign as the secondary");
+    assert_eq!(error, WALLET_NOT_CONFIGURED_MESSAGE);
+    assert!(load_stored_wallet_state_unlocked(&config)
+        .expect("load")
+        .is_none());
+}

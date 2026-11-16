@@ -263,6 +263,18 @@ fn validate_setup(params: &WalletSetupParams) -> Result<Vec<WalletAccount>, Stri
                 account.chain.as_str()
             ));
         }
+        if account.index == 0
+            && SECONDARY_ACCOUNTS.iter().any(|secondary| {
+                secondary.chain == account.chain && secondary.derivation_path == derivation_path
+            })
+        {
+            // A primary at a secondary path resolves to that secondary account's
+            // key, so the secondary's program policy would sign for the primary.
+            return Err(format!(
+                "wallet setup account '{}' index 0 uses a secondary account path; a primary account must not alias one",
+                account.chain.as_str()
+            ));
+        }
         if account.index > 0 {
             // A secondary account must be one the host knows, at its canonical
             // path, so the key it later signs with is the one its policy names.
