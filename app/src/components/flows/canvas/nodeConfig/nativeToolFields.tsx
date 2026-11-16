@@ -7,8 +7,9 @@
  * registry (`tools::native_ops`).
  *
  * Shows the selected tool's description so the author knows what it does.
- * Fetches are guarded — outside Tauri / on error it falls back to a raw text
- * input so a slug is never a dead end.
+ * Fetches are guarded — outside Tauri, on error, or when the registry returns
+ * no usable tools it falls back to a raw text input so a slug is never a dead
+ * end.
  */
 import { useEffect, useMemo, useState } from 'react';
 
@@ -39,7 +40,6 @@ export function NativeToolField({ label, hint, value, onChange, testId }: Native
   const { t } = useT();
   const [tools, setTools] = useState<AgentToolInfo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,7 +48,7 @@ export function NativeToolField({ label, hint, value, onChange, testId }: Native
         const list = await agentRegistryApi.availableTools();
         if (!cancelled) setTools(list);
       } catch {
-        if (!cancelled) setFailed(true);
+        // Leave `tools` empty; the raw-input fallback below takes over.
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -61,8 +61,9 @@ export function NativeToolField({ label, hint, value, onChange, testId }: Native
   const current = toolName(value);
   const selected = useMemo(() => tools.find(tool => tool.name === current), [tools, current]);
 
-  // Catalog unavailable → raw text input so the author can still enter a slug.
-  if (failed && tools.length === 0) {
+  // Catalog unavailable or empty (fetch failed, or returned no usable tools) →
+  // raw text input so the author can still enter a slug.
+  if (!loading && tools.length === 0) {
     return (
       <Field label={label} hint={hint}>
         <UiInput

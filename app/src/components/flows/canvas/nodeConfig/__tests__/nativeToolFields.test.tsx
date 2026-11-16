@@ -2,8 +2,8 @@
  * Behavior tests for the flows "Tool" node's native tool picker. The options
  * come from `agentRegistryApi.availableTools` (`openhuman.agent_registry_available_tools`,
  * the native registry the flow engine resolves `oh:<name>` slugs against);
- * picks are stored as `oh:<name>`, and a failed fetch falls back to a raw
- * text input. `useT()` falls back to the bundled English map with no provider
+ * picks are stored as `oh:<name>`, and a failed fetch or an empty catalog
+ * falls back to a raw text input. `useT()` falls back to the bundled English map with no provider
  * mounted (same convention as the sibling `nodeConfigForms.test.tsx`).
  */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -83,5 +83,28 @@ describe('NativeToolField', () => {
     expect(onChange).toHaveBeenLastCalledWith('oh:shell');
     fireEvent.change(input, { target: { value: '' } });
     expect(onChange).toHaveBeenLastCalledWith('');
+  });
+
+  it('falls back to a raw text input when the registry returns no tools', async () => {
+    availableToolsMock.mockResolvedValue([]);
+    const { onChange } = renderField();
+    const input = await screen.findByTestId('tool-slug-custom');
+    expect(input).toHaveValue('');
+    expect(screen.queryByTestId('tool-slug')).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'web_search' } });
+    expect(onChange).toHaveBeenLastCalledWith('oh:web_search');
+  });
+
+  it('shows a saved slug in the fallback input when the registry is empty', async () => {
+    availableToolsMock.mockResolvedValue([]);
+    renderField('oh:shell');
+    expect(await screen.findByTestId('tool-slug-custom')).toHaveValue('shell');
+  });
+
+  it('keeps the loading select (not the fallback) while the fetch is pending', () => {
+    availableToolsMock.mockReturnValue(new Promise(() => {}));
+    renderField();
+    expect(screen.getByTestId('tool-slug')).toBeDisabled();
+    expect(screen.queryByTestId('tool-slug-custom')).not.toBeInTheDocument();
   });
 });

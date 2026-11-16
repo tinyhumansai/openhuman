@@ -12,6 +12,7 @@
 import debug from 'debug';
 
 import { callCoreRpc } from '../coreRpcClient';
+import { CORE_RPC_METHODS } from '../rpcMethods';
 
 const log = debug('agentRegistryApi');
 
@@ -124,7 +125,7 @@ export const agentRegistryApi = {
   availableTools: async (): Promise<AgentToolInfo[]> => {
     log('availableTools: request');
     const res = await callCoreRpc<unknown>({
-      method: 'openhuman.agent_registry_available_tools',
+      method: CORE_RPC_METHODS.agentRegistryAvailableTools,
       params: {},
     });
     const tools = parseAgentTools(unwrapCliEnvelope(res));
