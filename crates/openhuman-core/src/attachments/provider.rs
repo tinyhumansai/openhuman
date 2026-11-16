@@ -231,6 +231,7 @@ use crate::attachments::secure_open::secure_open;
 
 #[path = "provider_cache.rs"]
 mod cache;
+pub(crate) use cache::cached_readout_chars;
 #[path = "provider_fallback.rs"]
 mod fallback;
 #[cfg(test)]
@@ -253,6 +254,10 @@ mod history_tests;
 #[cfg(test)]
 #[path = "provider_routing_tests.rs"]
 mod routing_tests;
+
+#[cfg(test)]
+#[path = "provider_cache_tests.rs"]
+mod cache_tests;
 
 #[cfg(test)]
 #[path = "provider_security_tests.rs"]
