@@ -6,18 +6,23 @@
 //! the caller declares the debit and the host holds the transaction to it:
 //!
 //! 1. `getTokenAccountsByOwner` for the signer, under SPL Token and
-//!    Token-2022, gives every token account it owns and its balance now.
+//!    Token-2022, gives the signer's token accounts that the transaction
+//!    names, and their balances now.
 //! 2. `simulateTransaction` (no signature check, the transaction's own
 //!    blockhash) returns those accounts' post-transaction state.
 //! 3. The debit of each mint is the drop in the sum of those balances. An
 //!    account that the transaction closes, or whose owner it changes, counts
 //!    as emptied. Credits are ignored.
 //!
+//! The pre-state and the post-state are only comparable when they come from
+//! the same bank. Every answer carries the slot it was computed at, and a
+//! measurement whose reads disagree on the slot is repeated, then refused.
+//!
 //! [`check_simulation`] then refuses unless the simulation succeeded and every
 //! mint's debit equals the declared amount (undeclared mints: zero). Native
 //! SOL spent on fees and rent is not measured here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -28,6 +33,10 @@ use super::{base58, MintTotal, TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 
 /// Size of the base token-account layout shared by SPL Token and Token-2022.
 const TOKEN_ACCOUNT_LEN: usize = 165;
+
+/// How many times a measurement whose reads came from different slots is
+/// repeated before the transaction is refused.
+const SNAPSHOT_ATTEMPTS: usize = 3;
 
 /// What the simulation showed.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,18 +164,61 @@ fn account_data(account: &Value) -> Option<Vec<u8>> {
         .ok()
 }
 
-/// Read the signer's token accounts, simulate `transaction` and measure the
-/// debits, over the Solana JSON-RPC at `url`.
+/// The slot an RPC answer was computed at (`result.context.slot`).
+fn context_slot(answer: &Value, method: &str) -> Result<u64, String> {
+    answer
+        .get("context")
+        .and_then(|context| context.get("slot"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("{method} returned no context slot"))
+}
+
+/// One measurement: the report, or the slots its reads came from when they
+/// disagree (the pre-state and post-state are then not comparable).
+enum Attempt {
+    Measured(SimulationReport),
+    SplitAcrossSlots(Vec<u64>),
+}
+
+/// Read the signer's token accounts that `account_keys` names, simulate
+/// `transaction` and measure the debits, over the Solana JSON-RPC at `url`.
+///
+/// Only accounts named in the transaction's own account keys are read or
+/// requested: a transaction cannot write an account it does not name, so
+/// the rest cannot be debited and need not be measured.
 ///
 /// # Errors
 ///
-/// A transport or RPC error, or an answer that is not the documented shape.
+/// A transport or RPC error, an answer that is not the documented shape, or
+/// reads that stay split across slots after [`SNAPSHOT_ATTEMPTS`] attempts.
 pub async fn simulate(
     url: &str,
     transaction: &[u8],
     owner: &[u8; 32],
+    account_keys: &[[u8; 32]],
 ) -> Result<SimulationReport, String> {
+    let mut seen = Vec::new();
+    for _ in 0..SNAPSHOT_ATTEMPTS {
+        match measure(url, transaction, owner, account_keys).await? {
+            Attempt::Measured(report) => return Ok(report),
+            Attempt::SplitAcrossSlots(slots) => seen = slots,
+        }
+    }
+    Err(format!(
+        "the token balances and the simulation were read at different slots ({seen:?}) \
+         on every attempt; the transaction was not measured, retry"
+    ))
+}
+
+async fn measure(
+    url: &str,
+    transaction: &[u8],
+    owner: &[u8; 32],
+    account_keys: &[[u8; 32]],
+) -> Result<Attempt, String> {
     let owner_text = base58(owner);
+    let named: BTreeSet<String> = account_keys.iter().map(|key| base58(key)).collect();
+    let mut slots = Vec::with_capacity(3);
     let mut addresses = Vec::new();
     let mut pre = Vec::new();
     for program in [TOKEN_PROGRAM, TOKEN_2022_PROGRAM] {
@@ -180,6 +232,7 @@ pub async fn simulate(
             ]),
         )
         .await?;
+        slots.push(context_slot(&answer, "getTokenAccountsByOwner")?);
         let rows = answer
             .get("value")
             .and_then(Value::as_array)
@@ -189,6 +242,9 @@ pub async fn simulate(
                 .get("pubkey")
                 .and_then(Value::as_str)
                 .ok_or("getTokenAccountsByOwner row has no pubkey")?;
+            if !named.contains(pubkey) {
+                continue;
+            }
             let state = row
                 .get("account")
                 .and_then(account_data)
@@ -214,6 +270,15 @@ pub async fn simulate(
         ]),
     )
     .await?;
+    slots.push(context_slot(&answer, "simulateTransaction")?);
+    if slots.iter().any(|slot| *slot != slots[0]) {
+        tracing::warn!(
+            ?slots,
+            "{} token reads and the simulation were not at one slot",
+            super::LOG_PREFIX
+        );
+        return Ok(Attempt::SplitAcrossSlots(slots));
+    }
     let value = answer
         .get("value")
         .ok_or("simulateTransaction returned no value")?;
@@ -230,7 +295,7 @@ pub async fn simulate(
     if err.is_none() && post.len() != pre.len() {
         return Err("simulateTransaction returned the wrong number of accounts".to_string());
     }
-    Ok(SimulationReport {
+    Ok(Attempt::Measured(SimulationReport {
         debits: if err.is_some() {
             Vec::new()
         } else {
@@ -239,7 +304,7 @@ pub async fn simulate(
         err,
         token_accounts: addresses,
         units_consumed: value.get("unitsConsumed").and_then(Value::as_u64),
-    })
+    }))
 }
 
 #[cfg(test)]

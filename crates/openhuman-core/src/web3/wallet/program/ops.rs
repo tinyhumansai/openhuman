@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use base64::Engine as _;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tinywallet_bus::wire::{RpcEndpointKey, RpcSource, Scheme, SecretMaterial, Signature};
 use zeroize::Zeroizing;
 
@@ -82,11 +83,25 @@ pub struct ExecuteProgramParams {
     pub quote_id: String,
 }
 
+/// What a quote is bound to. The quote map is process-wide, so a quote can be
+/// taken only by the context it was prepared in: the same workspace (whose
+/// spend ledger it draws on), the same wallet (a hash of the encrypted phrase,
+/// which changes when the wallet is replaced), the same account and the same
+/// Solana endpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QuoteBinding {
+    workspace: std::path::PathBuf,
+    wallet: String,
+    account_index: u32,
+    endpoint: String,
+}
+
 #[derive(Clone)]
 struct StoredQuote {
     prepared: PreparedProgram,
     transaction: Vec<u8>,
     decoded: DecodedTransaction,
+    binding: QuoteBinding,
 }
 
 static QUOTES: Lazy<Mutex<HashMap<String, StoredQuote>>> = Lazy::new(|| Mutex::new(HashMap::new()));
@@ -98,8 +113,48 @@ fn store_quote(quote: StoredQuote, now_ms: u64) {
     }
 }
 
-fn take_quote(quote_id: &str) -> Option<StoredQuote> {
-    QUOTES.lock().ok()?.remove(quote_id)
+/// Remove the quote only when `binding` matches the one it was prepared under.
+/// A mismatched request leaves the quote where it is, for its own context.
+fn take_quote(quote_id: &str, binding: &QuoteBinding) -> Option<StoredQuote> {
+    let mut quotes = QUOTES.lock().ok()?;
+    if quotes.get(quote_id)?.binding != *binding {
+        return None;
+    }
+    quotes.remove(quote_id)
+}
+
+/// Whether a quote with this id is held, in any context.
+fn quote_held(quote_id: &str) -> bool {
+    QUOTES
+        .lock()
+        .is_ok_and(|quotes| quotes.contains_key(quote_id))
+}
+
+/// The context a quote for `account_index` is bound to, read now.
+async fn quote_binding(
+    ctx: &DispatchCtx,
+    config: &crate::config::Config,
+    account_index: u32,
+) -> Result<QuoteBinding, String> {
+    let material =
+        super::super::ops::secret_material(ctx, WalletChain::Solana, account_index).await?;
+    Ok(QuoteBinding {
+        workspace: config.workspace_dir.clone(),
+        wallet: hex::encode(Sha256::digest(material.encrypted_mnemonic.as_bytes())),
+        account_index,
+        endpoint: solana_rpc_url(ctx).await?,
+    })
+}
+
+/// A quote is usable strictly before its expiry instant.
+fn ensure_unexpired(expires_at_ms: u64, now_ms: u64) -> Result<(), PolicyRefusal> {
+    if expires_at_ms > now_ms {
+        return Ok(());
+    }
+    Err(refusal(
+        RefusalKind::QuoteExpired,
+        format!("the quote expired at {expires_at_ms} (now {now_ms}); prepare it again"),
+    ))
 }
 
 /// Prepare quotes currently held (test support).
@@ -155,6 +210,7 @@ pub async fn prepare_program(
         .map_err(|error| format!("transaction is not valid base64: {error}"))?;
     let decoded = decode_transaction(&transaction)?;
     let account = super::super::ops::ensure_account(ctx, chain, params.account_index).await?;
+    let binding = quote_binding(ctx, &config, params.account_index).await?;
     let summary = summarize(&decoded, &account.address).map_err(|refused| refused.to_string())?;
     let now = super::super::policy::wall_clock_ms();
     let (_, records) = ledger_records(&config)?;
@@ -197,6 +253,7 @@ pub async fn prepare_program(
             prepared: prepared.clone(),
             transaction,
             decoded,
+            binding,
         },
         now,
     );
@@ -262,23 +319,24 @@ pub async fn execute_prepared_program(
 ) -> Result<Outcome<ExecutedProgram>, String> {
     let config = ctx.load_config().await?;
     let now = super::super::policy::wall_clock_ms();
-    let stored = take_quote(&params.quote_id)
-        .filter(|stored| stored.prepared.expires_at_ms > now)
-        .ok_or_else(|| "prepared program quote is unavailable or expired".to_string())?;
-    if stored.prepared.account_index != params.account_index {
-        let message = format!(
-            "quote {} was prepared for account index {}, not {}",
-            params.quote_id, stored.prepared.account_index, params.account_index
-        );
-        store_quote(stored, now);
-        return Err(message);
+    let unavailable = || "prepared program quote is unavailable or expired".to_string();
+    if !quote_held(&params.quote_id) {
+        return Err(unavailable());
     }
+    // A quote from another workspace, wallet, account or endpoint is reported
+    // as unavailable and stays in the map for its own context.
+    let binding = quote_binding(ctx, &config, params.account_index).await?;
+    let stored = take_quote(&params.quote_id, &binding)
+        .filter(|stored| stored.prepared.expires_at_ms > now)
+        .ok_or_else(unavailable)?;
     let origin = ExecutionOrigin::rpc();
     let prepared = stored.prepared.clone();
     let chain = chain_name(prepared.chain);
     let (ledger, _) = ledger_records(&config)?;
-    // Simulate again against the chain as it is now: the caps and the
-    // declaration must still hold when the key is used.
+    // Simulate against the chain as it is now. The caps and the declaration
+    // are checked against this snapshot only: an opaque program can debit a
+    // different amount when the transaction is included, so the caps are
+    // not a bound on the chain's final state.
     let simulated = match simulate_quote(ctx, &stored.transaction, &stored.decoded).await {
         Ok(report) => check_simulation(&prepared.declared_debits, &report),
         Err(error) => {
@@ -288,9 +346,14 @@ pub async fn execute_prepared_program(
     };
     let reserved = ledger
         .reserve(|records| {
+            // Read the clock at the point of no return. The simulation above
+            // can take many seconds, so a quote that expired while it ran must
+            // be refused here, before anything is signed.
+            let reserved_at = super::super::policy::wall_clock_ms();
             if let Some(refused) = origin_refusal(&origin) {
                 return Err(refused);
             }
+            ensure_unexpired(prepared.expires_at_ms, reserved_at)?;
             simulated.clone()?;
             if let Some(earlier) = records.iter().rev().find(|record| {
                 record.quote_id == prepared.quote_id && record.status.counts_against_caps()
@@ -310,13 +373,13 @@ pub async fn execute_prepared_program(
                 &prepared.summary,
                 &prepared.declared_debits,
                 records,
-                now,
+                reserved_at,
             )?;
             Ok(program_record(
                 &prepared,
                 &origin,
                 LedgerStatus::Pending,
-                now,
+                reserved_at,
             ))
         })
         .map_err(|error| format!("wallet spend ledger is unavailable: {error:#}"))?;
@@ -469,7 +532,11 @@ async fn simulate_quote(
         .first()
         .ok_or_else(|| "the transaction lists no accounts".to_string())?;
     let url = solana_rpc_url(ctx).await?;
-    simulate(&url, transaction, owner)
+    simulate(&url, transaction, owner, &decoded.account_keys)
         .await
         .map_err(|error| format!("could not simulate the transaction: {error}"))
 }
+
+#[cfg(test)]
+#[path = "ops_tests.rs"]
+mod tests;
