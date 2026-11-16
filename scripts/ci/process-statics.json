@@ -948,5 +948,15 @@
     "category": "A",
     "reason": "Host wiring: an id-keyed table of picture sinks the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; the pictures pass through and are not kept.",
     "verification": "modules/browser_pictures_tests.rs: a_registered_sink_gets_each_picture_and_a_refusal_is_not_fatal"
+  },
+  {
+    "file": "crates/openhuman-core/src/web3/wallet/program/ops.rs",
+    "scope": "",
+    "name": "QUOTES",
+    "type": "Lazy<Mutex<HashMap<String,StoredQuote>>>",
+    "count": 1,
+    "category": "B",
+    "reason": "Prepared program quotes are partitioned by QuoteBinding (workspace path, a hash of the encrypted phrase, account index and Solana endpoint). A take is refused, and the quote stays in the map, unless all four match the context that takes it.",
+    "verification": "web3/wallet/program/ops_tests.rs: a_quote_is_taken_only_in_the_context_it_was_prepared_in"
   }
 ]
