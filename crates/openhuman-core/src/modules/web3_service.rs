@@ -253,7 +253,7 @@ pub(crate) async fn execute(
         WalletChain::Solana => crate::web3::wallet::WalletChain::Solana,
         WalletChain::Tron => crate::web3::wallet::WalletChain::Tron,
     };
-    let stored = crate::web3::wallet::secret_material(ctx, chain)
+    let stored = crate::web3::wallet::secret_material(ctx, chain, 0)
         .await
         .map_err(|error| wallet::WalletCallError::Failed(error.to_string()))?;
     let mnemonic = crate::credentials::ops::decrypt_secret(config, &stored.encrypted_mnemonic)

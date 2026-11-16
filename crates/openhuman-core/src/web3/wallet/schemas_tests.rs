@@ -6,8 +6,8 @@ use crate::core::all::{
 
 #[test]
 fn wallet_schema_wire_contracts_are_preserved() {
-    assert_eq!(all_wallet_controller_schemas().len(), 20);
-    assert_eq!(all_wallet_registered_controllers().len(), 20);
+    assert_eq!(all_wallet_controller_schemas().len(), 23);
+    assert_eq!(all_wallet_registered_controllers().len(), 23);
     assert_schema_controller_parity(
         &all_wallet_controller_schemas(),
         &all_wallet_registered_controllers(),
@@ -20,6 +20,12 @@ fn wallet_schema_wire_contracts_are_preserved() {
         ("derive_recovery_material", &["phrase"][..]),
         ("tx_status", &["chain", "hash", "evmNetwork"][..]),
         ("execute_prepared", &["quoteId", "confirmed"][..]),
+        ("account", &["chain", "accountIndex"][..]),
+        (
+            "prepare_program",
+            &["accountIndex", "transaction", "expectedDebits"][..],
+        ),
+        ("execute_prepared_program", &["accountIndex", "quoteId"][..]),
     ] {
         let schema = wallet_schemas(function);
         expect_schema_input_order(&schema, inputs);

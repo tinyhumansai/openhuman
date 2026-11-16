@@ -23,6 +23,7 @@ fn policy() -> WalletPolicyConfig {
         automation_enabled: true,
         apply_to_interactive: false,
         assets: vec![usdc_cap()],
+        ..WalletPolicyConfig::default()
     }
 }
 
@@ -462,5 +463,40 @@ fn a_plain_cron_turn_is_refused_by_the_spend_policy() {
     assert_eq!(
         kind(evaluate(&policy(), &origin, &q, &[], NOW)),
         RefusalKind::Origin
+    );
+}
+
+#[test]
+fn program_records_never_count_against_the_primary_accounts_caps() {
+    // A program execute of the same mint and amount, from either account,
+    // leaves the index-0 transfer caps exactly as they were.
+    let mut program = spent(100_000_000, RECIPIENT, NOW - 1_000, LedgerStatus::Broadcast);
+    program.kind = LedgerKind::Program;
+    let mut secondary = program.clone();
+    secondary.account_index = 1;
+    let q = quote("q", "USDC", 50_000_000, RECIPIENT);
+    assert_eq!(
+        evaluate(&policy(), &automation(), &q, &[program, secondary], NOW),
+        Ok(true)
+    );
+    // The same record as a transfer is counted, as before.
+    let transfer = spent(100_000_000, RECIPIENT, NOW - 1_000, LedgerStatus::Broadcast);
+    assert_eq!(
+        kind(evaluate(&policy(), &automation(), &q, &[transfer], NOW)),
+        RefusalKind::Daily
+    );
+}
+
+#[test]
+fn an_account_section_does_not_change_the_primary_asset_policy() {
+    let mut with_section = policy();
+    with_section.accounts.insert(
+        "solana_1".into(),
+        crate::config::schema::WalletAccountPolicy::default(),
+    );
+    let q = quote("q", "USDC", 60_000_000, RECIPIENT);
+    assert_eq!(
+        evaluate(&with_section, &automation(), &q, &[], NOW),
+        evaluate(&policy(), &automation(), &q, &[], NOW)
     );
 }

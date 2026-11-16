@@ -5684,12 +5684,14 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "bs58",
  "bytes",
  "chrono",
  "chrono-tz",
  "directories",
  "dirs 6.0.0",
  "dotenvy",
+ "ed25519-dalek",
  "env_logger",
  "flate2",
  "fs2",
@@ -9594,7 +9596,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "getrandom 0.4.3",
  "serde",
@@ -9613,7 +9615,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-accessibility"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "arboard",
  "command-group",
@@ -9628,7 +9630,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-browser"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "agent-browser",
  "base64 0.22.1",
@@ -9647,7 +9649,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-bus"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -9657,7 +9659,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-core"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -9669,7 +9671,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-cursor"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "getrandom 0.4.3",
  "serde",
@@ -9679,7 +9681,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-desktop"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "agent-desktop-core",
  "agent-desktop-linux",
@@ -9694,7 +9696,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-engine"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "getrandom 0.4.3",
  "image",

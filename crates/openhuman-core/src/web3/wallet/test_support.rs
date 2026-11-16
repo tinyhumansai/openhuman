@@ -49,6 +49,8 @@ pub(crate) fn sample_account(chain: WalletChain) -> WalletAccount {
             WalletChain::Solana => "m/44'/501'/0'/0'".to_string(),
             WalletChain::Tron => "m/44'/195'/0'/0/0".to_string(),
         },
+        index: 0,
+        label: None,
     }
 }
 
