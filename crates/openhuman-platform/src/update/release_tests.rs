@@ -1,4 +1,5 @@
 use super::*;
+use crate::update::test_support::{RecordingReporter, RUNNING_VERSION, SOURCE};
 
 #[test]
 fn is_newer_detects_update() {
@@ -8,11 +9,6 @@ fn is_newer_detects_update() {
     assert!(!is_newer("0.49.17", "0.49.17"));
     assert!(!is_newer("0.49.16", "0.49.17"));
     assert!(!is_newer("0.49.17", "0.50.0"));
-}
-
-#[test]
-fn current_version_is_not_empty() {
-    assert!(!current_version().is_empty());
 }
 
 /// OPENHUMAN-TAURI-2F regression guard. A reqwest call to an unroutable
@@ -41,7 +37,7 @@ async fn transport_failure_classifier_catches_unreachable_host() {
 // ---------------------------------------------------------------------------
 // #6089: `check_available` used to build `https://api.github.com/...` inline, so
 // the HTTP + JSON-parse path could only be exercised against the live endpoint —
-// which `scheduler_tests.rs` calls out as the reason `tick()` is untested. These
+// which the core's `update/scheduler_tests.rs` calls out as the reason `tick()` is untested. These
 // drive the private `check_available_with_base_url` seam against a local mock.
 // ---------------------------------------------------------------------------
 
@@ -79,16 +75,21 @@ async fn releases_mock(status: u16, body: &str) -> wiremock::MockServer {
 async fn check_available_parses_a_release_and_picks_this_platforms_asset() {
     let server = releases_mock(200, &release_body("v99.0.0")).await;
 
-    let info = check_available_with_base_url(&server.uri())
-        .await
-        .expect("mocked release must parse");
+    let info = check_available_with_base_url(
+        &SOURCE,
+        RUNNING_VERSION,
+        &RecordingReporter::default(),
+        &server.uri(),
+    )
+    .await
+    .expect("mocked release must parse");
 
     assert_eq!(info.latest_version, "99.0.0", "the leading v is stripped");
-    assert_eq!(info.current_version, current_version());
+    assert_eq!(info.current_version, RUNNING_VERSION);
     assert!(
         info.update_available,
         "99.0.0 is newer than {}",
-        current_version()
+        RUNNING_VERSION
     );
     assert_eq!(
         info.asset_name.as_deref(),
@@ -110,15 +111,20 @@ async fn check_available_parses_a_release_and_picks_this_platforms_asset() {
 async fn check_available_reports_no_update_for_an_older_tag() {
     let server = releases_mock(200, &release_body("v0.0.1")).await;
 
-    let info = check_available_with_base_url(&server.uri())
-        .await
-        .expect("mocked release must parse");
+    let info = check_available_with_base_url(
+        &SOURCE,
+        RUNNING_VERSION,
+        &RecordingReporter::default(),
+        &server.uri(),
+    )
+    .await
+    .expect("mocked release must parse");
 
     assert_eq!(info.latest_version, "0.0.1");
     assert!(
         !info.update_available,
         "0.0.1 must not be newer than {}",
-        current_version()
+        RUNNING_VERSION
     );
 }
 
@@ -154,24 +160,21 @@ fn check_available_reports_an_update_without_a_download_when_no_platform_asset_i
         .enable_all()
         .build()
         .expect("runtime");
-    let mut result = None;
-    let events = sentry::test::with_captured_events(|| {
-        result = Some(runtime.block_on(async {
-            let server = releases_mock(200, &body).await;
-            check_available_with_base_url(&server.uri()).await
-        }));
+    let reporter = RecordingReporter::default();
+    let result = runtime.block_on(async {
+        let server = releases_mock(200, &body).await;
+        check_available_with_base_url(&SOURCE, RUNNING_VERSION, &reporter, &server.uri()).await
     });
 
-    let info = result
-        .expect("check ran")
-        .expect("a missing platform asset must not fail the check");
+    let info = result.expect("a missing platform asset must not fail the check");
     assert!(info.update_available, "99.0.0 is still an available update");
     assert_eq!(info.latest_version, "99.0.0");
     assert!(info.download_url.is_none(), "no asset, no download url");
     assert!(info.asset_name.is_none());
+    let reports = reporter.reports();
     assert!(
-        events.is_empty(),
-        "a missing platform asset is expected, not a Sentry event: {events:?}"
+        reports.is_empty(),
+        "a missing platform asset is expected, not a reported error: {reports:?}"
     );
 }
 
@@ -181,9 +184,14 @@ async fn check_available_surfaces_a_non_2xx_as_a_github_api_error() {
     // says a caller currently cannot tell apart from "no update".
     let server = releases_mock(403, r#"{"message":"API rate limit exceeded"}"#).await;
 
-    let err = check_available_with_base_url(&server.uri())
-        .await
-        .expect_err("a 403 must not be reported as a successful check");
+    let err = check_available_with_base_url(
+        &SOURCE,
+        RUNNING_VERSION,
+        &RecordingReporter::default(),
+        &server.uri(),
+    )
+    .await
+    .expect_err("a 403 must not be reported as a successful check");
 
     assert!(
         err.contains("GitHub API error: 403"),
@@ -195,9 +203,14 @@ async fn check_available_surfaces_a_non_2xx_as_a_github_api_error() {
 async fn check_available_surfaces_a_malformed_body_as_a_parse_error() {
     let server = releases_mock(200, "{ not json").await;
 
-    let err = check_available_with_base_url(&server.uri())
-        .await
-        .expect_err("a malformed body must not be reported as a successful check");
+    let err = check_available_with_base_url(
+        &SOURCE,
+        RUNNING_VERSION,
+        &RecordingReporter::default(),
+        &server.uri(),
+    )
+    .await
+    .expect_err("a malformed body must not be reported as a successful check");
 
     assert!(
         err.contains("failed to parse release JSON"),
@@ -208,12 +221,15 @@ async fn check_available_surfaces_a_malformed_body_as_a_parse_error() {
 /// The seam exists for tests only: the shipped binary must still resolve the
 /// pinned GitHub origin. Guards the extraction itself — if someone later makes
 /// the base URL configurable at runtime, this is what breaks, and
-/// `ops::validate_download_url`'s host allowlist is why that matters.
+/// the core's `update::ops::validate_download_url` host allowlist is why that matters.
 #[test]
 fn the_default_origin_is_still_the_pinned_github_api() {
     assert_eq!(GITHUB_API_BASE, "https://api.github.com");
     assert_eq!(
-        format!("{GITHUB_API_BASE}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"),
+        format!(
+            "{GITHUB_API_BASE}/repos/{}/{}/releases/latest",
+            SOURCE.owner, SOURCE.repo
+        ),
         "https://api.github.com/repos/tinyhumansai/openhuman/releases/latest",
         "the URL check_available() builds must be byte-identical to the pre-refactor literal"
     );
@@ -256,7 +272,8 @@ fn find_platform_asset_matches_the_versioned_archive() {
         asset(&wanted),
     ];
 
-    let picked = find_platform_asset(&assets).expect("the versioned archive must be selected");
+    let picked =
+        find_platform_asset(&SOURCE, &assets).expect("the versioned archive must be selected");
 
     assert_eq!(
         picked.name, wanted,
@@ -278,7 +295,8 @@ fn find_platform_asset_ignores_the_checksum_and_signature_siblings() {
         asset(&archive),
     ];
 
-    let picked = find_platform_asset(&assets).expect("the archive itself must be selected");
+    let picked =
+        find_platform_asset(&SOURCE, &assets).expect("the archive itself must be selected");
     assert_eq!(picked.name, archive);
 
     // And with the archive absent, neither sibling is an acceptable substitute.
@@ -287,7 +305,7 @@ fn find_platform_asset_ignores_the_checksum_and_signature_siblings() {
         asset(&format!("{archive}.sig")),
     ];
     assert!(
-        find_platform_asset(&siblings_only).is_none(),
+        find_platform_asset(&SOURCE, &siblings_only).is_none(),
         "a checksum or signature must never be selected as the binary"
     );
 }
@@ -303,7 +321,8 @@ fn find_platform_asset_falls_back_to_a_legacy_raw_binary() {
     };
     let assets = vec![asset("openhuman-core-some-other-triple"), asset(&legacy)];
 
-    let picked = find_platform_asset(&assets).expect("the legacy raw binary must still resolve");
+    let picked =
+        find_platform_asset(&SOURCE, &assets).expect("the legacy raw binary must still resolve");
 
     assert_eq!(picked.name, legacy);
 }
@@ -312,7 +331,7 @@ fn find_platform_asset_falls_back_to_a_legacy_raw_binary() {
 fn find_platform_asset_returns_none_when_no_core_asset_is_published() {
     // What macOS and Windows actually see today: the release carries desktop
     // bundles but no `openhuman-core-*` archive for them. `None` is the correct
-    // answer, and `ops::validate_asset_name` is why a bundle must not be
+    // answer, and the core's `update::ops::validate_asset_name` is why a bundle must not be
     // substituted — it requires the `openhuman-core-` prefix.
     let assets = vec![
         asset("OpenHuman_0.64.7_aarch64-apple-darwin.app.tar.gz"),
@@ -320,7 +339,7 @@ fn find_platform_asset_returns_none_when_no_core_asset_is_published() {
         asset("latest.json"),
     ];
 
-    assert!(find_platform_asset(&assets).is_none());
+    assert!(find_platform_asset(&SOURCE, &assets).is_none());
 }
 
 #[test]
@@ -357,9 +376,14 @@ async fn check_available_picks_the_versioned_archive() {
     );
     let server = releases_mock(200, &body).await;
 
-    let info = check_available_with_base_url(&server.uri())
-        .await
-        .expect("mocked release must parse");
+    let info = check_available_with_base_url(
+        &SOURCE,
+        RUNNING_VERSION,
+        &RecordingReporter::default(),
+        &server.uri(),
+    )
+    .await
+    .expect("mocked release must parse");
 
     assert!(info.update_available);
     assert_eq!(
@@ -413,9 +437,9 @@ fn staging_extracts_the_core_binary_out_of_the_archive() {
         "openhuman-core",
         b"#!/bin/sh\nexit 0\n",
     );
-    let dest = dir.path().join(staged_binary_name());
+    let dest = dir.path().join(staged_binary_name(&SOURCE));
 
-    extract_core_binary(&archive, &dest, false).expect("the inner binary must extract");
+    extract_core_binary(&SOURCE, &archive, &dest, false).expect("the inner binary must extract");
 
     assert_eq!(
         std::fs::read(&dest).expect("read staged binary"),
@@ -445,13 +469,13 @@ fn staging_refuses_an_archive_without_the_core_binary() {
         "something-else",
         b"not the core\n",
     );
-    let dest = dir.path().join(staged_binary_name());
+    let dest = dir.path().join(staged_binary_name(&SOURCE));
 
-    let err =
-        extract_core_binary(&archive, &dest, false).expect_err("a wrong-named entry must fail");
+    let err = extract_core_binary(&SOURCE, &archive, &dest, false)
+        .expect_err("a wrong-named entry must fail");
 
     assert!(
-        err.contains(staged_binary_name()),
+        err.contains(&staged_binary_name(&SOURCE)),
         "the error must name the entry it looked for, got: {err}"
     );
     assert!(
@@ -467,7 +491,7 @@ fn staging_extracts_zip_when_archive_format_is_explicit() {
     let file = std::fs::File::create(&archive).expect("create zip");
     let mut zip = zip::ZipWriter::new(file);
     zip.start_file(
-        staged_binary_name(),
+        staged_binary_name(&SOURCE),
         zip::write::SimpleFileOptions::default(),
     )
     .expect("start binary entry");
@@ -478,9 +502,9 @@ fn staging_extracts_zip_when_archive_format_is_explicit() {
     // on the temporary archive path's extension.
     let downloaded = dir.path().join(".release.zip.tmp");
     std::fs::copy(&archive, &downloaded).expect("copy to download temp path");
-    let dest = dir.path().join(staged_binary_staging_name());
+    let dest = dir.path().join(staged_binary_staging_name(&SOURCE));
 
-    extract_core_binary(&downloaded, &dest, true).expect("zip binary must extract");
+    extract_core_binary(&SOURCE, &downloaded, &dest, true).expect("zip binary must extract");
 
     assert_eq!(
         std::fs::read(&dest).expect("read staged binary"),
@@ -491,10 +515,10 @@ fn staging_extracts_zip_when_archive_format_is_explicit() {
 #[test]
 fn raw_core_binary_stages_separately_from_running_executable() {
     let dir = tempfile::TempDir::new().expect("temp dir");
-    let staged = staged_asset_path(dir.path(), staged_binary_name(), false);
+    let staged = staged_asset_path(&SOURCE, dir.path(), &staged_binary_name(&SOURCE), false);
 
-    assert_eq!(staged, dir.path().join(staged_binary_staging_name()));
-    assert_ne!(staged, dir.path().join(staged_binary_name()));
+    assert_eq!(staged, dir.path().join(staged_binary_staging_name(&SOURCE)));
+    assert_ne!(staged, dir.path().join(staged_binary_name(&SOURCE)));
 }
 
 /// Linux releases publish a core archive, so a newer release without one for
@@ -516,7 +540,13 @@ fn check_available_fails_on_linux_when_the_core_asset_is_missing() {
         .expect("runtime");
     let result = runtime.block_on(async {
         let server = releases_mock(200, body).await;
-        check_available_with_base_url(&server.uri()).await
+        check_available_with_base_url(
+            &SOURCE,
+            RUNNING_VERSION,
+            &RecordingReporter::default(),
+            &server.uri(),
+        )
+        .await
     });
     let error = result.expect_err("a missing Linux core asset must fail the check");
     assert!(error.contains("no core asset was found"), "{error}");

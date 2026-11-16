@@ -55,6 +55,10 @@ crate-type = ["rlib"]
 # reached only through the loaded module's bus endpoints.
 tinyflows = { path = "../../vendor/tinyflows/crates/tinyflows" }
 tinyflows-bus = { path = "../../vendor/tinyflows/crates/tinyflows-bus" }
+# OS service managers and GitHub-release update staging. A leaf below the core
+# (`scripts/ci/check-crate-chain.mjs`) that knows nothing of `Config`, the event
+# bus or RPC envelopes; `platform::service` / `platform::update` bind it.
+openhuman-platform = { path = "../openhuman-platform" }
 # TinyAgents — Rust LLM orchestration framework (LangGraph/LangChain-style):
 # durable state graphs, agent-loop harness, model/tool registries, REPL +
 # `.rag` workflow language. openhuman's agent engine + orchestration run on this

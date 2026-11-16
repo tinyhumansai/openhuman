@@ -14,7 +14,7 @@ CORE_PRODUCT_FEATURES="$(bash scripts/ci/product-features.sh --core)"
 # below belongs to exactly one section, and each section runs whole:
 #   core     the core crate's own unit tests (lib + bins), product features
 #   product  embed, tinyhumans and the cli integration targets, product features
-#   facades  rpc, and embed and tinyhumans on default features
+#   facades  rpc, platform, and embed and tinyhumans on default features
 #   tui      the terminal frontend
 # Each is its own cold build of the core: cargo resolves the core's features
 # differently for each selected package set (core alone, embed/tinyhumans, the
@@ -424,6 +424,9 @@ if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
 fi
 suite "openhuman-rpc" llvm_cov_package --no-report --no-fail-fast -p openhuman-rpc --all-targets \
   --features storage-sqlite,secret-file
+# The OS service managers and update staging below the core: a leaf with no
+# feature vocabulary, so one small build of its own.
+suite "openhuman-platform" llvm_cov_package --no-report --no-fail-fast -p openhuman-platform --all-targets
 if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
   suite "openhuman-tinyhumans" llvm_cov_product_facade --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets
 fi

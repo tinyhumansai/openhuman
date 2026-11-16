@@ -15,15 +15,8 @@ fn scheduler_defaults_are_pinned_to_safe_auto_limits() {
 }
 
 #[test]
-fn scheduler_mode_serde_and_policy_strings_are_stable() {
+fn scheduler_mode_serde_strings_are_stable() {
     let config: SchedulerGateConfig = toml::from_str("mode = \"always_on\"").unwrap();
     assert_eq!(config.mode, SchedulerGateMode::AlwaysOn);
     assert_eq!(config.mode.as_str(), "always_on");
-    let paused = Policy::Paused {
-        reason: PauseReason::SignedOut,
-    };
-    assert_eq!(paused.as_str(), "paused");
-    assert_eq!(paused.pause_reason(), Some(PauseReason::SignedOut));
-    assert_eq!(PauseReason::SignedOut.as_str(), "signed_out");
-    assert_eq!(Policy::Normal.pause_reason(), None);
 }

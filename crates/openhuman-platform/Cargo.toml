@@ -1,0 +1,41 @@
+[package]
+name = "openhuman-platform"
+description = "OS service managers (launchd, systemd, schtasks, E2E mock) and GitHub-release update staging for the OpenHuman core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+publish = false
+
+# A leaf below the core (`scripts/ci/check-crate-chain.mjs`): it names no
+# OpenHuman crate and knows nothing of the core's `Config`, event bus or RPC
+# envelopes. The core describes what to install with a `ServiceSpec` and where
+# releases live with an `UpdateSource`, and reports errors through a callback.
+[dependencies]
+anyhow = "1.0"
+flate2 = "1"
+hex = "0.4"
+log = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+tokio = { version = "1", features = ["sync"] }
+tracing = { version = "0.1", default-features = false }
+url = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+# Same TLS split as the core: Windows also carries reqwest's native-tls
+# backend so release downloads honour the OS certificate store.
+reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }

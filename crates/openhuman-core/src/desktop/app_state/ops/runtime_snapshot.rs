@@ -5,10 +5,9 @@
 use super::types::RuntimeSnapshot;
 use super::LOG_PREFIX;
 use crate::config::Config;
-use crate::platform::service::ServiceState;
-use crate::platform::service::ServiceStatus;
 use log::{debug, warn};
 use once_cell::sync::Lazy;
+use openhuman_platform::service::{ServiceState, ServiceStatus};
 use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

@@ -63,10 +63,10 @@ the frontend which of its connection channels is broken.
 | [`cost/`](cost/README.md) | Token usage and USD cost: an append-only `costs.jsonl` ledger, day and month aggregates, the 7-day dashboard, the static pricing and context-window catalog (`catalog.rs`), and managed vs BYOK route classification (`route.rs`). |
 | [`health/`](health/README.md) | The in-process component health registry, the `HealthVerdict` behind `GET /health`, and static system info. |
 | [`proc_metrics/`](proc_metrics/README.md) | Cross-platform RSS and peak-RSS sampling for this process and its tree. Used by the `rss-bench` and `library-profile` bins in openhuman-benchmarks (`profile/`). No RPC. |
-| [`service/`](service/README.md) | Installs the core as a per-user OS service (LaunchAgent, systemd user unit, Windows scheduled task), self-restart and graceful shutdown over the bus, daemon-host tray preferences, and a file-backed mock for E2E (`OPENHUMAN_SERVICE_MOCK`). |
+| [`service/`](service/README.md) | Installs the core as a per-user OS service (LaunchAgent, systemd user unit, Windows scheduled task, through the managers in [`openhuman-platform`](../../../openhuman-platform/README.md)), self-restart and graceful shutdown over the bus, daemon-host tray preferences, and a file-backed mock for E2E (`OPENHUMAN_SERVICE_MOCK`). |
 | [`socket/`](socket/README.md) | The persistent Socket.IO client to the backend: hand-rolled Engine.IO and Socket.IO handshakes over a WebSocket, reconnect with backoff, a token provider re-read on every reconnect, redirect following, and inbound event dispatch. |
 | [`startup/`](startup/README.md) | One-shot workspace migrations run during boot (session layout, welcome-agent artifacts). Errors are logged and never abort startup. |
-| [`update/`](update/README.md) | Self-update from GitHub Releases: check, download and atomically stage the platform binary, then restart (`SelfReplace`) or leave it for a supervisor. Plus the periodic background checker. |
+| [`update/`](update/README.md) | Self-update from GitHub Releases: check, download and atomically stage the platform binary (staging in [`openhuman-platform`](../../../openhuman-platform/README.md)), then restart (`SelfReplace`) or leave it for a supervisor. Plus the periodic background checker. |
 
 ## Key types and entry points
 

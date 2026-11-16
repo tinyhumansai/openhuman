@@ -4623,6 +4623,7 @@ dependencies = [
  "log",
  "nu-ansi-term",
  "once_cell",
+ "openhuman-platform",
  "parking_lot",
  "rand 0.10.3",
  "regex",
@@ -4786,6 +4787,25 @@ dependencies = [
  "tokio-stream",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "openhuman-platform"
+version = "0.64.20"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "hex",
+ "log",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tokio",
+ "tracing",
+ "url",
+ "zip 2.6.1",
 ]
 
 [[package]]

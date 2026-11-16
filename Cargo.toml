@@ -1,5 +1,6 @@
 # Virtual workspace root. Members: `crates/openhuman-core` (package `openhuman`,
-# the core library), `crates/openhuman-embed` (library facade),
+# the core library), `crates/openhuman-platform` (OS service managers and
+# update staging, a leaf below the core), `crates/openhuman-embed` (library facade),
 # `crates/openhuman-rpc` (JSON-RPC envelopes, client and server, and the on-disk
 # session store hosts install, above the core), `crates/openhuman-tinyhumans`
 # (SDK-backed backend transport + login/session ownership for hosts),
@@ -17,6 +18,7 @@ members = [
     "crates/openhuman-core",
     "crates/openhuman-embed",
     "crates/openhuman-modules-linked",
+    "crates/openhuman-platform",
     "crates/openhuman-rpc",
     "crates/openhuman-tinyhumans",
     "crates/openhuman-tui",
@@ -36,7 +38,7 @@ license = "GPL-3.0-only"
 repository = "https://github.com/tinyhumansai/openhuman"
 
 [workspace.dependencies]
-# The library chain: core -> embed -> tinyhumans -> rpc -> app/cli/tui. Hosts
+# The library chain: platform -> core -> embed -> tinyhumans -> rpc -> app/cli/tui. Hosts
 # name `openhuman-rpc` only (`scripts/ci/check-crate-chain.mjs`). There is no
 # `openhuman-core` entry on purpose: one spelled here carried the core's whole
 # `default` feature set into whichever member named it.

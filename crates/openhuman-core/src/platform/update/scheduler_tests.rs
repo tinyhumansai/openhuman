@@ -27,10 +27,11 @@ async fn run_returns_immediately_when_disabled() {
 }
 
 // NOTE: We deliberately do NOT unit-test `tick()` directly. It calls
-// `update_core::check_available()` which performs a real HTTPS request
+// `check_available()` which performs a real HTTPS request
 // to api.github.com — running that from the unit suite makes the test
 // flaky (offline CI runners, rate limits, DNS hiccups). Coverage of
-// the HTTP + JSON-parse path now lives in `core_tests.rs`, which drives
+// the HTTP + JSON-parse path now lives in `openhuman-platform`'s
+// `update/release_tests.rs`, which drives
 // `check_available_with_base_url(base_url)` against a wiremock server
 // (#6089). The surrounding scheduler properties are locked down here by:
 //   - `min_interval_is_at_least_ten_minutes` (rate-limit floor)

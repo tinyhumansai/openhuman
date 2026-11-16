@@ -174,7 +174,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
         {
           name: "rust-fmt",
           when: rust,
-          run: "cargo fmt --manifest-path Cargo.toml --package openhuman --package openhuman-cli --package openhuman-embed --package openhuman-modules-linked --package openhuman-rpc --package openhuman-tinyhumans --package openhuman-tui -- --check",
+          run: "cargo fmt --manifest-path Cargo.toml --package openhuman --package openhuman-cli --package openhuman-embed --package openhuman-modules-linked --package openhuman-platform --package openhuman-rpc --package openhuman-tinyhumans --package openhuman-tui -- --check",
         },
         {
           name: "rust-layout",
@@ -551,6 +551,11 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           name: "tinyhumans-clippy",
           when: core,
           run: "cargo clippy -p openhuman-tinyhumans --all-targets -- -D warnings",
+        },
+        {
+          name: "platform-clippy",
+          when: core,
+          run: "cargo clippy -p openhuman-platform --all-targets -- -D warnings",
         },
       ],
     },

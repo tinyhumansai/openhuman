@@ -92,7 +92,7 @@ function recommendations(changedFiles, lightweight) {
     lines.push('pnpm --dir app exec vitest run <changed-test-files> --config test/vitest.config.ts');
   }
   if (hasPattern(changedFiles, ROOT_RUST_PATTERNS)) {
-    lines.push('cargo fmt --manifest-path Cargo.toml --package openhuman --package openhuman-cli --package openhuman-embed --package openhuman-modules-linked --package openhuman-rpc --package openhuman-tinyhumans --package openhuman-tui -- --check');
+    lines.push('cargo fmt --manifest-path Cargo.toml --package openhuman --package openhuman-cli --package openhuman-embed --package openhuman-modules-linked --package openhuman-platform --package openhuman-rpc --package openhuman-tinyhumans --package openhuman-tui -- --check');
     if (!lightweight) lines.push('pnpm debug rust <test-filter>');
   }
   if (hasPattern(changedFiles, TAURI_PATTERNS)) {

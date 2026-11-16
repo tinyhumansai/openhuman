@@ -22,6 +22,7 @@ Architecture: [overview](docs/gitbooks/en/developing/architecture.md),
 | `crates/openhuman-embed/` | Library facade over the core (depends on core only): `Runtime`/`RuntimeBuilder` with host presets, `embed::process` (tokio runtime, logging, dotenv, master key, Sentry options), and the curated facades hosts use (`config`, `artifacts`, `chat_surface`, `modules`, `identity`). Its doc-hidden `__host` list is for tinyhumans and rpc only |
 | `crates/openhuman-rpc/` | Top of the library chain (depends on tinyhumans only). JSON-RPC 2.0 over the core: envelopes, HTTP client, and the server (router, Socket.IO, listener, `run_server*`); `host::{cli, desktop, tui}`, the shared host boot; re-exports `embed` and `tinyhumans` as the hosts' curated facade; plus `session_store` (`session-store` feature), the on-disk session store (`session_raw/`, `session_db/`, `tinyagents_store/`, turn states) behind TinyAgents' session store port, which the app, CLI and TUI install. Core and embed reach session state through the port (`agent::session_store`); a few legacy paths still fall back to workspace files when no store is installed. With a storage URL (`OPENHUMAN_STORAGE_URL` / `[storage] url`), `install_for_host` installs TinyAgents' `DriverSessionStores` over that backend instead (core `storage` domain) |
 | `crates/openhuman-tinyhumans/` | The TinyHumans layer above embed (depends on embed only), and the only owner of anything hosted: the backend transport port and its SDK implementation, the authenticated client, routes and RPC proxies, and the hosted providers (integrations, voice, inference, channels, memory), all plugged into the core through its generic registries; a `RuntimeBuilder` that boots connected; and the host-side login/session owner (login-token exchange, `/auth/me`, current-user cache, credential handoff) used by app and TUI |
+| `crates/openhuman-platform/` | Leaf below the core (names no OpenHuman crate): OS service managers (launchd, systemd, schtasks, E2E mock) behind `ServiceSpec`, and GitHub-release update staging behind `UpdateSource` + `UpdateReporter`. Core builds the spec and source from `Config` (`platform/service/spec.rs`, `platform/update/source.rs`) |
 | `crates/openhuman-tui/` | Standalone terminal frontend; depends on `openhuman-rpc` only and boots with `openhuman_rpc::host::tui` |
 | `tests/` | Rust integration and JSON-RPC tests |
 | `docs/gitbooks/` | Public product and contributor documentation, synced with GitBook (`en/` is canonical, `zh/` the translation) |
@@ -37,6 +38,9 @@ the layer directly below it:
 ```text
 openhuman-core -> openhuman-embed -> openhuman-tinyhumans -> openhuman-rpc -> { app, cli, tui }
 ```
+
+Leaf crates sit below the core and name no OpenHuman crate; today that is
+`openhuman-platform`, a normal dependency of `openhuman-core` only.
 
 Hosts (app, CLI, TUI) depend on `openhuman-rpc` alone and reach the core
 through its curated facade (`openhuman_rpc::host`, `openhuman_rpc::embed`,

@@ -1,31 +1,25 @@
 //! systemd user unit install/start/stop/status for Linux.
 
-use crate::config::Config;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use super::common::{self, run_capture, run_checked};
-use super::{ServiceState, ServiceStatus};
+use super::common::{run_capture, run_checked, systemd_command_line};
+use super::{ServiceSpec, ServiceState, ServiceStatus};
 
-pub(crate) fn install(config: &Config) -> Result<()> {
-    let file = linux_service_file(config)?;
+pub(crate) fn install(spec: &ServiceSpec) -> Result<()> {
+    let file = linux_service_file(spec);
     if let Some(parent) = file.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    let exe = common::resolve_daemon_executable()?;
-    let logs_dir = config
-        .config_path
-        .parent()
-        .map_or_else(|| PathBuf::from("."), PathBuf::from)
-        .join("logs");
-    fs::create_dir_all(&logs_dir)?;
+    let logs_dir = &spec.logs_dir;
+    fs::create_dir_all(logs_dir)?;
 
     let stdout = logs_dir.join("daemon.stdout.log");
     let stderr = logs_dir.join("daemon.stderr.log");
-    let exec_start = common::daemon_command_line(&exe);
+    let exec_start = systemd_command_line(&spec.exe, &spec.args)?;
 
     let unit = format!(
         "[Unit]\nDescription=OpenHuman Daemon\n\n[Service]\nExecStart={}\nRestart=always\nRestartSec=3\n\nStandardOutput=append:{}\nStandardError=append:{}\n\n[Install]\nWantedBy=default.target\n",
@@ -35,15 +29,15 @@ pub(crate) fn install(config: &Config) -> Result<()> {
     );
 
     fs::write(&file, unit)?;
-    let _ = run_checked(Command::new("systemctl").args(["--user", "enable", "openhuman.service"]));
+    let _ = run_checked(Command::new("systemctl").args(["--user", "enable", spec.label.as_str()]));
     Ok(())
 }
 
-pub(crate) fn start(config: &Config) -> Result<ServiceStatus> {
-    if !is_service_enabled_linux()? {
+pub(crate) fn start(spec: &ServiceSpec) -> Result<ServiceStatus> {
+    if !is_service_enabled_linux(spec)? {
         log::info!("[service] Enabling systemd service");
         let _ =
-            run_checked(Command::new("systemctl").args(["--user", "enable", "openhuman.service"]));
+            run_checked(Command::new("systemctl").args(["--user", "enable", spec.label.as_str()]));
     } else {
         log::info!("[service] Systemd service already enabled");
     }
@@ -52,26 +46,26 @@ pub(crate) fn start(config: &Config) -> Result<ServiceStatus> {
 
     log::info!("[service] Starting systemd service");
     let start_result =
-        run_checked(Command::new("systemctl").args(["--user", "start", "openhuman.service"]));
+        run_checked(Command::new("systemctl").args(["--user", "start", spec.label.as_str()]));
     if let Err(e) = start_result {
-        let status_check = super::status(config)?;
+        let status_check = super::status(spec)?;
         if matches!(status_check.state, ServiceState::Running) {
             log::info!("[service] Service was already running - operation successful");
         } else {
             return Err(e);
         }
     }
-    super::status(config)
+    super::status(spec)
 }
 
-pub(crate) fn stop(_config: &Config) -> Result<()> {
-    let _ = run_checked(Command::new("systemctl").args(["--user", "stop", "openhuman.service"]));
+pub(crate) fn stop(spec: &ServiceSpec) -> Result<()> {
+    let _ = run_checked(Command::new("systemctl").args(["--user", "stop", spec.label.as_str()]));
     Ok(())
 }
 
-pub(crate) fn status(config: &Config) -> Result<ServiceStatus> {
+pub(crate) fn status(spec: &ServiceSpec) -> Result<ServiceStatus> {
     let out =
-        run_capture(Command::new("systemctl").args(["--user", "is-active", "openhuman.service"]))
+        run_capture(Command::new("systemctl").args(["--user", "is-active", spec.label.as_str()]))
             .unwrap_or_else(|_| "unknown".into());
     let state = match out.trim() {
         "active" => ServiceState::Running,
@@ -80,14 +74,14 @@ pub(crate) fn status(config: &Config) -> Result<ServiceStatus> {
     };
     Ok(ServiceStatus {
         state,
-        unit_path: Some(linux_service_file(config)?),
-        label: "openhuman.service".to_string(),
+        unit_path: Some(linux_service_file(spec)),
+        label: spec.label.clone(),
         details: None,
     })
 }
 
-pub(crate) fn uninstall(config: &Config) -> Result<ServiceStatus> {
-    let file = linux_service_file(config)?;
+pub(crate) fn uninstall(spec: &ServiceSpec) -> Result<ServiceStatus> {
+    let file = linux_service_file(spec);
     if file.exists() {
         fs::remove_file(&file).with_context(|| format!("Failed to remove {}", file.display()))?;
     }
@@ -95,27 +89,29 @@ pub(crate) fn uninstall(config: &Config) -> Result<ServiceStatus> {
     Ok(ServiceStatus {
         state: ServiceState::NotInstalled,
         unit_path: Some(file),
-        label: "openhuman.service".to_string(),
+        label: spec.label.clone(),
         details: None,
     })
 }
 
-pub(crate) fn linux_service_file(config: &Config) -> Result<PathBuf> {
-    let config_dir = config
-        .config_path
-        .parent()
-        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+/// `<work_dir>/.config/systemd/user/<label>`.
+pub(crate) fn linux_service_file(spec: &ServiceSpec) -> PathBuf {
+    user_unit_path(&spec.work_dir, &spec.label)
+}
 
-    Ok(config_dir
+/// Where the user unit named `label` lives for a service running in
+/// `work_dir`. Shared with the mock so both report the same `unit_path`.
+pub(crate) fn user_unit_path(work_dir: &std::path::Path, label: &str) -> PathBuf {
+    work_dir
         .join(".config")
         .join("systemd")
         .join("user")
-        .join("openhuman.service"))
+        .join(label)
 }
 
-fn is_service_enabled_linux() -> Result<bool> {
+fn is_service_enabled_linux(spec: &ServiceSpec) -> Result<bool> {
     let result = Command::new("systemctl")
-        .args(["--user", "is-enabled", "openhuman.service"])
+        .args(["--user", "is-enabled", spec.label.as_str()])
         .output();
 
     match result {

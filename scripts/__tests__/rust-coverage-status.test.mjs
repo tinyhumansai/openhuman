@@ -294,10 +294,10 @@ test("private coverage executes every package configuration once and reports aft
   const { status, calls } = runMockedCoverage(7);
   assert.equal(status, 1);
   const selections = calls.filter((line) => line.includes("llvm-cov nextest"));
-  // The product suites (core, embed, tinyhumans, cli), rpc, the two default
-  // feature suites and the tui.
-  assert.equal(selections.length, 5);
-  assert.equal(new Set(selections).size, 5);
+  // The product suites (core, embed, tinyhumans, cli), rpc, platform, the two
+  // default feature suites and the tui.
+  assert.equal(selections.length, 6);
+  assert.equal(new Set(selections).size, 6);
   assert.ok(selections.every((line) => line.includes("--no-tests=fail")));
   // One build and one run of the product graph, over the union of the old
   // per-package filters, listed first with the same arguments.
@@ -332,7 +332,7 @@ test("private coverage cancels remaining suites but still preserves a report", (
   );
 });
 
-test("private coverage passes when all five selected configurations report tests", () => {
+test("private coverage passes when all six selected configurations report tests", () => {
   const { status } = runMockedCoverage(0);
   assert.equal(status, 0);
 });

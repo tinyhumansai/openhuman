@@ -1,6 +1,5 @@
 //! Scheduled task install/start/stop/status for Windows.
 
-use crate::config::Config;
 use anyhow::Result;
 use std::fs;
 // File is `#[cfg(windows)]`-gated at the module level — no per-item guard needed.
@@ -8,28 +7,23 @@ use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
-use super::common::{self, run_capture, run_checked};
-use super::{ServiceState, ServiceStatus};
+use super::common::{cmd_command_line, run_capture, run_checked};
+use super::{ServiceSpec, ServiceState, ServiceStatus};
 
-const WINDOWS_TASK_NAME: &str = "OpenHuman Core";
-
-fn windows_task_name() -> &'static str {
-    WINDOWS_TASK_NAME
+/// The `.cmd` wrapper the scheduled task runs, which redirects the daemon's
+/// output into the log files.
+fn wrapper_path(spec: &ServiceSpec) -> PathBuf {
+    spec.logs_dir.join("openhuman-daemon.cmd")
 }
 
-pub(crate) fn install(config: &Config) -> Result<()> {
-    let exe = common::resolve_daemon_executable()?;
-    let logs_dir = config
-        .config_path
-        .parent()
-        .map_or_else(|| PathBuf::from("."), PathBuf::from)
-        .join("logs");
-    fs::create_dir_all(&logs_dir)?;
+pub(crate) fn install(spec: &ServiceSpec) -> Result<()> {
+    let logs_dir = &spec.logs_dir;
+    fs::create_dir_all(logs_dir)?;
 
-    let wrapper = logs_dir.join("openhuman-daemon.cmd");
+    let wrapper = wrapper_path(spec);
     let stdout = logs_dir.join("daemon.stdout.log");
     let stderr = logs_dir.join("daemon.stderr.log");
-    let daemon_cmd = common::daemon_command_line(&exe);
+    let daemon_cmd = cmd_command_line(&spec.exe, &spec.args)?;
 
     let cmd = format!(
         "@echo off\n{} >> \"{}\" 2>> \"{}\"\n",
@@ -42,7 +36,7 @@ pub(crate) fn install(config: &Config) -> Result<()> {
     run_checked(Command::new("schtasks").args([
         "/Create",
         "/TN",
-        windows_task_name(),
+        spec.label.as_str(),
         "/TR",
         &wrapper.display().to_string(),
         "/SC",
@@ -53,8 +47,8 @@ pub(crate) fn install(config: &Config) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn start(config: &Config) -> Result<ServiceStatus> {
-    let task_name = windows_task_name();
+pub(crate) fn start(spec: &ServiceSpec) -> Result<ServiceStatus> {
+    let task_name = spec.label.as_str();
 
     if !is_task_exists_windows(task_name)? {
         log::warn!("[service] Windows scheduled task does not exist, please install first");
@@ -69,24 +63,24 @@ pub(crate) fn start(config: &Config) -> Result<ServiceStatus> {
     log::info!("[service] Starting Windows scheduled task");
     let run_result = run_checked(Command::new("schtasks").args(["/Run", "/TN", task_name]));
     if let Err(e) = run_result {
-        let status_check = super::status(config)?;
+        let status_check = super::status(spec)?;
         if matches!(status_check.state, ServiceState::Running) {
             log::info!("[service] Task was already running - operation successful");
             return Ok(status_check);
         }
         return Err(e);
     }
-    super::status(config)
+    super::status(spec)
 }
 
-pub(crate) fn stop(_config: &Config) -> Result<()> {
-    let task_name = windows_task_name();
+pub(crate) fn stop(spec: &ServiceSpec) -> Result<()> {
+    let task_name = spec.label.as_str();
     let _ = run_checked(Command::new("schtasks").args(["/End", "/TN", task_name]));
     Ok(())
 }
 
-pub(crate) fn status(_config: &Config) -> Result<ServiceStatus> {
-    let task_name = windows_task_name();
+pub(crate) fn status(spec: &ServiceSpec) -> Result<ServiceStatus> {
+    let task_name = spec.label.as_str();
     let out =
         run_capture(Command::new("schtasks").args(["/Query", "/TN", task_name, "/FO", "LIST"]));
     match out {
@@ -112,15 +106,10 @@ pub(crate) fn status(_config: &Config) -> Result<ServiceStatus> {
     }
 }
 
-pub(crate) fn uninstall(config: &Config) -> Result<ServiceStatus> {
-    let task_name = windows_task_name();
+pub(crate) fn uninstall(spec: &ServiceSpec) -> Result<ServiceStatus> {
+    let task_name = spec.label.as_str();
     let _ = run_checked(Command::new("schtasks").args(["/Delete", "/TN", task_name, "/F"]));
-    let wrapper = config
-        .config_path
-        .parent()
-        .map_or_else(|| PathBuf::from("."), PathBuf::from)
-        .join("logs")
-        .join("openhuman-daemon.cmd");
+    let wrapper = wrapper_path(spec);
     if wrapper.exists() {
         fs::remove_file(&wrapper).ok();
     }

@@ -793,4 +793,12 @@
 # 325/305/3 2026-10-30 The module roll-up's upstream ownership split removes
 #                      dependencies from the always-on flows graph. Measured by
 #                      the hosted kernel-floor and dep-sim calibration checks.
-flows:325:305:3
+# 326/306/3 2026-11-14 The OS service managers and GitHub-release update
+#                      staging move out of the core into the new leaf crate
+#                      `openhuman-platform` (senamakel/openhuman#349). It is one
+#                      first-party package/name; every dependency it names was
+#                      already in the profile at the same version, and no native
+#                      build is added. Measured with `cargo tree -p openhuman -e
+#                      normal --no-default-features --features flows --target
+#                      x86_64-unknown-linux-gnu`: 325/305 before, 326/306 after.
+flows:326:306:3

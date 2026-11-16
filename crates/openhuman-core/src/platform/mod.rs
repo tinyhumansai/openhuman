@@ -10,7 +10,6 @@ pub mod cost;
 pub mod health;
 pub mod llm_gate;
 pub mod proc_metrics;
-pub(crate) mod resource_admission;
 pub mod service;
 pub mod socket;
 pub mod update;

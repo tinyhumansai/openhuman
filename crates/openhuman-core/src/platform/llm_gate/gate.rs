@@ -17,9 +17,8 @@ use super::signals::SignalEnv;
 use super::throttle::{GateCore, SharedCore, LLM_SLOTS};
 use crate::config::SchedulerGateConfig;
 
-pub use super::decide::Signals;
+pub use super::decide::{PauseReason, Policy, Signals};
 pub use super::throttle::LlmPermit;
-pub use crate::config::schema::{PauseReason, Policy};
 
 /// The environment variables that override what the hardware reports. The names
 /// are user-facing configuration, so they stay the host's; the sampler only

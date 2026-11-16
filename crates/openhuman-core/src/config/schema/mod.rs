@@ -159,7 +159,7 @@ pub use runtime::{
 pub use runtime_agent37::{Agent37RuntimeConfig, DEFAULT_AGENT37_TEMPLATE};
 pub use runtime_local_jail::LocalJailConfig;
 pub use runtime_openshell::{OpenShellRuntimeConfig, DEFAULT_OPENSHELL_IMAGE};
-pub use scheduler_gate::{PauseReason, Policy, SchedulerGateConfig, SchedulerGateMode};
+pub use scheduler_gate::{SchedulerGateConfig, SchedulerGateMode};
 pub use security::{AuditConfig, SandboxBackend, SandboxConfig};
 pub use security_mode::{
     JudgeMode, SecurityJudgeDialect, SecurityJudgeRoute, SecurityMode, SecurityModeConfig,

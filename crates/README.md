@@ -1,10 +1,11 @@
 # crates
 
-The Rust side of OpenHuman is seven crates. One library holds the business
-logic; the others are layers above it that add a public facade, the JSON-RPC
-protocol, the hosted TinyHumans connection, and the three executables people
-run (the CLI binary, the terminal UI and the desktop app). Six of them are
-members of the root Cargo workspace; `openhuman-app` is excluded and builds
+The Rust side of OpenHuman is eight crates. One library holds the business
+logic; one leaf below it holds the OS-facing pieces that need no product
+configuration; the others are layers above it that add a public facade, the
+JSON-RPC protocol, the hosted TinyHumans connection, and the three executables
+people run (the CLI binary, the terminal UI and the desktop app). Seven of them
+are members of the root Cargo workspace; `openhuman-app` is excluded and builds
 with `--manifest-path crates/openhuman-app/Cargo.toml`.
 
 ## The crates
@@ -12,6 +13,7 @@ with `--manifest-path crates/openhuman-app/Cargo.toml`.
 | Crate | Package / lib | What it is |
 | --- | --- | --- |
 | [`openhuman-core`](openhuman-core/README.md) | package `openhuman`, lib `openhuman_core` | The core library: every business domain under `src/<domain>/`, the controller contract and registry, in-process dispatch, the event bus and the CLI dispatcher. No JSON-RPC server, no backend client, no binary targets. |
+| [`openhuman-platform`](openhuman-platform/README.md) | `openhuman-platform` | A leaf below the core: the per-user OS service managers (launchd, systemd user unit, scheduled task, the E2E mock) behind a `ServiceSpec`, and GitHub-release update staging behind an `UpdateSource` and an error-report callback. No `Config`, event bus or RPC envelope. |
 | [`openhuman-embed`](openhuman-embed/README.md) | `openhuman-embed` | The typed library facade for running the core in-process in another product (`Runtime` then `Agent`), plus the host presets, `embed::process` lifecycle helpers and the curated facades the hosts use. |
 | [`openhuman-rpc`](openhuman-rpc/README.md) | `openhuman-rpc` | JSON-RPC 2.0 over the core: envelopes, the HTTP client (`http-client`), the server with Socket.IO and the `run_server*` entry points (`server`), the on-disk session store (`session-store`), and `host::{cli, desktop, tui}`, the shared host boot. Re-exports `embed` and `tinyhumans`: the one dependency a host needs. |
 | [`openhuman-tinyhumans`](openhuman-tinyhumans/README.md) | `openhuman-tinyhumans` | The hosted-backend layer, and the only owner of anything hosted: the backend transport port and its SDK implementation, the authenticated client, routes and hosted providers (plugged into the core's generic registries), `install()`, a `RuntimeBuilder` that boots connected, the hosted RPC proxies, the login and session owner, and the Jev ranker. The only crate allowed to depend on `tinyhumans-sdk`. |
@@ -23,7 +25,7 @@ with `--manifest-path crates/openhuman-app/Cargo.toml`.
 
 Arrows point from a crate to what it depends on (normal `[dependencies]`,
 taken from each [`Cargo.toml`](../Cargo.toml)). It is a strict chain: each crate
-names only the layer directly below it.
+names only the layer directly below it, and the core names only its leaves.
 
 ```text
   openhuman-app      openhuman-tui      openhuman-cli      (hosts)
@@ -42,14 +44,17 @@ names only the layer directly below it.
                            |             process helpers, facades
                            v
                     openhuman-core       domains, controller registry,
-                                         generic registries
+                           |             generic registries
+                           v
+                  openhuman-platform     OS service managers, update staging
 ```
 
 The same edges as a list:
 
 | Crate | Depends on (first-party, normal) |
 | --- | --- |
-| `openhuman-core` | none |
+| `openhuman-platform` | none |
+| `openhuman-core` | `openhuman-platform` |
 | `openhuman-embed` | `openhuman-core` |
 | `openhuman-tinyhumans` | `openhuman-embed` (plus [`vendor/tinyhumans-sdk`](../vendor/tinyhumans-sdk/)) |
 | `openhuman-rpc` | `openhuman-tinyhumans` |
@@ -118,6 +123,7 @@ README for the explicit `[[test]]` entries they need.
 - [`crates/openhuman-cli/README.md`](openhuman-cli/README.md): the openhuman-cli crate README.
 - [`crates/openhuman-core/README.md`](openhuman-core/README.md): the openhuman-core crate README.
 - [`crates/openhuman-embed/README.md`](openhuman-embed/README.md): the openhuman-embed crate README.
+- [`crates/openhuman-platform/README.md`](openhuman-platform/README.md): the openhuman-platform crate README.
 - [`crates/openhuman-rpc/README.md`](openhuman-rpc/README.md): the openhuman-rpc crate README.
 - [`crates/openhuman-tinyhumans/README.md`](openhuman-tinyhumans/README.md): the openhuman-tinyhumans crate README.
 - [`crates/openhuman-tui/README.md`](openhuman-tui/README.md): the openhuman-tui crate README.

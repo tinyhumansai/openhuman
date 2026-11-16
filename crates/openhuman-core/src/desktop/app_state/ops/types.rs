@@ -1,7 +1,7 @@
 //! Serde types exchanged with the frontend: the persisted local app-state
 //! blob, the patch applied to it, and the polled `app_state_snapshot` shape.
 
-use crate::platform::service::ServiceStatus;
+use openhuman_platform::service::ServiceStatus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tinyinference_local::status::LocalAiStatus;

@@ -1,5 +1,6 @@
 use super::*;
-use crate::platform::update::{download_and_stage_with_version, platform_triple};
+use crate::update::test_support::{RecordingReporter, SOURCE};
+use crate::update::{download_and_stage, platform_triple};
 
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -8,7 +9,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 // #315: the staging path trusted whatever body the download URL returned. The
 // release publishes a `.sha256` beside each archive and the release metadata
 // declares the asset size; neither was checked, and the body was buffered
-// whole. These drive `download_and_stage_with_version` against a local mock.
+// whole. These drive `download_and_stage` against a local mock.
 // ---------------------------------------------------------------------------
 
 fn sha256(body: &[u8]) -> [u8; 32] {
@@ -61,12 +62,13 @@ async fn staging_refuses_a_tampered_archive_and_stages_nothing() {
     let server = release_mock(&asset, tampered.clone(), Some(sidecar)).await;
     let dir = tempfile::TempDir::new().expect("temp dir");
 
-    let result = download_and_stage_with_version(
+    let result = download_and_stage(
+        &SOURCE,
         &format!("{}/{asset}", server.uri()),
         &asset,
         Some(dir.path().to_path_buf()),
-        None,
         Some(tampered.len() as u64),
+        &RecordingReporter::default(),
     )
     .await;
 
@@ -87,12 +89,13 @@ async fn staging_refuses_a_body_larger_than_the_declared_size() {
     let server = release_mock(&asset, body, Some(sidecar)).await;
     let dir = tempfile::TempDir::new().expect("temp dir");
 
-    let result = download_and_stage_with_version(
+    let result = download_and_stage(
+        &SOURCE,
         &format!("{}/{asset}", server.uri()),
         &asset,
         Some(dir.path().to_path_buf()),
-        None,
         Some(16),
+        &RecordingReporter::default(),
     )
     .await;
 
@@ -122,12 +125,13 @@ async fn staging_refuses_an_update_without_a_checksum_sidecar() {
         .await;
     let dir = tempfile::TempDir::new().expect("temp dir");
 
-    let result = download_and_stage_with_version(
+    let result = download_and_stage(
+        &SOURCE,
         &format!("{}/{asset}", server.uri()),
         &asset,
         Some(dir.path().to_path_buf()),
-        None,
         Some(4),
+        &RecordingReporter::default(),
     )
     .await;
 
@@ -146,12 +150,13 @@ async fn staging_refuses_a_malformed_checksum_sidecar() {
     let server = release_mock(&asset, body, Some("not a digest".to_string())).await;
     let dir = tempfile::TempDir::new().expect("temp dir");
 
-    let result = download_and_stage_with_version(
+    let result = download_and_stage(
+        &SOURCE,
         &format!("{}/{asset}", server.uri()),
         &asset,
         Some(dir.path().to_path_buf()),
         None,
-        None,
+        &RecordingReporter::default(),
     )
     .await;
 
@@ -189,17 +194,17 @@ async fn staging_stages_a_verified_archive() {
     let server = release_mock(&asset, archive, Some(sidecar)).await;
     let dir = tempfile::TempDir::new().expect("temp dir");
 
-    let applied = download_and_stage_with_version(
+    let applied = download_and_stage(
+        &SOURCE,
         &format!("{}/{asset}", server.uri()),
         &asset,
         Some(dir.path().to_path_buf()),
-        Some("99.0.0"),
         Some(size),
+        &RecordingReporter::default(),
     )
     .await
     .expect("a verified archive must stage");
 
-    assert_eq!(applied.installed_version, "99.0.0");
     assert_eq!(
         std::fs::read(&applied.staged_path).expect("read staged binary"),
         b"#!/bin/sh\nexit 0\n",
@@ -211,7 +216,7 @@ async fn staging_stages_a_verified_archive() {
         .collect();
     assert_eq!(
         entries,
-        vec![std::path::PathBuf::from(&applied.staged_path)],
+        vec![applied.staged_path.clone()],
         "the downloaded archive must not be left beside the staged binary"
     );
 }

@@ -94,6 +94,8 @@ openhuman-rpc = { path = "crates/openhuman-rpc", default-features = false }
 
 test('each layer may name only the layer directly below it', () => {
   assert.deepEqual(CHAIN['openhuman-embed'], ['openhuman']);
+  assert.deepEqual(CHAIN.openhuman, ['openhuman-platform']);
+  assert.deepEqual(CHAIN['openhuman-platform'], [], 'a leaf names no OpenHuman crate');
   assert.deepEqual(CHAIN['openhuman-cli'], ['openhuman-rpc', 'openhuman-modules-linked']);
   assert.deepEqual(
     checkManifestEdges({
@@ -121,10 +123,25 @@ test('a host depending on the core is a violation, even through a workspace alia
   );
 });
 
-test('the core may not depend on any OpenHuman crate', () => {
+test('the core may depend on its leaves only', () => {
   const [violation] = checkManifestEdges({
     crate: 'openhuman',
     deps: [{ key: 'openhuman-rpc', package: 'openhuman-rpc', workspace: false }],
+  });
+  assert.match(violation.reason, /may only depend on openhuman-platform/);
+  assert.deepEqual(
+    checkManifestEdges({
+      crate: 'openhuman',
+      deps: [{ key: 'openhuman-platform', package: 'openhuman-platform', workspace: false }],
+    }),
+    []
+  );
+});
+
+test('a leaf below the core may not depend on any OpenHuman crate', () => {
+  const [violation] = checkManifestEdges({
+    crate: 'openhuman-platform',
+    deps: [{ key: 'openhuman-core', package: 'openhuman', workspace: false }],
   });
   assert.match(violation.reason, /may not depend on any OpenHuman crate/);
 });

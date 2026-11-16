@@ -8,7 +8,8 @@ use serde_json::Value;
 use crate::config::{UpdateConfig, UpdateRestartStrategy};
 use crate::core::Outcome;
 use crate::platform::update;
-use crate::platform::update::types::{UpdateApplyResult, UpdateInfo, UpdateRunResult, VersionInfo};
+use crate::platform::update::types::{UpdateApplyResult, UpdateRunResult, VersionInfo};
+use openhuman_platform::update::{platform_triple, UpdateInfo};
 
 async fn load_update_policy(ctx: &DispatchCtx) -> Result<UpdateConfig, String> {
     ctx.load_config()
@@ -70,7 +71,7 @@ fn missing_asset_result(
         restart_strategy,
         message: format!(
             "latest release has no asset for target {}",
-            update::platform_triple()
+            platform_triple()
         ),
     }
 }
@@ -162,8 +163,8 @@ async fn build_run_result_from_staged_update(
 pub async fn update_version() -> Outcome<Value> {
     let info = VersionInfo {
         version: update::current_version().to_string(),
-        target_triple: update::platform_triple().to_string(),
-        asset_prefix: format!("openhuman-core-{}", update::platform_triple()),
+        target_triple: platform_triple().to_string(),
+        asset_prefix: format!("openhuman-core-{}", platform_triple()),
     };
     log::debug!(
         "[update:rpc] update_version → {} ({})",
@@ -230,7 +231,7 @@ pub async fn update_run(ctx: &DispatchCtx) -> Outcome<Value> {
     else {
         log::warn!(
             "[update:rpc] update_run: latest release has no asset for this platform (target={})",
-            update::platform_triple()
+            platform_triple()
         );
         let result = missing_asset_result(info, restart_strategy);
         return Outcome::single_log(

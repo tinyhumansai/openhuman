@@ -169,55 +169,6 @@
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/platform/service/linux.rs",
-    "line": 37,
-    "text": "fs::write(&file, unit)?;",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
-    "path": "crates/openhuman-core/src/platform/service/macos.rs",
-    "line": 81,
-    "text": "fs::write(&file, plist)?;",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
-    "path": "crates/openhuman-core/src/platform/service/mock.rs",
-    "line": 163,
-    "text": "std::fs::write(path, bytes)",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
-    "path": "crates/openhuman-core/src/platform/service/windows.rs",
-    "line": 40,
-    "text": "fs::write(&wrapper, cmd)?;",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
-    "path": "crates/openhuman-core/src/platform/update/core.rs",
-    "line": 192,
-    "text": "let mut out = std::fs::File::create(&tmp_path)",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
-    "path": "crates/openhuman-core/src/platform/update/core.rs",
-    "line": 219,
-    "text": "let mut out = std::fs::File::create(&tmp_path)",
-    "occurrence": 2
-  },
-  {
-    "rule": "json-write",
-    "path": "crates/openhuman-core/src/platform/update/core.rs",
-    "line": 516,
-    "text": "let mut file = std::fs::File::create(&tmp_path)",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
     "path": "crates/openhuman-core/src/profiles/registry.rs",
     "line": 219,
     "text": "std::fs::write(&layout.meta_path, raw)",

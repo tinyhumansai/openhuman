@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::config::UpdateConfig;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-use crate::platform::update::core as update_core;
+use crate::platform::update::check_available;
 
 /// Minimum allowed interval to avoid hammering the GitHub API.
 const MIN_INTERVAL_MINUTES: u32 = 10;
@@ -48,7 +48,7 @@ pub async fn run(config: UpdateConfig) {
 async fn tick() {
     log::debug!("[update:scheduler] checking for updates");
 
-    match update_core::check_available().await {
+    match check_available().await {
         Ok(info) => {
             if info.update_available {
                 log::warn!(

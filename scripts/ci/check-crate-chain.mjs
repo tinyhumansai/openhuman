@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Enforces the crate chain: core -> embed -> tinyhumans -> rpc -> app/cli/tui.
+// Enforces the crate chain: core -> embed -> tinyhumans -> rpc -> app/cli/tui,
+// with leaf crates (`openhuman-platform`) below the core.
 //
 // Each OpenHuman crate may name exactly one OpenHuman crate among its NORMAL
 // dependencies — the layer directly below it — and the hosts (desktop app, CLI,
@@ -39,7 +40,10 @@ import { LINKED_MODULES_FEATURE as LINKED_FEATURE, parseFeatureTable, stripComme
  * the check until someone places it in the chain on purpose.
  */
 export const CHAIN = {
-  openhuman: [],
+  // Leaves below the core: OS-facing helpers that name no OpenHuman crate.
+  'openhuman-platform': [],
+  // The core may name its leaves only.
+  openhuman: ['openhuman-platform'],
   'openhuman-embed': ['openhuman'],
   'openhuman-tinyhumans': ['openhuman-embed'],
   'openhuman-rpc': ['openhuman-tinyhumans'],

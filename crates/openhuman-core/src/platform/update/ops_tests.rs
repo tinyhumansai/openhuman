@@ -13,7 +13,8 @@
 use super::*;
 use crate::config::UpdateRestartStrategy;
 use crate::core::runtime::DispatchCtx;
-use crate::platform::update::types::{UpdateApplyResult, UpdateInfo};
+use crate::platform::update::types::UpdateApplyResult;
+use openhuman_platform::update::UpdateInfo;
 
 // ── update_version ────────────────────────────────────────────────────────────
 
@@ -41,13 +42,13 @@ async fn update_version_returns_target_triple() {
         .expect("target_triple field");
     // Must be non-empty and match the compile-time constant.
     assert!(!triple.is_empty(), "target_triple must be non-empty");
-    assert_eq!(triple, crate::platform::update::platform_triple());
+    assert_eq!(triple, openhuman_platform::update::platform_triple());
 }
 
 #[tokio::test]
 async fn update_version_asset_prefix_contains_target_triple() {
     let outcome = update_version().await;
-    let triple = crate::platform::update::platform_triple();
+    let triple = openhuman_platform::update::platform_triple();
     let prefix = outcome
         .value
         .get("asset_prefix")

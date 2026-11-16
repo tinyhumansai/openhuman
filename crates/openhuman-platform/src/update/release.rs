@@ -1,10 +1,11 @@
-//! Core self-update logic: check GitHub Releases for a newer `openhuman-core` binary
-//! and download + stage it for the Tauri shell to swap in.
+//! Release discovery and staging: check GitHub Releases for a newer build of
+//! the binary an [`UpdateSource`] names, and download + stage it for the
+//! caller to swap in.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::platform::update::download;
+use super::download;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Locks staging mutations by destination so concurrent update requests cannot
@@ -26,21 +27,27 @@ fn staging_lock(dest: &std::path::Path) -> Arc<tokio::sync::Mutex<()>> {
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
-use crate::config::UpdateRestartStrategy;
-use crate::platform::update::types::{GitHubAsset, GitHubRelease, UpdateApplyResult, UpdateInfo};
-use crate::util::utf8_safe_prefix_at_byte_boundary;
-
-/// GitHub owner/repo for the core binary releases.
-const GITHUB_OWNER: &str = "tinyhumansai";
-const GITHUB_REPO: &str = "openhuman";
+use super::types::{
+    GitHubAsset, GitHubRelease, StagedUpdate, UpdateInfo, UpdateReporter, UpdateSource,
+};
 
 /// Origin of the release-metadata API. Not configurable at runtime — see
 /// `check_available_with_base_url`.
 const GITHUB_API_BASE: &str = "https://api.github.com";
 
-/// Current binary version (set at compile time from Cargo.toml).
-pub fn current_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
+/// `User-Agent` for release requests: `<asset_prefix>-updater`.
+fn user_agent(source: &UpdateSource) -> String {
+    format!("{}-updater", source.asset_prefix)
+}
+
+/// The longest prefix of `s` that is at most `max_bytes` long and ends on a
+/// UTF-8 character boundary.
+fn utf8_prefix(s: &str, max_bytes: usize) -> &str {
+    let mut end = max_bytes.min(s.len());
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 /// Build the target triple string used in release asset names.
@@ -81,27 +88,32 @@ fn is_archive_asset(name: &str) -> bool {
 /// Find the right asset for this platform from a list of release assets.
 ///
 /// The release workflow publishes the core as a versioned archive,
-/// `openhuman-core-<version>-<triple>.tar.gz` (`.zip` on Windows) — the version
-/// sits between the prefix and the triple. Matching on `openhuman-core-{triple}`
+/// `<prefix>-<version>-<triple>.tar.gz` (`.zip` on Windows) — the version
+/// sits between the prefix and the triple. Matching on `<prefix>-{triple}`
 /// alone therefore never hits, on any platform, which is what left every update
 /// check reporting `asset=(none)` (#6766). #908 fixed this once; the matcher was
 /// reintroduced in its pre-#908 form when this module moved into the core, so the
 /// shape below is restored from that fix.
 ///
 /// The raw-binary form is kept as a fallback for older releases.
-fn find_platform_asset(assets: &[GitHubAsset]) -> Option<&GitHubAsset> {
+fn find_platform_asset<'a>(
+    source: &UpdateSource,
+    assets: &'a [GitHubAsset],
+) -> Option<&'a GitHubAsset> {
     let triple = platform_triple();
     let archive_ext = if cfg!(windows) { ".zip" } else { ".tar.gz" };
+    let prefix = format!("{}-", source.asset_prefix);
 
     log::debug!(
-        "[update] looking for an 'openhuman-core-*{}{}' asset among {} assets",
+        "[update] looking for an '{}*{}{}' asset among {} assets",
+        prefix,
         triple,
         archive_ext,
         assets.len()
     );
 
     let archive_match = assets.iter().find(|a| {
-        a.name.starts_with("openhuman-core-")
+        a.name.starts_with(&prefix)
             && a.name.contains(triple)
             && a.name.ends_with(archive_ext)
             // The release publishes a checksum and a signature beside each
@@ -115,7 +127,7 @@ fn find_platform_asset(assets: &[GitHubAsset]) -> Option<&GitHubAsset> {
     }
 
     // Legacy raw-binary releases.
-    let legacy = format!("openhuman-core-{triple}");
+    let legacy = format!("{prefix}{triple}");
     let legacy_exe = format!("{legacy}.exe");
     assets
         .iter()
@@ -124,32 +136,33 @@ fn find_platform_asset(assets: &[GitHubAsset]) -> Option<&GitHubAsset> {
 
 /// Name the staged executable is written under.
 ///
-/// The archive carries the binary as plain `openhuman-core` (`.exe` on
-/// Windows), which is the name the shell restarts, so the extracted file keeps
-/// it rather than inheriting the archive's `.tar.gz` name.
-fn staged_binary_name() -> &'static str {
+/// The archive carries the binary as plain `<prefix>` (`.exe` on Windows),
+/// which is the name the shell restarts, so the extracted file keeps it rather
+/// than inheriting the archive's `.tar.gz` name.
+fn staged_binary_name(source: &UpdateSource) -> String {
     if cfg!(windows) {
-        "openhuman-core.exe"
+        format!("{}.exe", source.asset_prefix)
     } else {
-        "openhuman-core"
+        source.asset_prefix.to_string()
     }
 }
 
-fn staged_binary_staging_name() -> &'static str {
+fn staged_binary_staging_name(source: &UpdateSource) -> String {
     if cfg!(windows) {
-        "openhuman-core-staged.exe"
+        format!("{}-staged.exe", source.asset_prefix)
     } else {
-        "openhuman-core.staged"
+        format!("{}.staged", source.asset_prefix)
     }
 }
 
 fn staged_asset_path(
-    dir: &std::path::Path,
+    source: &UpdateSource,
+    dir: &Path,
     asset_name: &str,
     is_archive: bool,
-) -> std::path::PathBuf {
-    if is_archive || asset_name == staged_binary_name() {
-        dir.join(staged_binary_staging_name())
+) -> PathBuf {
+    if is_archive || asset_name == staged_binary_name(source) {
+        dir.join(staged_binary_staging_name(source))
     } else {
         dir.join(asset_name)
     }
@@ -157,7 +170,7 @@ fn staged_asset_path(
 
 /// Make `tmp` executable and move it onto `dest` atomically, cleaning up `tmp`
 /// if the rename fails.
-fn finalize_executable(tmp: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+fn finalize_executable(tmp: &Path, dest: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         std::fs::set_permissions(tmp, std::fs::Permissions::from_mode(0o755))
@@ -169,18 +182,20 @@ fn finalize_executable(tmp: &std::path::Path, dest: &std::path::Path) -> Result<
     })
 }
 
-/// Extract the inner `openhuman-core` executable from a downloaded archive to
+/// Extract the inner `<prefix>` executable from a downloaded archive to
 /// `dest`.
 ///
 /// Without this the archive itself was written to the staging path and marked
 /// executable, so a restart would try to exec a tarball. Restored from #908,
 /// which added it for exactly that reason.
 fn extract_core_binary(
-    archive_path: &std::path::Path,
-    dest: &std::path::Path,
+    source: &UpdateSource,
+    archive_path: &Path,
+    dest: &Path,
     is_zip: bool,
 ) -> Result<(), String> {
-    let inner_name = staged_binary_name();
+    let inner_name = staged_binary_name(source);
+    let inner_name = inner_name.as_str();
     let tmp_path = dest.with_extension("staging-tmp");
 
     let file = std::fs::File::open(archive_path).map_err(|e| format!("open archive: {e}"))?;
@@ -244,30 +259,41 @@ fn is_newer(latest: &str, current: &str) -> bool {
     l > c
 }
 
-/// Check GitHub Releases for a newer version of openhuman-core.
-pub async fn check_available() -> Result<UpdateInfo, String> {
-    check_available_with_base_url(GITHUB_API_BASE).await
+/// Check `source`'s GitHub Releases for a version newer than `current`.
+pub async fn check_available(
+    source: &UpdateSource,
+    current: &str,
+    reporter: &dyn UpdateReporter,
+) -> Result<UpdateInfo, String> {
+    check_available_with_base_url(source, current, reporter, GITHUB_API_BASE).await
 }
 
 /// `check_available`, with the API origin injected.
 ///
-/// Deliberately **private**, and deliberately not an env var. `ops::validate_download_url`
-/// pins asset downloads to the GitHub host allowlist on purpose; a runtime-overridable
-/// release endpoint would be a self-update redirection primitive on the highest-trust
-/// path in the product. The only caller besides `check_available` is the unit suite,
-/// which points it at a local mock — which is what the note in `scheduler_tests.rs`
-/// asked for.
-async fn check_available_with_base_url(base_url: &str) -> Result<UpdateInfo, String> {
-    let current = current_version();
+/// Deliberately **private**, and deliberately not an env var. The core's
+/// `update::ops::validate_download_url` pins asset downloads to the GitHub host
+/// allowlist on purpose; a runtime-overridable release endpoint would be a
+/// self-update redirection primitive on the highest-trust path in the product.
+/// The only caller besides `check_available` is the unit suite, which points it
+/// at a local mock.
+async fn check_available_with_base_url(
+    source: &UpdateSource,
+    current: &str,
+    reporter: &dyn UpdateReporter,
+    base_url: &str,
+) -> Result<UpdateInfo, String> {
     log::info!(
         "[update] checking for updates — current version: {}",
         current
     );
 
-    let url = format!("{base_url}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest");
+    let url = format!(
+        "{base_url}/repos/{}/{}/releases/latest",
+        source.owner, source.repo
+    );
 
     let client = reqwest::Client::builder()
-        .user_agent("openhuman-core-updater")
+        .user_agent(user_agent(source))
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
@@ -279,9 +305,7 @@ async fn check_available_with_base_url(base_url: &str) -> Result<UpdateInfo, Str
         .await
         .map_err(|e| {
             let msg = format!("failed to fetch latest release: {e}");
-            if is_transport_network_failure(&e)
-                || crate::core::observability::is_updater_transient_message(&msg)
-            {
+            if is_transport_network_failure(&e) || reporter.is_transient_message(&msg) {
                 // OPENHUMAN-TAURI-2F: reqwest's transport-level failure fires
                 // before any HTTP status when DNS / TCP / TLS handshake fails,
                 // or the user's ISP / firewall blocks api.github.com. No
@@ -296,12 +320,7 @@ async fn check_available_with_base_url(base_url: &str) -> Result<UpdateInfo, Str
                     "[observability] update.check_releases skipped transient updater transport failure: {msg}"
                 );
             } else {
-                crate::core::observability::report_error(
-                    msg.as_str(),
-                    "update",
-                    "check_releases",
-                    &[("failure", "transport")],
-                );
+                reporter.report(msg.as_str(), "check_releases", &[("failure", "transport")]);
             }
             msg
         })?;
@@ -313,10 +332,10 @@ async fn check_available_with_base_url(base_url: &str) -> Result<UpdateInfo, Str
         log::warn!(
             "[update] GitHub API returned {}: {}",
             status,
-            utf8_safe_prefix_at_byte_boundary(&body, 200)
+            utf8_prefix(&body, 200)
         );
         let msg = format!("GitHub API error: {status}");
-        if crate::core::observability::is_updater_transient_http_status(status.as_u16()) {
+        if reporter.is_transient_http_status(status.as_u16()) {
             tracing::warn!(
                 domain = "update",
                 operation = "check_releases",
@@ -325,9 +344,8 @@ async fn check_available_with_base_url(base_url: &str) -> Result<UpdateInfo, Str
                 "[observability] update.check_releases skipped transient updater HTTP response: {msg}"
             );
         } else {
-            crate::core::observability::report_error(
+            reporter.report(
                 msg.as_str(),
-                "update",
                 "check_releases",
                 &[("status", status_str.as_str()), ("failure", "non_2xx")],
             );
@@ -342,7 +360,7 @@ async fn check_available_with_base_url(base_url: &str) -> Result<UpdateInfo, Str
 
     let latest_version = release.tag_name.trim_start_matches('v').to_string();
     let update_available = is_newer(&latest_version, current);
-    let platform_asset = find_platform_asset(&release.assets);
+    let platform_asset = find_platform_asset(source, &release.assets);
 
     if update_available && platform_asset.is_none() {
         if cfg!(target_os = "linux") {
@@ -353,9 +371,8 @@ async fn check_available_with_base_url(base_url: &str) -> Result<UpdateInfo, Str
                 platform_triple()
             );
             log::error!("[update] {message}");
-            crate::core::observability::report_error(
+            reporter.report(
                 &message,
-                "update",
                 "check_releases",
                 &[("failure", "missing_platform_asset")],
             );
@@ -397,34 +414,23 @@ async fn check_available_with_base_url(base_url: &str) -> Result<UpdateInfo, Str
 ///
 /// The asset's `.sha256` sidecar is fetched first, then the asset is streamed
 /// to a temp file and moved to the staging path only if its digest matches.
-/// The caller (Tauri shell) is responsible for killing the old process and
-/// restarting with the new binary.
+/// The caller is responsible for killing the old process and restarting with
+/// the new binary.
 ///
 /// `staging_dir` — directory where the new binary should be placed (e.g.
 /// the `binaries/` dir next to the Tauri app, or the Resources dir).
 /// If `None`, uses the directory of the currently running executable.
-pub async fn download_and_stage(
-    download_url: &str,
-    asset_name: &str,
-    staging_dir: Option<PathBuf>,
-) -> Result<UpdateApplyResult, String> {
-    download_and_stage_with_version(download_url, asset_name, staging_dir, None, None).await
-}
-
-/// `download_and_stage`, with the release metadata the caller already holds.
-///
-/// `target_version` — the version of the release being staged, used in the
-/// returned `UpdateApplyResult`. If `None`, falls back to `current_version()`.
 ///
 /// `expected_size` — the asset size the release declared. The body must be
 /// exactly this long. If `None`, the body is capped at `MAX_UPDATE_BYTES`.
-pub async fn download_and_stage_with_version(
+pub async fn download_and_stage(
+    source: &UpdateSource,
     download_url: &str,
     asset_name: &str,
     staging_dir: Option<PathBuf>,
-    target_version: Option<&str>,
     expected_size: Option<u64>,
-) -> Result<UpdateApplyResult, String> {
+    reporter: &dyn UpdateReporter,
+) -> Result<StagedUpdate, String> {
     log::info!(
         "[update] downloading update from {} (asset: {})",
         download_url,
@@ -432,7 +438,7 @@ pub async fn download_and_stage_with_version(
     );
 
     let client = reqwest::Client::builder()
-        .user_agent("openhuman-core-updater")
+        .user_agent(user_agent(source))
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
@@ -454,9 +460,8 @@ pub async fn download_and_stage_with_version(
                 "[update] download skipped transport-level failure asset={asset_name}: {msg}"
             );
         } else {
-            crate::core::observability::report_error(
+            reporter.report(
                 msg.as_str(),
-                "update",
                 "download",
                 &[("asset", asset_name), ("failure", "transport")],
             );
@@ -468,7 +473,7 @@ pub async fn download_and_stage_with_version(
         let status = response.status();
         let status_str = status.as_u16().to_string();
         let msg = format!("download failed with status {}", status);
-        if crate::core::observability::is_updater_transient_http_status(status.as_u16()) {
+        if reporter.is_transient_http_status(status.as_u16()) {
             tracing::warn!(
                 domain = "update",
                 operation = "download",
@@ -478,9 +483,8 @@ pub async fn download_and_stage_with_version(
                 "[observability] update.download skipped transient updater HTTP response: {msg}"
             );
         } else {
-            crate::core::observability::report_error(
+            reporter.report(
                 msg.as_str(),
-                "update",
                 "download",
                 &[
                     ("asset", asset_name),
@@ -494,7 +498,7 @@ pub async fn download_and_stage_with_version(
 
     let max_bytes = expected_size.unwrap_or(download::MAX_UPDATE_BYTES);
     download::check_declared_length(&response, max_bytes)
-        .inspect_err(|e| report_rejected_download(e, asset_name, "oversize"))?;
+        .inspect_err(|e| report_rejected_download(reporter, e, asset_name, "oversize"))?;
 
     // Determine staging path.
     let dir = if let Some(d) = staging_dir {
@@ -516,7 +520,7 @@ pub async fn download_and_stage_with_version(
     // `.tar.gz` 0755 and restarting into it cannot work (#6766).
     let is_archive = is_archive_asset(asset_name);
     // Legacy raw-binary assets can have the same name as the running executable.
-    let staged_path = staged_asset_path(&dir, asset_name, is_archive);
+    let staged_path = staged_asset_path(source, &dir, asset_name, is_archive);
     // Keep the lock through download-temp creation, extraction, and final rename:
     // those paths are shared by requests targeting the same staged executable.
     let destination_lock = staging_lock(&staged_path);
@@ -539,12 +543,17 @@ pub async fn download_and_stage_with_version(
     };
     if let Some(e) = refusal {
         let _ = std::fs::remove_file(&tmp_path);
-        report_rejected_download(&e, asset_name, "verification");
+        report_rejected_download(reporter, &e, asset_name, "verification");
         return Err(e);
     }
 
     if is_archive {
-        let extracted = extract_core_binary(&tmp_path, &staged_path, asset_name.ends_with(".zip"));
+        let extracted = extract_core_binary(
+            source,
+            &tmp_path,
+            &staged_path,
+            asset_name.ends_with(".zip"),
+        );
         // The archive is scratch either way.
         let _ = std::fs::remove_file(&tmp_path);
         extracted?;
@@ -552,27 +561,22 @@ pub async fn download_and_stage_with_version(
         finalize_executable(&tmp_path, &staged_path)?;
     }
 
-    let installed_version = target_version
-        .unwrap_or_else(|| current_version())
-        .to_string();
-
     log::info!("[update] staged update binary at {}", staged_path.display());
 
-    Ok(UpdateApplyResult {
-        installed_version,
-        staged_path: staged_path.to_string_lossy().to_string(),
-        restart_required: true,
-        restart_strategy: UpdateRestartStrategy::SelfReplace,
-    })
+    Ok(StagedUpdate { staged_path })
 }
 
 /// Report an update body refused by the size or checksum check. These are not
 /// transport noise: a mismatch on the restart path is worth a Sentry event.
-fn report_rejected_download(message: &str, asset_name: &str, failure: &str) {
+fn report_rejected_download(
+    reporter: &dyn UpdateReporter,
+    message: &str,
+    asset_name: &str,
+    failure: &str,
+) {
     log::error!("[update] refusing update asset={asset_name}: {message}");
-    crate::core::observability::report_error(
+    reporter.report(
         message,
-        "update",
         "download",
         &[("asset", asset_name), ("failure", failure)],
     );
@@ -598,5 +602,5 @@ fn is_transport_network_failure(err: &reqwest::Error) -> bool {
 }
 
 #[cfg(test)]
-#[path = "core_tests.rs"]
+#[path = "release_tests.rs"]
 mod tests;

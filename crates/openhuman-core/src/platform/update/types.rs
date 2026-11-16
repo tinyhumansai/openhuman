@@ -1,31 +1,11 @@
 //! Types for the self-update domain.
+//!
+//! Release discovery types (`UpdateInfo`, the GitHub release shapes) live in
+//! `openhuman_platform::update`.
 
 use serde::{Deserialize, Serialize};
 
 use crate::config::UpdateRestartStrategy;
-
-/// Summary of an available update from GitHub Releases.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateInfo {
-    /// The latest version tag (e.g. "0.50.0").
-    pub latest_version: String,
-    /// The currently running version.
-    pub current_version: String,
-    /// Whether an update is available (`latest_version > current_version`).
-    pub update_available: bool,
-    /// Direct download URL for the platform-appropriate asset.
-    pub download_url: Option<String>,
-    /// Asset file name.
-    pub asset_name: Option<String>,
-    /// Asset size in bytes, as the release declared it. The download is
-    /// refused unless its body is exactly this long.
-    #[serde(default)]
-    pub asset_size: Option<u64>,
-    /// Release notes / body from GitHub.
-    pub release_notes: Option<String>,
-    /// When the release was published (ISO 8601).
-    pub published_at: Option<String>,
-}
 
 /// Lightweight identity of the running core binary, returned by
 /// `update.version`. Lets the frontend decide whether to call
@@ -75,21 +55,4 @@ pub struct UpdateApplyResult {
     pub restart_required: bool,
     /// The configured post-stage restart contract.
     pub restart_strategy: UpdateRestartStrategy,
-}
-
-/// Subset of the GitHub Releases API response we care about.
-#[derive(Debug, Deserialize)]
-pub struct GitHubRelease {
-    pub tag_name: String,
-    pub body: Option<String>,
-    pub published_at: Option<String>,
-    pub assets: Vec<GitHubAsset>,
-}
-
-/// A single asset attached to a GitHub release.
-#[derive(Debug, Deserialize)]
-pub struct GitHubAsset {
-    pub name: String,
-    pub browser_download_url: String,
-    pub size: u64,
 }

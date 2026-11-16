@@ -146,6 +146,9 @@ cd "$(dirname "$0")/../.."
 # 312 -> 305 on 2026-10-30: the module roll-up's upstream ownership split
 # removes dependencies from the always-on flows graph; measured by both cargo
 # tree and dep-sim. See kernel-floor.limits.
-EXPECTED_NAMES=305
+# 305 -> 306 on 2026-11-14: the new leaf crate `openhuman-platform` (OS service
+# managers and update staging moved out of the core) adds one name and no
+# native build; see the 326/306/3 entry in `kernel-floor.limits`.
+EXPECTED_NAMES=306
 
 exec python3 scripts/dep-sim.py --cut-nothing --expect-names "${EXPECTED_NAMES}"

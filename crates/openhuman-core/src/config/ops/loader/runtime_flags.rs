@@ -102,7 +102,7 @@ pub fn set_browser_allow_all(enabled: bool) -> Result<Outcome<RuntimeFlagsOut>, 
 
 /// Returns the operational status of the agent server.
 pub fn agent_server_status() -> Outcome<serde_json::Value> {
-    let running = crate::platform::service::mock::mock_agent_running().unwrap_or(true);
+    let running = openhuman_platform::service::mock_agent_running().unwrap_or(true);
     log::info!("[config] agent_server_status requested: running={running}");
     let payload = json!({
         "running": running,

@@ -301,12 +301,82 @@
   },
   {
     "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/platform/update/core.rs",
-    "line": 164,
+    "path": "crates/openhuman-platform/src/update/release.rs",
+    "line": 179,
     "text": "std::fs::rename(tmp, dest).map_err(|e| {",
     "occurrence": 1,
     "classification": "machine",
     "reason": "Downloaded executable update atomically replaces the local installed binary; deployment artifact is not tenant state.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-platform/src/service/linux.rs",
+    "line": 31,
+    "text": "fs::write(&file, unit)?;",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Writes the per-user systemd unit that launches the core daemon; OS service registration, not tenant state.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7390"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-platform/src/service/macos.rs",
+    "line": 64,
+    "text": "fs::write(&file, plist)?;",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Writes the per-user LaunchAgent plist that launches the core daemon; OS service registration, not tenant state.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7390"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-platform/src/service/mock.rs",
+    "line": 160,
+    "text": "std::fs::write(path, bytes)",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Writes the E2E service-mock state file standing in for an OS service manager; machine-local test fixture state.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7390"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-platform/src/service/windows.rs",
+    "line": 34,
+    "text": "fs::write(&wrapper, cmd)?;",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Writes the scheduled-task .cmd wrapper that launches the core daemon; OS service registration, not tenant state.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7390"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-platform/src/update/release.rs",
+    "line": 209,
+    "text": "let mut out = std::fs::File::create(&tmp_path)",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Stages a downloaded, checksum-verified core executable beside the installed binary; deployment artifact, not tenant state.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-platform/src/update/release.rs",
+    "line": 236,
+    "text": "let mut out = std::fs::File::create(&tmp_path)",
+    "occurrence": 2,
+    "classification": "machine",
+    "reason": "Stages a downloaded, checksum-verified core executable beside the installed binary; deployment artifact, not tenant state.",
+    "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
+  },
+  {
+    "rule": "json-write",
+    "path": "crates/openhuman-platform/src/update/release.rs",
+    "line": 531,
+    "text": "let mut file = std::fs::File::create(&tmp_path)",
+    "occurrence": 1,
+    "classification": "machine",
+    "reason": "Stages a downloaded, checksum-verified core executable beside the installed binary; deployment artifact, not tenant state.",
     "issue": "https://github.com/tinyhumansai/openhuman/issues/7434"
   },
   {

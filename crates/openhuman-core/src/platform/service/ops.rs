@@ -3,7 +3,8 @@
 use crate::config::Config;
 use crate::core::Outcome;
 use crate::platform::service::daemon_host::DaemonHostConfig;
-use crate::platform::service::{self, daemon_host, ServiceStatus};
+use crate::platform::service::{self, daemon_host};
+use openhuman_platform::service::ServiceStatus;
 
 /// Installs the OpenHuman daemon as a system service.
 pub async fn service_install(config: &Config) -> Result<Outcome<ServiceStatus>, String> {

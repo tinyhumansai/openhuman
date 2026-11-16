@@ -2,6 +2,8 @@
 
 Self-update domain for the `openhuman-core` binary. Checks GitHub Releases (`tinyhumansai/openhuman`, "latest" endpoint) for a newer build of the platform-appropriate core binary, downloads + atomically stages it next to the running executable, and (depending on the configured restart strategy) publishes a self-restart so the Tauri shell/supervisor can swap it in. Also exposes a cheap no-network version probe and a periodic background checker. Network failures are classified so transient transport/HTTP problems don't spam Sentry.
 
+Release discovery and staging themselves (GitHub fetch, asset match, verified download, extraction, atomic staging) live in the leaf crate [`openhuman-platform`](../../../../openhuman-platform/README.md) (`openhuman_platform::update`). This module binds it to the core's release source, version and Sentry ([`source.rs`](./source.rs)) and owns everything product-shaped: policy, the URL/asset allowlist, the restart strategy, the scheduler, the controllers and the tools.
+
 ## Responsibilities
 - Query the GitHub Releases "latest" API and compare semver-ish tags against the compiled `CARGO_PKG_VERSION` (`is_newer`).
 - Select the release asset matching this platform's target triple (`openhuman-core-{triple}`, `.exe` on Windows). Releases publish core archives for Linux only, so a newer release with no asset for this triple is reported as available with no `download_url` (logged at warn, not an error).
@@ -14,19 +16,20 @@ Self-update domain for the `openhuman-core` binary. Checks GitHub Releases (`tin
 ## Key files
 | File | Role |
 | --- | --- |
-| `crates/openhuman-core/src/platform/update/mod.rs` | Export-focused. `pub use core::*`, `pub use ops as rpc`, `pub use types::*`, and the `all_update_controller_schemas` / `all_update_registered_controllers` re-exports. |
-| `crates/openhuman-core/src/platform/update/core.rs` | Core logic: `current_version`, `platform_triple`, `check_available` (GitHub fetch + parse), `download_and_stage[_with_version]` (atomic staging), asset selection, semver compare, transport-failure classifier. |
-| `crates/openhuman-core/src/platform/update/download.rs` | Verified download: `.sha256` sidecar fetch + parse, size-capped streaming to disk with hashing, and the size/digest check. The core archive is not signed, so only the checksum is verified. |
+| `crates/openhuman-core/src/platform/update/mod.rs` | Export-focused. `pub use ops as rpc`, `pub use types::*`, the `source` functions, and the `all_update_controller_schemas` / `all_update_registered_controllers` re-exports. |
+| `crates/openhuman-core/src/platform/update/source.rs` | The host seam: `CORE_RELEASES` (`tinyhumansai/openhuman`, asset prefix `openhuman-core`), the Sentry `UpdateReporter`, `current_version`, `check_available`, `download_and_stage[_with_version]` (wraps `openhuman_platform::update` and builds `UpdateApplyResult`). |
+| `crates/openhuman-platform/src/update/release.rs` | Release logic (in `openhuman-platform`): `platform_triple`, `check_available` (GitHub fetch + parse), `download_and_stage` (atomic staging), asset selection, semver compare, transport-failure classifier. |
+| `crates/openhuman-platform/src/update/download.rs` | Verified download (in `openhuman-platform`): `.sha256` sidecar fetch + parse, size-capped streaming to disk with hashing, and the size/digest check. The core archive is not signed, so only the checksum is verified. |
 | `crates/openhuman-core/src/platform/update/ops.rs` | RPC handlers (`update_version`/`update_check`/`update_apply`/`update_run`), mutation-policy enforcement, URL/asset-name validation, and `UpdateRunResult` builders per restart strategy. Aliased as `update::rpc`. |
 | `crates/openhuman-core/src/platform/update/scheduler.rs` | `run(UpdateConfig)` periodic checker loop + `tick()`; publishes startup/health events. Floor `MIN_INTERVAL_MINUTES = 10`. |
 | `crates/openhuman-core/src/platform/update/schemas.rs` | Controller registry: `all_controller_schemas`, `all_registered_controllers`, `schemas(fn)`, and `handle_*` thunks delegating to `ops`. |
-| `crates/openhuman-core/src/platform/update/types.rs` | Serde types: `UpdateInfo`, `VersionInfo`, `UpdateRunResult`, `UpdateApplyResult`, `GitHubRelease`, `GitHubAsset`. |
+| `crates/openhuman-core/src/platform/update/types.rs` | Serde types: `VersionInfo`, `UpdateRunResult`, `UpdateApplyResult`. `UpdateInfo` and the GitHub release shapes are `openhuman_platform::update`'s. |
 | `crates/openhuman-core/src/platform/update/tools.rs` | Agent tools for checking and applying updates, registered by `tools/ops.rs`. |
-| `crates/openhuman-core/src/platform/update/*_tests.rs` | Sibling test suites (`core_tests`, `download_tests`, `ops_tests`, `ops_tests_2_tests`, `scheduler_tests`, `schemas_tests`, `tools_tests`), included via `#[path]`. |
+| `crates/openhuman-core/src/platform/update/*_tests.rs` | Sibling test suites (`source_tests`, `ops_tests`, `ops_tests_2_tests`, `scheduler_tests`, `schemas_tests`, `tools_tests`), included via `#[path]`. |
 
 ## Public surface
-- Types ([`types.rs`](./types.rs)): `UpdateInfo`, `VersionInfo`, `UpdateRunResult`, `UpdateApplyResult`, `GitHubRelease`, `GitHubAsset`.
-- Core fns ([`core.rs`](./core.rs), re-exported via `core::*`): `current_version() -> &'static str`, `platform_triple() -> &'static str`, `check_available() -> Result<UpdateInfo, String>`, `download_and_stage(...)`, `download_and_stage_with_version(...)`.
+- Types ([`types.rs`](./types.rs)): `VersionInfo`, `UpdateRunResult`, `UpdateApplyResult`.
+- Source fns ([`source.rs`](./source.rs)): `current_version() -> &'static str`, `check_available() -> Result<UpdateInfo, String>`, `download_and_stage(...)`, `download_and_stage_with_version(...)`. `platform_triple()` and `UpdateInfo` come from `openhuman_platform::update`.
 - `update::rpc` (alias of `ops`): `update_version`, `update_check`, `update_apply`, `update_run`: all returning `Outcome<Value>`.
 - `update::scheduler::run(UpdateConfig)`: background loop entry point.
 - `all_update_controller_schemas()` / `all_update_registered_controllers()`.
@@ -59,12 +62,12 @@ None. No `store.rs`: staged binaries are written to the filesystem (current-exe 
 - `crate::config`: reads `UpdateConfig` (`enabled`, `interval_minutes`, `rpc_mutations_enabled`, `restart_strategy`) and `UpdateRestartStrategy`; `ops` loads it via `config::rpc::load_config_with_timeout`.
 - `crate::platform::service`: `service::rpc::service_restart` to publish the self-restart for `SelfReplace`.
 - `crate::platform::health`: `health::bus::register_health_subscriber` in the scheduler.
-- `crate::util`: `utf8_safe_prefix_at_byte_boundary` for safe error-body truncation.
 - `crate::core::bus`: `BUS.publish`, `crate::core::events::DomainEvent`, and `bus::init()` to bring up the in-process broker.
-- `crate::core::observability`: Sentry reporting + transient-failure classifiers (`report_error`, `is_updater_transient_message`, `is_updater_transient_http_status`).
+- `openhuman_platform::update`: release discovery and staging, called with `CORE_RELEASES` and the Sentry reporter.
+- `crate::core::observability`: Sentry reporting + transient-failure classifiers (`report_error`, `is_updater_transient_message`, `is_updater_transient_http_status`), reached through the `UpdateReporter` in `source.rs`.
 - `crate::core::all`: `ControllerFuture`, `RegisteredController` (schemas wiring); `crate::core::{ControllerSchema, FieldSchema, TypeSchema}`.
 - `crate::core::Outcome`: RPC return contract.
-- External crates: `reqwest` (HTTP), `url` (URL validation), `serde`/`serde_json`, `tokio`.
+- External crates: `url` (URL validation), `serde`/`serde_json`, `tokio`.
 
 ## Used by
 - `crates/openhuman-core/src/core/all.rs`: registers `all_update_registered_controllers()` / `all_update_controller_schemas()` into the controller registry.

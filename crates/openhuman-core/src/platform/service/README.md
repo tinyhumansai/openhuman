@@ -2,6 +2,8 @@
 
 Service-management domain for the OpenHuman core daemon. It installs/uninstalls the core binary as a per-user OS service (macOS LaunchAgent, Linux systemd user unit, Windows scheduled task), drives its install/start/stop/status lifecycle, and orchestrates **self-restart** and **graceful shutdown** of the currently running core process via the event bus. It also persists machine-local daemon-host UI preferences (tray visibility). All of this is exposed transport-agnostically through the `service.*` RPC/CLI controller registry.
 
+The OS managers themselves (launchd, systemd, schtasks and the E2E mock) live in the leaf crate [`openhuman-platform`](../../../../openhuman-platform/README.md) (`openhuman_platform::service`), driven by a `ServiceSpec`. [`spec.rs`](./spec.rs) builds that spec from `Config` and owns the product identity: labels, daemon executable lookup, arguments and log directory.
+
 ## Responsibilities
 
 - Install / uninstall the core daemon as a native per-user service and report its `ServiceStatus`.
@@ -16,26 +18,21 @@ Service-management domain for the OpenHuman core daemon. It installs/uninstalls 
 | File | Role |
 | --- | --- |
 | `crates/openhuman-core/src/platform/service/mod.rs` | Export-focused module root; declares submodules and re-exports the public surface + controller-schema pair. |
-| `crates/openhuman-core/src/platform/service/core.rs` | `ServiceState` / `ServiceStatus` types and the cross-platform `install`/`start`/`stop`/`status`/`uninstall` dispatchers that route to the mock or the per-OS impl via `cfg`. |
+| `crates/openhuman-core/src/platform/service/spec.rs` | The host seam: `service_spec(&Config)` (labels `com.openhuman.core` + legacy `com.openhuman.daemon`/`com.openhuman.app` on macOS, `openhuman.service` on Linux, `OpenHuman Core` on Windows; `resolve_daemon_executable`; args `["run"]`; `<config dir>/logs`), and `install`/`start`/`stop`/`status`/`uninstall(&Config)` over `openhuman_platform::service`. |
 | `crates/openhuman-core/src/platform/service/ops.rs` | RPC handler layer (`service_install`, `service_start`, `service_stop`, `service_status`, `service_restart`, `service_shutdown`, `service_uninstall`, `daemon_host_get`/`set`) returning `Outcome<T>`. Re-exported as `rpc`. |
 | `crates/openhuman-core/src/platform/service/schemas.rs` | Controller schemas + `handle_*` adapters for the `service` namespace; `all_controller_schemas` / `all_registered_controllers`. |
 | `crates/openhuman-core/src/platform/service/restart.rs` | Self-restart orchestration: `service_restart` (publishes event), `trigger_self_restart_now` (respawns current exe with original args), `apply_startup_restart_delay_from_env`, `RestartStatus`. |
 | `crates/openhuman-core/src/platform/service/shutdown.rs` | Graceful-shutdown orchestration: `service_shutdown` (publishes event), `ShutdownStatus`. |
 | `crates/openhuman-core/src/platform/service/bus.rs` | Event-bus subscribers `RestartSubscriber` / `ShutdownSubscriber` (filter domain `system`) and idempotent `register_*_subscriber` helpers; one-shot atomic gates so only the first request acts. |
-| `crates/openhuman-core/src/platform/service/common.rs` | Shared OS helpers: service labels, `resolve_daemon_executable`, `daemon_program_args` (`["run"]`), `xml_escape`, command runners (`run_checked`/`run_capture`/`run_best_effort`/`run_check_silent`), Windows `CREATE_NO_WINDOW` suppression. |
-| `crates/openhuman-core/src/platform/service/macos.rs` | LaunchAgent (`com.openhuman.core.plist`) install/start/stop/status/uninstall via `launchctl`; migrates legacy labels. |
-| `crates/openhuman-core/src/platform/service/linux.rs` | systemd user-unit install/lifecycle via `systemctl --user`. |
-| `crates/openhuman-core/src/platform/service/windows.rs` | Scheduled-task install/lifecycle via `schtasks`. |
+| `crates/openhuman-platform/src/service/` | The managers (in `openhuman-platform`): `ServiceState`/`ServiceStatus`, the dispatchers, `macos.rs` (LaunchAgent via `launchctl`, removes legacy labels), `linux.rs` (systemd user unit via `systemctl --user`), `windows.rs` (scheduled task via `schtasks`), `mock.rs`, and `common.rs` (command runners, Windows `CREATE_NO_WINDOW`, `xml_escape`). |
 | `crates/openhuman-core/src/platform/service/daemon_host.rs` | `DaemonHostConfig { show_tray }` + async `load_for_config_dir` / `save_for_config_dir` (JSON next to config, `daemon_host_config.json`). |
-| `crates/openhuman-core/src/platform/service/mock.rs` | File-backed deterministic mock backend gated on `OPENHUMAN_SERVICE_MOCK`; supports forced failures and an `agent_running` flag (`mock_agent_running`). |
-| `crates/openhuman-core/src/platform/service/mock_tests.rs` | Sibling test suite for [`mock.rs`](./mock.rs). |
 | `crates/openhuman-core/src/platform/service/tools.rs` | LLM-callable wrappers over the domain (`service_status` / `daemon_host_prefs_get` default-on; lifecycle mutators default-off via the `service_lifecycle` user-filter toggle). |
 
 ## Public surface
 
 From [`mod.rs`](./mod.rs) re-exports:
 
-- `core::*`: `ServiceState`, `ServiceStatus`, and the dispatchers `install` / `start` / `stop` / `status` / `uninstall`.
+- `spec::{install, start, stop, status, uninstall}`: the `Config`-bound dispatchers. `ServiceState` / `ServiceStatus` are `openhuman_platform::service`'s.
 - `ops::*` (also aliased `rpc`): the async RPC handlers `service_install` … `service_uninstall`, `service_restart`, `service_shutdown`, `daemon_host_get`, `daemon_host_set`.
 - `restart::{apply_startup_restart_delay_from_env, RestartStatus}` (and `restart::trigger_self_restart_now` via the `restart` module path).
 - `shutdown::ShutdownStatus`.
@@ -82,6 +79,7 @@ Both subscribers are registered idempotently from `crates/openhuman-core/src/cor
 
 ## Dependencies
 
+- `openhuman_platform::service`: the OS managers and the mock, driven by the `ServiceSpec` from [`spec.rs`](./spec.rs).
 - `crate::config`: `Config` (paths, config dir) for every lifecycle/path operation; `config::rpc::load_config_with_timeout` in the schema handlers.
 - `crate::core::bus::BUS` (`tinybus::OnceBus<DomainEvent>`): `publish` / `subscribe` for restart/shutdown orchestration; `crate::core::events::DomainEvent` for the event catalog.
 - `crate::core` (`ControllerSchema`, `FieldSchema`, `TypeSchema`) and `crate::core::all` (`ControllerFuture`, `RegisteredController`): controller schema/registration contract.
@@ -92,7 +90,7 @@ Both subscribers are registered idempotently from `crates/openhuman-core/src/cor
 
 - `crates/openhuman-core/src/core/all.rs`: registers the service controllers (`all_service_registered_controllers`).
 - `crates/openhuman-core/src/core/runtime/subscribers.rs`: registers the restart/shutdown event-bus subscribers at startup.
-- `crates/openhuman-core/src/platform/update/ops.rs` (`rpc::service_restart` after a self-replace), `crates/openhuman-core/src/config/ops/loader/runtime_flags.rs` (`mock::mock_agent_running`), `crates/openhuman-core/src/desktop/app_state/ops/{types,runtime_snapshot}.rs` (`ServiceState`/`ServiceStatus`, `status`): call into `crate::platform::service`.
+- `crates/openhuman-core/src/platform/update/ops.rs` (`rpc::service_restart` after a self-replace), `crates/openhuman-core/src/desktop/app_state/ops/runtime_snapshot.rs` (`status`): call into `crate::platform::service`. `crates/openhuman-core/src/config/ops/loader/runtime_flags.rs` (`mock_agent_running`) and `desktop/app_state/ops/{types,runtime_snapshot}.rs` (`ServiceState`/`ServiceStatus`) use `openhuman_platform::service` directly.
 - `crates/openhuman-core/src/tools/mod.rs`: re-exports `platform::service::tools::*`.
 - `lib.rs`: module wiring.
 
@@ -104,7 +102,8 @@ Both subscribers are registered idempotently from `crates/openhuman-core/src/cor
 - Self-restart fails if launched with no args (`std::env::args().skip(1)` empty).
 - Platform support is compile-gated; on unsupported targets the dispatchers `bail!` with "supported on macOS, Linux, and Windows only".
 - `OPENHUMAN_SERVICE_MOCK` short-circuits **every** lifecycle dispatcher to the file-backed mock: used for deterministic E2E; it can also inject forced per-operation failures.
-- Windows command spawns set `CREATE_NO_WINDOW` (`common::no_window`) so polled `schtasks /Query` calls don't flash a console.
+- Windows command spawns set `CREATE_NO_WINDOW` (`openhuman_platform`'s `common::no_window`) so polled `schtasks /Query` calls don't flash a console.
+- Every lifecycle call builds the spec, so it resolves the daemon executable (env `OPENHUMAN_CORE_BIN`, else a sibling `openhuman-core[-*]`) even for `status`.
 - Lifecycle RPCs are deliberately **not** unit-tested (they mutate real OS state or kill the process); RPC-adapter coverage lives in `tests/json_rpc_e2e.rs`. `daemon_host_get`/`set` and the restart/shutdown publish paths are unit-tested.
 
 ## Further reading

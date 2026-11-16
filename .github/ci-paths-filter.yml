@@ -102,6 +102,7 @@ rust-core:
   - 'Cargo.toml'
   - 'crates/openhuman-core/**'
   - 'crates/openhuman-embed/**'
+  - 'crates/openhuman-platform/**'
   - 'crates/openhuman-tinyhumans/**'
   - 'crates/openhuman-rpc/**'
   - 'crates/openhuman-cli/**'

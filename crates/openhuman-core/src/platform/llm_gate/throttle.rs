@@ -14,9 +14,9 @@ use std::time::Duration;
 use parking_lot::RwLock;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use super::decide::{decide, Signals};
+use super::decide::{decide, Policy, Signals};
 use super::signals::{self, SignalEnv};
-use crate::config::schema::{Policy, SchedulerGateConfig};
+use crate::config::schema::SchedulerGateConfig;
 
 /// Process-wide ceiling on concurrent LLM-bound work.
 ///
