@@ -43,6 +43,46 @@ export function isMissingRequiredFieldsError(err: unknown): boolean {
 }
 
 /**
+ * Pull a human-readable message out of a JSON error payload embedded in a
+ * message, e.g. `Backend returned 400 Bad Request: {"success":false,
+ * "error":"No auth config found for toolkit \"reddit\""}`.
+ *
+ * Returns null when there is no JSON object, when it does not parse, or when
+ * it parses but carries no readable string field — the caller then keeps its
+ * previous behaviour. `error` / `message` / `detail` and a nested
+ * `error.message` cover the backend envelope and the provider shapes.
+ */
+function extractEmbeddedErrorMessage(raw: string): string | null {
+  const start = raw.indexOf('{');
+  if (start === -1) return null;
+  const end = raw.lastIndexOf('}');
+  if (end <= start) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object') return null;
+
+  const record = parsed as Record<string, unknown>;
+  const nested = record.error;
+  const candidates: unknown[] = [
+    typeof nested === 'object' && nested !== null
+      ? (nested as Record<string, unknown>).message
+      : undefined,
+    typeof nested === 'string' ? nested : undefined,
+    record.message,
+    record.detail,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  return null;
+}
+
+/**
  * Return a safe, user-facing summary of an authorization failure. Strips the
  * raw backend URL and JSON payload from the message so sensitive Composio
  * internals are never shown in the UI.
@@ -54,6 +94,12 @@ export function sanitizeAuthError(err: unknown): string {
   }
   if (!err) return 'Something went wrong.';
   const raw = err instanceof Error ? err.message : String(err);
+
+  // A JSON payload the backend embedded carries the actionable text — the 400
+  // that names the unconfigured toolkit (#5507). Read it out *before* the
+  // guard below trims the message at the first `{` and discards it.
+  const embedded = extractEmbeddedErrorMessage(raw);
+  if (embedded) return embedded;
 
   // Strip any URL that looks like a backend endpoint so it is not displayed.
   const stripped = raw.replace(/https?:\/\/[^\s"]+/g, '<backend>');
@@ -84,5 +130,8 @@ export function sanitizeAuthError(err: unknown): string {
       .trim();
   } while (result !== prev);
 
+  // Nothing readable: if the message is still a raw JSON object, drop it as
+  // the guard intended rather than showing the payload.
+  if (result.startsWith('{')) return 'Authorization failed.';
   return result || 'Authorization failed.';
 }
