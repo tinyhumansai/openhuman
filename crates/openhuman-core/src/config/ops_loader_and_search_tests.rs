@@ -355,6 +355,22 @@ async fn snapshot_config_json_redacts_every_search_key_but_keeps_settings() {
 }
 
 #[tokio::test]
+async fn snapshot_config_json_redacts_browser_upstream_proxy_credentials() {
+    let mut cfg = Config::default();
+    cfg.browser.upstream_proxies = vec![crate::config::schema::tools::BrowserUpstreamProxy {
+        domains: vec!["reddit.com".into()],
+        url: "http://resi-user:hunter2@gate.example:7000".into(),
+    }];
+    let snapshot = snapshot_config_json(&cfg).await.unwrap();
+    let serialized = snapshot.to_string();
+    assert!(!serialized.contains("hunter2"));
+    assert!(!serialized.contains("resi-user"));
+    let proxy = &snapshot["config"]["browser"]["upstream_proxies"][0];
+    assert_eq!(proxy["domains"][0], "reddit.com");
+    assert!(proxy["url"].as_str().unwrap().contains("gate.example"));
+}
+
+#[tokio::test]
 async fn snapshot_config_json_redacts_the_storage_url_credentials() {
     let mut cfg = Config::default();
     cfg.storage.url = Some("mongodb://app:hunter2@db.internal/openhuman".into());

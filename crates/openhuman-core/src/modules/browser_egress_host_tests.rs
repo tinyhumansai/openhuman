@@ -170,10 +170,34 @@ fn owner() -> tinysecurity_bus::SubjectScope {
 fn the_config_names_a_stable_alias_not_the_rotating_policy() {
     // TinyBus fixes TinyComputer's config at load; a policy id in it would
     // change at the first re-registration and every refresh would be refused.
-    let alias = browser_dial_alias();
+    let config = crate::config::Config::default();
+    let alias = browser_dial_alias(&config);
     assert_eq!(alias["policy_id"], BROWSER_POLICY_ALIAS);
     assert_eq!(alias["generation"], BROWSER_POLICY_ALIAS_GENERATION);
-    assert_eq!(alias, browser_dial_alias());
+    assert_eq!(alias, browser_dial_alias(&config));
+    // With nothing routed the section holds exactly the alias, which every
+    // TinyComputer release accepts.
+    assert_eq!(alias.as_object().unwrap().len(), 2);
+}
+
+#[test]
+fn configured_upstream_proxies_ride_in_the_private_egress_section() {
+    let mut config = crate::config::Config::default();
+    config.browser.upstream_proxies = vec![crate::config::schema::tools::BrowserUpstreamProxy {
+        domains: vec!["reddit.com".into(), "redd.it".into()],
+        url: "http://resi:secret@gate.example:7000".into(),
+    }];
+    let alias = browser_dial_alias(&config);
+    assert_eq!(alias["policy_id"], BROWSER_POLICY_ALIAS);
+    assert_eq!(
+        alias["upstream_proxies"],
+        serde_json::json!([{
+            "url": "http://resi:secret@gate.example:7000",
+            "domains": ["reddit.com", "redd.it"],
+        }])
+    );
+    // Stable bytes: TinyBus refuses a callback-bound refresh that differs.
+    assert_eq!(alias, browser_dial_alias(&config));
 }
 
 #[test]
