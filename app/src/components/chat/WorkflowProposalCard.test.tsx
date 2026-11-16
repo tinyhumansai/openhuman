@@ -407,6 +407,28 @@ describe('WorkflowProposalCard', () => {
     expect(mockCreateFlow).not.toHaveBeenCalled();
   });
 
+  it('retries recording saved_flow_id when the message write fails once', async () => {
+    mockUpdateMessage.mockRejectedValueOnce(new Error('temporary')).mockResolvedValueOnce({});
+    render(
+      <WorkflowProposalCard
+        threadId="t1"
+        proposal={proposal({ sourceMessageId: 'workflow-proposal:sub-1' })}
+      />
+    );
+    fireEvent.click(screen.getByText('chat.flowProposal.save'));
+    await waitFor(() => {
+      const savedWrites = mockUpdateMessage.mock.calls.filter(
+        call => (call[2] as { saved_flow_id?: string } | undefined)?.saved_flow_id === 'f1'
+      );
+      expect(savedWrites).toHaveLength(2);
+    });
+    expect(mockUpdateMessage).toHaveBeenCalledWith('t1', 'workflow-proposal:sub-1', {
+      scope: 'workflow_proposal',
+      saved_flow_id: 'f1',
+    });
+    await waitFor(() => expect(screen.getByTestId('workflow-proposal-saved')).toBeInTheDocument());
+  });
+
   it('enables the flow the agent already saved for this proposal instead of creating one', async () => {
     // The user said "save it" in chat; the core recorded the agent's flow on
     // the proposal's source message, which this card's state never saw.

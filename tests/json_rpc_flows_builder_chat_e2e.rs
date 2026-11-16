@@ -2,6 +2,8 @@
 //! orchestrator, which spawns `workflow_builder` asynchronously, whose proposal
 //! is delivered into the thread as the card the user saves, plus the agent-side
 //! "save it" path, in the order a user takes: the agent saves, then the card.
+//! The second test covers the reverse order (#8459): the card saves first,
+//! then "save it" in chat must not create a second copy of the flow.
 //! Every model response is scripted (the in-process FIFO in
 //! `support/rpc_e2e_harness.rs`), so the assertions are about what the host
 //! does with them: spawn, delivery, persistence, events and saving.
@@ -123,6 +125,45 @@ fn events_named(sink: &Arc<Mutex<Vec<Value>>>, name: &str) -> Vec<Value> {
         .filter(|e| e.get("event").and_then(Value::as_str) == Some(name))
         .cloned()
         .collect()
+}
+
+/// Approve every `spawn_subagent` approval card as it arrives, the way a user
+/// would under supervised autonomy. Only hand-off cards are answered, so a
+/// `create_workflow` card stays pending for the test to answer (or to assert
+/// was never raised). Abort the returned task at the end of the test.
+fn approve_handoff_cards(
+    events: &Arc<Mutex<Vec<Value>>>,
+    rpc_base: &str,
+) -> tokio::task::JoinHandle<()> {
+    let handoff_events = Arc::clone(events);
+    let handoff_base = rpc_base.to_string();
+    tokio::spawn(async move {
+        let mut answered = std::collections::HashSet::new();
+        let mut id = 1_000;
+        loop {
+            for card in events_named(&handoff_events, "approval_request") {
+                if card["tool_name"] != "spawn_subagent" {
+                    continue;
+                }
+                let Some(request_id) = card["request_id"].as_str() else {
+                    continue;
+                };
+                if !answered.insert(request_id.to_string()) {
+                    continue;
+                }
+                id += 1;
+                let decided = post_json_rpc(
+                    &handoff_base,
+                    id,
+                    "openhuman.approval_decide",
+                    json!({ "request_id": request_id, "decision": "approve_once" }),
+                )
+                .await;
+                assert_no_jsonrpc_error(&decided, "approval_decide for spawn_subagent");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
 }
 
 /// Poll until `probe` returns `Some`, or panic with `what`.
@@ -437,35 +478,7 @@ async fn chat_spawns_workflow_builder_and_saves_its_proposal() {
     // any external effect. This suite is about what follows the hand-off, so a
     // background user approves those cards; `create_workflow` stays for step 4,
     // which answers it itself.
-    let handoff_events = Arc::clone(&events);
-    let handoff_base = rpc_base.clone();
-    let handoff_task = tokio::spawn(async move {
-        let mut answered = std::collections::HashSet::new();
-        let mut id = 1_000;
-        loop {
-            for card in events_named(&handoff_events, "approval_request") {
-                if card["tool_name"] != "spawn_subagent" {
-                    continue;
-                }
-                let Some(request_id) = card["request_id"].as_str() else {
-                    continue;
-                };
-                if !answered.insert(request_id.to_string()) {
-                    continue;
-                }
-                id += 1;
-                let decided = post_json_rpc(
-                    &handoff_base,
-                    id,
-                    "openhuman.approval_decide",
-                    json!({ "request_id": request_id, "decision": "approve_once" }),
-                )
-                .await;
-                assert_no_jsonrpc_error(&decided, "approval_decide for spawn_subagent");
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    });
+    let handoff_task = approve_handoff_cards(&events, &rpc_base);
 
     // ── 1. the orchestrator spawns workflow_builder once and its turn ends ──
     let graph = three_step_graph();
@@ -787,6 +800,354 @@ async fn chat_spawns_workflow_builder_and_saves_its_proposal() {
         flow_count(&rpc_base).await,
         1,
         "saving the card after the agent saved must not create a second flow"
+    );
+
+    clear_forced_chat_completions();
+    handoff_task.abort();
+    sse_task.abort();
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[test]
+fn json_rpc_chat_card_save_then_agent_save_creates_no_second_flow() {
+    const CHILD_ENV: &str = "OPENHUMAN_CARD_THEN_AGENT_E2E_CHILD";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        // Same isolation as the agent-then-card test: the bus, the default
+        // core context and the approval gate are process-wide and one-shot.
+        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "json_rpc_chat_card_save_then_agent_save_creates_no_second_flow",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_ENV, "1")
+            .output()
+            .expect("run the isolated card-then-agent E2E child");
+        let child_output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        print!("{child_output}");
+        assert!(
+            output.status.success()
+                && child_output.contains("running 1 test")
+                && child_output.contains("1 passed; 0 failed"),
+            "isolated card-then-agent E2E child must run exactly one passing test:\n{child_output}"
+        );
+        return;
+    }
+    run_json_rpc_e2e_on_agent_stack(
+        "json_rpc_chat_card_save_then_agent_save_creates_no_second_flow",
+        chat_card_save_then_agent_save_creates_no_second_flow,
+    );
+}
+
+async fn chat_card_save_then_agent_save_creates_no_second_flow() {
+    // The reverse order of the test above (#8459): the user saves the proposal
+    // from its card first, then says "save it" in chat. The agent path must
+    // not create a second copy of the flow.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .try_init();
+    let _env_lock = json_rpc_e2e_env_lock_async().await;
+    tinyhumans_boot::boot();
+    let _fifo_guard = ScriptedFifoGuard;
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _storage_url_guard = EnvVarGuard::unset("OPENHUMAN_STORAGE_URL");
+    let _approval_gate_guard = EnvVarGuard::unset("OPENHUMAN_APPROVAL_GATE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+    clear_forced_chat_completions();
+    with_chat_completion_requests(|requests| requests.clear());
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{mock_addr}");
+    write_builder_config(&openhuman_home, &mock_origin);
+    write_builder_config(&openhuman_home.join("users").join("local"), &mock_origin);
+    write_builder_config(&openhuman_home.join("users").join("e2e-user"), &mock_origin);
+
+    openhuman_core::core::bus::init()
+        .await
+        .expect("initialise the in-process bus");
+    openhuman_core::core::runtime::CoreContext::init_with_config(
+        openhuman_core::core::types::HostKind::Cli,
+        &openhuman_core::core::runtime::TokenSource::Fixed(Arc::new(TEST_RPC_TOKEN.to_string())),
+        openhuman_core::core::runtime::DomainSet::full(),
+        Default::default(),
+        None,
+    )
+    .await
+    .expect("initialise the process default core context");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let store = post_json_rpc(
+        &rpc_base,
+        101,
+        "openhuman.auth_store_session",
+        json!({ "token": "e2e-test-jwt", "user_id": "e2e-user" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "store_session");
+
+    let (subagent_tx, mut subagent_rx) = mpsc::unbounded_channel();
+    let _subscription = openhuman_core::core::bus::BUS
+        .subscribe(Arc::new(SubagentEvents(subagent_tx)))
+        .expect("subscribe to sub-agent domain events");
+
+    let create = post_json_rpc(&rpc_base, 102, "openhuman.threads_create_new", json!({})).await;
+    let thread_id = assert_no_jsonrpc_error(&create, "threads_create_new")["data"]["id"]
+        .as_str()
+        .expect("thread id")
+        .to_string();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sse_task = collect_sse(
+        format!("{rpc_base}/events?client_id={CLIENT_ID}"),
+        Arc::clone(&events),
+    )
+    .await;
+
+    // Supervised autonomy asks before each hand-off; approve those like the
+    // agent-then-card test does, so the turns reach the behaviour under test.
+    let handoff_task = approve_handoff_cards(&events, &rpc_base);
+
+    // ── 1. the orchestrator spawns workflow_builder once and its turn ends ──
+    let graph = three_step_graph();
+    push_forced_chat_completion_when(
+        ORCHESTRATOR_MARKER,
+        forced_tool_call_completion(
+            "spawn_subagent",
+            json!({
+                "agent_id": "workflow_builder",
+                "prompt": format!("Build a workflow named \"{REQUESTED_NAME}\" that runs every morning at 8 in three steps."),
+                "task_title": REQUESTED_NAME,
+            }),
+        ),
+    );
+    push_forced_chat_completion_when(
+        ORCHESTRATOR_MARKER,
+        forced_text_completion(
+            "TURN1-END: the workflow builder is on it; the proposal will appear here.",
+        ),
+    );
+    push_forced_chat_completion_when(
+        BUILDER_MARKER,
+        forced_tool_call_completion(
+            "propose_workflow",
+            json!({ "name": REQUESTED_NAME, "graph": graph.clone() }),
+        ),
+    );
+    push_forced_chat_completion_when(BUILDER_MARKER, forced_text_completion("Proposal ready."));
+
+    send_chat(
+        &rpc_base,
+        103,
+        &thread_id,
+        "Set up a morning digest workflow for me.",
+    )
+    .await;
+    let turn_end = wait_for("the first turn's terminal event", || {
+        let events = Arc::clone(&events);
+        async move {
+            let mut terminal = events_named(&events, "chat_done");
+            terminal.extend(events_named(&events, "chat_error"));
+            terminal.into_iter().next()
+        }
+    })
+    .await;
+    assert_eq!(
+        turn_end.get("event").and_then(Value::as_str),
+        Some("chat_done"),
+        "the spawning turn must finish cleanly: {turn_end}"
+    );
+
+    // ── 2. the delivered proposal ──
+    let message = wait_for("the workflow_proposal message", || {
+        let rpc_base = rpc_base.clone();
+        let thread_id = thread_id.clone();
+        async move { proposal_message(&thread_messages(&rpc_base, &thread_id).await) }
+    })
+    .await;
+    let proposal_id = message["id"]
+        .as_str()
+        .expect("proposal message id")
+        .to_string();
+    let task_id = proposal_id
+        .strip_prefix("workflow-proposal:")
+        .expect("proposal id carries the task id")
+        .to_string();
+    let proposal = message["extraMetadata"]["proposal"].clone();
+    assert_eq!(proposal["name"], REQUESTED_NAME, "{proposal}");
+
+    // ── 3. the task's completion is published and delivered ──
+    let completed = wait_for("SubagentCompleted for the builder task", || {
+        let found = loop {
+            match subagent_rx.try_recv() {
+                Ok((id, agent)) if id == task_id => break Some((id, agent)),
+                Ok(_) => continue,
+                Err(_) => break None,
+            }
+        };
+        async move { found }
+    })
+    .await;
+    assert_eq!(completed.1, "workflow_builder");
+    wait_for("the builder result's delivery turn", || {
+        let rpc_base = rpc_base.clone();
+        let thread_id = thread_id.clone();
+        async move {
+            thread_messages(&rpc_base, &thread_id)
+                .await
+                .into_iter()
+                .find(|m| m["extraMetadata"]["scope"] == "background_delivery")
+        }
+    })
+    .await;
+
+    // ── 4. the card's save, as WorkflowProposalCard does it ──
+    // It creates the flow (born disabled for a schedule), records
+    // `saved_flow_id` on the proposal message, then enables that flow.
+    assert_eq!(flow_count(&rpc_base).await, 0, "no flow before the save");
+    let created = post_json_rpc(
+        &rpc_base,
+        160,
+        "openhuman.flows_create",
+        json!({ "name": proposal["name"], "graph": proposal["graph"] }),
+    )
+    .await;
+    let created_result = assert_no_jsonrpc_error(&created, "flows_create");
+    let card_flow = peel_logs_envelope(created_result).clone();
+    assert_eq!(
+        card_flow["enabled"], false,
+        "a schedule trigger is born disabled: {card_flow}"
+    );
+    assert!(
+        created_result["logs"]
+            .to_string()
+            .contains("created DISABLED"),
+        "the save says why it is disabled: {created_result}"
+    );
+    let card_flow_id = card_flow["id"].as_str().expect("card flow id").to_string();
+    let updated = post_json_rpc(
+        &rpc_base,
+        161,
+        "openhuman.threads_message_update",
+        json!({
+            "thread_id": thread_id,
+            "message_id": proposal_id,
+            "extra_metadata": { "scope": "workflow_proposal", "saved_flow_id": card_flow_id },
+        }),
+    )
+    .await;
+    let updated_record = assert_no_jsonrpc_error(&updated, "threads_message_update");
+    assert_eq!(
+        updated_record["data"]["extraMetadata"]["saved_flow_id"], card_flow_id,
+        "the card records the saved flow on the proposal: {updated_record}"
+    );
+    let enabled = post_json_rpc(
+        &rpc_base,
+        162,
+        "openhuman.flows_set_enabled",
+        json!({ "id": card_flow_id, "enabled": true }),
+    )
+    .await;
+    let enabled_result =
+        peel_logs_envelope(assert_no_jsonrpc_error(&enabled, "flows_set_enabled")).clone();
+    assert_eq!(enabled_result["enabled"], true, "{enabled_result}");
+    assert_eq!(
+        flow_count(&rpc_base).await,
+        1,
+        "the card save creates one flow"
+    );
+
+    // ── 5. the agent-side "save it" must not create a second copy ──
+    clear_forced_chat_completions();
+    push_forced_chat_completion_when(
+        ORCHESTRATOR_MARKER,
+        forced_tool_call_completion(
+            "spawn_subagent",
+            json!({
+                "agent_id": "workflow_builder",
+                "prompt": format!("Save the delivered proposal \"{REQUESTED_NAME}\" as-is with this graph: {}", graph),
+            }),
+        ),
+    );
+    push_forced_chat_completion_when(
+        ORCHESTRATOR_MARKER,
+        forced_text_completion("TURN2-END: saving it now."),
+    );
+    // A builder that read the hand-off answers in text: the proposal is
+    // already saved, so there is nothing to create.
+    push_forced_chat_completion_when(
+        BUILDER_MARKER,
+        forced_text_completion(&format!("Already saved as {card_flow_id}.")),
+    );
+    send_chat(&rpc_base, 150, &thread_id, "save it").await;
+    let turn2_end = wait_for("the save turn's terminal event", || {
+        let events = Arc::clone(&events);
+        async move {
+            let mut terminal = events_named(&events, "chat_error");
+            terminal.extend(
+                events_named(&events, "chat_done")
+                    .into_iter()
+                    .filter(|e| e.to_string().contains("TURN2-END")),
+            );
+            terminal.into_iter().next()
+        }
+    })
+    .await;
+    assert_eq!(
+        turn2_end.get("event").and_then(Value::as_str),
+        Some("chat_done"),
+        "the save turn must finish cleanly: {turn2_end}"
+    );
+    wait_for("SubagentCompleted for the save task", || {
+        let found = subagent_rx.try_recv().ok();
+        async move { found }
+    })
+    .await;
+    // The builder's own model request must carry the already-saved note: the
+    // host appends it to the save hand-off when the proposal it names was
+    // already saved from its card (#8459). Without it the builder only sees
+    // the name and graph, and a faithful `create_workflow` duplicates the flow.
+    let builder_requests = with_chat_completion_requests(|requests| {
+        requests
+            .iter()
+            .filter(|r| {
+                r.get("body")
+                    .map(Value::to_string)
+                    .is_some_and(|b| b.contains(BUILDER_MARKER))
+            })
+            .map(|r| r.get("body").map(Value::to_string).unwrap_or_default())
+            .collect::<Vec<_>>()
+    });
+    assert!(
+        builder_requests.iter().any(|b| b.contains(&card_flow_id)
+            && b.contains("already saved")
+            && b.contains("Do not call `create_workflow`")),
+        "the builder's save hand-off must say the proposal is already saved as {card_flow_id}: {builder_requests:?}"
+    );
+    let create_approval = events_named(&events, "approval_request")
+        .into_iter()
+        .any(|e| e["tool_name"] == "create_workflow");
+    assert!(
+        !create_approval,
+        "no create_workflow approval may be requested for an already-saved proposal"
+    );
+    assert_eq!(
+        flow_count(&rpc_base).await,
+        1,
+        "saying \"save it\" after the card saved must not create a second flow"
     );
 
     clear_forced_chat_completions();
