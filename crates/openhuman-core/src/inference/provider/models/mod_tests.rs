@@ -62,9 +62,10 @@ fn workspace_with_provider(
 /// with the cosmetic endpoint `cli://claude-code`. Probing `{endpoint}/models`
 /// failed in reqwest's builder ("builder error for url (cli://claude-code/models)")
 /// and reached Sentry for every picker open. Claude Code runs as a local CLI
-/// and has no `/models` listing, so the catalog is empty — not an error.
+/// and has no `/models` listing, so the picker lists the built-in Claude
+/// models the CLI accepts instead (#8717) — still without any request.
 #[tokio::test]
-async fn claude_code_cli_provider_lists_no_models_without_a_request() {
+async fn claude_code_cli_provider_lists_builtin_models_without_a_request() {
     use crate::config::schema::cloud_providers::AuthStyle;
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = workspace_with_provider(&tmp, "claude-code", "cli://claude-code", AuthStyle::None);
@@ -72,8 +73,27 @@ async fn claude_code_cli_provider_lists_no_models_without_a_request() {
     let outcome =
         super::catalog_listing::list_configured_models_from_config("claude-code", &config)
             .await
-            .expect("claude-code must list an empty catalog, not fail");
-    assert_eq!(outcome.value["models"], serde_json::json!([]));
+            .expect("claude-code must list its built-in catalog, not fail");
+    assert_eq!(
+        outcome.value["models"],
+        serde_json::json!([
+            { "id": "claude-fable-5-2" },
+            { "id": "claude-fable-5-1" },
+            { "id": "claude-fable-5" },
+            { "id": "claude-opus-5-5" },
+            { "id": "claude-opus-4-8" },
+            { "id": "claude-opus-4-7" },
+            { "id": "claude-opus-4-6" },
+            { "id": "claude-sonnet-5-5" },
+            { "id": "claude-sonnet-4-6" },
+            { "id": "claude-haiku-5-5" },
+            { "id": "claude-haiku-4-5" },
+        ])
+    );
+    assert_eq!(
+        outcome.logs,
+        vec!["built-in catalog: 11 models".to_string()]
+    );
 }
 
 /// A `cli://` placeholder endpoint cannot host a `/models` listing;
