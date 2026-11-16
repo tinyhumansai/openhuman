@@ -1,19 +1,20 @@
 /**
  * NativeToolField — the tool picker for the "Tool" node (native OpenHuman tools,
- * as opposed to the Composio "App action" node). Loads the agent's tool
- * registry from `listRuntimeTools` (`openhuman.javascript_list_tools`) and lets
- * the author pick one from a dropdown; the value stored on `config.slug` is
- * `oh:<tool_name>`, which the flow engine routes to the native tool registry.
+ * as opposed to the Composio "App action" node). Loads the native tool registry
+ * from `agentRegistryApi.availableTools` (`openhuman.agent_registry_available_tools`)
+ * and lets the author pick one from a dropdown; the value stored on `config.slug`
+ * is `oh:<tool_name>`, which the flow engine routes to the same native tool
+ * registry (`tools::native_ops`).
  *
- * Shows the selected tool's description + a peek at its parameters so the author
- * knows what `args` to supply. Fetches are guarded — outside Tauri / on error it
- * falls back to a raw text input so a slug is never a dead end.
+ * Shows the selected tool's description so the author knows what it does.
+ * Fetches are guarded — outside Tauri / on error it falls back to a raw text
+ * input so a slug is never a dead end.
  */
 import { useEffect, useMemo, useState } from 'react';
 
 import { cn } from '../../../../lib/cn';
 import { useT } from '../../../../lib/i18n/I18nContext';
-import { listRuntimeTools, type RuntimeTool } from '../../../../services/api/runtimeToolsApi';
+import { agentRegistryApi, type AgentToolInfo } from '../../../../services/api/agentRegistryApi';
 import { NativeSelect, Input as UiInput } from '../../../ui';
 import { Field, MONO_CLASS } from './nodeConfigFields';
 
@@ -36,7 +37,7 @@ function toolName(slug: string): string {
 
 export function NativeToolField({ label, hint, value, onChange, testId }: NativeToolFieldProps) {
   const { t } = useT();
-  const [tools, setTools] = useState<RuntimeTool[]>([]);
+  const [tools, setTools] = useState<AgentToolInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
 
@@ -44,7 +45,7 @@ export function NativeToolField({ label, hint, value, onChange, testId }: Native
     let cancelled = false;
     void (async () => {
       try {
-        const list = await listRuntimeTools();
+        const list = await agentRegistryApi.availableTools();
         if (!cancelled) setTools(list);
       } catch {
         if (!cancelled) setFailed(true);
