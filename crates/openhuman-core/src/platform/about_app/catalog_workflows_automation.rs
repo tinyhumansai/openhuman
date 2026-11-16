@@ -96,13 +96,13 @@ Capability {
         name: "Browser Automation",
         domain: "workflows",
         category: CapabilityCategory::Workflows,
-        description: "Inspect pages and run bounded browser tasks in Chrome through TinyComputer, with a rescue model for failed steps. A finished task's plan and the page elements it found are kept per site in the core's workspace, so the next task there starts sooner. Switched off by [components] computer = false, which unregisters the browser tools and answers the browser RPCs with COMPONENT_DISABLED:computer.",
+        description: "Inspect pages and run bounded browser tasks in Chrome through TinyComputer, with a rescue model for failed steps. A finished task's plan and the page elements it found are kept per site in the core's workspace, so the next task there starts sooner. An operator can route chosen domains through an upstream HTTP proxy ([browser] upstream_proxies) for sites that block this machine’s own address; TinySecurity still authorizes every routed page and the proxy itself. Switched off by [components] computer = false, which unregisters the browser tools and answers the browser RPCs with COMPONENT_DISABLED:computer.",
         how_to: "Connections > Computer > Browser, then ask the assistant to use the browser; What tasks learn turns learning off or forgets learned sites",
         status: CapabilityStatus::Beta,
         privacy: Some(CapabilityPrivacy {
             leaves_device: true,
             data_kind: PrivacyDataKind::Raw,
-            destinations: &["Visited websites", "OpenRouter, OpenHuman backend, OpenJev or Sage for task decisions", "TypeSafe or Surplus Intelligence for captcha images, only when the captcha solver is on (captcha_provider)"],
+            destinations: &["Visited websites", "OpenRouter, OpenHuman backend, OpenJev or Sage for task decisions", "TypeSafe or Surplus Intelligence for captcha images, only when the captcha solver is on (captcha_provider)", "The operator’s upstream HTTP proxy, for the domains in [browser] upstream_proxies, only when set"],
         }),
     },
 Capability {
