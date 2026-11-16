@@ -134,9 +134,11 @@ export function sanitizeAuthError(err: unknown): string {
   const stripped = message.replace(/https?:\/\/[^\s"]+/g, '<backend>');
 
   // Trim at the first occurrence of a JSON blob to avoid leaking payloads.
-  // Match a literal opening brace, with an optional colon and whitespace, so
-  // ordinary text without an embedded JSON object remains intact.
-  const jsonIdx = stripped.search(/\s*:?\s*\{/);
+  // Match a literal opening brace (not preceded by `$`, so a `${...}`
+  // placeholder such as `${REDDIT_CLIENT_ID}` is not mistaken for JSON), with
+  // an optional colon and whitespace, so ordinary text without an embedded
+  // JSON object remains intact.
+  const jsonIdx = stripped.search(/\s*:?\s*(?<!\$)\{/);
   // Fall back to trimming at any bare `{` that follows whitespace if the
   // expected JSON form was not found (defensive — handles other JSON shapes).
   const jsonIdxFallback = stripped.search(/\s\{/);
