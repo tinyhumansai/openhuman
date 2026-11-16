@@ -194,6 +194,59 @@ describe('startLoopbackOauthListener', () => {
     }
   });
 
+  test.each([true, false])(
+    'superseding an attempt settles its callback and leaves the new listener running (already waiting: %s)',
+    async alreadyWaiting => {
+      vi.useFakeTimers();
+      try {
+        mockInvoke.mockResolvedValue({ redirectUri: 'http://127.0.0.1:53824/auth', state: 's' });
+        mockListen.mockResolvedValue(vi.fn());
+        const previous = await startLoopbackOauthListener({ timeoutSecs: 1 });
+        let previousError: unknown;
+        const waitForPrevious = () => {
+          void previous!.awaitCallback().catch(error => {
+            previousError = error;
+          });
+        };
+        if (alreadyWaiting) waitForPrevious();
+        const current = await startLoopbackOauthListener({ timeoutSecs: 5 });
+        if (!alreadyWaiting) waitForPrevious();
+        await Promise.resolve();
+
+        expect(previousError).toBeInstanceOf(Error);
+        expect((previousError as Error).message).toMatch(/superseded/);
+        expect(vi.getTimerCount()).toBe(0);
+        mockInvoke.mockClear();
+        await previous!.cancel();
+        expect(mockInvoke).not.toHaveBeenCalledWith('stop_loopback_oauth_listener');
+        await current!.cancel();
+        expect(mockInvoke).toHaveBeenCalledWith('stop_loopback_oauth_listener');
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  test('cleanup after a completed callback cannot stop a later attempt', async () => {
+    mockInvoke.mockResolvedValue({ redirectUri: 'http://127.0.0.1:53824/auth', state: 's' });
+    let callback!: (event: { payload: { url: string } }) => void;
+    mockListen.mockImplementation((_event, handler) => {
+      callback = handler;
+      return Promise.resolve(vi.fn());
+    });
+    const previous = await startLoopbackOauthListener();
+    const result = previous!.awaitCallback();
+    callback({ payload: { url: 'http://127.0.0.1:53824/auth?code=test&state=s' } });
+    await result;
+    const current = await startLoopbackOauthListener();
+    mockInvoke.mockClear();
+
+    await previous!.cancel();
+
+    expect(mockInvoke).not.toHaveBeenCalledWith('stop_loopback_oauth_listener');
+    await current!.cancel();
+  });
+
   test('cancel clears the pending timeout so it cannot stop a later listener', async () => {
     vi.useFakeTimers();
     try {
