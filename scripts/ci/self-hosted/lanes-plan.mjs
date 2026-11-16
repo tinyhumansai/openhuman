@@ -574,7 +574,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             " mcp::registry::tests::" +
             " doctor::checks::" +
             " core::schema_test_support::" +
-            " openhuman::config:: openhuman::platform::socket::event_handlers:: tools::schemas:: tools::ops::tests::",
+            " openhuman::config:: openhuman::platform::socket::event_handlers:: search::schemas:: search::rpc:: integrations::composio::tools_execute_rpc:: tools::ops::tests::",
         },
         {
           // Share one build for these disjoint test surfaces. Enable the
