@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use super::common::{command_line, run_capture, run_checked};
+use super::common::{run_capture, run_checked, systemd_command_line};
 use super::{ServiceSpec, ServiceState, ServiceStatus};
 
 pub(crate) fn install(spec: &ServiceSpec) -> Result<()> {
@@ -19,7 +19,7 @@ pub(crate) fn install(spec: &ServiceSpec) -> Result<()> {
 
     let stdout = logs_dir.join("daemon.stdout.log");
     let stderr = logs_dir.join("daemon.stderr.log");
-    let exec_start = command_line(&spec.exe, &spec.args);
+    let exec_start = systemd_command_line(&spec.exe, &spec.args)?;
 
     let unit = format!(
         "[Unit]\nDescription=OpenHuman Daemon\n\n[Service]\nExecStart={}\nRestart=always\nRestartSec=3\n\nStandardOutput=append:{}\nStandardError=append:{}\n\n[Install]\nWantedBy=default.target\n",

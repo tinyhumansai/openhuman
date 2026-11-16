@@ -7,7 +7,7 @@ use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
-use super::common::{command_line, run_capture, run_checked};
+use super::common::{cmd_command_line, run_capture, run_checked};
 use super::{ServiceSpec, ServiceState, ServiceStatus};
 
 /// The `.cmd` wrapper the scheduled task runs, which redirects the daemon's
@@ -23,7 +23,7 @@ pub(crate) fn install(spec: &ServiceSpec) -> Result<()> {
     let wrapper = wrapper_path(spec);
     let stdout = logs_dir.join("daemon.stdout.log");
     let stderr = logs_dir.join("daemon.stderr.log");
-    let daemon_cmd = command_line(&spec.exe, &spec.args);
+    let daemon_cmd = cmd_command_line(&spec.exe, &spec.args)?;
 
     let cmd = format!(
         "@echo off\n{} >> \"{}\" 2>> \"{}\"\n",
