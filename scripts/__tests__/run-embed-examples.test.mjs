@@ -51,6 +51,17 @@ test("on win32 without bash cargo runs directly and the wrapper is skipped", () 
   assert.ok(calls[1].args.includes("telegram"));
   assert.ok(!calls[1].args.join(" ").includes("ci-cancel-aware.sh"));
 });
+test("on win32 a throwing bash probe falls back to direct cargo", () => {
+  const calls = [];
+  runExamples({examples:[{name:"telegram",features:[]}],environment:{},platform:"win32", run(command,args,options) {
+    calls.push({command,args,options});
+    if (command === "bash") throw new Error("spawnSync bash EACCES");
+    return {status:0,stdout:"EXAMPLE_OK telegram\n",stderr:""};
+  }});
+  assert.equal(calls[1].command, "cargo");
+  assert.equal(calls[1].args[0], "run");
+  assert.ok(calls[1].args.includes("telegram"));
+});
 test("every discoverable example has an offline output contract", () => {
   const examples = discoverExamples();
   assert.ok(examples.length >= 18);
