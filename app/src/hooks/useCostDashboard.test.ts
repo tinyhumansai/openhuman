@@ -42,6 +42,43 @@ describe('useCostDashboard', () => {
     vi.useRealTimers();
   });
 
+  it.each(['success', 'failure'] as const)(
+    'lets a slow request settle with %s before starting another scheduled poll',
+    async outcome => {
+      vi.useFakeTimers();
+      let settle!: () => void;
+      mockedCall
+        .mockImplementationOnce(
+          () =>
+            new Promise<CostDashboardPayload>((resolve, reject) => {
+              settle = () =>
+                outcome === 'success' ? resolve(fixture) : reject(new Error('Slow RPC failed'));
+            })
+        )
+        .mockResolvedValue(fixture);
+      const { result } = renderHook(() => useCostDashboard());
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(12_000);
+      });
+      expect(mockedCall).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        settle();
+      });
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.isFetching).toBe(false);
+      expect(result.current.error).toBe(outcome === 'failure' ? 'Slow RPC failed' : null);
+      expect(result.current.data).toEqual(outcome === 'success' ? fixture : null);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(8_000);
+      });
+      expect(mockedCall).toHaveBeenCalledTimes(2);
+      expect(result.current.data).toEqual(fixture);
+      expect(result.current.error).toBeNull();
+    }
+  );
+
   it('keeps the newest refresh when an earlier dashboard request finishes later', async () => {
     let resolvePrevious!: (value: CostDashboardPayload) => void;
     mockedCall

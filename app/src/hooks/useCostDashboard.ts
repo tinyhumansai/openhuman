@@ -141,9 +141,11 @@ export function useCostDashboard(options: UseCostDashboardOptions = {}): UseCost
   const cancelledRef = useRef<boolean>(false);
 
   const requestRef = useRef(0);
+  const pendingRequestRef = useRef<number | null>(null);
 
   const fetchOnce = useCallback(async () => {
     const request = ++requestRef.current;
+    pendingRequestRef.current = request;
     setIsFetching(true);
     try {
       const response = await callCoreRpc<RpcEnvelope<CostDashboardPayload> | CostDashboardPayload>({
@@ -159,6 +161,7 @@ export function useCostDashboard(options: UseCostDashboardOptions = {}): UseCost
       if (cancelledRef.current || request !== requestRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      if (pendingRequestRef.current === request) pendingRequestRef.current = null;
       if (!cancelledRef.current && request === requestRef.current) {
         setIsLoading(false);
         setIsFetching(false);
@@ -186,7 +189,7 @@ export function useCostDashboard(options: UseCostDashboardOptions = {}): UseCost
     }
     const interval = window.setInterval(
       () => {
-        void fetchOnce();
+        if (pendingRequestRef.current === null) void fetchOnce();
       },
       Math.max(1000, refreshMs)
     );
