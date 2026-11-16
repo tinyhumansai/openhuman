@@ -134,12 +134,11 @@ export function sanitizeAuthError(err: unknown): string {
   const stripped = message.replace(/https?:\/\/[^\s"]+/g, '<backend>');
 
   // Trim at the first occurrence of a JSON blob to avoid leaking payloads.
-  // The URL stripping above may consume the `:` before `{`, so we match
-  // the optional colon and any surrounding whitespace before the `{`.
-  // This covers both `: {"error"...}` and the bare ` {"error"...}` form.
-  const jsonIdx = stripped.search(/\s*:?.../);
-  // Fall back to trimming at any bare `{` that follows whitespace if we
-  // did not find a `{"error"` form (defensive — handles other JSON shapes).
+  // Match a literal opening brace, with an optional colon and whitespace, so
+  // ordinary text without an embedded JSON object remains intact.
+  const jsonIdx = stripped.search(/\s*:?\s*\{/);
+  // Fall back to trimming at any bare `{` that follows whitespace if the
+  // expected JSON form was not found (defensive — handles other JSON shapes).
   const jsonIdxFallback = stripped.search(/\s\{/);
   const cutIdx =
     jsonIdx !== -1 ? jsonIdx : jsonIdxFallback !== -1 ? jsonIdxFallback : stripped.length;

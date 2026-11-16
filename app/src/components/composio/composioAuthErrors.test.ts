@@ -27,6 +27,10 @@ describe('sanitizeAuthError — embedded JSON error bodies', () => {
     expect(sanitizeAuthError('{"detail":"Token expired"}')).toBe('Token expired');
   });
 
+  it('keeps plain authorization messages intact', () => {
+    expect(sanitizeAuthError('Permission denied')).toBe('Permission denied');
+  });
+
   it('strips backend URLs from extracted messages', () => {
     expect(
       sanitizeAuthError(
