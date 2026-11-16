@@ -586,5 +586,6 @@ fn browser_automation_discloses_the_optional_upstream_proxy() {
         .destinations
         .iter()
         .any(|destination| destination.contains("upstream HTTP proxy")
-            && destination.contains("[browser] upstream_proxies")));
+            && destination.contains("[browser] upstream_proxies")
+            && destination.contains("next core start")));
 }
