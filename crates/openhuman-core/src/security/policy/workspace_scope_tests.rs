@@ -1,11 +1,8 @@
 //! Tests for the per-tool-call policy scoping that carries a run's
 //! `WorkspaceDescriptor` into the filesystem tools
-//! ([`super::gate::security_scoped_to_root`]).
+//! ([`super::scoped_to_workspace`]).
 
-use super::gate::security_scoped_to_root;
-use crate::security::policy::TrustedAccess;
-use crate::security::SecurityPolicy;
-use std::path::Path;
+use super::*;
 use tinyagents_harness::context::{RunConfig, RunContext};
 use tinyagents_harness::tool::ToolExecutionContext;
 use tinytools::WorkspaceDescriptor;
@@ -24,7 +21,7 @@ fn security_for_tool_context(
             policy_id = %workspace.policy_id,
             "[tools:system] granting TinyAgents workspace descriptor as action dir + trusted root"
         );
-        security_scoped_to_root(security, &workspace.root)
+        scoped_to_workspace(security, &workspace.root)
     } else {
         security.clone()
     }
@@ -222,7 +219,7 @@ fn system_and_filesystem_tools_share_workspace_scoped_policy() {
     let ctx = tool_context_with_workspace(project.path());
 
     let system = security_for_tool_context(&base, Some(&ctx), "shell");
-    let filesystem = security_scoped_to_root(&base, project.path());
+    let filesystem = scoped_to_workspace(&base, project.path());
 
     assert_eq!(system.action_dir, filesystem.action_dir);
     assert_eq!(system.trusted_roots, filesystem.trusted_roots);

@@ -21,6 +21,7 @@ pub mod prompt_injection;
 pub mod scrub;
 pub mod secret_storage;
 pub mod switch;
+pub(crate) mod tool_gates;
 
 pub use audit::{get_or_create_workspace_audit_sink, AuditSink};
 pub use ops as rpc;
