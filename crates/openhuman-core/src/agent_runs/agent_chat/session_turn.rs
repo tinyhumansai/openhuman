@@ -8,9 +8,9 @@ use crate::core::Outcome;
 use tinyagents_harness::observability::turn_observer::SetupPhase;
 
 use super::guards::{
-    effective_agent_chat_origin, enforce_user_prompt_or_reject, grant_turn_cwd,
-    normalize_model_override, resolve_turn_cwd,
+    effective_agent_chat_origin, enforce_user_prompt_or_reject, grant_turn_cwd, resolve_turn_cwd,
 };
+pub(super) use super::turn_overrides::apply_turn_overrides;
 
 /// Executes a single chat turn with an AI agent.
 ///
@@ -457,30 +457,6 @@ pub async fn agent_chat_reply_for_controlled(
         false,
     )
     .await
-}
-
-/// Applies a call's model, temperature and inference route to `config`, in
-/// memory, before its session is built.
-pub(super) fn apply_turn_overrides(
-    config: &mut Config,
-    model_override: Option<String>,
-    temperature: Option<f64>,
-    route: Option<crate::config::schema::EphemeralRoute>,
-) {
-    // TAURI-RUST-RS: an upstream caller (frontend, JSON-RPC client) can pass
-    // `model_override: Some("")`. See `normalize_model_override` for the
-    // rationale — an empty / whitespace-only override collapses to `None`.
-    if let Some(model) = normalize_model_override(model_override) {
-        config.default_model = Some(model);
-    }
-    if let Some(temp) = temperature {
-        config.default_temperature = temp;
-    }
-    // After the model override, because the route pins its roles to
-    // `"<slug>:<model>"` and the model it uses is the one this call resolved.
-    if let Some(route) = route {
-        crate::config::schema::ephemeral_route::apply(config, route);
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

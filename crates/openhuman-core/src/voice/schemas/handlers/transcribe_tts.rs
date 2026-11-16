@@ -5,8 +5,9 @@ use crate::core::all::{BoundRegisteredController, ControllerFuture, ControllerTa
 use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
+use crate::util::params::outcome_value_to_json;
 use crate::voice::schemas::helpers::{
-    deserialize_params, effective_stt_provider, effective_tts_provider, to_json,
+    deserialize_params, effective_stt_provider, effective_tts_provider,
 };
 use crate::voice::schemas::params::{
     ReplySynthesizeParams, SttDispatchParams, TranscribeBytesParams, TranscribeParams,
@@ -15,6 +16,25 @@ use crate::voice::schemas::params::{
 
 fn load_voice_config(ctx: DispatchCtx) -> ControllerTask<Config> {
     Box::pin(async move { ctx.load_config().await })
+}
+
+/// Resolve the voice id a TTS dispatch passes to the provider.
+///
+/// A non-blank requested voice wins (trimmed). Otherwise only Piper gets a
+/// default: passing a Piper voice id to a cloud TTS provider would send an
+/// invalid voice to the upstream API, so every other provider gets `""`.
+fn resolve_tts_voice(requested: Option<&str>, provider_name: &str) -> String {
+    requested
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if provider_name == "piper" {
+                crate::voice::DEFAULT_PIPER_VOICE.to_string()
+            } else {
+                String::new()
+            }
+        })
 }
 
 fn ignored_params(_params: Map<String, Value>) -> Result<(), String> {
@@ -85,7 +105,12 @@ pub(crate) fn voice_tts_dispatch_controller() -> BoundRegisteredController {
 }
 
 fn run_voice_status(_ctx: DispatchCtx, config: Config, (): ()) -> ControllerFuture {
-    Box::pin(async move { to_json(crate::voice::voice_status(&config).await?) })
+    Box::pin(async move {
+        outcome_value_to_json(
+            crate::voice::voice_status(&config).await?,
+            "serialize error: ",
+        )
+    })
 }
 
 fn run_voice_transcribe(
@@ -94,7 +119,7 @@ fn run_voice_transcribe(
     p: TranscribeParams,
 ) -> ControllerFuture {
     Box::pin(async move {
-        to_json(
+        outcome_value_to_json(
             crate::voice::voice_transcribe(
                 &config,
                 &p.audio_path,
@@ -102,6 +127,7 @@ fn run_voice_transcribe(
                 p.skip_cleanup,
             )
             .await?,
+            "serialize error: ",
         )
     })
 }
@@ -112,7 +138,7 @@ fn run_voice_transcribe_bytes(
     p: TranscribeBytesParams,
 ) -> ControllerFuture {
     Box::pin(async move {
-        to_json(
+        outcome_value_to_json(
             crate::voice::voice_transcribe_bytes(
                 &config,
                 &p.audio_bytes,
@@ -121,13 +147,17 @@ fn run_voice_transcribe_bytes(
                 p.skip_cleanup,
             )
             .await?,
+            "serialize error: ",
         )
     })
 }
 
 fn run_voice_tts(_ctx: DispatchCtx, config: Config, p: TtsParams) -> ControllerFuture {
     Box::pin(async move {
-        to_json(crate::voice::voice_tts(&config, &p.text, p.output_path.as_deref()).await?)
+        outcome_value_to_json(
+            crate::voice::voice_tts(&config, &p.text, p.output_path.as_deref()).await?,
+            "serialize error: ",
+        )
     })
 }
 
@@ -144,22 +174,7 @@ fn run_voice_reply_synthesize(
         // selecting "piper" persisted to config but conversation replies
         // still hit the cloud TTS proxy.
         let provider_name = effective_tts_provider(&config);
-        // Only default to the Piper voice id when the active provider is
-        // actually Piper. Passing a Piper voice id to a cloud TTS provider
-        // would send an invalid voice to the upstream API.
-        let voice = p
-            .voice_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                if provider_name == "piper" {
-                    crate::voice::DEFAULT_PIPER_VOICE.to_string()
-                } else {
-                    String::new()
-                }
-            });
+        let voice = resolve_tts_voice(p.voice_id.as_deref(), &provider_name);
         let effective_voice = if voice.is_empty() {
             None
         } else {
@@ -171,10 +186,11 @@ fn run_voice_reply_synthesize(
         let provider = crate::voice::create_tts_provider(&provider_name, &voice, &config)
             .await
             .map_err(|e| e.to_string())?;
-        to_json(
+        outcome_value_to_json(
             provider
                 .synthesize(&config, &p.text, effective_voice)
                 .await?,
+            "serialize error: ",
         )
     })
 }
@@ -236,21 +252,7 @@ fn run_voice_tts_dispatch(
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| effective_tts_provider(&config));
-        // Only fall back to the Piper default voice id when the provider is
-        // Piper; sending a Piper voice id to a cloud TTS endpoint is invalid.
-        let voice = p
-            .voice
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                if provider_name == "piper" {
-                    crate::voice::DEFAULT_PIPER_VOICE.to_string()
-                } else {
-                    String::new()
-                }
-            });
+        let voice = resolve_tts_voice(p.voice.as_deref(), &provider_name);
         let effective_voice = if voice.is_empty() {
             None
         } else {
@@ -266,7 +268,7 @@ fn run_voice_tts_dispatch(
         let outcome = provider
             .synthesize(&config, &p.text, effective_voice)
             .await?;
-        to_json(outcome)
+        outcome_value_to_json(outcome, "serialize error: ")
     })
 }
 
@@ -315,3 +317,7 @@ pub(crate) fn handle_voice_tts_dispatch(
 ) -> ControllerFuture {
     voice_tts_dispatch_controller().invoke(ctx, params)
 }
+
+#[cfg(test)]
+#[path = "transcribe_tts_tests.rs"]
+mod tests;

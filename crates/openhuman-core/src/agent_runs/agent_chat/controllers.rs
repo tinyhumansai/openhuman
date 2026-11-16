@@ -1,3 +1,4 @@
+use crate::util::params::{json_output, optional_string, required_string};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -74,7 +75,9 @@ pub(crate) fn schemas(function: &str) -> ControllerSchema {
                 },
                 optional_string(
                     "inference_reasoning_effort",
-                    "Reasoning effort for the model selected by inference_url.",
+                    "Reasoning effort for this turn's model (none, minimal, low, medium, \
+                     high, xhigh): the inference_url route's model when one is given, else \
+                     the model the turn resolves (model_override or the configured model).",
                 ),
             ],
             outputs: vec![json_output(
@@ -143,6 +146,23 @@ fn handle_agent_chat(
             _ => super::AgentChatTarget::Orchestrator,
         };
         let headless = ctx.is_headless_agent_chat();
+        let route = crate::config::schema::EphemeralRoute::from_params(
+            params.inference_url,
+            params.api_key,
+        );
+        // Without an `inference_url` there is no route to carry the effort;
+        // set it on this call's config instead of dropping it.
+        let reasoning_effort = match route {
+            Some(_) => params.inference_reasoning_effort,
+            None => {
+                super::turn_overrides::apply_turn_reasoning_effort(
+                    &mut config,
+                    params.common.model_override.as_deref(),
+                    params.inference_reasoning_effort,
+                );
+                None
+            }
+        };
         let reply = super::session_turn::agent_chat_reply_for_with_headless(
             &mut config,
             target,
@@ -151,15 +171,11 @@ fn handle_agent_chat(
             params.common.temperature,
             params.common.thread_id,
             params.common.cwd,
-            crate::config::schema::EphemeralRoute::from_params(
-                params.inference_url,
-                params.api_key,
-            )
-            .map(|route| {
+            route.map(|route| {
                 route
                     .with_headers(params.inference_headers)
                     .with_provider_options(params.inference_provider_options)
-                    .with_reasoning_effort(params.inference_reasoning_effort)
+                    .with_reasoning_effort(reasoning_effort)
             }),
             super::AgentChatEnv {
                 host: crate::agent::turn_env::HostTurnEnv {
@@ -202,39 +218,12 @@ fn deserialize_params<T: serde::de::DeserializeOwned>(
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
 }
 
-fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::String,
-        comment,
-        required: true,
-    }
-}
-
-fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        required: false,
-    }
-}
-
 fn optional_f64(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
         ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
         comment,
         required: false,
-    }
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty: TypeSchema::Json,
-        comment,
-        required: true,
     }
 }
 

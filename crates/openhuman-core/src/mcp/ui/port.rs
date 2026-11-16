@@ -14,7 +14,12 @@ use crate::config::Config;
 use crate::mcp::host;
 use crate::mcp::module_client::McpConfiguredClient;
 
-use super::types::UiToolDescriptor;
+/// What a widget-initiated tool call needs to know about its target tool.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UiToolDescriptor {
+    pub meta: Option<Value>,
+    pub annotations: Option<Value>,
+}
 
 /// What a widget RPC asks of an MCP server.
 #[async_trait]
@@ -119,44 +124,18 @@ impl UiServerPort for HostUiPort {
                 annotations: None,
             });
         }
-        let listed: Vec<tinymcp_bus::McpRemoteTool> = client
-            .call(
-                &client_config,
-                tinymcp_bus::names::methods::STATIC_LIST_TOOLS,
-                (server_id,),
-            )
+        let safe = client
+            .safe_static_tools(&client_config, server_id)
             .await
             .map_err(|error| {
                 tracing::debug!(server_id, ?error, "[mcp_ui] could not list tools");
             })
             .ok()?;
-        let listed = client
-            .scrub_static_tools(&client_config, server_id, listed)
-            .await
-            .ok()?;
-        let meta = listed
-            .iter()
-            .find(|remote| remote.name == tool)
-            .and_then(|remote| remote.meta.clone());
-        let annotations = listed
-            .iter()
-            .find(|remote| remote.name == tool)
-            .and_then(|remote| remote.annotations.clone());
-        let safe = crate::mcp::registry::tools_safe_for_agent(
-            server_id,
-            listed
-                .into_iter()
-                .map(|remote| tinymcp_bus::McpTool {
-                    description: remote.description.or(remote.title),
-                    name: remote.name,
-                    input_schema: remote.input_schema,
-                    meta: None,
-                })
-                .collect(),
-        )
-        .await;
-        safe.iter().find(|candidate| candidate.name == tool)?;
-        Some(UiToolDescriptor { meta, annotations })
+        let remote = safe.into_iter().find(|remote| remote.name == tool)?;
+        Some(UiToolDescriptor {
+            meta: remote.meta,
+            annotations: remote.annotations,
+        })
     }
 
     async fn read_resource(&self, server_id: &str, uri: &str) -> Result<Vec<Value>, String> {

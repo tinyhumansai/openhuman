@@ -1,8 +1,8 @@
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::runtime::DispatchCtx;
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::test_support::{introspect, rpc};
 
@@ -313,8 +313,4 @@ fn handle_wallet_prepared_quotes(
     _params: Map<String, Value>,
 ) -> ControllerFuture {
     Box::pin(async move { to_json(introspect::wallet_prepared_quotes().await?) })
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }

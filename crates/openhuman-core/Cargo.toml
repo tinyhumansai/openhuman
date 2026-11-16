@@ -314,8 +314,6 @@ async-trait = "0.1"
 # crates); declared directly so the keyring module can `use zeroize::Zeroizing`.
 zeroize = "1"
 hex = "0.4"
-# The host-owned SaaS gateway signature uses HMAC with SHA-256.
-hmac = "0.12"
 tokio-util = { version = "0.7", features = ["rt", "io"] }
 # tokio-tungstenite is declared per-target below so the TLS backend
 # (native-tls on Windows, rustls on macOS / Linux) matches the reqwest
@@ -458,6 +456,13 @@ tinyhosts-bus = { path = "../../vendor/tinyhosts/crates/tinyhosts-bus", optional
 # derive a known account. Dev-dependency features are not linked into the
 # shipped binary, so that does not undo the shed.
 tinywallet-bus = { path = "../../vendor/tinywallet/crates/tinywallet-bus", default-features = false, features = ["wire"], optional = true }
+# Base58 for Solana public keys and signatures in `web3::wallet::program`,
+# which decodes a host-built transaction to check it against the account's
+# policy before the module signs it. A codec only; no key material.
+bs58 = { version = "0.5", optional = true }
+# Verifies (never makes) the co-signers' ed25519 signatures on a partially
+# signed host-built Solana transaction before the module adds the account's.
+ed25519-dalek = { version = "2.2", optional = true }
 
 
 [target.'cfg(windows)'.dependencies]
@@ -727,6 +732,8 @@ voice = [
 # feature carries only the lightweight bus contract and generic HTTP client.
 web3 = [
     "dep:tinywallet-bus",
+    "dep:bs58",
+    "dep:ed25519-dalek",
     "modules",
 ]
 
@@ -788,11 +795,8 @@ skills = ["tinyskills/registry", "dep:tinyskills-drivers"]
 # dependencies. The issue-level DoD line claiming it "sheds the MCP SDK /
 # transport stack" is superseded by this correction (see AGENTS.md).
 #
-# NOTE: the family root `pub mod mcp;` and `mcp::http_client` stay ALWAYS
-# compiled. `http_client` is a mis-housed shared utility (the gitbooks docs
-# tool dials `McpHttpClient`; `core::observability` names
-# `McpUnauthorizedError`), and the server/registry/audit stubs need their
-# parent compiled. `sanitize` left the family entirely for `util::sanitize` —
+# NOTE: the family root `pub mod mcp;` stays ALWAYS compiled: the
+# server/registry/audit stubs need their parent compiled. `sanitize` left the family entirely for `util::sanitize` —
 # the orchestrator prompt sanitises *skill* descriptions through it. The gate
 # follows the real dependency graph, not the directory name.
 mcp = ["modules"]

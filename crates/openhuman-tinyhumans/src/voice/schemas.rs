@@ -12,8 +12,11 @@ use openhuman_embed::__host::core::all::{
     RegisteredController,
 };
 use openhuman_embed::__host::core::runtime::DispatchCtx;
-use openhuman_embed::__host::core::{ControllerSchema, FieldSchema, Outcome, TypeSchema};
-use serde::{Deserialize, Serialize};
+use openhuman_embed::__host::core::ControllerSchema;
+use openhuman_embed::__host::util::params::{
+    json_output, optional_string, outcome_value_to_json, required_string,
+};
+use serde::Deserialize;
 use serde_json::{Map, Value};
 use tinyinference_voice::cloud::CloudTranscribeOptions;
 
@@ -21,32 +24,6 @@ use super::cloud_transcribe::transcribe_cloud;
 use super::realtime::mint_voice_agent_signed_url;
 
 const LOG_PREFIX: &str = "[voice-hosted-rpc]";
-
-fn field(name: &'static str, ty: TypeSchema, comment: &'static str, required: bool) -> FieldSchema {
-    FieldSchema {
-        name,
-        ty,
-        comment,
-        required,
-    }
-}
-
-fn required_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    field(name, TypeSchema::String, comment, true)
-}
-
-fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
-    field(
-        name,
-        TypeSchema::Option(Box::new(TypeSchema::String)),
-        comment,
-        false,
-    )
-}
-
-fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
-    field(name, TypeSchema::Json, comment, true)
-}
 
 /// Schema for one hosted voice controller.
 pub fn hosted_voice_schemas(function: &str) -> ControllerSchema {
@@ -119,10 +96,6 @@ struct CloudTranscribeParams {
     language: Option<String>,
 }
 
-fn to_json<T: Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    serde_json::to_value(outcome.value).map_err(|e| format!("serialize error: {e}"))
-}
-
 async fn load_config(ctx: &DispatchCtx) -> Result<Config, String> {
     ctx.load_config().await
 }
@@ -136,7 +109,10 @@ fn handle_voice_agent_signed_url(
     Box::pin(async move {
         log::debug!("{LOG_PREFIX} voice.agent_signed_url");
         let config = load_config(&ctx).await?;
-        to_json(mint_voice_agent_signed_url(&config).await?)
+        outcome_value_to_json(
+            mint_voice_agent_signed_url(&config).await?,
+            "serialize error: ",
+        )
     })
 }
 
@@ -152,7 +128,10 @@ fn handle_voice_cloud_transcribe(ctx: DispatchCtx, params: Map<String, Value>) -
             mime_type: p.mime_type,
             file_name: p.file_name,
         };
-        to_json(transcribe_cloud(&config, &p.audio_base64, &opts).await?)
+        outcome_value_to_json(
+            transcribe_cloud(&config, &p.audio_base64, &opts).await?,
+            "serialize error: ",
+        )
     })
 }
 

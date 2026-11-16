@@ -206,7 +206,7 @@ async fn the_callback_bound_load_config_is_what_every_refresh_pushes() {
     let mut refreshed = module_config(&config).await;
     inject_security_browser_config(
         &mut refreshed,
-        crate::modules::browser_egress_host::browser_dial_alias(),
+        crate::modules::browser_egress_host::browser_dial_alias(&config),
         ":1.42",
     );
 

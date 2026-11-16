@@ -1,13 +1,14 @@
 //! Handlers for config snapshot reads and model, memory, runtime, and local-AI inference settings.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::config::rpc as config_rpc;
 use crate::core::all::ControllerFuture;
 
 use super::super::helpers::{
-    deserialize_params, to_json, LocalAiSettingsUpdate, MemorySettingsUpdate, ModelSettingsUpdate,
+    deserialize_params, LocalAiSettingsUpdate, MemorySettingsUpdate, ModelSettingsUpdate,
     RuntimeSettingsUpdate,
 };
 

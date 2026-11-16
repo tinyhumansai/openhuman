@@ -63,7 +63,7 @@ pub use hosting::HostingConfig;
 pub mod storage;
 pub use storage::StorageConfig;
 pub mod wallet_policy;
-pub use wallet_policy::{WalletAssetCap, WalletPolicyConfig};
+pub use wallet_policy::{WalletAccountPolicy, WalletAssetCap, WalletMintCap, WalletPolicyConfig};
 pub mod profile_layout;
 pub use profile_layout::{users_dir, ProfileLayout};
 mod identity_cost;
@@ -172,16 +172,17 @@ pub use tinychannels_bus::config::{
 };
 pub use tokenjuice::TokenjuiceConfig;
 pub use tools::{
-    BrowserConfig, ComposioConfig, ComposioDirectBaseUrls, ComposioHostCredential, CurlConfig,
-    GitbooksConfig, HttpHeader, HttpRequestConfig, IntegrationToggle, IntegrationsConfig,
-    LegacySearchInputs, McpAuthConfig, McpClientConfig, McpClientIdentityConfig, McpServerConfig,
-    McpToolExposure, MultimodalConfig, MultimodalFileConfig, PresentationMode, ProviderRoute,
-    SearchConfig, SearchEngineCredentials, SearchHostCredential, SearchProviderSettings,
-    SearxngConfig, SecretsConfig, SeltzConfig, UnknownKeyedSearchProvider, COMPOSIO_MODE_BACKEND,
-    COMPOSIO_MODE_DIRECT, COMPOSIO_MODE_DISABLED, MANAGED_SEARCH_PROVIDERS, SEARCH_ENGINE_BRAVE,
-    SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL,
-    SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY, SEARCH_PROVIDERS, SEARCH_ROLES, SEARCH_ROLE_ANSWER,
-    SEARCH_ROLE_CONTENTS, SEARCH_ROLE_SEARCH,
+    BrowserConfig, BrowserUpstreamProxy, ComposioConfig, ComposioDirectBaseUrls,
+    ComposioHostCredential, CurlConfig, GitbooksConfig, HttpHeader, HttpRequestConfig,
+    IntegrationToggle, IntegrationsConfig, LegacySearchInputs, McpAuthConfig, McpClientConfig,
+    McpClientIdentityConfig, McpServerConfig, McpToolExposure, MultimodalConfig,
+    MultimodalFileConfig, PresentationMode, ProviderRoute, SearchConfig, SearchEngineCredentials,
+    SearchHostCredential, SearchProviderSettings, SearxngConfig, SecretsConfig, SeltzConfig,
+    UnknownKeyedSearchProvider, COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT,
+    COMPOSIO_MODE_DISABLED, MANAGED_SEARCH_PROVIDERS, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED,
+    SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
+    SEARCH_ENGINE_TAVILY, SEARCH_PROVIDERS, SEARCH_ROLES, SEARCH_ROLE_ANSWER, SEARCH_ROLE_CONTENTS,
+    SEARCH_ROLE_SEARCH,
 };
 pub use update::{UpdateConfig, UpdateRestartStrategy};
 pub use web_chat_config::WebChatConfig;

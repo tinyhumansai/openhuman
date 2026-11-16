@@ -78,8 +78,6 @@ There is no type shared across the family. The ones contributors touch most:
   ([`cost/global.rs`](./cost/global.rs)). The tracker is bound to one workspace, and signing in or
   out rebinds it so usage lands in the right user's ledger.
 - `SocketPort` and `token_provider_from_config` ([`socket/`](./socket/)).
-- `pick_listen_port_for_host` and its variants ([`connectivity/`](./connectivity/)), used by the
-  RPC host when binding.
 - `ServiceStatus` and the restart and shutdown publishers ([`service/`](./service/)).
 
 ## RPC / CLI surface

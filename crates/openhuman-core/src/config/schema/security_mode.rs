@@ -94,19 +94,6 @@ impl SecurityJudgeRoute {
         }
     }
 
-    /// Jev through the TinyHumans gateway at `base_url`.
-    #[must_use]
-    pub fn tinyhumans(base_url: &str, api_key: impl Into<String>) -> Self {
-        Self {
-            api_key: api_key.into(),
-            endpoint: format!(
-                "{}/agent-integrations/openrouter/systemone",
-                base_url.trim_end_matches('/')
-            ),
-            dialect: SecurityJudgeDialect::OpenRouter,
-        }
-    }
-
     /// The open Jev endpoint.
     #[must_use]
     pub fn open_jev(api_key: impl Into<String>) -> Self {

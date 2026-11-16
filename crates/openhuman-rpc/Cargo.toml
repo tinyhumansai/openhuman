@@ -19,7 +19,7 @@ os-keyring = ["dep:keyring", "dep:tinystoragedrivers", "dep:zeroize", "dep:hex"]
 http-client = ["dep:reqwest"]
 # The core's JSON-RPC server: HTTP router, Socket.IO, and the listener bind.
 # Turns on the core's `http-server` gate, which carries the domain-owned HTTP
-# handlers (the `/v1` inference router, the dictation WebSocket) the router
+# handlers (the `/v1` inference router, the live-voice WebSocket) the router
 # mounts.
 server = [
     "os-keyring",
@@ -39,6 +39,10 @@ server = [
     "dep:rand",
     "dep:uuid",
     "dep:urlencoding",
+    "dep:hex",
+    "dep:hmac",
+    "dep:reqwest",
+    "dep:sha2",
     "session-store",
 ]
 # The on-disk session store (`session_store`): OpenHuman's classic
@@ -86,6 +90,9 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "linux-
 tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", default-features = false, features = ["keyring"], optional = true }
 zeroize = { version = "1", optional = true }
 hex = { version = "0.4", optional = true }
+# The SaaS gateway's user signature (HMAC-SHA256).
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", optional = true }
 # The only openhuman crate this layer depends on. Core internals the server
 # needs come through embed's `#[doc(hidden)]` `__host` list (reached as
 # `openhuman_tinyhumans::__host`, which tinyhumans forwards); there is no direct `openhuman-core`

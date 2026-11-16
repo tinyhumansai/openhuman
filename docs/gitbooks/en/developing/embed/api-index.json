@@ -96,7 +96,6 @@
     "PhysicalDispatchStatus",
     "PhysicalDispatchTerminal",
     "PhysicalDispatchUsage",
-    "PickListenPortError",
     "ProfileError",
     "ProfileEvents",
     "ProfileHandle",

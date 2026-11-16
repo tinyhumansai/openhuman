@@ -36,7 +36,7 @@ pub struct SaasConfig {
     pub root: PathBuf,
     /// Validated direct inference defaults shared by profile chat, relay, and cron.
     #[serde(default)]
-    pub chat_provider: Option<super::direct_profile_provider::DirectProfileProvider>,
+    pub chat_provider: Option<crate::profiles::direct_profile_provider::DirectProfileProvider>,
     /// Operator-owned direct Exa/Gemini policy; never a user settings RPC.
     #[serde(default)]
     pub search: Option<crate::config::SearchConfig>,
@@ -80,7 +80,7 @@ pub struct SaasConfig {
     #[serde(default)]
     pub custom_definitions: bool,
     /// Require `X-OpenHuman-User-Sig` on every request made for a user
-    /// (see `profiles::gateway`).
+    /// (checked by `openhuman-rpc`'s `saas_gateway`).
     #[serde(default = "default_true")]
     pub require_user_signature: bool,
     /// The storage backend every node of a deployment shares (`sqlite:…`,

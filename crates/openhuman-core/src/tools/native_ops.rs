@@ -8,29 +8,9 @@ use crate::modules::tinybox::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::security::policy::CommandClass;
 use crate::security::SecurityPolicy;
 use crate::tools;
-use crate::tools::native_ops_types::{ExecuteToolOutcome, RuntimeToolSummary};
-use tinytools::{Tool, ToolCallOptions, ToolScope};
+use crate::tools::native_ops_types::ExecuteToolOutcome;
+use tinytools::{Tool, ToolCallOptions};
 use tracing::{debug, trace};
-
-fn tool_scope_label(scope: ToolScope) -> &'static str {
-    match scope {
-        ToolScope::All => "all",
-        ToolScope::AgentOnly => "agent_only",
-        ToolScope::CliRpcOnly => "cli_rpc_only",
-    }
-}
-
-fn summarize_tool(tool: &dyn Tool) -> RuntimeToolSummary {
-    RuntimeToolSummary {
-        name: tool.name().to_string(),
-        description: tool.description().to_string(),
-        category: tool.category().to_string(),
-        permission_level: tool.permission_level().to_string(),
-        scope: tool_scope_label(tool.scope()).to_string(),
-        supports_markdown: tool.supports_markdown(),
-        parameters: tool.parameters_schema(),
-    }
-}
 
 async fn command_class_for_tool(
     security: &SecurityPolicy,
@@ -77,15 +57,6 @@ async fn command_class_for_tool(
     })
 }
 
-pub async fn build_runtime_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>, String> {
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
-    build_runtime_tools_with_security(config, security).await
-}
-
 /// Builds native tools with a caller-resolved policy snapshot.
 pub async fn build_runtime_tools_with_security(
     config: &Config,
@@ -120,18 +91,6 @@ pub async fn build_runtime_tools_with_security(
         "[native_ops] build_runtime_tools: done"
     );
     Ok(built)
-}
-
-pub async fn list_tools(config: &Config) -> Result<Vec<RuntimeToolSummary>, String> {
-    debug!("[native_ops] list_tools: start");
-    let mut summaries: Vec<RuntimeToolSummary> = build_runtime_tools(config)
-        .await?
-        .into_iter()
-        .map(|tool| summarize_tool(tool.as_ref()))
-        .collect();
-    summaries.sort_by(|a, b| a.name.cmp(&b.name));
-    debug!(count = summaries.len(), "[native_ops] list_tools: done");
-    Ok(summaries)
 }
 
 pub async fn classify_tool_call(
@@ -172,20 +131,6 @@ pub async fn classify_tool_call_with_security(
         "[native_ops] classify_tool_call: done"
     );
     Ok(class)
-}
-
-pub async fn execute_tool(
-    config: &Config,
-    tool_name: &str,
-    args: serde_json::Value,
-    prefer_markdown: bool,
-) -> Result<ExecuteToolOutcome, String> {
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
-    execute_tool_with_security(config, security, tool_name, args, prefer_markdown).await
 }
 
 /// Executes a native call using the same policy snapshot used for its gate.

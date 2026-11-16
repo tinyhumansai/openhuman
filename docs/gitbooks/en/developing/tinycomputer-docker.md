@@ -175,3 +175,40 @@ turn** may take without that approval:
 `task_step` waves through steps the task controller itself marks
 irreversible, such as sending, submitting or deleting. List it only for jobs
 whose prompt and allowed websites you control.
+
+## 5. Sites that refuse a datacenter address
+
+Some sites block whole datacenter ranges. Reddit, for one, answers every page
+from a cloud VM with "You've been blocked by network security". To fix that,
+`[browser] upstream_proxies` routes chosen domains through an upstream HTTP
+proxy, such as a residential or mobile exit:
+
+```toml
+[browser]
+upstream_proxies = [
+  { domains = ["reddit.com", "redd.it", "redditstatic.com", "redditmedia.com"], url = "http://user:password@proxy.example:8000" },
+]
+```
+
+- A domain matches itself and every subdomain. Every other host is still
+  dialed directly.
+- Routing never bypasses policy. TinySecurity authorizes each routed page
+  exactly as it would a direct one, and the never-open list still applies.
+  The proxy's own host and port also go through TinySecurity's browser dial
+  authorization before TinyComputer opens a socket to them. TinyComputer then
+  asks the proxy for a `CONNECT` tunnel to an address TinySecurity approved
+  for the page's host, so the proxy resolves nothing. The browser's `Host`
+  header and TLS SNI pass through the tunnel unchanged. Plain `http://`
+  pages use the same tunnel.
+- Only `http://` proxy URLs work. Percent-encode any `@`, `:` or `/` in the
+  user name or password. The credentials go to the proxy as
+  `Proxy-Authorization: Basic`.
+- The URL is a credential. It reaches TinyComputer only in its host-private
+  `browser.egress` section. It is redacted from the config snapshot and from
+  debug output, and it is never logged. Keep `config.toml` readable by the
+  core's user only.
+- This works only with browser egress enforcement on, which is the default
+  build with `security-module`. Changing the list takes effect on the next
+  core start.
+- A proxy that rejects the credentials (`407`) or refuses the tunnel makes the
+  page fail with `502`. The core log names only the status.

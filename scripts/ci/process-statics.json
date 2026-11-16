@@ -150,14 +150,54 @@
     "verification": "config/schema/cloud_providers_tests.rs: hosted_presets_and_classification_are_context_scoped"
   },
   {
-    "file": "crates/openhuman-core/src/core/observability/telemetry/langfuse/environment.rs",
+    "file": "crates/openhuman-core/src/core/event_bind_tokens.rs",
     "scope": "",
-    "name": "SKIP_LOGGED",
-    "type": "std::sync::Once",
+    "name": "MINTER",
+    "type": "OnceLock<BindTokenMinter>",
     "count": 1,
     "category": "A",
-    "reason": "This process-wide latch suppresses duplicate informational messages when Langfuse pushes are disabled for an environment; it stores no request, credential, or tenant data.",
-    "verification": "core/observability/telemetry/langfuse/environment.rs: skip_push calls Once::call_once"
+    "reason": "Holds the one function pointer the RPC server installs to mint `/events` bind tokens; it carries no tenant data, and the tokens themselves live in the server's own store, bound to a client id.",
+    "verification": "core/event_bind_tokens_tests.rs: the_installed_minter_mints_and_reports_a_full_store"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/observability_hooks.rs",
+    "scope": "",
+    "name": "SESSION_EXPIRY_PREDICATES",
+    "type": "HookSlot<SessionExpiryPredicate>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: stateless predicates the embedding host registers at startup to recognise its backend's session-expiry error shapes. It holds code, never request, credential or tenant data.",
+    "verification": "core/observability_hooks_tests.rs: a_registered_predicate_extends_the_core_markers"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/observability_hooks.rs",
+    "scope": "",
+    "name": "EXPECTED_ERROR_CLASSIFIERS",
+    "type": "HookSlot<ExpectedErrorClassifier>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: stateless classifiers the embedding host registers at startup to map its own error sentinels onto expected-error kinds. It holds code, never request, credential or tenant data.",
+    "verification": "core/observability_hooks_tests.rs: a_registered_classifier_demotes_host_sentinels"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/observability_hooks.rs",
+    "scope": "",
+    "name": "CRASH_NOISE_FILTERS",
+    "type": "HookSlot<CrashNoiseFilter>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: named fn-pointer Sentry noise predicates the embedding host registers at startup; Sentry's before_send runs outside any CoreContext, so the table is process-wide. It holds code, never event or tenant data.",
+    "verification": "core/observability_hooks_tests.rs: a_registered_crash_noise_filter_is_named_in_the_verdict"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/observability/progress_tracing/sinks.rs",
+    "scope": "",
+    "name": "TRACE_SINKS",
+    "type": "HookSlot<Arc<dyn TraceSink>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: usage-data trace sinks the embedding host registers at startup. Sinks receive the config and spans per call; the table holds no request, credential or tenant data.",
+    "verification": "core/observability/progress_tracing/export_tests.rs: usage_data_spans_reach_registered_sinks_only_when_sharing"
   },
   {
     "file": "crates/openhuman-core/src/core/slots.rs",
@@ -898,5 +938,25 @@
     "category": "B",
     "reason": "An in-process write exclusion for backend-stored auth-profile documents, keyed by the authenticated profile id; it holds only which tenant documents have a read-modify-write in flight (no credential data) and serialises writers of the same tenant only, while the backend's compare-and-swap remains the cross-process guard.",
     "verification": "credentials/profiles_storage_tests.rs: a_tenant_store_keeps_its_document_and_lock_in_the_configured_backend; credentials/profiles/backend_tests.rs: a_tenant_store_outside_its_own_scope_is_refused_in_saas"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/browser_pictures.rs",
+    "scope": "",
+    "name": "SINKS",
+    "type": "HookSlot<BrowserPictureSink>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of picture sinks the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; the pictures pass through and are not kept.",
+    "verification": "modules/browser_pictures_tests.rs: a_registered_sink_gets_each_picture_and_a_refusal_is_not_fatal"
+  },
+  {
+    "file": "crates/openhuman-core/src/web3/wallet/program/ops.rs",
+    "scope": "",
+    "name": "QUOTES",
+    "type": "Lazy<Mutex<HashMap<String,StoredQuote>>>",
+    "count": 1,
+    "category": "B",
+    "reason": "Prepared program quotes are partitioned by QuoteBinding (workspace path, a hash of the encrypted phrase, account index and Solana endpoint). A take is refused, and the quote stays in the map, unless all four match the context that takes it.",
+    "verification": "web3/wallet/program/ops_tests.rs: a_quote_is_taken_only_in_the_context_it_was_prepared_in"
   }
 ]

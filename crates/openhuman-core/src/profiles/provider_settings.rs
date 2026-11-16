@@ -8,8 +8,8 @@
 use crate::config::{
     Config, PresentationMode, ProviderRoute, SearchConfig, SearchProviderSettings,
 };
-use crate::core::runtime::direct_profile_provider::{validate_endpoint, DirectProfileProvider};
 use crate::core::runtime::SaasConfig;
+use crate::profiles::direct_profile_provider::{validate_endpoint, DirectProfileProvider};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use tinysearch_bus::Role;

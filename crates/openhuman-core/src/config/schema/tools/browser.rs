@@ -61,6 +61,36 @@ pub struct BrowserConfig {
     /// placeholder off: a fill or type that carries one is refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keychain_command: Option<String>,
+    /// Destination domains the browser reaches through an upstream HTTP
+    /// proxy, for sites that refuse this machine's own address (a datacenter
+    /// range, say). Each entry's `domains` match themselves and every
+    /// subdomain. TinySecurity still authorizes every such destination, and
+    /// the proxy's own host and port as well; TinyComputer then tunnels with
+    /// `CONNECT` (`browser.egress.upstream_proxies` in its module config).
+    /// Applies only with browser egress enforcement (`security-module`).
+    /// Empty, the default, routes nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub upstream_proxies: Vec<BrowserUpstreamProxy>,
+}
+
+/// One `[browser] upstream_proxies` entry. `url` is an
+/// `http://user:password@host:port` proxy URL with percent-encoded
+/// credentials; it is never logged, and `Debug` leaves it out.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BrowserUpstreamProxy {
+    /// Destination domains routed through this proxy, such as `reddit.com`.
+    pub domains: Vec<String>,
+    /// The proxy URL. Only `http://` proxies are supported.
+    pub url: String,
+}
+
+impl std::fmt::Debug for BrowserUpstreamProxy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BrowserUpstreamProxy")
+            .field("domains", &self.domains)
+            .field("url", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Action kinds `[browser] unattended_actions` may name: the gated direct
@@ -159,6 +189,7 @@ impl Default for BrowserConfig {
             unattended_actions: Vec::new(),
             learn_from_tasks: true,
             keychain_command: None,
+            upstream_proxies: Vec::new(),
         }
     }
 }

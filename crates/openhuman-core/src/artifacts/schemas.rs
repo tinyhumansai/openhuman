@@ -1,4 +1,5 @@
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::{to_json, type_name};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
@@ -558,21 +559,6 @@ fn read_optional_u64(params: &Map<String, Value>, key: &str) -> Result<Option<u6
             "invalid '{key}': expected unsigned integer, got {}",
             type_name(other)
         )),
-    }
-}
-
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
-}
-
-fn type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "bool",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
     }
 }
 

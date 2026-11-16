@@ -1,7 +1,8 @@
-#[cfg(feature = "mcp")]
-use super::implementations::network::{McpListServersTool, McpListToolsTool};
 use super::*;
 use crate::config::Config;
+use crate::mcp::gitbooks_tools::{GitbooksGetPageTool, GitbooksSearchTool};
+#[cfg(feature = "mcp")]
+use crate::mcp::tools::{mcp_call_tool, McpListServersTool, McpListToolsTool};
 use crate::modules::tinybox::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::security::{AuditSink, SecurityPolicy};
 use std::sync::Arc;
@@ -303,23 +304,14 @@ pub async fn all_tools_with_runtime_and_pack_handle(
     // `juice_find` / `juice_extract` / `juice_summarize`: only while a handle can name them.
     tools.extend(crate::inference::tokenjuice::repl_tools_for(root_config));
 
-    // Presentation generation (#2778), backed by the native Rust engine.
-    // Always registered.
+    // Presentation then document generation (#2778, #4847): native-Rust
+    // engines emitting through the artifact pipeline. Always registered
+    // while `documents` is on.
     #[cfg(feature = "documents")]
-    tools.push(Box::new(PresentationTool::for_config(
+    tools.extend(crate::artifacts::tools::registered_tools(
         root_config,
         security.clone(),
-    )));
-
-    // Document generation (#4847, Problem 3). Native-Rust engine
-    // (docx-rs backed) — no managed runtime, no subprocess — emitting a
-    // real `.docx` through the same byte-agnostic artifact pipeline as
-    // the presentation tool. Always registered; same constructor shape.
-    #[cfg(feature = "documents")]
-    tools.push(Box::new(DocumentTool::for_config(
-        root_config,
-        security.clone(),
-    )));
+    ));
 
     // Thread-level goal tools (Codex-style per-thread completion contract).
     // Visible only to agents that allowlist them (orchestrator). The target
@@ -338,7 +330,6 @@ pub async fn all_tools_with_runtime_and_pack_handle(
             browser_client.clone(),
         )));
         tools.push(Box::new(BrowserTool::new(
-            security.clone(),
             browser_client,
             browser_config.max_task_steps,
         )));
@@ -429,7 +420,7 @@ pub async fn all_tools_with_runtime_and_pack_handle(
     // `mcp::registry` domain gated above. Both are compiled out by the `mcp`
     // feature; see the static-vs-dynamic note in AGENTS.md.
     #[cfg(feature = "mcp")]
-    tools.push(crate::mcp::ui::show_ui_tool(root_config));
+    tools.push(Box::new(ShowUiTool::for_config(root_config)));
     #[cfg(feature = "mcp")]
     if root_config.mcp_client.enabled && !root_config.mcp_client.servers.is_empty() {
         // Catalog retrieval runs in the async turn prelude. This synchronous
@@ -438,7 +429,7 @@ pub async fn all_tools_with_runtime_and_pack_handle(
         let mcp_config = Arc::new(root_config.clone());
         tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_config))));
         tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_config))));
-        let call = Box::new(mcp_call_tool(Arc::clone(&mcp_config), security.clone()));
+        let call = Box::new(mcp_call_tool(Arc::clone(&mcp_config)));
         tools.push(crate::mcp::ui::ui_aware_call(call, &mcp_config));
     }
 

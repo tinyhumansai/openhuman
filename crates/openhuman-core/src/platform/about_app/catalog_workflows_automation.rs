@@ -102,7 +102,7 @@ Capability {
         privacy: Some(CapabilityPrivacy {
             leaves_device: true,
             data_kind: PrivacyDataKind::Raw,
-            destinations: &["Visited websites", "OpenRouter, OpenHuman backend, OpenJev or Sage for task decisions"],
+            destinations: &["Visited websites", "OpenRouter, OpenHuman backend, OpenJev or Sage for task decisions", "TypeSafe or Surplus Intelligence for captcha images, only when the captcha solver is on (captcha_provider)"],
         }),
     },
 Capability {
@@ -187,8 +187,8 @@ Capability {
         name: "Wallet Execution Tools",
         domain: "wallet",
         category: CapabilityCategory::Workflows,
-        description: "Read addresses, native balances and token balances (USDC on Solana, via wallet.token_balances), prepare/confirm/execute native + token transfers (ERC20/SPL/TRC20/BEP20), and inspect transactions (status, receipt, lookup) across the connected wallet (EVM, BTC, Solana, Tron). Quote-first; signing stays local. Agent and automated executes run inside the [wallet_policy] spend policy (asset allowlist, per-transaction, rolling-day and per-recipient weekly caps) and are recorded in a persistent ledger. Switched off by [components] wallet = false, which answers COMPONENT_DISABLED:wallet and leaves keychain material, spending limits and RPC endpoints untouched.",
-        how_to: "Use wallet.* RPC methods (balances, token_balances, prepare_transfer, execute_prepared, tx_status, tx_receipt, lookup_tx, policy_get, policy_update, ledger_list) via the agent or core_rpc_relay. Settings > Crypto > Wallet Balances shows native balances only; token balances come from wallet.token_balances or the agent's wallet_balances tool.",
+        description: "Read addresses, native balances and token balances (USDC on Solana, via wallet.token_balances), prepare/confirm/execute native + token transfers (ERC20/SPL/TRC20/BEP20), and inspect transactions (status, receipt, lookup) across the connected wallet (EVM, BTC, Solana, Tron). Quote-first; signing stays local. Agent and automated executes run inside the [wallet_policy] spend policy (asset allowlist, per-transaction, rolling-day and per-recipient weekly caps) and are recorded in a persistent ledger. A secondary Solana account (index 1) can sign host-built program transactions only, under its own [wallet_policy.accounts.solana_1] program and mint allowlist with per-transaction and rolling-day caps. Switched off by [components] wallet = false, which answers COMPONENT_DISABLED:wallet and leaves keychain material, spending limits and RPC endpoints untouched.",
+        how_to: "Use wallet.* RPC methods (balances, token_balances, prepare_transfer, execute_prepared, tx_status, tx_receipt, lookup_tx, policy_get, policy_update, ledger_list, account, prepare_program, execute_prepared_program) via the agent or core_rpc_relay. Settings > Crypto > Wallet Balances shows native balances only; token balances come from wallet.token_balances or the agent's wallet_balances tool.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_CREDENTIALS,
     },

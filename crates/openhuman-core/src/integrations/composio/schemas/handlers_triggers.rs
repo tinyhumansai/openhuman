@@ -3,6 +3,7 @@
 //! `list_triggers`, `enable_trigger`, `disable_trigger`.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde_json::{Map, Value};
 
 use crate::core::all::ControllerFuture;
@@ -12,7 +13,7 @@ use super::params::{
     CreateTriggerParams, EnableTriggerParams, ListAvailableTriggersParams, ListGithubReposParams,
     ListTriggersParams, TriggerHistoryParams,
 };
-use super::util::{read_required_non_empty, to_json};
+use super::util::read_required_non_empty;
 
 pub(super) fn handle_list_github_repos(
     ctx: DispatchCtx,

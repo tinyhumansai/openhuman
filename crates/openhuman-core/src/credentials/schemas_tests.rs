@@ -3,6 +3,7 @@ use crate::core::all::{
     assert_schema_controller_parity, expect_schema_fields, expect_schema_identity,
     expect_schema_required_inputs,
 };
+use crate::core::Outcome;
 
 #[test]
 fn credential_schema_wire_contracts_are_preserved() {

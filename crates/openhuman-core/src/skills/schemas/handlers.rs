@@ -6,6 +6,7 @@
 //! intentionally thin.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use std::path::Path;
 
 use serde_json::{Map, Value};
@@ -21,7 +22,7 @@ use crate::skills::ops_install::ScanAcknowledgement;
 use crate::skills::runtime::spawn_workflow_run_background;
 use crate::skills::{registry, run_log};
 
-use super::helpers::{deserialize_params, resolve_config, resolve_workspace_dir, to_json};
+use super::helpers::{deserialize_params, resolve_config, resolve_workspace_dir};
 use super::wire_types::{
     WorkflowInputDescription, WorkflowSummary, WorkflowsCancelParams, WorkflowsCreateParams,
     WorkflowsCreateResult, WorkflowsDescribeParams, WorkflowsDescribeResult,

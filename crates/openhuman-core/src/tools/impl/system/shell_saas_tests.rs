@@ -20,9 +20,3 @@ fn saas_sandbox_refuses_instead_of_falling_back_to_the_host() {
         .output()
         .contains("Sandbox unavailable: no such sandbox"));
 }
-
-#[test]
-fn runtime_path_is_withheld_only_in_saas() {
-    assert!(!passes_runtime_path_with(true));
-    assert!(passes_runtime_path_with(false));
-}

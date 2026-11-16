@@ -13,7 +13,7 @@ async fn status_reports_no_accounts() {
 async fn secret_material_is_disabled_error() {
     // `WalletSecretMaterial` intentionally omits `Debug` (mirrors the real
     // type, which never logs a mnemonic), so match rather than `expect_err`.
-    match secret_material(WalletChain::Evm).await {
+    match secret_material(WalletChain::Evm, 0).await {
         Ok(_) => panic!("secret material must be unavailable when the wallet is compiled out"),
         Err(msg) => assert_eq!(msg, DISABLED_MSG),
     }

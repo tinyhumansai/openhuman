@@ -243,6 +243,49 @@ pub(super) fn route_with_model(provider: String, model: Option<&str>) -> String 
     }
 }
 
+/// The route a pinned role should use for one turn whose caller asked for
+/// `model` (`model_override`).
+///
+/// A pinned role route (`chat_provider = "local-openai:A"`) outranks
+/// `default_model` in [`provider_for_role`], so an override written only to
+/// `default_model` never reaches the endpoint. This rewrites the pin instead:
+///
+/// * `model` that is itself an explicit provider route (`ollama:llama3.1:8b`,
+///   a configured `<slug>:<model>`, `claude-code:…`) replaces the pin, the way
+///   it would be routed with nothing pinned;
+/// * a bare model id keeps the pinned provider, its credentials, endpoint and
+///   `@temperature`, and swaps only the model ([`route_with_model`]);
+/// * a `cloud` pin resolves to the configured primary route before applying
+///   a bare override, so a primary BYOK provider's default model cannot win;
+/// * a pin with no model of its own (`openhuman`) is returned unchanged: the
+///   managed backend already takes the model from `default_model` / request.
+///
+/// `hint:<role>` overrides select a workload rather than a model and must not
+/// be passed here.
+pub(crate) fn route_for_turn_model(pinned: &str, model: &str, config: &Config) -> String {
+    let model = model.trim();
+    if is_explicit_provider_default(model, config) {
+        return model.to_string();
+    }
+    if pinned.trim() == "cloud" {
+        let primary = crate::config::ops::resolve_primary_cloud_provider_string(config);
+        if primary == BYOK_INCOMPLETE_SENTINEL {
+            // The primary BYOK entry's model is optional when the caller
+            // supplies a per-turn model. Resolve the provider from the entry
+            // itself so the incomplete sentinel does not swallow that model.
+            if let Some(entry) = config
+                .primary_cloud
+                .as_deref()
+                .and_then(|id| config.cloud_providers.iter().find(|entry| entry.id == id))
+            {
+                return format!("{}:{model}", entry.slug);
+            }
+        }
+        return route_with_model(primary, Some(model));
+    }
+    route_with_model(pinned.to_string(), Some(model))
+}
+
 #[cfg(test)]
 #[path = "routing_tests.rs"]
 mod routing_tests;

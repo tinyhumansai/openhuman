@@ -9,7 +9,6 @@
 mod tests;
 
 mod handlers;
-mod params;
 mod registry;
 
 pub use registry::{all_controller_schemas, all_registered_controllers, schemas};
@@ -19,6 +18,7 @@ use crate::core::all::{
     BoundRegisteredController, ControllerEntry, ControllerFuture, ControllerTask,
 };
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::outcome_value_to_json;
 use serde_json::Map;
 
 fn registry_get_config(ctx: DispatchCtx) -> ControllerTask<Config> {
@@ -31,8 +31,9 @@ fn parse_registry_get_params(params: Map<String, serde_json::Value>) -> Result<S
 
 fn run_registry_get(_ctx: DispatchCtx, config: Config, qualified_name: String) -> ControllerFuture {
     Box::pin(async move {
-        params::to_json(
+        outcome_value_to_json(
             crate::mcp::registry::ops::mcp_clients_registry_get(&config, qualified_name).await?,
+            "",
         )
     })
 }
@@ -48,7 +49,7 @@ pub(crate) fn registry_get_controller_entry() -> ControllerEntry {
 
 // Test-only re-exports used by the companion schema tests.
 #[cfg(test)]
-use params::{read_optional_u32, read_required};
+use crate::util::params::read_required;
 
 #[cfg(test)]
 pub(crate) fn registry_get_parameter_contract() -> crate::core::all::ControllerParamContract {

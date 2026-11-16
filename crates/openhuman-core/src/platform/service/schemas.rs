@@ -5,11 +5,11 @@
 //! RPC methods and their underlying implementation handlers.
 
 use crate::core::runtime::DispatchCtx;
+use crate::util::params::to_json;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 /// Returns a collection of all available controller schemas for the service domain.
@@ -270,11 +270,6 @@ fn handle_daemon_host_set(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
         let config = ctx.load_config().await?;
         to_json(crate::platform::service::rpc::daemon_host_set(&config, payload.show_tray).await?)
     })
-}
-
-/// Formats the Outcome as an OpenHuman-standard JSON result.
-fn to_json<T: serde::Serialize>(outcome: Outcome<T>) -> Result<Value, String> {
-    outcome.into_cli_compatible_json()
 }
 
 #[cfg(test)]

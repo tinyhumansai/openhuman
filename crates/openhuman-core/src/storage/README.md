@@ -10,8 +10,7 @@ One URL picks it: `OPENHUMAN_STORAGE_URL`, else `[storage] url` in
 at startup and installs it (`install_for_url`), and every store, the session
 store included, reads from it. There is no second layout: what older installs
 wrote (the per-domain `.db` files, JSONL transcripts and turn-state JSON) is
-imported once, read-only, by `import/`. The `classic` opt-out is retired; the
-value is read as unset, with a warning.
+imported once, read-only, by `import/`.
 
 The default belongs to the **workspace**, so a different workspace is a
 different database. When a different user signs in, `rebind::rebind` (called
@@ -150,16 +149,12 @@ it with the core stopped.
   so the host keeps no retry loop of its own.
 - `import_state`: where a one-time importer records that it finished
   (`tsd.migrations`, `Migrations::mark_done`) and the claim that serialises
-  two processes (`Leases` on `tsd.leases`). `migrate_legacy_markers` turns the
-  marker rows older builds wrote (`storage_import`, `threads_import`,
-  `subagent_sessions_import`, `composio_state_import`, `*_host_import`) into
-  the same entries at boot, so an installed profile is not imported again.
+  two processes (`Leases` on `tsd.leases`).
 - `schema_support`: owner, time and id helpers the host domains' v1 -> v2
   steps share. Each host domain declares its own `storage_schema()` (owners
   `approvals`, `devices`, `notifications`, `task_sources`, `artifacts`, `cost`,
   `config`, `profiles`, `threads`, `subagents`, `agents`), composed in
-  `schema.rs`. `host_importers` moves the v1 data whose v2 home is another
-  owner's collection (`composio_state` into `tsd.kv`).
+  `schema.rs`.
 
 ## Storage for loadable modules
 
@@ -347,7 +342,7 @@ runs under the process default context and on its own would only see
 - Known agents: the live ones are `core::runtime::AgentContextRegistry`'s
   (embed registers each agent it builds and deregisters it on drop).
   `AgentContextRegistry::register` also records the agent id in the
-  backend's `local` scope (`storage_agents`, `agents::record`), so a
+  backend's `local` scope (`agents.registry`, `agents::record`), so a
   restarted process still knows it; `agents::contexts()` lists both.
 - `for_each_scope(label, step)`: runs `step` for `local`, then under each
   known agent's context — its live one, or the default context acting for it
