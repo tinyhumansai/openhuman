@@ -165,6 +165,8 @@ pub enum RefusalKind {
     /// The declared token debits disagree with what the transaction moves
     /// (its visible transfers, or its simulation), or the simulation failed.
     SimulationMismatch,
+    /// The prepared quote reached its expiry before it could be signed.
+    QuoteExpired,
 }
 
 /// A refused execute.
