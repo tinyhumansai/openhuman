@@ -31,6 +31,14 @@ describe('sanitizeAuthError — embedded JSON error bodies', () => {
     expect(sanitizeAuthError('Permission denied')).toBe('Permission denied');
   });
 
+  it('preserves ${...} placeholders in a readable message', () => {
+    // The brace trim must not mistake the `{` in a placeholder for JSON, or
+    // the guidance the user needs disappears.
+    expect(sanitizeAuthError('{"error":"Set client_id=${REDDIT_CLIENT_ID} and retry."}')).toBe(
+      'Set client_id=${REDDIT_CLIENT_ID} and retry.'
+    );
+  });
+
   it('strips backend URLs from extracted messages', () => {
     expect(
       sanitizeAuthError(
