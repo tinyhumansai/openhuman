@@ -51,8 +51,18 @@ export function isMissingRequiredFieldsError(err: unknown): boolean {
  * it parses but carries no readable string field — the caller then keeps its
  * previous behaviour. `error` / `message` / `detail` and a nested
  * `error.message` cover the backend envelope and the provider shapes.
+ *
+ * A 5xx is refused outright. The body of an internal failure is not something
+ * the user can act on, and surfacing it would leak backend internals — the
+ * behaviour the raw-JSON guard exists to prevent. Only a client error (4xx),
+ * or a payload with no status prefix at all, is read for a message.
  */
 function extractEmbeddedErrorMessage(raw: string): string | null {
+  // The transport tags a failure as `Backend returned <status> ...`; a body
+  // with no such prefix is read unconditionally.
+  const status = /Backend returned (\d{3})/.exec(raw)?.[1];
+  if (status !== undefined && Number(status) >= 500) return null;
+
   const start = raw.indexOf('{');
   if (start === -1) return null;
   const end = raw.lastIndexOf('}');
