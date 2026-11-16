@@ -86,9 +86,15 @@ fn direct_tool_names(def: &AgentDefinition) -> Vec<String> {
             names.push(tool.clone());
         }
     }
-    // Same glob grammar the runtime uses to hide denied tools, so a `file_*`
-    // denylist drops every matching name here too.
-    names.retain(|name| !crate::tools::rules::glob_list_matches(&def.disallowed_tools, name));
+    // This listing is an RPC display the harness rule gate never sees, so it
+    // drops the denied names itself, with the same `tinytools` glob grammar
+    // the runtime's deny rule (`tools::rules::agent_rule_layer`) matches: a
+    // `file_*` denylist drops every matching name here too.
+    names.retain(|name| {
+        !def.disallowed_tools
+            .iter()
+            .any(|pattern| tinytools::glob_matches(pattern, name))
+    });
     names.sort();
     names
 }

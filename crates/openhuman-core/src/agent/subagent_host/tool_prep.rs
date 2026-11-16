@@ -55,40 +55,34 @@ pub(super) fn is_subagent_spawn_tool(name: &str) -> bool {
 /// invoke. Index-based filtering avoids cloning `Box<dyn Tool>` (which
 /// isn't Clone) and lets us reuse the parent's existing instances.
 ///
-/// OpenHuman applies its explicit deny globs and the CCR recovery exception;
-/// TinyAgents applies the portable role, skill, scope, and delegation rules.
-///
+/// OpenHuman applies the CCR recovery exception; TinyAgents applies the
+/// portable role, skill, scope, and delegation rules. A definition's
+/// `disallowed_tools` is not applied here: it is a deny rule in the child's
+/// rule policy (`tools::rules::child_rule_policy`), which keeps a denied tool
+/// off the child's prompt (`rule_listed_indices`), its catalogue and
+/// `tool_search`, and refuses a call to it by name.
 pub(super) fn filter_tool_indices(
     parent_tools: &[Box<dyn Tool>],
     scope: &ToolScope,
-    disallowed: &[String],
     skill_filter: Option<&str>,
 ) -> Vec<usize> {
-    filter_tool_indices_with_nested_spawn(parent_tools, scope, disallowed, skill_filter, false)
+    filter_tool_indices_with_nested_spawn(parent_tools, scope, skill_filter, false)
 }
 
 /// Filters child tools with an explicit, host-validated nested-spawn grant.
 pub(super) fn filter_tool_indices_with_nested_spawn(
     parent_tools: &[Box<dyn Tool>],
     scope: &ToolScope,
-    disallowed: &[String],
     skill_filter: Option<&str>,
     nested_spawn_granted: bool,
 ) -> Vec<usize> {
     let mut first_specs = std::collections::HashMap::new();
     let mut specs = Vec::new();
-    let mut disallowed_recovery = std::collections::HashSet::new();
     let mut delegation_tools = Vec::new();
     for tool in parent_tools {
         let name = tool.name();
         if is_subagent_spawn_tool(name) {
             delegation_tools.push(name.to_string());
-        }
-        if crate::tools::rules::glob_list_matches(disallowed, name) {
-            if crate::inference::tokenjuice::is_recovery_tool(name) {
-                disallowed_recovery.insert(name.to_string());
-            }
-            continue;
         }
         if first_specs.insert(name.to_string(), ()).is_none() {
             specs.push(tool.spec());
@@ -117,12 +111,12 @@ pub(super) fn filter_tool_indices_with_nested_spawn(
         .collect();
 
     // CCR recovery remains a host exception: it bypasses scope and skill
-    // filters, while the deny glob, leaf role, and explicit empty scope win.
+    // filters, while the leaf role and an explicit empty scope win. A
+    // disallowed recovery tool stays denied by the child's rule policy.
     if !matches!(scope, ToolScope::Named(allowed) if allowed.is_empty()) {
         for tool in parent_tools {
             let name = tool.name();
             if crate::inference::tokenjuice::is_recovery_tool(name)
-                && !disallowed_recovery.contains(name)
                 && !delegation_tools.iter().any(|tool| tool == name)
             {
                 retained.insert(name.to_string());
@@ -143,8 +137,9 @@ pub(super) struct DefinitionToolFilter {
     pub nested_spawn_tools: std::collections::HashSet<String>,
 }
 
-/// Applies a child's definition scope, denylist, and checked host grant to
-/// the parent's registered tools before the inherited visibility ceiling.
+/// Applies a child's definition scope and checked host grant to the parent's
+/// registered tools before the inherited visibility ceiling. The definition's
+/// `disallowed_tools` is enforced by the child's rule policy, not here.
 pub(super) fn filter_definition_tool_indices(
     parent_tools: &[Box<dyn Tool>],
     definition: &AgentDefinition,
@@ -175,7 +170,6 @@ pub(super) fn filter_definition_tool_indices(
     let mut allowed = filter_tool_indices_with_nested_spawn(
         parent_tools,
         &definition.tools,
-        &definition.disallowed_tools,
         skill_filter,
         nested_spawn_granted,
     );
@@ -198,7 +192,6 @@ pub(super) fn filter_definition_tool_indices(
         let name = tool.name();
         if definition.extra_tools.iter().any(|extra| extra == name)
             && !allowed.contains(&index)
-            && !crate::tools::rules::glob_list_matches(&definition.disallowed_tools, name)
             && (!is_subagent_spawn_tool(name) || nested_spawn_tools.contains(name))
         {
             allowed.push(index);
