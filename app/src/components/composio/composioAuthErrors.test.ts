@@ -27,6 +27,20 @@ describe('sanitizeAuthError — embedded JSON error bodies', () => {
     expect(sanitizeAuthError('{"detail":"Token expired"}')).toBe('Token expired');
   });
 
+  it('strips backend URLs from extracted messages', () => {
+    expect(
+      sanitizeAuthError(
+        '{"error":"Request failed for POST https://api.tinyhumans.ai/agent-integrations/composio/authorize"}'
+      )
+    ).toBe('Request failed for POST <backend>');
+  });
+
+  it('does not return serialized JSON from an extracted message', () => {
+    expect(
+      sanitizeAuthError('{"error":"{\\"code\\":500,\\"internal\\":\\"provider-debug\\"}"}')
+    ).toBe('Authorization failed.');
+  });
+
   it('does not surface an internal message from a 5xx body', () => {
     // A server-side failure is not actionable and its body can carry backend
     // internals, so it stays behind the raw-JSON guard.

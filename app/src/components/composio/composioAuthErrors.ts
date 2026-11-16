@@ -58,23 +58,36 @@ export function isMissingRequiredFieldsError(err: unknown): boolean {
  * or a payload with no status prefix at all, is read for a message.
  */
 function extractEmbeddedErrorMessage(raw: string): string | null {
-  // The transport tags a failure as `Backend returned <status> ...`; a body
-  // with no such prefix is read unconditionally.
+  // The transport tags a failure as `Backend returned <status> ...`; the body
+  // of server errors stays on the generic sanitization path.
   const status = /Backend returned (\d{3})/.exec(raw)?.[1];
-  if (status !== undefined && Number(status) >= 500) return null;
+  if (status !== undefined && Number(status) >= 500) {
+    console.debug('[composio][authorize] embedded-error-extraction reason=status_5xx');
+    return null;
+  }
 
   const start = raw.indexOf('{');
-  if (start === -1) return null;
+  if (start === -1) {
+    console.debug('[composio][authorize] embedded-error-extraction reason=no_json_object');
+    return null;
+  }
   const end = raw.lastIndexOf('}');
-  if (end <= start) return null;
+  if (end <= start) {
+    console.debug('[composio][authorize] embedded-error-extraction reason=malformed_json_bounds');
+    return null;
+  }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw.slice(start, end + 1));
   } catch {
+    console.debug('[composio][authorize] embedded-error-extraction reason=malformed_json');
     return null;
   }
-  if (parsed === null || typeof parsed !== 'object') return null;
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    console.debug('[composio][authorize] embedded-error-extraction reason=unsupported_payload_shape');
+    return null;
+  }
 
   const record = parsed as Record<string, unknown>;
   const nested = record.error;
@@ -87,8 +100,12 @@ function extractEmbeddedErrorMessage(raw: string): string | null {
     record.detail,
   ];
   for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    if (typeof candidate === 'string' && candidate.trim()) {
+      console.debug('[composio][authorize] embedded-error-extraction reason=message_extracted');
+      return candidate.trim();
+    }
   }
+  console.debug('[composio][authorize] embedded-error-extraction reason=no_readable_message');
   return null;
 }
 
@@ -105,20 +122,22 @@ export function sanitizeAuthError(err: unknown): string {
   if (!err) return 'Something went wrong.';
   const raw = err instanceof Error ? err.message : String(err);
 
-  // A JSON payload the backend embedded carries the actionable text — the 400
-  // that names the unconfigured toolkit (#5507). Read it out *before* the
-  // guard below trims the message at the first `{` and discards it.
+  // Extract the actionable client-error message, then run it through the same
+  // URL and raw-JSON protections as every other error string.
   const embedded = extractEmbeddedErrorMessage(raw);
-  if (embedded) return embedded;
+  const message = embedded ?? raw;
+  if (!embedded) {
+    console.debug('[composio][authorize] sanitizeAuthError reason=using_sanitized_fallback');
+  }
 
   // Strip any URL that looks like a backend endpoint so it is not displayed.
-  const stripped = raw.replace(/https?:\/\/[^\s"]+/g, '<backend>');
+  const stripped = message.replace(/https?:\/\/[^\s"]+/g, '<backend>');
 
   // Trim at the first occurrence of a JSON blob to avoid leaking payloads.
   // The URL stripping above may consume the `:` before `{`, so we match
   // the optional colon and any surrounding whitespace before the `{`.
   // This covers both `: {"error"...}` and the bare ` {"error"...}` form.
-  const jsonIdx = stripped.search(/\s*:?\s*\{"error"/);
+  const jsonIdx = stripped.search(/\s*:?.../);
   // Fall back to trimming at any bare `{` that follows whitespace if we
   // did not find a `{"error"` form (defensive — handles other JSON shapes).
   const jsonIdxFallback = stripped.search(/\s\{/);
