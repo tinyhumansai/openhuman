@@ -202,10 +202,16 @@ fn a_refresh_keeps_the_upstream_proxies_admitted_at_load() {
 
     // Before any load, a refresh builds from the current config.
     let empty = parking_lot::Mutex::new(None);
-    assert_eq!(refresh_alias_in(&empty, &edited), browser_dial_alias(&edited));
+    assert_eq!(
+        refresh_alias_in(&empty, &edited),
+        browser_dial_alias(&edited)
+    );
     // The next load admits the edit.
     assert_eq!(admit_in(&slot, &edited), browser_dial_alias(&edited));
-    assert_eq!(refresh_alias_in(&slot, &edited), browser_dial_alias(&edited));
+    assert_eq!(
+        refresh_alias_in(&slot, &edited),
+        browser_dial_alias(&edited)
+    );
 }
 
 #[test]
