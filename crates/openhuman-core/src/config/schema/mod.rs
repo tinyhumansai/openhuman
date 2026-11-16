@@ -63,7 +63,7 @@ pub use hosting::HostingConfig;
 pub mod storage;
 pub use storage::StorageConfig;
 pub mod wallet_policy;
-pub use wallet_policy::{WalletAssetCap, WalletPolicyConfig};
+pub use wallet_policy::{WalletAccountPolicy, WalletAssetCap, WalletMintCap, WalletPolicyConfig};
 pub mod profile_layout;
 pub use profile_layout::{users_dir, ProfileLayout};
 mod identity_cost;

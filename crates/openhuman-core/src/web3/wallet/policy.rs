@@ -37,7 +37,7 @@ use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource
 use crate::modules::wallet::WalletCallError;
 use tinywallet_bus::wire::{ExecutionResult, PreparedTransaction};
 
-use super::ledger::{LedgerRecord, LedgerStatus, SpendLedger};
+use super::ledger::{LedgerKind, LedgerRecord, LedgerStatus, SpendLedger};
 
 /// Prefix of every policy refusal, so callers and logs can tell a refusal from
 /// a failure.
@@ -97,7 +97,7 @@ impl ExecutionOrigin {
         }
     }
 
-    fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         match self {
             Self::Interactive { .. } => "interactive",
             Self::Agent { .. } => "agent",
@@ -106,7 +106,7 @@ impl ExecutionOrigin {
         }
     }
 
-    fn class(&self) -> &str {
+    pub(crate) fn class(&self) -> &str {
         match self {
             Self::Interactive { class }
             | Self::Agent { class }
@@ -150,6 +150,21 @@ pub enum RefusalKind {
     Daily,
     RecipientWeekly,
     AlreadyAttempted,
+    /// The account has no `[wallet_policy.accounts]` section.
+    AccountNotAllowed,
+    /// An instruction invokes a program the account's section does not list.
+    ProgramNotAllowed,
+    /// An instruction the host refuses to sign whatever the policy says (a
+    /// token approval, a System transfer, an unverifiable token transfer).
+    InstructionNotAllowed,
+    /// A token movement of a mint the account's section does not list.
+    MintNotAllowed,
+    /// The transaction itself cannot be signed by this account (wrong fee
+    /// payer, extra signers, address lookup tables, malformed bytes).
+    TransactionNotAllowed,
+    /// The declared token debits disagree with what the transaction moves
+    /// (its visible transfers, or its simulation), or the simulation failed.
+    SimulationMismatch,
 }
 
 /// A refused execute.
@@ -165,7 +180,7 @@ impl std::fmt::Display for PolicyRefusal {
     }
 }
 
-fn refusal(kind: RefusalKind, message: impl Into<String>) -> PolicyRefusal {
+pub(crate) fn refusal(kind: RefusalKind, message: impl Into<String>) -> PolicyRefusal {
     PolicyRefusal {
         kind,
         message: message.into(),
@@ -284,6 +299,8 @@ pub fn evaluate(
 
     let counted = records.iter().filter(|record| {
         record.policy_applied
+            && record.kind == LedgerKind::Transfer
+            && record.account_index == 0
             && record.status.counts_against_caps()
             && cap_matches(cap, &record_facts(record))
     });
@@ -345,6 +362,8 @@ fn new_record(
         status,
         transaction_hash: None,
         error: None,
+        kind: LedgerKind::Transfer,
+        account_index: 0,
     }
 }
 
