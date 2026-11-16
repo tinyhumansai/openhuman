@@ -6,8 +6,8 @@ use std::sync::Mutex;
 
 use base64::Engine as _;
 use once_cell::sync::Lazy;
-use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tinywallet_bus::wire::{RpcEndpointKey, RpcSource, Scheme, SecretMaterial, Signature};
 use zeroize::Zeroizing;
 

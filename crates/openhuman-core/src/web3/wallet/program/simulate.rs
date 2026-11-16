@@ -272,7 +272,11 @@ async fn measure(
     .await?;
     slots.push(context_slot(&answer, "simulateTransaction")?);
     if slots.iter().any(|slot| *slot != slots[0]) {
-        tracing::warn!(?slots, "{} token reads and the simulation were not at one slot", super::LOG_PREFIX);
+        tracing::warn!(
+            ?slots,
+            "{} token reads and the simulation were not at one slot",
+            super::LOG_PREFIX
+        );
         return Ok(Attempt::SplitAcrossSlots(slots));
     }
     let value = answer

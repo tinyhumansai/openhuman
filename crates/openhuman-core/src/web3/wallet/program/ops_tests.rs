@@ -65,7 +65,10 @@ fn a_quote_is_taken_only_in_the_context_it_was_prepared_in() {
     for other in &other_contexts {
         assert!(take_quote(&id, other).is_none(), "taken under {other:?}");
     }
-    assert!(has_quote_for_test(&id), "a refused take must keep the quote");
+    assert!(
+        has_quote_for_test(&id),
+        "a refused take must keep the quote"
+    );
 
     let taken = take_quote(&id, &prepared_in).expect("the preparing context takes it");
     assert_eq!(taken.binding, prepared_in);

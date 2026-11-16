@@ -157,9 +157,14 @@ async fn simulate_reads_the_owners_token_accounts_and_measures_the_cpi_debit() {
         .mount(&server)
         .await;
 
-    let report = simulate(&server.uri(), &[1, 2, 3], &key(SIGNER), &[key(vault_source)])
-        .await
-        .expect("simulation");
+    let report = simulate(
+        &server.uri(),
+        &[1, 2, 3],
+        &key(SIGNER),
+        &[key(vault_source)],
+    )
+    .await
+    .expect("simulation");
     assert_eq!(report.err, None);
     assert_eq!(report.debits, vec![total(TINY_MINT, 1_000_000)]);
     assert_eq!(report.token_accounts, vec![vault_source.to_string()]);
@@ -199,7 +204,9 @@ async fn a_measurement_whose_reads_span_slots_is_refused() {
     )
     .mount(&server)
     .await;
-    owner_accounts(TOKEN_PROGRAM, json!([]), 1).mount(&server).await;
+    owner_accounts(TOKEN_PROGRAM, json!([]), 1)
+        .mount(&server)
+        .await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method": "simulateTransaction"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -212,9 +219,14 @@ async fn a_measurement_whose_reads_span_slots_is_refused() {
         .mount(&server)
         .await;
 
-    let error = simulate(&server.uri(), &[1, 2, 3], &key(SIGNER), &[key(vault_source)])
-        .await
-        .expect_err("split slots must not be measured");
+    let error = simulate(
+        &server.uri(),
+        &[1, 2, 3],
+        &key(SIGNER),
+        &[key(vault_source)],
+    )
+    .await
+    .expect_err("split slots must not be measured");
     assert!(error.contains("different slots"), "{error}");
 }
 
@@ -236,7 +248,9 @@ async fn only_token_accounts_the_transaction_names_are_read_or_requested() {
     )
     .mount(&server)
     .await;
-    owner_accounts(TOKEN_PROGRAM, json!([]), 1).mount(&server).await;
+    owner_accounts(TOKEN_PROGRAM, json!([]), 1)
+        .mount(&server)
+        .await;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({
             "method": "simulateTransaction",
@@ -254,9 +268,14 @@ async fn only_token_accounts_the_transaction_names_are_read_or_requested() {
         .mount(&server)
         .await;
 
-    let report = simulate(&server.uri(), &[1, 2, 3], &key(SIGNER), &[key(vault_source)])
-        .await
-        .expect("the request names only the transaction's account");
+    let report = simulate(
+        &server.uri(),
+        &[1, 2, 3],
+        &key(SIGNER),
+        &[key(vault_source)],
+    )
+    .await
+    .expect("the request names only the transaction's account");
     assert_eq!(report.token_accounts, vec![vault_source.to_string()]);
     assert_eq!(report.debits, vec![total(TINY_MINT, 1_000_000)]);
 }

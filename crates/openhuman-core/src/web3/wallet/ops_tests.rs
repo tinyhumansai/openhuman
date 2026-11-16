@@ -461,7 +461,9 @@ fn validate_setup_rejects_a_primary_at_a_secondary_path() {
     let mut params = sample_params();
     let mut alias = sample_account(WalletChain::Solana);
     alias.derivation_path = giveaway_account().derivation_path;
-    params.accounts.retain(|account| account.chain != WalletChain::Solana);
+    params
+        .accounts
+        .retain(|account| account.chain != WalletChain::Solana);
     params.accounts.push(alias);
     assert!(validate_setup(&params)
         .expect_err("primary aliasing the secondary path")
