@@ -65,6 +65,30 @@ impl LedgerStatus {
     }
 }
 
+/// What an execute signed.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LedgerKind {
+    /// A module-prepared transfer from a chain's primary account
+    /// (`wallet.execute_prepared`). Records written before kinds existed.
+    #[default]
+    Transfer,
+    /// A host-built transaction (`wallet.execute_prepared_program`), capped by
+    /// its account's `[wallet_policy.accounts]` section only.
+    Program,
+}
+
+impl LedgerKind {
+    fn is_transfer(&self) -> bool {
+        *self == Self::Transfer
+    }
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
 /// One execute attempt.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -105,6 +129,13 @@ pub struct LedgerRecord {
     /// Why the execute was refused or failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// What was signed. Transfer and program records never count against
+    /// each other's caps.
+    #[serde(default, skip_serializing_if = "LedgerKind::is_transfer")]
+    pub kind: LedgerKind,
+    /// The signing account's index on its chain (0 for the primary account).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub account_index: u32,
 }
 
 impl LedgerRecord {

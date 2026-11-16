@@ -27,6 +27,10 @@ export interface WalletAccount {
   chain: WalletChain;
   address: string;
   derivationPath: string;
+  /** Account index on the chain; absent for the primary (index 0) account. */
+  index?: number;
+  /** Label of a secondary account (`giveaway`). */
+  label?: string;
 }
 
 export interface WalletRecoveryMaterial {
@@ -48,6 +52,8 @@ export interface WalletStatus {
   source: WalletSetupSource | null;
   mnemonicWordCount: number | null;
   accounts: WalletAccount[];
+  /** Secondary accounts (index 1 and up), absent when there are none. */
+  additionalAccounts?: WalletAccount[];
   updatedAtMs: number | null;
 }
 
