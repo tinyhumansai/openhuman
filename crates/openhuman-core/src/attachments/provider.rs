@@ -116,7 +116,7 @@ struct AttachmentModel {
     controls: Option<HostControlSlot>,
 }
 
-const MAX_HISTORICAL_MEDIA_BLOCKS: usize = 8;
+pub(crate) const MAX_HISTORICAL_MEDIA_BLOCKS: usize = 8;
 
 impl AttachmentModel {
     /// The dispatch context of the turn this model serves.

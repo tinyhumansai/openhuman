@@ -16,19 +16,17 @@
 //! session never interleave.
 
 use anyhow::{anyhow, Result};
-use tinyagents_harness::token_estimation::DEFAULT_CHARS_PER_TOKEN;
 use tinyagents_runtime::{
     ResumeMode, SessionIdentityRequest, SessionIdentityResolver, TranscriptCodec,
     TranscriptTurnOptions,
 };
 use tinyagents_session::transcript::{lock_session_turn, SessionRef, TranscriptTurn};
-use tinyinference_llm::message::{ContentBlock, MediaRef, Message};
+use tinyinference_llm::message::Message;
 
 use super::super::types::OpenHumanSessionHost;
 use crate::agent::session_host::OpenHumanTranscriptCodec;
 use crate::agent::tinyagents::context_wiring::{compact_history, CompactionSummarizer, IdleFold};
 use crate::agent::tinyagents::host::OpenHumanRunContext;
-use crate::attachments::provider::cached_readout_chars;
 use crate::attachments::AttachmentAccessScope;
 
 /// How [`OpenHumanSessionHost::compact_bound_history`] decides and sizes a
@@ -124,9 +122,9 @@ impl OpenHumanSessionHost {
             tracing::info!(thread_id = %thread_id, outcome = "empty", "[compact_thread] no conversation");
             return Ok(CompactOutcome::Empty);
         }
+        let measured = tinyagents_harness::token_estimation::estimate_slice_tokens(&history);
         let documents = self.document_readout_tokens(&history).await;
-        let tokens = tinyagents_harness::token_estimation::estimate_slice_tokens(&history)
-            .saturating_add(documents);
+        let tokens = measured.saturating_add(documents);
         if tokens < options.min_tokens {
             tracing::info!(
                 thread_id = %thread_id,
@@ -158,7 +156,7 @@ impl OpenHumanSessionHost {
             settings: models.summarizer_settings,
         };
         let fold = IdleFold {
-            min_tokens: fold_threshold(options.min_tokens, documents),
+            min_tokens: documents::fold_threshold(options.min_tokens, documents, measured),
             keep_recent_tokens: options.keep_recent_tokens,
             strategy: self.context_config.compaction_strategy,
             context_window,
@@ -273,93 +271,42 @@ impl OpenHumanSessionHost {
         (messages, refreshed_len)
     }
 
-    /// Tokens the documents in `history` add beyond the flat weight the
-    /// estimator charges each one. A provider that cannot read a document
-    /// natively is sent its cached text readout instead, on every request
-    /// that replays it, so a conversation holding long documents is far
-    /// larger than its transcript. A document with no cached readout (read
-    /// natively, or never sent) keeps the flat weight.
+    /// Tokens the documents the next request would replay from `history`
+    /// add beyond the flat weight the estimator charges each one. See
+    /// [`documents::extra_tokens`].
     async fn document_readout_tokens(&self, history: &[Message]) -> u64 {
-        if documents_of(history).next().is_none() {
+        if !documents::has_documents(history) {
             return 0;
         }
-        let config = match Box::pin(self.dispatch_ctx().load_config()).await {
+        let ctx = self.dispatch_ctx();
+        let config = match Box::pin(ctx.load_config()).await {
             Ok(config) => config,
             Err(error) => {
                 tracing::debug!(%error, "[compact_thread] documents sized at their flat weight: no config");
                 return 0;
             }
         };
+        // Where this thread's turns stage uploads: the session's own root,
+        // else the thread's bound working folder, else `action_dir`.
+        let workspace = match self.workspace_descriptor.as_ref() {
+            Some(workspace) => Some(workspace.root.clone()),
+            None => crate::attachments::thread_action_dir(
+                &ctx,
+                &config,
+                &config.workspace_dir,
+                self.thread_id.as_deref(),
+            )
+            .await
+            .ok(),
+        };
         let scope = AttachmentAccessScope {
-            workspace: self
-                .workspace_descriptor
-                .as_ref()
-                .map(|workspace| workspace.root.clone()),
+            workspace,
             thread_id: self.thread_id.clone(),
             ..AttachmentAccessScope::default()
         };
-        documents_extra_tokens(&config, &scope, history).await
+        documents::extra_tokens(&ctx, &config, &scope, history).await
     }
 }
 
-/// Each uploaded document in `history`'s user messages: its workspace path
-/// and its block.
-fn documents_of(history: &[Message]) -> impl Iterator<Item = (&str, &ContentBlock)> {
-    history
-        .iter()
-        .filter_map(|message| match message {
-            Message::User(user) => Some(user.content.iter()),
-            _ => None,
-        })
-        .flatten()
-        .filter_map(|block| match block {
-            ContentBlock::Document(MediaRef::Path { path, .. }) => Some((path.as_str(), block)),
-            _ => None,
-        })
-}
-
-/// Tokens the documents in `history` carry beyond their flat estimate
-/// weight, by the readouts cached for them under `scope`'s uploads.
-async fn documents_extra_tokens(
-    config: &crate::config::Config,
-    scope: &AttachmentAccessScope,
-    history: &[Message],
-) -> u64 {
-    let mut documents = 0_usize;
-    let mut extra_chars = 0_u64;
-    for (path, block) in documents_of(history) {
-        documents += 1;
-        let Some(chars) = cached_readout_chars(config, path, scope).await else {
-            continue;
-        };
-        extra_chars =
-            extra_chars.saturating_add(chars.saturating_sub(block.estimated_char_weight() as u64));
-    }
-    let extra = (extra_chars as f64 / DEFAULT_CHARS_PER_TOKEN) as u64;
-    tracing::debug!(
-        documents,
-        extra_tokens = extra,
-        "[compact_thread] documents sized by their cached readouts"
-    );
-    extra
-}
-
-/// The smallest compaction fold threshold: half of it is the most verbatim
-/// tail a fold keeps, so below this the tail would shrink under 20k tokens.
-const FOLD_FLOOR_TOKENS: u64 = 40_000;
-
-/// The threshold the fold runs against for a conversation of at least
-/// `min_tokens` that holds `documents` tokens of readout the estimator
-/// misses. The fold's middleware measures documents at their flat weight,
-/// so its trigger moves down by what that weight misses, or it would find
-/// nothing to fold in the conversation just judged large enough. It never
-/// drops below [`FOLD_FLOOR_TOKENS`] (or `min_tokens`, when that is lower).
-fn fold_threshold(min_tokens: u64, documents: u64) -> u64 {
-    min_tokens
-        .saturating_sub(documents)
-        .max(min_tokens.min(FOLD_FLOOR_TOKENS))
-}
-
-#[cfg(test)]
-#[path = "compact_tests.rs"]
-mod tests;
+#[path = "compact_documents.rs"]
+mod documents;
