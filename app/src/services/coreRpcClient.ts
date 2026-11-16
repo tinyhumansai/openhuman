@@ -824,6 +824,7 @@ export async function callCoreRpc<T>({
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), effectiveTimeoutMs);
     let response: Response;
+    let responseBody: JsonRpcResponse<T> | string;
     try {
       if (isTauri() && rpcUrlNeedsShellRelay(rpcUrl)) {
         // Self-hosted runtime on a LAN IP — the secure `tauri://localhost`
@@ -848,6 +849,9 @@ export async function callCoreRpc<T>({
           signal: controller.signal,
         });
       }
+      responseBody = response.ok
+        ? ((await response.json()) as JsonRpcResponse<T>)
+        : await response.text();
     } catch (fetchErr) {
       if (controller.signal.aborted) {
         // Throw a fully-classified `CoreRpcError` here so the outer catch
@@ -866,7 +870,7 @@ export async function callCoreRpc<T>({
     }
 
     if (!response.ok) {
-      const text = await response.text();
+      const text = responseBody as string;
       const httpMessage = `Core RPC HTTP ${response.status}: ${text || response.statusText}`;
       const kind = classifyRpcError(text || response.statusText, response.status);
       // The local core rejected our bearer. `getCoreRpcToken` caches the
@@ -900,7 +904,7 @@ export async function callCoreRpc<T>({
       throw new CoreRpcError(httpMessage, kind, response.status);
     }
 
-    const json = (await response.json()) as JsonRpcResponse<T>;
+    const json = responseBody as JsonRpcResponse<T>;
 
     if (json.error) {
       coreRpcError('HTTP error response', {
