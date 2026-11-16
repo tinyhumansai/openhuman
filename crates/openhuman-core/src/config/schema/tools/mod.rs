@@ -7,7 +7,7 @@ pub mod mcp;
 pub mod multimodal;
 pub mod search;
 
-pub use browser::BrowserConfig;
+pub use browser::{BrowserConfig, BrowserUpstreamProxy};
 pub use http::{CurlConfig, HttpRequestConfig};
 pub use integrations::{
     ComposioConfig, ComposioDirectBaseUrls, ComposioHostCredential, IntegrationToggle,
