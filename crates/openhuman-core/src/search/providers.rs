@@ -4,7 +4,7 @@
 //! This is the host's policy view of `[search]`: it combines the user's
 //! selection and routes with what the process can actually reach — a backend
 //! credential for managed routes, a stored key (or SearXNG base URL) for direct
-//! ones. The settings RPC renders it; `modules::search::module_config` turns it
+//! ones, nothing for Keenable's keyless direct route. The settings RPC renders it; `modules::search::module_config` turns it
 //! into the TinySearch module configuration. Provider execution is not here.
 
 use serde::Serialize;
@@ -28,6 +28,8 @@ pub struct ResolvedProvider {
     pub managed_available: bool,
     /// Whether the direct route has what it needs (a key, or a SearXNG URL).
     pub key_configured: bool,
+    /// Whether the direct route also works without a key (see [`key_optional()`]).
+    pub key_optional: bool,
     /// Enabled, search is on, and the chosen route is reachable.
     pub usable: bool,
     /// Roles this provider can serve.
@@ -75,6 +77,14 @@ pub fn direct_configured(config: &Config, provider: &str) -> bool {
     }
 }
 
+/// Whether the direct route of `provider` works without a key. Keenable serves
+/// keyless public endpoints rate-limited per IP, so like SearXNG the user's
+/// enabled entry is the only opt-in; a stored key moves it to the keyed
+/// endpoints. TinySearch applies the same rule when it lists provider tools.
+pub fn key_optional(provider: &str) -> bool {
+    provider == "keenable"
+}
+
 /// Whether the process holds a credential the managed backend accepts.
 pub async fn backend_credential_available(config: &Config) -> bool {
     if config.profile_providers.is_some() {
@@ -105,9 +115,10 @@ pub fn resolve_with(config: &Config, managed_available: bool) -> Vec<ResolvedPro
             let route = config.search.route(id);
             let managed_capable = MANAGED_SEARCH_PROVIDERS.contains(&id);
             let key_configured = direct_configured(config, id);
+            let key_optional = key_optional(id);
             let reachable = match route {
                 ProviderRoute::Backend => managed_capable && managed_available,
-                ProviderRoute::Direct => key_configured,
+                ProviderRoute::Direct => key_configured || key_optional,
             };
             ResolvedProvider {
                 id,
@@ -116,6 +127,7 @@ pub fn resolve_with(config: &Config, managed_available: bool) -> Vec<ResolvedPro
                 managed_capable,
                 managed_available,
                 key_configured,
+                key_optional,
                 usable: search_enabled && enabled && reachable,
                 roles: provider_roles(id).to_vec(),
             }
