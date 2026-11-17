@@ -94,7 +94,7 @@ jobs:
     if: fromJSON(needs.plan.outputs.matrix).include[0] != null
     runs-on: ubuntu-22.04
     # The rust-cov shards each build the core cold on 4 cores (~20 min per
-    # build, CARGO_BUILD_JOBS=1) and run for 30-75 min; the one job that ran
+    # build with CARGO_BUILD_JOBS=1, now 2) and run for 30-75 min; the one job that ran
     # them all never fit in 100. Every other group keeps 100.
     timeout-minutes: ${{ startsWith(matrix.group, 'rust-cov-') && 120 || 100 }}
     container:
