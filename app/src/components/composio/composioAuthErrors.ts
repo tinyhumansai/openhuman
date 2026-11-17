@@ -58,17 +58,20 @@ export function isMissingRequiredFieldsError(err: unknown): boolean {
  * or a payload with no status prefix at all, is read for a message.
  */
 function extractEmbeddedErrorMessage(raw: string): string | null {
-  // The transport tags a failure as `Backend returned <status> ...`; the body
-  // of server errors stays on the generic sanitization path.
-  const status = /Backend returned (\d{3})/.exec(raw)?.[1];
-  if (status !== undefined && Number(status) >= 500) {
-    console.debug('[composio][authorize] embedded-error-extraction reason=status_5xx');
-    return null;
-  }
-
   const start = raw.indexOf('{');
   if (start === -1) {
     console.debug('[composio][authorize] embedded-error-extraction reason=no_json_object');
+    return null;
+  }
+
+  // The transport tags a failure as `Backend returned <status> ...` or
+  // `HTTP <status>: ...`; the body of server errors stays on the generic
+  // sanitization path. Only inspect the transport prefix before `{` so a
+  // 4xx message mentioning "HTTP 500" inside JSON is not misclassified.
+  const prefix = raw.slice(0, start);
+  const status = /(?:Backend returned|HTTP)\s+(\d{3})\b/.exec(prefix)?.[1];
+  if (status !== undefined && Number(status) >= 500) {
+    console.debug('[composio][authorize] embedded-error-extraction reason=status_5xx');
     return null;
   }
   const end = raw.lastIndexOf('}');
@@ -85,7 +88,9 @@ function extractEmbeddedErrorMessage(raw: string): string | null {
     return null;
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    console.debug('[composio][authorize] embedded-error-extraction reason=unsupported_payload_shape');
+    console.debug(
+      '[composio][authorize] embedded-error-extraction reason=unsupported_payload_shape'
+    );
     return null;
   }
 

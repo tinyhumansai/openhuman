@@ -65,6 +65,15 @@ describe('sanitizeAuthError — embedded JSON error bodies', () => {
     expect(result).not.toContain('"message"');
   });
 
+  it('does not surface an internal message from an HTTP 5xx prefix body', () => {
+    const err = new Error(
+      'HTTP 500: {"error":{"message":"internal server error payload","code":500}}'
+    );
+    const result = sanitizeAuthError(err);
+    expect(result).not.toContain('internal server error payload');
+    expect(result).not.toContain('"message"');
+  });
+
   it('still drops opaque JSON and falls back to the generic message', () => {
     // No readable field: the payload must not reach the UI.
     expect(sanitizeAuthError('{"foo":123}')).toBe('Authorization failed.');
